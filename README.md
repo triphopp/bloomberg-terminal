@@ -4,6 +4,8 @@ A personal Bloomberg-style financial terminal built for local use. Real-time mar
 
 > **Local-only by design.** No authentication layer. Do not expose this to the internet without adding auth.
 
+![Bloomberg Terminal](README.png)
+
 ---
 
 ## Features
