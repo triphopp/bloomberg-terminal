@@ -4,7 +4,7 @@ thesis_to_html.py — Convert Obsidian investment thesis .md → Bloomberg-theme
 
 Usage:
     python tools/thesis_to_html.py
-    python tools/thesis_to_html.py --input "G:/My Drive/Obsidian Vault/wiki/theses"
+    python tools/thesis_to_html.py --input "/path/to/your/theses"
     python tools/thesis_to_html.py --input thesis.md --output output.html
     python tools/thesis_to_html.py --input "wiki/theses" --output "wiki/theses/html"
 
@@ -673,7 +673,7 @@ def main():
     )
     parser.add_argument(
         "--input", "-i",
-        default="G:/My Drive/Obsidian Vault/wiki/theses",
+        default="./data/theses",
         help="Input .md file or directory (default: %(default)s)",
     )
     parser.add_argument(

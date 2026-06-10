@@ -308,7 +308,7 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
                 setShowSettings(false);
               }
             }}
-            placeholder="e.g. G:/My Drive/Obsidian/Clippings"
+            placeholder="e.g. C:/Users/you/notes/clippings"
             className="flex-1 text-xs bg-transparent border px-2 py-0.5 font-mono outline-none"
             style={{ borderColor: colors.border, color: colors.text }}
           />

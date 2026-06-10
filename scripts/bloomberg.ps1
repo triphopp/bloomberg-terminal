@@ -17,10 +17,10 @@ $FRONTEND_LOG = "$LOG_DIR\frontend.log"
 
 # ── Env vars (edit to match your machine) ────────────────────────────────────
 $ENV_VARS = @{
-    CLIPPINGS_DIR = "G:/My Drive/Obsidian Vault/Obsidian Vault GoogleDrive/Clippings"
-    THESES_DIR    = "G:/My Drive/Obsidian Vault/wiki/theses"
-    SOURCES_DIR   = "G:/My Drive/Obsidian Vault/wiki/sources"
-    OLLAMA_URL    = "http://localhost:11434"
+    CLIPPINGS_DIR = $env:CLIPPINGS_DIR  ?? "./data/clippings"
+    THESES_DIR    = $env:THESES_DIR     ?? "./data/theses"
+    SOURCES_DIR   = $env:SOURCES_DIR    ?? "./data/sources"
+    OLLAMA_URL    = $env:OLLAMA_URL     ?? "http://localhost:11434"
 }
 
 # ── Colors ────────────────────────────────────────────────────────────────────

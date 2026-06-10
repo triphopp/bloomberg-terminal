@@ -13,16 +13,11 @@ Python backend serves yfinance + FRED + Alpha Vantage + Ollama + BOT data to Nex
 ## Running (2 terminals always required)
 
 ```powershell
-# Terminal 1 — Python backend
-cd D:\Agents\Claude\bloomberg-terminal-main\backend
-$env:CLIPPINGS_DIR = "G:/My Drive/Obsidian Vault/Obsidian Vault GoogleDrive/Clippings"
-$env:THESES_DIR    = "G:/My Drive/Obsidian Vault/wiki/theses"
-$env:SOURCES_DIR   = "G:/My Drive/Obsidian Vault/wiki/sources"
-$env:OLLAMA_URL    = "http://localhost:11434"
+# Terminal 1 — Python backend (set env vars in backend/.env)
+cd backend
 python -m uvicorn main:app --port 8000 --reload
 
 # Terminal 2 — Next.js
-cd D:\Agents\Claude\bloomberg-terminal-main
 npm run dev
 ```
 

@@ -114,4 +114,4 @@
 | `SEC2_API_KEY` | All `/api/sec/v2/*` routes fail |
 | `BINANCE_API_KEY` | `/api/crypto/footprint` fails |
 | `FACEBOOK_ACCESS_TOKEN` | FB social feed falls back to RSSHub (may be rate-limited) |
-| `CLIPPINGS_DIR` | Clippings view empty (default: `G:/My Drive/...`) |
+| `CLIPPINGS_DIR` | Clippings view empty (default: `./data/clippings`) |

@@ -1,6 +1,6 @@
 """
 Portfolio v2 — Multi-account, multi-currency trade tracking.
-Accounts: Finansia (TH/THB), Dime (US/USD), InnovestX (Crypto/THB)
+Supports TH equity, US equity, and crypto accounts.
 """
 import io
 import uuid

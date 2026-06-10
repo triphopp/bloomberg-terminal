@@ -51,9 +51,16 @@ memory/sessions/
 memory/reports/
 memory/plans/
 
+# personal notes / roadmap drafts
+todo/
+
 # vercel
 .vercel
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+# Claude Code local settings (may contain tokens from allowed-commands history)
+.claude/settings.local.json
+.claude/launch.json
+.claude/

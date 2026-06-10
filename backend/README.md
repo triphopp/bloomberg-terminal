@@ -7,10 +7,10 @@ Market Data API built with **FastAPI + yfinance**. Provides real-time market dat
 ```powershell
 cd backend
 
-# Set environment variables
-$env:CLIPPINGS_DIR = "G:/My Drive/Obsidian Vault/Obsidian Vault GoogleDrive/Clippings"
-$env:THESES_DIR    = "G:/My Drive/Obsidian Vault/wiki/theses"
-$env:SOURCES_DIR   = "G:/My Drive/Obsidian Vault/wiki/sources"
+# Set environment variables (or use backend/.env)
+$env:CLIPPINGS_DIR = "C:/path/to/your/notes/clippings"
+$env:THESES_DIR    = "C:/path/to/your/notes/theses"
+$env:SOURCES_DIR   = "C:/path/to/your/notes/sources"
 $env:OLLAMA_URL    = "http://localhost:11434"
 
 # Run server
@@ -57,10 +57,10 @@ backend/
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `CLIPPINGS_DIR` | No | `G:/My Drive/Obsidian Vault/.../Clippings` | Path to Obsidian clippings folder |
-| `THESES_DIR` | No | `G:/My Drive/Obsidian Vault/wiki/theses` | Path to investment theses |
-| `SOURCES_DIR` | No | `G:/My Drive/Obsidian Vault/wiki/sources` | Path to research sources |
-| `OBSIDIAN_WIKI_DIR` | No | `G:/My Drive/Obsidian Vault/wiki` | Obsidian wiki root |
+| `CLIPPINGS_DIR` | No | `./data/clippings` | Path to markdown notes folder |
+| `THESES_DIR` | No | `./data/theses` | Path to investment theses folder |
+| `SOURCES_DIR` | No | `./data/sources` | Path to research sources folder |
+| `OBSIDIAN_WIKI_DIR` | No | `./data/wiki` | Wiki root folder |
 | `OLLAMA_URL` | No | `http://localhost:11434` | Local Ollama instance URL |
 | `PORTFOLIO_DB` | No | `portfolio.db` | SQLite database path |
 | `FRED_API_KEY` | No | — | FRED JSON API key (faster than CSV) |
