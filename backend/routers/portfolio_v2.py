@@ -1,0 +1,1262 @@
+"""
+Portfolio v2 — Multi-account, multi-currency trade tracking.
+Accounts: Finansia (TH/THB), Dime (US/USD), InnovestX (Crypto/THB)
+"""
+import io
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from typing import Optional
+
+import pandas as pd
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from pydantic import BaseModel
+
+from sources import market_data
+
+from cache import TTLCache
+from db import get_db
+from sources import market_data
+
+# ── Price cache — TTL 60s per symbol, THB rate TTL 120s ──────────────────────
+_price_cache: TTLCache = TTLCache(ttl=60,  maxsize=300)
+_rate_cache:  TTLCache = TTLCache(ttl=120, maxsize=5)
+
+router = APIRouter(prefix="/api/v2/portfolio")
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _now() -> str:
+    return datetime.utcnow().isoformat()
+
+
+def _map_account_name(name: str) -> str:
+    """Map spreadsheet account names to DB IDs."""
+    n = str(name).lower().strip()
+    if "finansia" in n:
+        return "finansia"
+    if "dime" in n:
+        return "dime"
+    if "innov" in n:
+        return "innovestx"
+    return "finansia"
+
+
+def _to_float(v) -> Optional[float]:
+    try:
+        f = float(v)
+        return f if f != 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_float_or_zero(v) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _fmt_date(v) -> Optional[str]:
+    if v is None:
+        return None
+    if hasattr(v, "strftime"):
+        return v.strftime("%Y-%m-%d")
+    s = str(v).strip()
+    return s[:10] if len(s) >= 10 else s
+
+
+def _get_yf_symbol(symbol: str, account_id: str) -> Optional[str]:
+    """Convert trade symbol to yfinance-compatible format."""
+    if not symbol:
+        return None
+    sym = symbol.strip().upper()
+    # Skip options (PUT_INTC, CALL_INTC etc.)
+    if sym.startswith(("PUT_", "CALL_")):
+        return None
+    if account_id == "finansia":
+        return f"{sym}.BK"
+    if account_id == "innovestx":
+        # Already yf-compatible: BTC-USD, BTC-THB, SOL-USD etc.
+        if "-" in sym:
+            return sym
+        # BTCTHB → BTC-THB, SOLTHB → SOL-THB
+        if sym.endswith("THB") and len(sym) > 3:
+            base = sym[:-3]
+            return f"{base}-THB"
+        return None
+    return sym  # Dime: US symbols as-is
+
+
+def _get_live_price(symbol: str, account_id: str) -> Optional[float]:
+    yf_sym = _get_yf_symbol(symbol, account_id)
+    if not yf_sym:
+        return None
+    cached = _price_cache.get(yf_sym)
+    if cached is not None:
+        return cached
+    try:
+        info = market_data.get_fast_info(yf_sym)
+        price = getattr(info, "last_price", None) or getattr(info, "regular_market_price", None)
+        result = float(price) if price else None
+        if result:
+            _price_cache.set(yf_sym, result)
+        return result
+    except Exception:
+        return None
+
+
+def _batch_fetch_prices(symbols: list[str]) -> dict[str, Optional[float]]:
+    """Batch-fetch current prices for multiple yfinance symbols in one HTTP call.
+    Falls back to individual fetch for symbols that fail.
+    Uses cache — only fetches symbols not already cached.
+    """
+    result: dict[str, Optional[float]] = {}
+    to_fetch = []
+
+    for sym in symbols:
+        cached = _price_cache.get(sym)
+        if cached is not None:
+            result[sym] = cached
+        else:
+            to_fetch.append(sym)
+
+    if not to_fetch:
+        return result
+
+    try:
+        # Typed batch download via market_data contract
+        batch = market_data.download(to_fetch, period="1d", interval="1d")
+        for sym in to_fetch:
+            price = batch.prices.get(sym)
+            if price is not None:
+                result[sym] = price
+                _price_cache.set(sym, price)
+            else:
+                result[sym] = None
+    except Exception:
+        pass
+
+    # Fill any missing with individual fallback
+    for sym in to_fetch:
+        if sym not in result or result[sym] is None:
+            try:
+                info = market_data.get_fast_info(sym)
+                price = getattr(info, "last_price", None) or getattr(info, "regular_market_price", None)
+                p = float(price) if price else None
+                result[sym] = p
+                if p:
+                    _price_cache.set(sym, p)
+            except Exception:
+                result[sym] = None
+
+    return result
+
+
+def _get_thb_per_usd() -> float:
+    """Get live USD→THB rate, fallback to 33.5. Cached 120s."""
+    cached = _rate_cache.get("THBUSD")
+    if cached is not None:
+        return cached
+    try:
+        info = market_data.get_fast_info("THBUSD=X")
+        rate = getattr(info, "last_price", None)
+        if rate and float(rate) > 0:
+            result = round(1 / float(rate), 4)
+            _rate_cache.set("THBUSD", result)
+            return result
+    except Exception:
+        pass
+    return 33.5
+
+
+# ── Pydantic Models ──────────────────────────────────────────────────────────
+
+class AccountIn(BaseModel):
+    id: str
+    name: str
+    broker: str = ""
+    country: str = "TH"
+    currency: str = "THB"
+    account_type: str = "equity"
+
+
+class AccountPatch(BaseModel):
+    name: Optional[str] = None
+    broker: Optional[str] = None
+    is_active: Optional[int] = None
+
+
+class TradeIn(BaseModel):
+    account_id: str
+    symbol: str
+    sector: str = ""
+    date_entry: str
+    date_exit: Optional[str] = None
+    price_entry: float = 0
+    price_exit: Optional[float] = None
+    price_stoploss: Optional[float] = None
+    price_target: Optional[float] = None
+    volume: float = 0
+    amount: Optional[float] = None
+    pnl_amount: Optional[float] = None
+    win_loss: str = "P"
+    pnl_percent: Optional[float] = None
+    exchange_rate: float = 1
+    strategy_name: str = ""
+    entry_trigger: str = ""
+    exit_trigger: str = ""
+    market_trend: str = ""
+    news_sentiment: str = ""
+    expectation_based: str = ""
+    factor_based: str = ""
+    fear_greed_index: str = ""
+    vix_index: str = ""
+    note: str = ""
+
+
+class TradePatch(BaseModel):
+    # Entry fields (แก้ไขข้อมูลที่กรอกผิด)
+    symbol:          Optional[str]   = None
+    sector:          Optional[str]   = None
+    date_entry:      Optional[str]   = None
+    price_entry:     Optional[float] = None
+    price_stoploss:  Optional[float] = None
+    price_target:    Optional[float] = None
+    volume:          Optional[float] = None
+    strategy_name:   Optional[str]   = None
+    entry_trigger:   Optional[str]   = None
+    market_trend:    Optional[str]   = None
+    note:            Optional[str]   = None
+    # Exit fields
+    date_exit:       Optional[str]   = None
+    price_exit:      Optional[float] = None
+    pnl_amount:      Optional[float] = None
+    win_loss:        Optional[str]   = None
+    pnl_percent:     Optional[float] = None
+    exit_trigger:    Optional[str]   = None
+
+
+class CashIn(BaseModel):
+    account_id: str
+    date: str
+    income: float = 0
+    investment: float = 0
+    exchange_rate: float = 1
+    note: str = ""
+
+
+class DividendIn(BaseModel):
+    account_id: str
+    asset: str
+    ex_date: Optional[str] = None
+    pay_date: Optional[str] = None
+    amount_per_unit: float = 0
+    total_received: float = 0
+    reinvested_amount: float = 0
+    reinvest_asset: str = ""
+    reinvest_price: float = 0
+    reinvest_units: float = 0
+
+
+# ── Accounts ─────────────────────────────────────────────────────────────────
+
+@router.get("/accounts")
+def list_accounts():
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM portfolio_accounts WHERE is_active = 1 ORDER BY created_at"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.post("/accounts", status_code=201)
+def create_account(body: AccountIn):
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO portfolio_accounts (id, name, broker, country, currency, account_type)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (body.id, body.name, body.broker, body.country, body.currency, body.account_type))
+    return {"ok": True, "id": body.id}
+
+
+@router.patch("/accounts/{account_id}")
+def patch_account(account_id: str, body: AccountPatch):
+    updates = body.model_dump(exclude_none=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    with get_db() as conn:
+        conn.execute(f"UPDATE portfolio_accounts SET {set_clause} WHERE id = ?",
+                     list(updates.values()) + [account_id])
+    return {"ok": True}
+
+
+# ── Trades ───────────────────────────────────────────────────────────────────
+
+@router.get("/trades")
+def list_trades(
+    account_id: Optional[str] = Query(None),
+    win_loss: Optional[str] = Query(None),
+    symbol: Optional[str] = Query(None),
+    limit: int = Query(500),
+    offset: int = Query(0),
+):
+    where, params = [], []
+    if account_id and account_id != "all":
+        where.append("account_id = ?")
+        params.append(account_id)
+    if win_loss:
+        where.append("win_loss = ?")
+        params.append(win_loss.upper())
+    if symbol:
+        where.append("symbol LIKE ?")
+        params.append(f"%{symbol.upper()}%")
+    sql = "SELECT * FROM trades"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY date_entry DESC, created_at DESC LIMIT ? OFFSET ?"
+    params += [limit, offset]
+    with get_db() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return {"trades": [dict(r) for r in rows], "thb_per_usd": _get_thb_per_usd()}
+
+
+@router.post("/trades", status_code=201)
+def create_trade(body: TradeIn):
+    trade_id = str(uuid.uuid4())
+    with get_db() as conn:
+        acc = conn.execute("SELECT currency FROM portfolio_accounts WHERE id = ?",
+                           (body.account_id,)).fetchone()
+        currency = acc["currency"] if acc else "THB"
+        conn.execute("""
+            INSERT INTO trades (id, account_id, symbol, sector, date_entry, date_exit,
+                price_entry, price_exit, price_stoploss, price_target, volume, amount,
+                pnl_amount, win_loss, pnl_percent, currency, exchange_rate,
+                strategy_name, entry_trigger, exit_trigger, market_trend,
+                news_sentiment, expectation_based, factor_based,
+                fear_greed_index, vix_index, note)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (trade_id, body.account_id, body.symbol.upper(), body.sector,
+              body.date_entry, body.date_exit,
+              body.price_entry, body.price_exit, body.price_stoploss, body.price_target,
+              body.volume, body.amount, body.pnl_amount, body.win_loss.upper(),
+              body.pnl_percent, currency, body.exchange_rate,
+              body.strategy_name, body.entry_trigger, body.exit_trigger,
+              body.market_trend, body.news_sentiment, body.expectation_based,
+              body.factor_based, body.fear_greed_index, body.vix_index, body.note))
+    return {"ok": True, "id": trade_id}
+
+
+@router.patch("/trades/{trade_id}")
+def patch_trade(trade_id: str, body: TradePatch):
+    updates = body.model_dump(exclude_none=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    if "symbol" in updates and updates["symbol"]:
+        updates["symbol"] = updates["symbol"].upper()
+    if "win_loss" in updates and updates["win_loss"]:
+        updates["win_loss"] = updates["win_loss"].upper()
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    with get_db() as conn:
+        cur = conn.execute(f"UPDATE trades SET {set_clause} WHERE id = ?",
+                           list(updates.values()) + [trade_id])
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Trade not found")
+    return {"ok": True}
+
+
+@router.delete("/trades/{trade_id}")
+def delete_trade(trade_id: str):
+    with get_db() as conn:
+        cur = conn.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Trade not found")
+    return {"ok": True}
+
+
+# ── Sell / Partial Sell ──────────────────────────────────────────────────────
+
+# ── Bulk Sector Re-normalize (one-time migration tool) ─────────────────────
+
+@router.post("/trades/bulk-patch-sector")
+def bulk_patch_sector(body: dict):
+    """
+    body = {"mappings": {"GOLD": "Materials", ...}, "account_id": "dime"}  # optional filter
+    """
+    import os
+    if os.getenv("ALLOW_DANGEROUS_OPS", "") != "1":
+        raise HTTPException(status_code=403, detail="Set ALLOW_DANGEROUS_OPS=1 env var to enable")
+
+    mappings: dict = body.get("mappings", {})
+    account_id: str | None = body.get("account_id")
+    if not mappings:
+        raise HTTPException(status_code=400, detail="No mappings provided")
+    updated = 0
+    with get_db() as conn:
+        for old_val, new_val in mappings.items():
+            where = "sector = ?"
+            params: list = [old_val]
+            if account_id:
+                where += " AND account_id = ?"
+                params.append(account_id)
+            cur = conn.execute(f"UPDATE trades SET sector = ? WHERE {where}",
+                               [new_val] + params)
+            updated += cur.rowcount
+    return {"ok": True, "updated": updated}
+
+
+class SellIn(BaseModel):
+    trade_id: str                        # ID of the open position being sold
+    sell_volume: float = 0               # How many shares/units to sell (0 = all)
+    sell_price: float = 0                # Exit price
+    sell_date: str                       # Date of sale (YYYY-MM-DD)
+    commission: float = 0                # Optional commission
+
+
+@router.post("/sell", status_code=201)
+def sell_position(body: SellIn):
+    """Close or partially reduce an open position.
+
+    Full sell (sell_volume = 0 or >= position volume):
+        Updates the trade: sets date_exit, price_exit, pnl_amount, win_loss
+
+    Partial sell (sell_volume < position volume):
+        1. Creates a new CLOSED trade for the sold portion
+        2. Reduces the original trade's volume (remaining shares stay open)
+    """
+    with get_db() as conn:
+        # Find the open position
+        row = conn.execute(
+            "SELECT * FROM trades WHERE id = ? AND win_loss = 'P'",
+            (body.trade_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Open position not found")
+
+        pos = dict(row)
+        total_volume = float(pos["volume"])
+        sell_vol = float(body.sell_volume) if body.sell_volume > 0 else total_volume
+
+        if sell_vol > total_volume:
+            raise HTTPException(status_code=400, detail=f"Sell volume ({sell_vol}) exceeds position volume ({total_volume})")
+
+        entry_price = float(pos["price_entry"])
+        exit_price  = float(body.sell_price)
+        remaining   = round(total_volume - sell_vol, 8)
+
+        if remaining <= 1e-8:
+            # ── Full sell: close the position ────────────────────────────────
+            pnl = round((exit_price - entry_price) * total_volume, 2)
+            pnl_pct = round(((exit_price / entry_price) - 1) * 100, 2) if entry_price > 0 else 0
+            # Account for commission if provided
+            pnl_net = round(pnl - float(body.commission), 2)
+            wl = "W" if pnl_net >= 0 else "L"
+
+            conn.execute(
+                """UPDATE trades SET date_exit = ?, price_exit = ?,
+                   pnl_amount = ?, win_loss = ?, pnl_percent = ?, note = note || ?
+                   WHERE id = ?""",
+                (body.sell_date, exit_price, pnl_net, wl, pnl_pct,
+                 f"\n[SOLD {body.sell_date}] @ {exit_price} | P&L: {pnl_net}",
+                 body.trade_id),
+            )
+
+            return {
+                "ok": True,
+                "action": "full_sell",
+                "trade_id": body.trade_id,
+                "pnl_amount": pnl_net,
+                "pnl_percent": pnl_pct,
+                "win_loss": wl,
+            }
+        else:
+            # ── Partial sell: split into sold + remaining ────────────────────
+            sold_volume = sell_vol
+            sold_pnl = round((exit_price - entry_price) * sold_volume, 2)
+            sold_pnl_pct = round(((exit_price / entry_price) - 1) * 100, 2) if entry_price > 0 else 0
+            sold_pnl_net = round(sold_pnl - float(body.commission), 2)
+            sold_wl = "W" if sold_pnl_net >= 0 else "L"
+
+            # 1) Create closed trade for sold portion
+            import uuid
+            sold_id = str(uuid.uuid4())
+            conn.execute(
+                """INSERT INTO trades (id, account_id, symbol, sector, date_entry, date_exit,
+                   price_entry, price_exit, volume, pnl_amount, win_loss, pnl_percent,
+                   currency, exchange_rate, strategy_name, note)
+                   SELECT ?, account_id, symbol, sector, date_entry, ?,
+                   price_entry, ?, ?, ?, ?, ?,
+                   currency, exchange_rate, strategy_name, ?
+                   FROM trades WHERE id = ?""",
+                (sold_id, body.sell_date, exit_price, sold_volume,
+                 sold_pnl_net, sold_wl, sold_pnl_pct,
+                 f"[PARTIAL SELL {body.sell_date}] @ {exit_price} | P&L: {sold_pnl_net}",
+                 body.trade_id),
+            )
+
+            # 2) Reduce original position volume
+            conn.execute(
+                "UPDATE trades SET volume = ?, note = note || ? WHERE id = ?",
+                (remaining,
+                 f"\n[PARTIAL SELL {body.sell_date}] {sold_volume} shares @ {exit_price}",
+                 body.trade_id),
+            )
+
+            return {
+                "ok": True,
+                "action": "partial_sell",
+                "sold_trade_id": sold_id,
+                "remaining_trade_id": body.trade_id,
+                "sold_volume": sold_volume,
+                "remaining_volume": remaining,
+                "pnl_amount": sold_pnl_net,
+                "pnl_percent": sold_pnl_pct,
+                "win_loss": sold_wl,
+            }
+
+
+# ── Cash Ledger ───────────────────────────────────────────────────────────────
+
+@router.get("/cash")
+def list_cash(account_id: Optional[str] = Query(None)):
+    where, params = [], []
+    if account_id and account_id != "all":
+        where.append("account_id = ?")
+        params.append(account_id)
+    sql = "SELECT * FROM cash_ledger"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY date DESC"
+    with get_db() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.post("/cash", status_code=201)
+def add_cash(body: CashIn):
+    entry_id = str(uuid.uuid4())
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO cash_ledger (id, account_id, date, income, investment, exchange_rate, note)
+            VALUES (?,?,?,?,?,?,?)
+        """, (entry_id, body.account_id, body.date, body.income, body.investment,
+              body.exchange_rate, body.note))
+    return {"ok": True, "id": entry_id}
+
+
+@router.put("/cash/{entry_id}")
+def update_cash(entry_id: str, body: CashIn):
+    with get_db() as conn:
+        cur = conn.execute("""
+            UPDATE cash_ledger SET account_id=?, date=?, income=?, investment=?,
+                exchange_rate=?, note=?
+            WHERE id = ?
+        """, (body.account_id, body.date, body.income, body.investment,
+              body.exchange_rate, body.note, entry_id))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Cash entry not found")
+    return {"ok": True}
+
+
+@router.delete("/cash/{entry_id}")
+def delete_cash(entry_id: str):
+    with get_db() as conn:
+        cur = conn.execute("DELETE FROM cash_ledger WHERE id = ?", (entry_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Cash entry not found")
+    return {"ok": True}
+
+
+# ── Dividends ─────────────────────────────────────────────────────────────────
+
+@router.get("/dividends")
+def list_dividends(account_id: Optional[str] = Query(None)):
+    where, params = [], []
+    if account_id and account_id != "all":
+        where.append("account_id = ?")
+        params.append(account_id)
+    sql = "SELECT * FROM dividends"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY pay_date DESC"
+    with get_db() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.post("/dividends", status_code=201)
+def add_dividend(body: DividendIn):
+    div_id = str(uuid.uuid4())
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO dividends (id, account_id, asset, ex_date, pay_date,
+                amount_per_unit, total_received, reinvested_amount,
+                reinvest_asset, reinvest_price, reinvest_units)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        """, (div_id, body.account_id, body.asset, body.ex_date, body.pay_date,
+              body.amount_per_unit, body.total_received, body.reinvested_amount,
+              body.reinvest_asset, body.reinvest_price, body.reinvest_units))
+    return {"ok": True, "id": div_id}
+
+
+@router.put("/dividends/{div_id}")
+def update_dividend(div_id: str, body: DividendIn):
+    with get_db() as conn:
+        cur = conn.execute("""
+            UPDATE dividends SET account_id=?, asset=?, ex_date=?, pay_date=?,
+                amount_per_unit=?, total_received=?, reinvested_amount=?,
+                reinvest_asset=?, reinvest_price=?, reinvest_units=?
+            WHERE id = ?
+        """, (body.account_id, body.asset, body.ex_date, body.pay_date,
+              body.amount_per_unit, body.total_received, body.reinvested_amount,
+              body.reinvest_asset, body.reinvest_price, body.reinvest_units, div_id))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Dividend entry not found")
+    return {"ok": True}
+
+
+@router.delete("/dividends/{div_id}")
+def delete_dividend(div_id: str):
+    with get_db() as conn:
+        cur = conn.execute("DELETE FROM dividends WHERE id = ?", (div_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Dividend entry not found")
+    return {"ok": True}
+
+
+# ── Dividend Suggestions (from yfinance) ─────────────────────────────────────
+
+@router.get("/dividend-suggestions")
+def get_dividend_suggestions(account_id: Optional[str] = Query(None)):
+    """Fetch recent dividend data from yfinance for open positions.
+
+    Returns one suggestion per symbol with: asset, amount_per_unit, ex_date, pay_date.
+    Only includes symbols where yfinance actually returned dividend data.
+    """
+    where = ["win_loss = 'P'"]
+    params = []
+    if account_id and account_id != "all":
+        where.append("account_id = ?")
+        params.append(account_id)
+
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT t.symbol, t.account_id FROM trades t "
+            f"WHERE {' AND '.join(where)} ORDER BY t.symbol",
+            params,
+        ).fetchall()
+
+    if not rows:
+        return {"suggestions": []}
+
+    suggestions = []
+    for r in rows:
+        symbol = r["symbol"]
+        acct = r["account_id"]
+        try:
+            yf_sym = _get_yf_symbol(symbol, acct)
+            if not yf_sym:
+                continue
+            # Typed dividend access via market_data contract
+            div_records = market_data.get_dividends(yf_sym)
+            if div_records:
+                # Filter to last 6 months + get most recent
+                cutoff = pd.Timestamp.now() - pd.DateOffset(months=6)
+                recent = [d for d in div_records
+                         if pd.Timestamp(d.ex_date) >= cutoff]
+                if not recent:
+                    recent = div_records  # fall back to all
+                best = max(recent, key=lambda d: d.ex_date)
+
+                if best.amount > 0:
+                    suggestions.append({
+                        "asset": symbol,
+                        "account_id": acct,
+                        "amount_per_unit": round(best.amount, 6),
+                        "ex_date": best.ex_date,
+                        "pay_date": best.ex_date,  # ex-date used for pay_date
+                        "source": "yfinance",
+                    })
+        except Exception:
+            continue
+
+    return {"suggestions": suggestions}
+
+
+# ── Open Positions (with live prices) ────────────────────────────────────────
+
+@router.get("/open-positions")
+def get_open_positions(
+    account_id: Optional[str] = Query(None),
+    base_currency: str = Query("THB"),
+):
+    where = ["win_loss = 'P'"]
+    params = []
+    if account_id and account_id != "all":
+        where.append("account_id = ?")
+        params.append(account_id)
+
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT t.*, a.currency acc_currency, a.name acc_name "
+            "FROM trades t JOIN portfolio_accounts a ON t.account_id = a.id "
+            f"WHERE {' AND '.join(where)} ORDER BY t.date_entry DESC",
+            params,
+        ).fetchall()
+
+    positions = [dict(r) for r in rows]
+    if not positions:
+        return {"positions": [], "thb_per_usd": _get_thb_per_usd()}
+
+    thb_per_usd = _get_thb_per_usd()
+
+    # ── Batch-fetch all prices in one yfinance call ───────────────────────────
+    yf_sym_map: dict[str, str] = {}   # yf_symbol → original position symbol+acct key
+    pos_yf_map: dict[int, str] = {}   # position index → yf_symbol
+
+    for i, pos in enumerate(positions):
+        yf_sym = _get_yf_symbol(pos["symbol"], pos["account_id"])
+        if yf_sym:
+            yf_sym_map[yf_sym] = yf_sym
+            pos_yf_map[i] = yf_sym
+
+    price_lookup = _batch_fetch_prices(list(yf_sym_map.keys()))
+
+    # ── Enrich positions with prices ─────────────────────────────────────────
+    enriched = []
+    for i, pos in enumerate(positions):
+        yf_sym = pos_yf_map.get(i)
+        price = price_lookup.get(yf_sym) if yf_sym else None
+        pos["current_price"] = price
+        if price and pos["price_entry"] and pos["price_entry"] > 0:
+            vol = _to_float_or_zero(pos["volume"])
+            entry = _to_float_or_zero(pos["price_entry"])
+            pnl = (price - entry) * vol
+            pos["unrealized_pnl"] = round(pnl, 4)
+            pos["unrealized_pct"] = round((price - entry) / entry * 100, 2)
+            if pos["acc_currency"] == "USD":
+                pos["unrealized_pnl_thb"] = round(pnl * thb_per_usd, 2)
+            else:
+                pos["unrealized_pnl_thb"] = round(pnl, 2)
+        else:
+            pos["unrealized_pnl"] = None
+            pos["unrealized_pct"] = None
+            pos["unrealized_pnl_thb"] = None
+        enriched.append(pos)
+
+    return {"positions": enriched, "thb_per_usd": thb_per_usd}
+
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+
+@router.get("/summary")
+def get_summary(base_currency: str = Query("THB")):
+    with get_db() as conn:
+        accounts = [dict(r) for r in conn.execute(
+            "SELECT * FROM portfolio_accounts WHERE is_active = 1"
+        ).fetchall()]
+
+        trade_stats = conn.execute("""
+            SELECT account_id,
+                   COUNT(*) total_trades,
+                   SUM(CASE WHEN win_loss = 'W' THEN 1 ELSE 0 END) wins,
+                   SUM(CASE WHEN win_loss = 'L' THEN 1 ELSE 0 END) losses,
+                   SUM(CASE WHEN win_loss = 'P' THEN 1 ELSE 0 END) open_count,
+                   SUM(COALESCE(pnl_amount, 0)) total_pnl_native
+            FROM trades
+            GROUP BY account_id
+        """).fetchall()
+
+        cash_stats = conn.execute("""
+            SELECT account_id,
+                   SUM(income) total_income,
+                   SUM(investment) total_invested
+            FROM cash_ledger GROUP BY account_id
+        """).fetchall()
+
+        div_stats = conn.execute("""
+            SELECT account_id, SUM(total_received) total_dividends
+            FROM dividends GROUP BY account_id
+        """).fetchall()
+
+    thb_per_usd = _get_thb_per_usd() if base_currency == "THB" else 1.0
+
+    stats_map = {r["account_id"]: dict(r) for r in trade_stats}
+    cash_map  = {r["account_id"]: dict(r) for r in cash_stats}
+    div_map   = {r["account_id"]: dict(r) for r in div_stats}
+
+    result = []
+    total_pnl_base = 0.0
+    total_wins = total_closed = 0
+
+    for acc in accounts:
+        aid = acc["id"]
+        s   = stats_map.get(aid, {})
+        c   = cash_map.get(aid, {})
+        d   = div_map.get(aid, {})
+
+        wins   = int(s.get("wins", 0) or 0)
+        losses = int(s.get("losses", 0) or 0)
+        closed = wins + losses
+        total  = int(s.get("total_trades", 0) or 0)
+        open_n = int(s.get("open_count", 0) or 0)
+        win_rate = round(wins / closed * 100, 1) if closed > 0 else 0.0
+
+        pnl_native = float(s.get("total_pnl_native") or 0)
+        if acc["currency"] == "USD" and base_currency == "THB":
+            pnl_base = pnl_native * thb_per_usd
+        else:
+            pnl_base = pnl_native
+
+        total_pnl_base += pnl_base
+        total_wins  += wins
+        total_closed += closed
+
+        result.append({
+            "account":        acc,
+            "total_trades":   total,
+            "open_count":     open_n,
+            "wins":           wins,
+            "losses":         losses,
+            "win_rate":       win_rate,
+            "pnl_native":     round(pnl_native, 2),
+            "pnl_base":       round(pnl_base, 2),
+            "total_income":   float(c.get("total_income") or 0),
+            "total_invested": float(c.get("total_invested") or 0),
+            "total_dividends": float(d.get("total_dividends") or 0),
+        })
+
+    return {
+        "accounts":       result,
+        "total_pnl_base": round(total_pnl_base, 2),
+        "global_win_rate": round(total_wins / total_closed * 100, 1) if total_closed > 0 else 0,
+        "base_currency":  base_currency,
+        "thb_per_usd":    thb_per_usd,
+    }
+
+
+# ── Analytics ─────────────────────────────────────────────────────────────────
+
+@router.get("/analytics")
+def get_analytics(account_id: Optional[str] = Query(None)):
+    where, params = ["win_loss != 'P'"], []
+    if account_id and account_id != "all":
+        where.append("account_id = ?")
+        params.append(account_id)
+    cond = " AND ".join(where)
+
+    open_where = ["t.win_loss = 'P'"]
+    open_params: list = []
+    if account_id and account_id != "all":
+        open_where.append("t.account_id = ?")
+        open_params.append(account_id)
+    open_cond = " AND ".join(open_where)
+
+    thb_per_usd = _get_thb_per_usd()
+
+    with get_db() as conn:
+        by_sector = conn.execute(f"""
+            SELECT sector, COUNT(*) cnt,
+                   SUM(CASE WHEN win_loss='W' THEN 1 ELSE 0 END) wins,
+                   SUM(COALESCE(pnl_amount,0)) pnl
+            FROM trades WHERE {cond} AND sector != ''
+            GROUP BY sector ORDER BY pnl DESC
+        """, params).fetchall()
+
+        by_strategy = conn.execute(f"""
+            SELECT strategy_name, COUNT(*) cnt,
+                   SUM(CASE WHEN win_loss='W' THEN 1 ELSE 0 END) wins,
+                   SUM(COALESCE(pnl_amount,0)) pnl
+            FROM trades WHERE {cond} AND strategy_name != ''
+            GROUP BY strategy_name ORDER BY pnl DESC
+        """, params).fetchall()
+
+        by_month = conn.execute(f"""
+            SELECT substr(date_entry,1,7) month,
+                   COUNT(*) cnt,
+                   SUM(CASE WHEN win_loss='W' THEN 1 ELSE 0 END) wins,
+                   SUM(COALESCE(pnl_amount,0)) pnl
+            FROM trades WHERE {cond}
+            GROUP BY month ORDER BY month
+        """, params).fetchall()
+
+        top_symbols = conn.execute(f"""
+            SELECT symbol, COUNT(*) cnt,
+                   SUM(CASE WHEN win_loss='W' THEN 1 ELSE 0 END) wins,
+                   SUM(COALESCE(pnl_amount,0)) pnl
+            FROM trades WHERE {cond}
+            GROUP BY symbol ORDER BY pnl DESC LIMIT 15
+        """, params).fetchall()
+
+        open_by_sector = conn.execute(f"""
+            SELECT
+                COALESCE(NULLIF(t.sector,''), 'Other') sector,
+                SUM(CASE WHEN a.currency='USD'
+                    THEN COALESCE(t.amount, t.price_entry * t.volume) * ?
+                    ELSE COALESCE(t.amount, t.price_entry * t.volume)
+                END) cost_basis_thb
+            FROM trades t
+            JOIN portfolio_accounts a ON t.account_id = a.id
+            WHERE {open_cond}
+            GROUP BY sector ORDER BY cost_basis_thb DESC
+        """, [thb_per_usd] + open_params).fetchall()
+
+        open_symbols = conn.execute(f"""
+            SELECT
+                COALESCE(NULLIF(t.sector,''), 'Other') sector,
+                t.symbol,
+                t.volume,
+                CASE WHEN a.currency='USD'
+                    THEN COALESCE(t.amount, t.price_entry * t.volume) * ?
+                    ELSE COALESCE(t.amount, t.price_entry * t.volume)
+                END cost_thb
+            FROM trades t
+            JOIN portfolio_accounts a ON t.account_id = a.id
+            WHERE {open_cond}
+            ORDER BY sector, cost_thb DESC
+        """, [thb_per_usd] + open_params).fetchall()
+
+    # group symbols by sector
+    from collections import defaultdict as _dd
+    syms_by_sector: dict = _dd(list)
+    for r in open_symbols:
+        cost = round(r["cost_thb"] or 0, 0)
+        syms_by_sector[r["sector"]].append({
+            "symbol": r["symbol"],
+            "volume": r["volume"],
+            "value":  cost,
+        })
+
+    def _fmt(rows) -> list[dict]:
+        result = []
+        for r in rows:
+            d = dict(r)
+            cnt = d.get("cnt", 1) or 1
+            d["win_rate"] = round(d.get("wins", 0) / cnt * 100, 1)
+            result.append(d)
+        return result
+
+    return {
+        "by_sector":     _fmt(by_sector),
+        "by_strategy":   _fmt(by_strategy),
+        "by_month":      _fmt(by_month),
+        "top_symbols":   _fmt(top_symbols),
+        "open_by_sector": [
+            {
+                "sector":  r["sector"],
+                "value":   round(r["cost_basis_thb"] or 0, 2),
+                "symbols": syms_by_sector[r["sector"]],
+            }
+            for r in open_by_sector if (r["cost_basis_thb"] or 0) > 0
+        ],
+    }
+
+
+# ── Allocation History ────────────────────────────────────────────────────────
+
+@router.get("/analytics/allocation-history")
+def get_allocation_history(
+    period: str = Query("Q"),
+    account_id: Optional[str] = Query(None),
+):
+    """
+    Return cost basis (THB) deployed per sector per time period.
+    Groups by date_entry so each period shows capital actually invested that period.
+    period: "M" = monthly (YYYY-MM), "Q" = quarterly (YYYY-QN)
+    """
+    if period not in ("M", "Q"):
+        raise HTTPException(status_code=400, detail="period must be M or Q")
+
+    where_parts: list[str] = []
+    params: list = []
+    if account_id and account_id != "all":
+        where_parts.append("t.account_id = ?")
+        params.append(account_id)
+    cond = f" AND {' AND '.join(where_parts)}" if where_parts else ""
+
+    thb_per_usd = _get_thb_per_usd()
+
+    if period == "M":
+        period_expr = "substr(t.date_entry, 1, 7)"
+    else:  # Q
+        period_expr = (
+            "substr(t.date_entry, 1, 4) || '-Q' || "
+            "CASE "
+            "  WHEN CAST(substr(t.date_entry, 6, 2) AS INTEGER) <= 3 THEN '1' "
+            "  WHEN CAST(substr(t.date_entry, 6, 2) AS INTEGER) <= 6 THEN '2' "
+            "  WHEN CAST(substr(t.date_entry, 6, 2) AS INTEGER) <= 9 THEN '3' "
+            "  ELSE '4' "
+            "END"
+        )
+
+    with get_db() as conn:
+        rows = conn.execute(f"""
+            SELECT
+                {period_expr} period,
+                COALESCE(NULLIF(t.sector, ''), 'Other') sector,
+                SUM(
+                    CASE WHEN a.currency = 'USD'
+                         THEN COALESCE(t.amount, t.price_entry * t.volume) * ?
+                         ELSE COALESCE(t.amount, t.price_entry * t.volume)
+                    END
+                ) value
+            FROM trades t
+            JOIN portfolio_accounts a ON t.account_id = a.id
+            WHERE t.date_entry IS NOT NULL AND t.date_entry != ''{cond}
+            GROUP BY period, sector
+            ORDER BY period, sector
+        """, [thb_per_usd] + params).fetchall()
+
+    # pivot: {period → {sector → value}}
+    from collections import defaultdict
+    data: dict[str, dict[str, float]] = defaultdict(dict)
+    sectors: set[str] = set()
+    for r in rows:
+        v = r["value"] or 0
+        if v > 0:
+            data[r["period"]][r["sector"]] = round(v, 0)
+            sectors.add(r["sector"])
+
+    # normalize — every period must have every sector key (0 if absent)
+    # recharts stacked area requires consistent keys across all data points
+    all_sectors = sorted(sectors)
+    periods_out = [
+        {"period": p, **{s: data[p].get(s, 0) for s in all_sectors}}
+        for p in sorted(data.keys())
+    ]
+    return {"periods": periods_out, "sectors": all_sectors}
+
+
+# ── Import from Excel ─────────────────────────────────────────────────────────
+
+@router.post("/import/excel")
+async def import_excel(file: UploadFile = File(...)):
+    """
+    Parse xlsx file with sheets: Finansia, Dime, InnovestX, Income&expenses.
+    Idempotent: uses a stable ID based on account+symbol+date_entry+volume.
+    """
+    try:
+        import openpyxl
+    except ImportError:
+        raise HTTPException(status_code=500, detail="openpyxl not installed. Run: pip install openpyxl")
+
+    contents = await file.read()
+    wb = openpyxl.load_workbook(io.BytesIO(contents), read_only=True, data_only=True)
+
+    # Map sheet name → (account_id, currency)
+    sheet_map = {
+        "Finansia":  ("finansia",  "THB"),
+        "Finansia ": ("finansia",  "THB"),
+        "Dime":      ("dime",      "USD"),
+        "InnovestX": ("innovestx", "THB"),
+        "InnovestX ":("innovestx", "THB"),
+    }
+
+    all_trades: list[dict] = []
+    all_cash:   list[dict] = []
+    all_divs:   list[dict] = []
+    now = _now()
+
+    # ── Parse trade sheets ────────────────────────────────────────────────────
+    for sheet_name, (account_id, currency) in sheet_map.items():
+        if sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_name]
+        header_idx: dict[str, int] = {}
+
+        for row_vals in ws.iter_rows(values_only=True):
+            # Skip empty rows
+            if not any(v is not None for v in row_vals):
+                continue
+
+            # Detect header row
+            if not header_idx:
+                row0 = str(row_vals[0] or "").strip().lower()
+                if "date" in row0:
+                    for i, h in enumerate(row_vals):
+                        if h is not None:
+                            header_idx[str(h).strip().lower()] = i
+                continue
+
+            def _get(*keys):
+                for k in keys:
+                    for hk, hi in header_idx.items():
+                        if k in hk and hi < len(row_vals):
+                            v = row_vals[hi]
+                            if v is not None:
+                                return v
+                return None
+
+            symbol = _get("stock")
+            if not symbol:
+                continue
+            date_entry = _fmt_date(_get("date (entry)"))
+            if not date_entry:
+                continue
+
+            vol = _to_float_or_zero(_get("volume"))
+            price_e = _to_float_or_zero(_get("price_entry"))
+
+            # Stable ID: hash of key fields to avoid duplicate imports
+            stable_key = f"{account_id}|{str(symbol).upper()}|{date_entry}|{vol:.4f}|{price_e:.4f}"
+            trade_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, stable_key))
+
+            win_loss_raw = str(_get("win/loss") or "P").strip().upper()
+            win_loss = win_loss_raw if win_loss_raw in ("W", "L", "P") else "P"
+
+            all_trades.append({
+                "id":               trade_id,
+                "account_id":       account_id,
+                "symbol":           str(symbol).strip().upper(),
+                "sector":           str(_get("sector") or "").strip(),
+                "date_entry":       date_entry,
+                "date_exit":        _fmt_date(_get("date (exit)")),
+                "price_entry":      price_e,
+                "price_exit":       _to_float(_get("price_exit")),
+                "price_stoploss":   _to_float(_get("price_stoploss")),
+                "price_target":     _to_float(_get("price_target")),
+                "volume":           vol,
+                "amount":           _to_float(_get("amount")),
+                "pnl_amount":       _to_float(_get("pnl_amount")),
+                "win_loss":         win_loss,
+                "pnl_percent":      _to_float(_get("pnl_percent")),
+                "currency":         currency,
+                "exchange_rate":    1.0,
+                "strategy_name":    str(_get("strategy name", "strategy_name") or ""),
+                "entry_trigger":    str(_get("entry trigger") or ""),
+                "exit_trigger":     str(_get("exit trigger") or ""),
+                "market_trend":     str(_get("market_trend") or ""),
+                "news_sentiment":   str(_get("news_sentiment") or ""),
+                "expectation_based":str(_get("expectation_based") or ""),
+                "factor_based":     str(_get("factor_based") or ""),
+                "fear_greed_index": str(_get("fear & greed index") or ""),
+                "vix_index":        str(_get("vix index") or ""),
+                "note":             str(_get("note") or ""),
+                "created_at":       now,
+            })
+
+    # ── Parse Income&expenses sheet ───────────────────────────────────────────
+    ie_names = [n for n in wb.sheetnames if "income" in n.lower() or "expense" in n.lower()]
+    if ie_names:
+        ws_ie = wb[ie_names[0]]
+        header_found = False
+        for row_vals in ws_ie.iter_rows(values_only=True):
+            if not any(v is not None for v in row_vals):
+                continue
+            # Detect header: contains วัน/เดือน/ปี or date-like Thai text
+            if not header_found:
+                r0 = str(row_vals[0] or "").strip()
+                if "วัน" in r0 or "date" in r0.lower():
+                    header_found = True
+                continue
+
+            # Cash section: cols 0–4
+            date_val    = row_vals[0] if len(row_vals) > 0 else None
+            income_val  = row_vals[1] if len(row_vals) > 1 else None
+            invest_val  = row_vals[2] if len(row_vals) > 2 else None
+            account_val = row_vals[3] if len(row_vals) > 3 else None
+            fx_val      = row_vals[4] if len(row_vals) > 4 else None
+
+            date_str = _fmt_date(date_val)
+            if date_str and (income_val is not None or invest_val is not None):
+                acc_id = _map_account_name(str(account_val or ""))
+                income   = _to_float_or_zero(income_val)
+                invested = _to_float_or_zero(invest_val)
+                if income != 0 or invested != 0:
+                    stable_key = f"cash|{acc_id}|{date_str}|{income:.2f}|{invested:.2f}"
+                    all_cash.append({
+                        "id":           str(uuid.uuid5(uuid.NAMESPACE_DNS, stable_key)),
+                        "account_id":   acc_id,
+                        "date":         date_str,
+                        "income":       income,
+                        "investment":   invested,
+                        "exchange_rate": _to_float_or_zero(fx_val) or 1.0,
+                        "note":         "",
+                        "created_at":   now,
+                    })
+
+            # Dividend section: cols 6–10 (ex_date, pay_date, amount/unit, net_received, account)
+            ex_date_val  = row_vals[6]  if len(row_vals) > 6  else None
+            pay_date_val = row_vals[7]  if len(row_vals) > 7  else None
+            amt_unit_val = row_vals[8]  if len(row_vals) > 8  else None
+            net_recv_val = row_vals[9]  if len(row_vals) > 9  else None
+            div_acc_val  = row_vals[10] if len(row_vals) > 10 else None
+            asset_val    = row_vals[5]  if len(row_vals) > 5  else None
+
+            ex_str  = _fmt_date(ex_date_val)
+            pay_str = _fmt_date(pay_date_val)
+            if ex_str and net_recv_val is not None:
+                net_recv = _to_float_or_zero(net_recv_val)
+                if net_recv != 0:
+                    div_acc = _map_account_name(str(div_acc_val or ""))
+                    asset   = str(asset_val or "").strip()
+                    stable_key = f"div|{div_acc}|{asset}|{ex_str}|{net_recv:.4f}"
+                    all_divs.append({
+                        "id":               str(uuid.uuid5(uuid.NAMESPACE_DNS, stable_key)),
+                        "account_id":       div_acc,
+                        "asset":            asset,
+                        "ex_date":          ex_str,
+                        "pay_date":         pay_str,
+                        "amount_per_unit":  _to_float_or_zero(amt_unit_val),
+                        "total_received":   net_recv,
+                        "reinvested_amount": 0,
+                        "reinvest_asset":   "",
+                        "reinvest_price":   0,
+                        "reinvest_units":   0,
+                        "created_at":       now,
+                    })
+
+    # ── Upsert into DB ────────────────────────────────────────────────────────
+    inserted = {"trades": 0, "cash": 0, "dividends": 0}
+    with get_db() as conn:
+        for t in all_trades:
+            existing = conn.execute("SELECT 1 FROM trades WHERE id = ?", (t["id"],)).fetchone()
+            if not existing:
+                conn.execute("""
+                    INSERT INTO trades (id, account_id, symbol, sector, date_entry, date_exit,
+                        price_entry, price_exit, price_stoploss, price_target, volume, amount,
+                        pnl_amount, win_loss, pnl_percent, currency, exchange_rate,
+                        strategy_name, entry_trigger, exit_trigger, market_trend,
+                        news_sentiment, expectation_based, factor_based,
+                        fear_greed_index, vix_index, note, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (t["id"], t["account_id"], t["symbol"], t["sector"],
+                      t["date_entry"], t["date_exit"],
+                      t["price_entry"], t["price_exit"], t["price_stoploss"], t["price_target"],
+                      t["volume"], t["amount"], t["pnl_amount"], t["win_loss"],
+                      t["pnl_percent"], t["currency"], t["exchange_rate"],
+                      t["strategy_name"], t["entry_trigger"], t["exit_trigger"],
+                      t["market_trend"], t["news_sentiment"], t["expectation_based"],
+                      t["factor_based"], t["fear_greed_index"], t["vix_index"],
+                      t["note"], t["created_at"]))
+                inserted["trades"] += 1
+
+        for c in all_cash:
+            cur = conn.execute("""
+                INSERT OR IGNORE INTO cash_ledger
+                    (id, account_id, date, income, investment, exchange_rate, note, created_at)
+                VALUES (?,?,?,?,?,?,?,?)
+            """, (c["id"], c["account_id"], c["date"], c["income"], c["investment"],
+                  c["exchange_rate"], c["note"], c["created_at"]))
+            inserted["cash"] += cur.rowcount
+
+        for d in all_divs:
+            cur = conn.execute("""
+                INSERT OR IGNORE INTO dividends
+                    (id, account_id, asset, ex_date, pay_date, amount_per_unit,
+                     total_received, reinvested_amount, reinvest_asset,
+                     reinvest_price, reinvest_units, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (d["id"], d["account_id"], d["asset"], d["ex_date"], d["pay_date"],
+                  d["amount_per_unit"], d["total_received"], d["reinvested_amount"],
+                  d["reinvest_asset"], d["reinvest_price"], d["reinvest_units"],
+                  d["created_at"]))
+            inserted["dividends"] += cur.rowcount
+
+    return {
+        "ok": True,
+        "inserted": inserted,
+        "parsed": {"trades": len(all_trades), "cash": len(all_cash), "dividends": len(all_divs)},
+    }

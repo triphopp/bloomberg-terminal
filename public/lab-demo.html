@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bloomberg Lab — Demo</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg:#0a0a0f; --panel:#10121a; --panel2:#0d0f1a;
+  --border:#1e2235; --border2:#2a3050;
+  --text:#e2e8f0; --muted:#64748b; --muted2:#475569;
+  --accent:#22d3ee; --amber:#f59e0b; --green:#34d399;
+  --red:#f87171; --purple:#a78bfa; --orange:#fb923c;
+  --yellow:#fbbf24; --pink:#f472b6; --teal:#2dd4bf;
+  --font:'Courier New',Courier,monospace;
+}
+body { background:var(--bg); color:var(--text); font-family:var(--font); font-size:11px; padding:10px; min-height:100vh; }
+
+/* ─── Terminal bar ─── */
+.tbar { display:flex; align-items:center; gap:6px; padding:5px 12px; background:#05060a; border-bottom:1px solid var(--border); margin:-10px -10px 10px; }
+.dot { width:9px; height:9px; border-radius:50%; }
+.dot-r{background:#f87171;} .dot-y{background:#fbbf24;} .dot-g{background:#34d399;}
+.ttitle { flex:1; text-align:center; color:var(--muted); font-size:10px; letter-spacing:2px; }
+.nbtn { padding:3px 8px; background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer; font-family:var(--font); font-size:10px; letter-spacing:1px; }
+.nbtn:hover,.nbtn.active { border-color:#f5a623; color:#f5a623; background:rgba(245,166,35,.07); }
+
+/* ─── Lab header ─── */
+.lab-hdr { display:flex; align-items:center; gap:6px; margin-bottom:4px; flex-wrap:wrap; }
+.lab-lbl { color:#f5a623; font-size:11px; letter-spacing:2px; margin-right:4px; }
+.sec-lbl { color:var(--muted); font-size:9px; letter-spacing:1px; }
+.pill-grp { display:flex; gap:2px; }
+.pill { padding:2px 7px; border:1px solid var(--border); background:transparent; color:var(--muted); cursor:pointer; font-family:var(--font); font-size:10px; transition:all .15s; }
+.pill:hover { border-color:#f5a623; color:#f5a623; }
+.pill.on { background:rgba(245,166,35,.15); border-color:#f5a623; color:#f5a623; }
+.spacer { flex:1; }
+.live-badge { display:flex; align-items:center; gap:4px; padding:2px 8px; border:1px solid var(--green); color:var(--green); font-size:10px; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+.live-dot { width:5px; height:5px; border-radius:50%; background:var(--green); animation:pulse 2s infinite; }
+
+/* ─── Mode indicator — single text line, Bloomberg style ─── */
+.mode-indicator {
+  display:flex; align-items:center; gap:4px;
+  padding:2px 8px; margin-bottom:4px;
+  height:18px;
+  font-size:9px; letter-spacing:0.5px;
+  background:var(--panel); border-bottom:1px solid var(--border);
+  color:var(--muted);
+}
+.mode-line { border-left:2px solid var(--accent); }
+.mode-scatter { border-left:2px solid var(--amber); }
+.mode-dot { display:none; }
+
+/* ─── Series bar ─── */
+.series-bar { display:flex; align-items:center; gap:4px; padding:3px 8px; background:var(--panel); border:1px solid var(--border); margin-bottom:4px; flex-wrap:wrap; min-height:28px; }
+.s-lbl { color:var(--muted); font-size:9px; letter-spacing:1px; white-space:nowrap; }
+
+/* ─── Chip ─── */
+.chip {
+  display:inline-flex; align-items:stretch;
+  border:1px solid; font-size:10px;
+  transition:opacity .15s; user-select:none;
+  position:relative;
+}
+.chip.role-x { outline:1px solid var(--teal); outline-offset:-1px; }
+.chip-color { width:6px; height:6px; border-radius:50%; margin:0 5px 0 6px; flex-shrink:0; align-self:center; }
+.chip-name { padding:3px 4px 3px 0; color:inherit; white-space:nowrap; align-self:center; }
+.chip-sep { width:1px; background:var(--border2); align-self:stretch; }
+
+/* role buttons */
+.role-btn {
+  padding:3px 6px; background:transparent; border:none;
+  cursor:pointer; font-family:var(--font); font-size:9px;
+  color:var(--muted2); transition:all .12s; line-height:1;
+  white-space:nowrap;
+}
+.role-btn:hover { color:var(--text); background:rgba(255,255,255,.04); }
+/* X axis */
+.role-btn.rbx.sel   { background:rgba(45,212,191,.2); color:var(--teal); font-weight:bold; }
+/* Y1 left axis */
+.role-btn.rby1.sel  { background:rgba(34,211,238,.2); color:var(--accent); }
+/* Y2 right axis */
+.role-btn.rby2.sel  { background:rgba(245,158,11,.2); color:var(--amber); }
+/* hidden */
+.role-btn.rboff.sel { background:rgba(100,116,139,.18); color:var(--muted); }
+
+.chip-rm { padding:3px 7px; background:transparent; border:none; cursor:pointer; font-family:var(--font); font-size:9px; color:var(--muted2); transition:color .12s; align-self:stretch; display:flex; align-items:center; }
+.chip-rm:hover { color:var(--red); }
+
+/* ─── Add button ─── */
+.add-btn { padding:3px 10px; border:1px dashed var(--border); background:transparent; color:var(--muted); cursor:pointer; font-family:var(--font); font-size:10px; transition:all .15s; white-space:nowrap; }
+.add-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+/* ─── Hint bar ─── */
+.hint-bar { display:flex; align-items:center; gap:8px; padding:2px 8px; background:rgba(251,191,36,.04); border:1px solid rgba(251,191,36,.18); border-left:2px solid var(--yellow); margin-bottom:4px; font-size:9px; color:rgba(251,191,36,.85); }
+.hint-bar.hidden { display:none; }
+.hint-close { margin-left:auto; cursor:pointer; color:var(--muted); }
+.hint-close:hover { color:var(--text); }
+
+/* ─── Norm banner ─── */
+.norm-banner { display:none; padding:2px 8px; background:rgba(167,139,250,.05); border:1px solid rgba(167,139,250,.22); border-left:2px solid var(--purple); color:var(--purple); font-size:9px; margin-bottom:4px; }
+.norm-banner.show { display:block; }
+
+/* ─── Chart area ─── */
+.chart-wrap { position:relative; background:var(--bg); border:1px solid var(--border); padding:6px 10px 4px; margin-bottom:4px; }
+.chart-inner { position:relative; height:280px; }
+.ax-lbl { position:absolute; font-size:9px; letter-spacing:1px; white-space:nowrap; transition:all .3s; }
+.ax-lbl-l { left:-2px; top:50%; transform:translateY(-50%) rotate(-90deg); color:var(--accent); }
+.ax-lbl-r { right:-2px; top:50%; transform:translateY(-50%) rotate(90deg); color:var(--amber); }
+.ax-lbl-b { bottom:-4px; left:50%; transform:translateX(-50%); color:var(--teal); font-size:9px; }
+
+/* ─── Legend ─── */
+.legend { display:flex; align-items:center; gap:12px; padding:5px 2px 2px; flex-wrap:wrap; }
+.leg-item { display:flex; align-items:center; gap:4px; font-size:10px; color:var(--muted); }
+.leg-line { width:18px; height:2px; border-radius:1px; }
+.leg-note { margin-left:auto; font-size:9px; color:var(--muted2); }
+
+/* ─── Stats bar ─── */
+.stats-bar { display:flex; background:var(--panel); border:1px solid var(--border); margin-bottom:4px; overflow-x:auto; }
+.sc { flex:1; min-width:110px; padding:4px 8px; border-right:1px solid var(--border); }
+.sc:last-child { border-right:none; }
+.sc-lbl { color:var(--muted); font-size:8px; letter-spacing:1px; margin-bottom:2px; text-transform:uppercase; }
+.sc-val { font-size:13px; font-weight:bold; line-height:1; }
+.sc-sub { font-size:9px; color:var(--muted); margin-top:2px; }
+.pos{color:var(--green);} .neg{color:var(--red);} .neu{color:var(--accent);}
+
+/* ─── Analysis ─── */
+.analysis { display:grid; grid-template-columns:1fr 1fr; gap:1px; margin-bottom:4px; background:var(--border); }
+.panel { background:var(--panel); padding:5px 8px; }
+.ptitle { font-size:8px; letter-spacing:2px; color:var(--muted); margin-bottom:5px; border-bottom:1px solid var(--border); padding-bottom:3px; text-transform:uppercase; }
+.corr-row { display:flex; justify-content:space-between; align-items:center; padding:3px 0; border-bottom:1px solid rgba(30,34,53,.8); font-size:10px; }
+.corr-row:last-child { border-bottom:none; }
+.cbar-wrap { width:70px; height:5px; background:rgba(255,255,255,.06); position:relative; }
+.cbar { height:100%; position:absolute; }
+.cnum { width:38px; text-align:right; font-size:10px; }
+.note-box { font-size:10px; color:var(--muted); line-height:1.75; }
+.hl{color:var(--accent);} .hl-y{color:var(--yellow);} .hl-g{color:var(--green);} .hl-r{color:var(--red);} .hl-t{color:var(--teal);}
+
+/* ─── Footer ─── */
+.footer { display:flex; align-items:center; gap:6px; padding:4px 0; border-top:1px solid var(--border); color:var(--muted); font-size:9px; margin-top:4px; flex-wrap:wrap; }
+.footer .fr { margin-left:auto; }
+
+/* ════════════════════════════════════════
+   ADD MODAL
+════════════════════════════════════════ */
+.modal-overlay { display:none; position:fixed; inset:0; z-index:100; background:rgba(5,6,10,.92); align-items:flex-start; justify-content:center; padding-top:60px; }
+.modal-overlay.open { display:flex; }
+.modal { width:580px; max-width:95vw; max-height:65vh; background:#050608; border:1px solid var(--border2); display:flex; flex-direction:column; border-radius:0; box-shadow:none; }
+.modal-hdr { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--border); }
+.modal-hdr-title { color:#f5a623; font-size:10px; letter-spacing:2px; flex:1; }
+.modal-close { background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px; font-family:var(--font); }
+.modal-close:hover { color:var(--red); }
+.search-wrap { padding:8px 14px; border-bottom:1px solid var(--border); display:flex; gap:6px; }
+.search-input { flex:1; background:var(--bg); border:1px solid var(--border2); color:var(--text); padding:6px 10px; font-family:var(--font); font-size:11px; outline:none; }
+.search-input:focus { border-color:var(--accent); }
+.search-input::placeholder { color:var(--muted2); }
+.modal-body { flex:1; overflow-y:auto; padding:6px 0; }
+.modal-body::-webkit-scrollbar { width:4px; }
+.modal-body::-webkit-scrollbar-thumb { background:var(--border2); }
+.cat-title { padding:6px 14px 3px; color:var(--muted2); font-size:9px; letter-spacing:2px; }
+.series-option { display:flex; align-items:center; gap:8px; padding:5px 14px; cursor:pointer; transition:background .1s; }
+.series-option:hover { background:rgba(255,255,255,.04); }
+.series-option.added { opacity:.35; pointer-events:none; }
+.opt-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.opt-name { flex:1; font-size:10px; color:var(--text); }
+.opt-unit { font-size:9px; color:var(--muted); }
+.opt-tag { font-size:8px; padding:1px 5px; border:1px solid var(--border); color:var(--muted2); }
+.opt-add { margin-left:auto; padding:2px 8px; border:1px solid var(--border); background:transparent; color:var(--muted); font-family:var(--font); font-size:9px; cursor:pointer; }
+.opt-add:hover { border-color:var(--accent); color:var(--accent); }
+.no-results { padding:16px 14px; color:var(--muted2); font-size:10px; text-align:center; }
+.modal-hint { padding:8px 14px; border-top:1px solid var(--border); font-size:9px; color:var(--muted2); line-height:1.7; }
+
+/* role legend in modal */
+.role-legend { display:flex; gap:10px; padding:6px 14px; border-bottom:1px solid var(--border); flex-wrap:wrap; }
+.rl-item { display:flex; align-items:center; gap:4px; font-size:9px; }
+.rl-badge { padding:1px 5px; font-size:9px; font-family:var(--font); border:1px solid; }
+.rl-x  { border-color:var(--teal); color:var(--teal); }
+.rl-y1 { border-color:var(--accent); color:var(--accent); }
+.rl-y2 { border-color:var(--amber); color:var(--amber); }
+.rl-off{ border-color:var(--muted2); color:var(--muted2); }
+</style>
+</head>
+<body>
+
+<!-- Terminal chrome -->
+<div class="tbar">
+  <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+  <div class="ttitle">BLOOMBERG TERMINAL — DATA LAB [DEMO]</div>
+  <button class="nbtn">MKT</button>
+  <button class="nbtn">MACRO</button>
+  <button class="nbtn">PORT</button>
+  <button class="nbtn active">LAB</button>
+</div>
+
+<!-- Lab header -->
+<div class="lab-hdr">
+  <span class="lab-lbl">LAB</span>
+  <span class="sec-lbl">PERIOD</span>
+  <div class="pill-grp" id="pgPeriod">
+    <button class="pill" onclick="setPeriod(this,'6mo')">6M</button>
+    <button class="pill on" onclick="setPeriod(this,'1y')">1Y</button>
+    <button class="pill" onclick="setPeriod(this,'2y')">2Y</button>
+    <button class="pill" onclick="setPeriod(this,'3y')">3Y</button>
+  </div>
+  <span style="color:var(--border2)">|</span>
+  <span class="sec-lbl">NORMALIZE</span>
+  <div class="pill-grp">
+    <button class="pill on" id="nNone"   onclick="setNorm('none')">NONE</button>
+    <button class="pill"   id="nPct"    onclick="setNorm('pct')">% CHG</button>
+    <button class="pill"   id="nZscore" onclick="setNorm('zscore')">Z-SCORE</button>
+    <button class="pill"   id="nLog"    onclick="setNorm('log')">LOG RTN</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="live-badge"><div class="live-dot"></div>LIVE 30s</div>
+</div>
+
+<!-- Mode indicator (auto) -->
+<div class="mode-indicator mode-line" id="modeBar">
+  <span id="modeText"><b style="color:#f5a623;letter-spacing:1px">MODE: LINE</b>  X: <b style="color:var(--teal)">TIME</b></span>
+  <span style="color:var(--muted2);margin-left:auto;font-size:9px">Assign X role to any series to enable scatter</span>
+</div>
+
+<!-- Series bar -->
+<div class="series-bar" id="seriesBar">
+  <span class="s-lbl">SERIES:</span>
+  <button class="add-btn" onclick="openModal()">＋ ADD SERIES</button>
+</div>
+
+<!-- Hint bar -->
+<div class="hint-bar hidden" id="hintBar">
+  <span>⚠</span>
+  <span id="hintText"></span>
+  <span class="hint-close" onclick="this.parentElement.classList.add('hidden')">✕</span>
+</div>
+
+<!-- Norm banner -->
+<div class="norm-banner" id="normBanner"></div>
+
+<!-- Chart -->
+<div class="chart-wrap">
+  <div class="chart-inner">
+    <span class="ax-lbl ax-lbl-l" id="lblL">—</span>
+    <span class="ax-lbl ax-lbl-r" id="lblR">—</span>
+    <span class="ax-lbl ax-lbl-b" id="lblB">TIME</span>
+    <canvas id="mainChart"></canvas>
+  </div>
+  <div class="legend" id="legend"></div>
+</div>
+
+<!-- Stats bar -->
+<div class="stats-bar" id="statsBar"></div>
+
+<!-- Analysis -->
+<div class="analysis">
+  <div class="panel">
+    <div class="ptitle">CORRELATION MATRIX</div>
+    <div id="corrMatrix"><div style="color:var(--muted2);font-size:10px;padding:4px 0">Add ≥ 2 series</div></div>
+    <div id="corrNote" style="margin-top:6px;font-size:9px;color:var(--muted);display:none"></div>
+  </div>
+  <div class="panel">
+    <div class="ptitle">AGENT OBSERVATION</div>
+    <div class="note-box" id="agentObs">Select series and assign roles to begin.</div>
+  </div>
+</div>
+
+<div class="footer">
+  <span>SOURCE: yfinance · FRED · simulated demo data</span>
+  <span style="color:var(--border2)">|</span>
+  <span style="color:var(--teal)">X axis: assign any series — switches to scatter plot</span>
+  <span style="color:var(--border2)">|</span>
+  <span style="color:var(--yellow)">Unit mismatches are advisory only</span>
+  <div class="fr">UPDATED: <span id="upTime"></span></div>
+</div>
+
+<!-- ADD MODAL -->
+<div class="modal-overlay" id="addModal" onclick="maybeCloseModal(event)">
+  <div class="modal">
+    <div class="modal-hdr">
+      <span class="modal-hdr-title">ADD SERIES</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="role-legend">
+      <span class="rl-item"><span class="rl-badge rl-x">X</span> horizontal axis (scatter / custom X)</span>
+      <span class="rl-item"><span class="rl-badge rl-y1">Y1</span> left Y axis</span>
+      <span class="rl-item"><span class="rl-badge rl-y2">Y2</span> right Y axis</span>
+      <span class="rl-item"><span class="rl-badge rl-off">–</span> hidden (analysis only)</span>
+    </div>
+    <div class="search-wrap">
+      <input class="search-input" id="searchInput" placeholder="Search: PE, yield, GDP, BTC, VIX, USDTHB, gold ..." oninput="renderCatalog()">
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-hint">
+      After adding: use <span style="color:var(--teal)">X</span> to set as horizontal axis · <span style="color:var(--accent)">Y1</span> left · <span style="color:var(--amber)">Y2</span> right · <span style="color:var(--muted)">–</span> analysis only.
+      Assigning a non-time series to X creates a <b style="color:var(--amber)">scatter plot</b>. All assignments are unrestricted.
+    </div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════
+//  CATALOG
+// ════════════════════════════════════════════════════════
+const CATALOG = [
+  { id:'__time__', cat:'AXIS',        name:'TIME (Date)',           unit:'date',     unitGroup:'time',   color:'#64748b', tag:'DEFAULT', noRemove:true },
+  { id:'aapl_pe',  cat:'VALUATION',  name:'AAPL Trailing P/E',    unit:'ratio ×',  unitGroup:'ratio',  color:'#22d3ee', tag:'FUNDAMENTAL' },
+  { id:'aapl_fwd', cat:'VALUATION',  name:'AAPL Forward P/E',     unit:'ratio ×',  unitGroup:'ratio',  color:'#818cf8', tag:'SNAPSHOT' },
+  { id:'spy_pe',   cat:'VALUATION',  name:'SPY Trailing P/E',     unit:'ratio ×',  unitGroup:'ratio',  color:'#fb923c', tag:'FUNDAMENTAL' },
+  { id:'msft_pe',  cat:'VALUATION',  name:'MSFT Trailing P/E',    unit:'ratio ×',  unitGroup:'ratio',  color:'#38bdf8', tag:'FUNDAMENTAL' },
+  { id:'nvda_pe',  cat:'VALUATION',  name:'NVDA P/E',             unit:'ratio ×',  unitGroup:'ratio',  color:'#4ade80', tag:'FUNDAMENTAL' },
+  { id:'aapl_pb',  cat:'VALUATION',  name:'AAPL P/Book',          unit:'ratio ×',  unitGroup:'ratio',  color:'#fb923c', tag:'FUNDAMENTAL' },
+  { id:'sp500_ey', cat:'VALUATION',  name:'S&P500 Earnings Yield',unit:'%',        unitGroup:'pct',    color:'#a78bfa', tag:'DERIVED' },
+  { id:'us10y',    cat:'RATES',      name:'US 10Y Yield',         unit:'%',        unitGroup:'pct',    color:'#f59e0b', tag:'FRED' },
+  { id:'us2y',     cat:'RATES',      name:'US 2Y Yield',          unit:'%',        unitGroup:'pct',    color:'#f87171', tag:'FRED' },
+  { id:'us30y',    cat:'RATES',      name:'US 30Y Yield',         unit:'%',        unitGroup:'pct',    color:'#fbbf24', tag:'FRED' },
+  { id:'tips5y',   cat:'RATES',      name:'TIPS 5Y Real Yield',   unit:'%',        unitGroup:'pct',    color:'#34d399', tag:'FRED' },
+  { id:'fed',      cat:'RATES',      name:'Fed Funds Rate',       unit:'%',        unitGroup:'pct',    color:'#f472b6', tag:'FRED' },
+  { id:'spread',   cat:'RATES',      name:'10Y−2Y Spread',        unit:'bps',      unitGroup:'bps',    color:'#e879f9', tag:'DERIVED' },
+  { id:'cpi',      cat:'MACRO',      name:'US CPI YoY',           unit:'%',        unitGroup:'pct',    color:'#f97316', tag:'FRED' },
+  { id:'pce',      cat:'MACRO',      name:'US PCE YoY',           unit:'%',        unitGroup:'pct',    color:'#84cc16', tag:'FRED' },
+  { id:'gdp',      cat:'MACRO',      name:'US GDP YoY',           unit:'%',        unitGroup:'pct',    color:'#22d3ee', tag:'FRED' },
+  { id:'unemp',    cat:'MACRO',      name:'US Unemployment',      unit:'%',        unitGroup:'pct',    color:'#fb923c', tag:'FRED' },
+  { id:'ism',      cat:'MACRO',      name:'ISM Manufacturing PMI',unit:'index',    unitGroup:'index',  color:'#a78bfa', tag:'FRED' },
+  { id:'usdthb',   cat:'FX',         name:'USD/THB',              unit:'price',    unitGroup:'price',  color:'#fbbf24', tag:'FX' },
+  { id:'usdjpy',   cat:'FX',         name:'USD/JPY',              unit:'price',    unitGroup:'price',  color:'#f87171', tag:'FX' },
+  { id:'eurusd',   cat:'FX',         name:'EUR/USD',              unit:'price',    unitGroup:'price',  color:'#34d399', tag:'FX' },
+  { id:'dxy',      cat:'FX',         name:'DXY Dollar Index',     unit:'index',    unitGroup:'index',  color:'#22d3ee', tag:'FX' },
+  { id:'btc',      cat:'CRYPTO',     name:'BTC/USD',              unit:'$',        unitGroup:'usd',    color:'#f59e0b', tag:'CRYPTO' },
+  { id:'eth',      cat:'CRYPTO',     name:'ETH/USD',              unit:'$',        unitGroup:'usd',    color:'#818cf8', tag:'CRYPTO' },
+  { id:'btc_dom',  cat:'CRYPTO',     name:'BTC Dominance',        unit:'%',        unitGroup:'pct',    color:'#fbbf24', tag:'CRYPTO' },
+  { id:'aapl_px',  cat:'PRICE',      name:'AAPL Price',           unit:'$',        unitGroup:'usd',    color:'#22d3ee', tag:'PRICE' },
+  { id:'spy_px',   cat:'PRICE',      name:'SPY Price',            unit:'$',        unitGroup:'usd',    color:'#f59e0b', tag:'PRICE' },
+  { id:'qqq_px',   cat:'PRICE',      name:'QQQ Price',            unit:'$',        unitGroup:'usd',    color:'#a78bfa', tag:'PRICE' },
+  { id:'vix',      cat:'VOL/RISK',   name:'VIX',                  unit:'index',    unitGroup:'index',  color:'#f87171', tag:'CBOE' },
+  { id:'move',     cat:'VOL/RISK',   name:'MOVE Index',           unit:'index',    unitGroup:'index',  color:'#fb923c', tag:'DERIVED' },
+  { id:'oil',      cat:'COMMODITIES',name:'WTI Crude Oil',        unit:'$/bbl',    unitGroup:'commod', color:'#92400e', tag:'FUTURES' },
+  { id:'gold',     cat:'COMMODITIES',name:'Gold (XAU/USD)',       unit:'$/oz',     unitGroup:'commod', color:'#fbbf24', tag:'FUTURES' },
+  { id:'copper',   cat:'COMMODITIES',name:'Copper',               unit:'$/lb',     unitGroup:'commod', color:'#fb923c', tag:'FUTURES' },
+  { id:'erp',      cat:'COMPUTED',   name:'Equity Risk Premium',  unit:'%',        unitGroup:'pct',    color:'#34d399', tag:'FORMULA', formula:'(1/PE×100)−10Y' },
+  { id:'real_y',   cat:'COMPUTED',   name:'Real Yield (10Y−CPI)', unit:'%',        unitGroup:'pct',    color:'#a78bfa', tag:'FORMULA', formula:'10Y−CPI' },
+  { id:'pe_z',     cat:'COMPUTED',   name:'AAPL PE Z-Score',      unit:'σ',        unitGroup:'zscore', color:'#f472b6', tag:'FORMULA', formula:'zscore(PE,3y)' },
+];
+
+// ════════════════════════════════════════════════════════
+//  DATA GENERATION
+// ════════════════════════════════════════════════════════
+const labels3y = [];
+(()=>{ const d=new Date(2022,0,1); while(d<=new Date(2025,4,1)){ labels3y.push(d.toLocaleDateString('en-US',{month:'short',year:'2-digit'})); d.setMonth(d.getMonth()+1); } })();
+
+function rng(s){ let x=s; return ()=>{ x=Math.sin(x)*10000; return x-(x|0); }; }
+
+const RAW_CFG = {
+  aapl_pe:  [30,8,0.018,0.4],   spy_pe:   [22,4,0.008,0.35],
+  msft_pe:  [35,7,0.022,0.38],  nvda_pe:  [55,28,0.07,0.5],
+  aapl_pb:  [40,10,0.018,0.42], sp500_ey: [4,0.8,0,0.4],
+  aapl_fwd: [28,2,0.01,0.3],
+  us10y:    [2.5,1.5,0.038,0.45], us2y: [2,2,0.048,0.55],
+  us30y:    [2.8,1.2,0.028,0.4],  tips5y:[0.5,1.2,0.028,0.42],
+  fed:      [0.25,3,0.048,0.5],   spread:[50,80,0,0.3],
+  cpi:      [3,4,0,0.3],  pce:[2.8,3.5,0,0.3],
+  gdp:      [2.5,2,0,0.25], unemp:[4,1.5,0,0.2], ism:[50,8,0,0.35],
+  usdthb:   [34,4,0.015,0.3], usdjpy:[120,20,0.045,0.4],
+  eurusd:   [1.08,.1,0,0.35],  dxy:[100,8,0.008,0.35],
+  btc:      [30000,25000,0.09,0.5], eth:[2000,1500,0.075,0.55],
+  btc_dom:  [45,8,0,0.3],
+  aapl_px:  [160,60,0.045,0.4], spy_px:[420,80,0.038,0.38], qqq_px:[360,100,0.048,0.42],
+  vix:      [18,15,0,0.6], move:[100,60,0,0.55],
+  oil:      [75,25,0,0.4], gold:[1800,300,0.018,0.35], copper:[4,1.2,0.008,0.4],
+};
+
+const DATA_CACHE = {};
+function getData(id){
+  if(DATA_CACHE[id]) return DATA_CACHE[id];
+  if(id==='__time__') return labels3y.map((_,i)=>i); // numeric index for time
+  if(id==='erp'){
+    const pe=getData('aapl_pe'), y=getData('us10y');
+    return DATA_CACHE[id]=pe.map((v,i)=>v?+((1/v*100)-y[i]).toFixed(3):null);
+  }
+  if(id==='real_y'){
+    const y=getData('us10y'), c=getData('cpi');
+    return DATA_CACHE[id]=y.map((v,i)=>v?+(v-c[i]).toFixed(3):null);
+  }
+  if(id==='pe_z'){
+    return DATA_CACHE[id]=zscore(getData('aapl_pe')).map(v=>+v.toFixed(3));
+  }
+  const cfg=RAW_CFG[id]||[100,20,0,0.4];
+  const [base,amp,trend,freq]=cfg;
+  const r=rng(id.split('').reduce((a,c)=>a+c.charCodeAt(0),0));
+  const n=labels3y.length;
+  let arr=[];
+  for(let i=0;i<n;i++){
+    const v=base + amp*Math.sin(freq*i) + trend*i*base*0.5 + (r()-.5)*amp*0.4;
+    arr.push(+v.toFixed(id==='btc'||id==='eth'||id.endsWith('_px')?0:2));
+  }
+  return DATA_CACHE[id]=arr;
+}
+
+// ════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════
+const PERIODS = { '6mo':35, '1y':29, '2y':17, '3y':0 };
+
+// roles: 'X' | 'Y1' | 'Y2' | 'off'
+let state = {
+  period: '1y',
+  norm: 'none',
+  series: [
+    { id:'__time__', role:'X'  },
+    { id:'aapl_pe',  role:'Y1' },
+    { id:'us10y',    role:'Y2' },
+  ]
+};
+
+// ════════════════════════════════════════════════════════
+//  HELPERS
+// ════════════════════════════════════════════════════════
+const getMeta = id => CATALOG.find(c=>c.id===id) || { id, name:id, color:'#64748b', unit:'', unitGroup:'misc', tag:'' };
+const getSlice = arr => arr.slice(PERIODS[state.period]);
+const getLabels = () => getSlice(labels3y);
+
+function zscore(arr){
+  const v=arr.filter(x=>x!=null);
+  const m=v.reduce((a,b)=>a+b,0)/v.length;
+  const s=Math.sqrt(v.reduce((a,b)=>a+(b-m)**2,0)/v.length);
+  if(s<1e-9) return arr.map(()=>0);
+  return arr.map(x=>x==null?null:+((x-m)/s).toFixed(3));
+}
+function pctChg(arr){ const b=arr.find(x=>x!=null); if(!b) return arr; return arr.map(v=>v==null?null:+((v-b)/Math.abs(b)*100).toFixed(2)); }
+function logRtn(arr){ const b=arr.find(x=>x!=null); if(!b||b<=0) return pctChg(arr); return arr.map(v=>v==null?null:+(Math.log(v/b)*100).toFixed(3)); }
+function applyNorm(arr,norm){ if(norm==='pct') return pctChg(arr); if(norm==='zscore') return zscore(arr); if(norm==='log') return logRtn(arr); return arr; }
+
+function corrPearson(a,b){
+  const p=a.map((v,i)=>[v,b[i]]).filter(x=>x[0]!=null&&x[1]!=null);
+  if(p.length<5) return null;
+  const ma=p.reduce((s,x)=>s+x[0],0)/p.length, mb=p.reduce((s,x)=>s+x[1],0)/p.length;
+  const n=p.reduce((s,x)=>s+(x[0]-ma)*(x[1]-mb),0);
+  const da=Math.sqrt(p.reduce((s,x)=>s+(x[0]-ma)**2,0));
+  const db=Math.sqrt(p.reduce((s,x)=>s+(x[1]-mb)**2,0));
+  if(!da||!db) return null;
+  return +(n/(da*db)).toFixed(3);
+}
+
+function fmtVal(v,unit){
+  if(v==null) return '—';
+  const u=unit||'';
+  if(u.includes('$')&&Math.abs(v)>1000) return `$${(v/1000).toFixed(1)}K`;
+  if(u.includes('$')) return `$${v}`;
+  if(u.includes('%')||u.includes('yield')||u.includes('rate')) return `${v}%`;
+  if(u.includes('×')||u.includes('ratio')) return `${v}×`;
+  if(u.includes('σ')) return `${v}σ`;
+  if(u.includes('bps')) return `${v}bps`;
+  return `${v}`;
+}
+
+// ════════════════════════════════════════════════════════
+//  CHART MODE DETECTION
+// ════════════════════════════════════════════════════════
+function getXSeries(){ return state.series.find(s=>s.role==='X'); }
+function isScatterMode(){ const x=getXSeries(); return x && x.id !== '__time__'; }
+
+// ════════════════════════════════════════════════════════
+//  CHIPS
+// ════════════════════════════════════════════════════════
+function renderChips(){
+  const bar=document.getElementById('seriesBar');
+  bar.querySelectorAll('.chip').forEach(el=>el.remove());
+  const addBtn=bar.querySelector('.add-btn');
+
+  state.series.forEach((s,i)=>{
+    const m=getMeta(s.id);
+    const isTime=(s.id==='__time__');
+    const chip=document.createElement('div');
+    chip.className='chip' + (s.role==='X'?' role-x':'');
+    chip.id=`chip_${i}`;
+    chip.style.cssText=`border-color:${m.color};color:${m.color}`;
+
+    const rmBtn = isTime ? '' :
+      `<div class="chip-sep"></div><button class="chip-rm" onclick="removeSeries(${i})" title="Remove">✕</button>`;
+
+    chip.innerHTML=`
+      <div class="chip-color" style="background:${m.color}"></div>
+      <span class="chip-name">${m.name}</span>
+      <div class="chip-sep"></div>
+      <button class="role-btn rbx${s.role==='X'?' sel':''}"
+        title="Set as X axis (horizontal)"
+        onclick="setRole(${i},'X')">X</button>
+      <button class="role-btn rby1${s.role==='Y1'?' sel':''}"
+        title="Left Y axis"
+        onclick="setRole(${i},'Y1')"${isTime?' disabled style="opacity:.3;cursor:default"':''}>Y1</button>
+      <button class="role-btn rby2${s.role==='Y2'?' sel':''}"
+        title="Right Y axis"
+        onclick="setRole(${i},'Y2')"${isTime?' disabled style="opacity:.3;cursor:default"':''}>Y2</button>
+      <button class="role-btn rboff${s.role==='off'?' sel':''}"
+        title="Hide from chart, keep in analysis"
+        onclick="setRole(${i},'off')"${isTime?' disabled style="opacity:.3;cursor:default"':''}>–</button>
+      ${rmBtn}
+    `;
+    bar.insertBefore(chip,addBtn);
+  });
+}
+
+// ════════════════════════════════════════════════════════
+//  ROLE ASSIGNMENT
+// ════════════════════════════════════════════════════════
+function setRole(idx, role){
+  // Only one X allowed
+  if(role==='X'){
+    state.series.forEach((s,i)=>{ if(s.role==='X') s.role = getMeta(s.id).id==='__time__' ? 'X' : 'Y1'; });
+    // If we're assigning X to __time__, clear any other X
+    if(state.series[idx].id !== '__time__'){
+      const timeS = state.series.find(s=>s.id==='__time__');
+      if(timeS) timeS.role='off'; // hide time from visual, keep it
+    }
+  }
+  state.series[idx].role = role;
+
+  // If assigning time to Y1/Y2 doesn't make sense — keep it X by default
+  if(state.series[idx].id==='__time__' && role!=='X' && role!=='off'){
+    state.series[idx].role='X';
+    return;
+  }
+
+  renderChips();
+  updateModeBar();
+  updateHint();
+  rebuildChart();
+}
+
+function removeSeries(idx){
+  if(state.series[idx].id==='__time__') return;
+  // If removing the X series, restore time to X
+  if(state.series[idx].role==='X'){
+    const timeS=state.series.find(s=>s.id==='__time__');
+    if(timeS) timeS.role='X';
+  }
+  state.series.splice(idx,1);
+  renderChips();
+  updateModeBar();
+  updateHint();
+  rebuildChart();
+  if(document.getElementById('addModal').classList.contains('open')) renderCatalog();
+}
+
+// ════════════════════════════════════════════════════════
+//  MODE BAR
+// ════════════════════════════════════════════════════════
+function updateModeBar(){
+  const bar=document.getElementById('modeBar');
+  const txt=document.getElementById('modeText');
+  const scatter=isScatterMode();
+  const xMeta=getMeta((getXSeries()||{id:'__time__'}).id);
+  const y1s=state.series.filter(s=>s.role==='Y1').map(s=>getMeta(s.id).name);
+  const y2s=state.series.filter(s=>s.role==='Y2').map(s=>getMeta(s.id).name);
+
+  if(scatter){
+    bar.className='mode-indicator mode-scatter';
+    txt.innerHTML=`<b style="color:var(--amber);letter-spacing:1px">MODE: SCATTER</b>` +
+      `  X: <b style="color:var(--teal)">${xMeta.name}</b>` +
+      (y1s.length ? `  ·  Y1: <b style="color:var(--accent)">${y1s.join(', ')}</b>` : '') +
+      (y2s.length ? `  ·  Y2: <b style="color:var(--amber)">${y2s.join(', ')}</b>` : '');
+  } else {
+    bar.className='mode-indicator mode-line';
+    txt.innerHTML=`<b style="color:#f5a623;letter-spacing:1px">MODE: LINE</b>` +
+      `  X: <b style="color:var(--teal)">TIME</b>` +
+      (y1s.length ? `  ·  Y1: <b style="color:var(--accent)">${y1s.join(', ')}</b>` : '') +
+      (y2s.length ? `  ·  Y2: <b style="color:var(--amber)">${y2s.join(', ')}</b>` : '');
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  HINT
+// ════════════════════════════════════════════════════════
+function updateHint(){
+  const hb=document.getElementById('hintBar');
+  const ht=document.getElementById('hintText');
+  const y1g=[...new Set(state.series.filter(s=>s.role==='Y1').map(s=>getMeta(s.id).unitGroup))];
+  const y2g=[...new Set(state.series.filter(s=>s.role==='Y2').map(s=>getMeta(s.id).unitGroup))];
+  const msgs=[];
+  if(y1g.length>1) msgs.push(`Y1 mixing <b>${y1g.join(' + ')}</b>`);
+  if(y2g.length>1) msgs.push(`Y2 mixing <b>${y2g.join(' + ')}</b>`);
+  if(msgs.length){ ht.innerHTML=msgs.join(' · ')+' — advisory only, use NORMALIZE to unify'; hb.classList.remove('hidden'); }
+  else hb.classList.add('hidden');
+}
+
+// ════════════════════════════════════════════════════════
+//  CHART
+// ════════════════════════════════════════════════════════
+const ctx=document.getElementById('mainChart').getContext('2d');
+let mainChart=null;
+
+function buildLineChart(){
+  const norm=state.norm;
+  const ySeries=state.series.filter(s=>s.role==='Y1'||s.role==='Y2');
+  const labels=getLabels();
+
+  const datasets=ySeries.map(s=>{
+    const m=getMeta(s.id);
+    const raw=getSlice(getData(s.id));
+    const data=applyNorm(raw,norm);
+    return {
+      label:m.name,
+      data, borderColor:m.color, backgroundColor:m.color+'18',
+      borderWidth:2, tension:0.4, fill:false,
+      pointRadius:raw.length<=15?4:0, pointHoverRadius:5,
+      yAxisID: s.role==='Y2' ? 'yR' : 'yL',
+    };
+  });
+
+  const shared=norm!=='none';
+  const hasY2=ySeries.some(s=>s.role==='Y2');
+  const scales={
+    yL:{ position:'left', grid:{color:'rgba(30,34,53,0.8)'}, ticks:{maxTicksLimit:8}, border:{color:'#1e2235'} },
+    yR:{ position:'right', display:!shared&&hasY2, grid:{drawOnChartArea:false}, ticks:{maxTicksLimit:8}, border:{color:'#1e2235'} },
+    x: { grid:{color:'rgba(30,34,53,0.6)'}, border:{color:'#1e2235'} }
+  };
+
+  return { type:'line', data:{labels,datasets}, options:{
+    responsive:true, maintainAspectRatio:false, animation:{duration:250},
+    interaction:{mode:'index',intersect:false},
+    plugins:{ legend:{display:false}, tooltip:{
+      backgroundColor:'rgba(5,6,10,0.95)', borderColor:'#2a3050', borderWidth:1,
+      titleColor:'#64748b', bodyColor:'#e2e8f0', padding:10,
+      callbacks:{ label(c){ const v=c.raw; if(v==null) return null;
+        const sid=ySeries[c.datasetIndex]?.id; const m=sid?getMeta(sid):null;
+        const sfx=norm==='pct'?'%':norm==='zscore'?'σ':norm==='log'?'%':(m?.unit||'');
+        return ` ${c.dataset.label}: ${v}${sfx?' '+sfx:''}`; } } } },
+    scales
+  }};
+}
+
+function buildScatterChart(){
+  const norm=state.norm;
+  const xS=getXSeries();
+  if(!xS) return buildLineChart();
+  const xMeta=getMeta(xS.id);
+  const xRaw=getSlice(getData(xS.id));
+  const xData=applyNorm(xRaw,norm);
+
+  const ySeries=state.series.filter(s=>s.role==='Y1'||s.role==='Y2');
+
+  const datasets=ySeries.map(s=>{
+    const m=getMeta(s.id);
+    const yRaw=getSlice(getData(s.id));
+    const yData=applyNorm(yRaw,norm);
+    // pair x,y — skip nulls
+    const points=xData.map((x,i)=>{
+      const y=yData[i];
+      return (x!=null&&y!=null) ? {x,y} : null;
+    }).filter(Boolean);
+
+    // Add trend line
+    const tl=trendLine(points);
+
+    return [{
+      label:m.name,
+      data:points,
+      borderColor:m.color, backgroundColor:m.color+'50',
+      borderWidth:1, pointRadius:4, pointHoverRadius:6,
+      showLine:false,
+      yAxisID: s.role==='Y2' ? 'yR' : 'yL',
+    },{
+      label:`${m.name} trend`,
+      data:[{x:tl.x1,y:tl.y1},{x:tl.x2,y:tl.y2}],
+      borderColor:m.color+'80', backgroundColor:'transparent',
+      borderWidth:1, borderDash:[4,4], pointRadius:0,
+      showLine:true, tension:0,
+      yAxisID: s.role==='Y2' ? 'yR' : 'yL',
+    }];
+  }).flat();
+
+  const sfx=norm==='pct'?'%':norm==='zscore'?'σ':norm==='log'?'%':(xMeta.unit||'');
+  return { type:'scatter', data:{datasets}, options:{
+    responsive:true, maintainAspectRatio:false, animation:{duration:250},
+    plugins:{ legend:{display:false}, tooltip:{
+      backgroundColor:'rgba(5,6,10,0.95)', borderColor:'#2a3050', borderWidth:1,
+      titleColor:'#64748b', bodyColor:'#e2e8f0', padding:10,
+      callbacks:{ title(items){ const p=items[0]?.raw; return p?`${xMeta.name}: ${p.x}${sfx?' '+sfx:''}`:''  },
+        label(c){ if(c.dataset.label.includes('trend')) return null;
+          const p=c.raw; if(!p) return null;
+          const m=getMeta(ySeries.find((_,i)=>Math.floor(c.datasetIndex/2)===i)?.id||'');
+          return ` ${c.dataset.label}: ${fmtVal(p.y,m.unit)}`; } } } },
+    scales:{
+      x:{ type:'linear', title:{display:true,text:xMeta.name+(sfx?' ('+sfx+')':''),color:'#2dd4bf',font:{size:9}}, grid:{color:'rgba(30,34,53,0.8)'}, border:{color:'#1e2235'} },
+      yL:{ position:'left', grid:{color:'rgba(30,34,53,0.8)'}, border:{color:'#1e2235'} },
+      yR:{ position:'right', display:ySeries.some(s=>s.role==='Y2'), grid:{drawOnChartArea:false}, border:{color:'#1e2235'} }
+    }
+  }};
+}
+
+function trendLine(pts){
+  if(pts.length<2) return {x1:0,y1:0,x2:1,y2:1};
+  const n=pts.length;
+  const sx=pts.reduce((a,p)=>a+p.x,0), sy=pts.reduce((a,p)=>a+p.y,0);
+  const sx2=pts.reduce((a,p)=>a+p.x*p.x,0), sxy=pts.reduce((a,p)=>a+p.x*p.y,0);
+  const slope=(n*sxy-sx*sy)/(n*sx2-sx*sx||1);
+  const intercept=(sy-slope*sx)/n;
+  const xs=pts.map(p=>p.x), xmin=Math.min(...xs), xmax=Math.max(...xs);
+  return {x1:xmin,y1:slope*xmin+intercept,x2:xmax,y2:slope*xmax+intercept};
+}
+
+function rebuildChart(){
+  const scatter=isScatterMode();
+  const cfg=scatter ? buildScatterChart() : buildLineChart();
+
+  if(mainChart){ mainChart.destroy(); mainChart=null; }
+  mainChart=new Chart(ctx,cfg);
+
+  // axis labels
+  const norm=state.norm;
+  const sfx=norm==='pct'?'%':norm==='zscore'?'σ':norm==='log'?'%':'';
+  const y1Units=[...new Set(state.series.filter(s=>s.role==='Y1').map(s=>getMeta(s.id).unit))];
+  const y2Units=[...new Set(state.series.filter(s=>s.role==='Y2').map(s=>getMeta(s.id).unit))];
+  const xMeta=getMeta((getXSeries()||{id:'__time__'}).id);
+
+  document.getElementById('lblL').textContent = sfx||y1Units.join(' / ')||'—';
+  document.getElementById('lblR').textContent = scatter?'':(sfx?'':(y2Units.join(' / ')||''));
+  document.getElementById('lblR').style.display = scatter?'none':'';
+  document.getElementById('lblB').textContent = scatter ? xMeta.name : (sfx?sfx+' from base':'TIME');
+  document.getElementById('lblB').style.color = scatter ? 'var(--teal)' : 'var(--muted2)';
+
+  renderLegend(scatter);
+  updateStats();
+  updateCorrMatrix();
+  updateAgentObs();
+}
+
+// ════════════════════════════════════════════════════════
+//  LEGEND
+// ════════════════════════════════════════════════════════
+function renderLegend(scatter){
+  const el=document.getElementById('legend');
+  const norm=state.norm;
+  const ySeries=state.series.filter(s=>s.role==='Y1'||s.role==='Y2');
+  el.innerHTML=ySeries.map(s=>{
+    const m=getMeta(s.id);
+    const raw=getSlice(getData(s.id));
+    const last=applyNorm(raw,norm).filter(v=>v!=null).at(-1);
+    const sfx=norm==='pct'?'%':norm==='zscore'?'σ':norm==='log'?'%':'';
+    const roleColor=s.role==='Y2'?'var(--amber)':'var(--accent)';
+    return `<span class="leg-item">
+      <div class="leg-line" style="background:${m.color}"></div>
+      <span>${m.name}</span>
+      <span style="color:${roleColor};font-size:9px"> [${s.role}]</span>
+      <span style="color:${m.color};margin-left:3px">${sfx?`${last}${sfx}`:fmtVal(last,m.unit)}</span>
+    </span>`;
+  }).join('');
+  if(scatter){
+    const xM=getMeta(getXSeries().id);
+    el.innerHTML+=`<span class="leg-note"><span style="color:var(--teal)">◉ X-axis: ${xM.name}</span> · dashes = trend lines</span>`;
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  STATS BAR
+// ════════════════════════════════════════════════════════
+function updateStats(){
+  const bar=document.getElementById('statsBar');
+  const norm=state.norm;
+  bar.innerHTML=state.series.filter(s=>s.id!=='__time__').map(s=>{
+    const m=getMeta(s.id);
+    const raw=getSlice(getData(s.id));
+    const data=applyNorm(raw,norm);
+    const valid=data.filter(v=>v!=null);
+    const last=valid.at(-1);
+    const mean=valid.length?+(valid.reduce((a,b)=>a+b,0)/valid.length).toFixed(2):null;
+    const sfx=norm==='pct'?'%':norm==='zscore'?'σ':norm==='log'?'%':'';
+    const roleColor=s.role==='X'?'var(--teal)':s.role==='Y2'?'var(--amber)':s.role==='Y1'?'var(--accent)':'var(--muted)';
+    return `<div class="sc">
+      <div class="sc-lbl" style="color:${m.color}">${m.name}</div>
+      <div class="sc-val" style="color:${m.color}">${sfx?`${last}${sfx}`:fmtVal(last,m.unit)}</div>
+      <div class="sc-sub">avg ${sfx?`${mean}${sfx}`:fmtVal(mean,m.unit)} · <span style="color:${roleColor}">${s.role}</span></div>
+    </div>`;
+  }).join('');
+}
+
+// ════════════════════════════════════════════════════════
+//  CORR MATRIX
+// ════════════════════════════════════════════════════════
+function updateCorrMatrix(){
+  const el=document.getElementById('corrMatrix');
+  const note=document.getElementById('corrNote');
+  const active=state.series.filter(s=>s.id!=='__time__');
+  if(active.length<2){ el.innerHTML='<div style="color:var(--muted2);font-size:10px;padding:4px 0">Add ≥ 2 series</div>'; note.style.display='none'; return; }
+
+  let pairs=[];
+  for(let i=0;i<active.length;i++) for(let j=i+1;j<active.length;j++){
+    const r=corrPearson(getSlice(getData(active[i].id)),getSlice(getData(active[j].id)));
+    if(r!=null) pairs.push({a:active[i],b:active[j],r});
+  }
+  if(!pairs.length){ el.innerHTML='<div style="color:var(--muted2);font-size:10px">Insufficient data</div>'; return; }
+
+  el.innerHTML=pairs.map(p=>{
+    const ma=getMeta(p.a.id), mb=getMeta(p.b.id);
+    const abs=Math.abs(p.r);
+    const col=p.r<0?'#f87171':'#34d399';
+    const dir=p.r<0?'right:0':'left:0';
+    return `<div class="corr-row">
+      <span style="color:var(--muted);font-size:9px">${ma.name.split(' ').slice(-2).join(' ')} × ${mb.name.split(' ').slice(-2).join(' ')}</span>
+      <div style="display:flex;align-items:center;gap:5px">
+        <div class="cbar-wrap"><div class="cbar" style="background:${col};width:${abs*100}%;${dir}"></div></div>
+        <span class="cnum" style="color:${col}">${p.r>0?'+':''}${p.r}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  if(isScatterMode()){
+    const xS=getXSeries(); const xMeta=getMeta(xS.id);
+    const scatter=state.series.filter(s=>s.role==='Y1'||s.role==='Y2');
+    const scatterPairs=scatter.map(s=>{
+      const r=corrPearson(getSlice(getData(xS.id)),getSlice(getData(s.id)));
+      return r!=null?`${getMeta(s.id).name} vs X: r=${r}`:null;
+    }).filter(Boolean);
+    if(scatterPairs.length){
+      el.innerHTML+=`<div style="margin-top:6px;font-size:9px;color:var(--teal)">X-scatter: ${scatterPairs.join(' · ')}</div>`;
+    }
+  }
+  note.style.display='block';
+  note.innerHTML=`<span style="color:var(--muted2)">All correlations use Pearson · ADF not run in demo</span>`;
+}
+
+// ════════════════════════════════════════════════════════
+//  AGENT OBS
+// ════════════════════════════════════════════════════════
+function updateAgentObs(){
+  const el=document.getElementById('agentObs');
+  const scatter=isScatterMode();
+  const xS=getXSeries();
+  const ySeries=state.series.filter(s=>s.role==='Y1'||s.role==='Y2');
+  const all=state.series.filter(s=>s.id!=='__time__');
+  if(!all.length){ el.innerHTML='Select series and assign roles to begin.'; return; }
+
+  let obs='';
+  if(scatter){
+    const xMeta=getMeta(xS.id);
+    obs+=`<span class="hl-t">SCATTER MODE</span> — X axis = <b>${xMeta.name}</b><br>`;
+    obs+=`Plotting ${ySeries.length} series against ${xMeta.name}.<br><br>`;
+    ySeries.forEach(s=>{
+      const m=getMeta(s.id);
+      const r=corrPearson(getSlice(getData(xS.id)),getSlice(getData(s.id)));
+      if(r!=null){
+        const strength=Math.abs(r)>0.7?'<span class="hl-r">strong</span>':Math.abs(r)>0.4?'<span class="hl-y">moderate</span>':'<span class="hl-g">weak</span>';
+        const dir=r<0?'inverse':'positive';
+        obs+=`${m.name} vs ${xMeta.name}: ${strength} ${dir} r=<span class="hl">${r}</span><br>`;
+      }
+    });
+    obs+=`<br><span class="hl-y">→ Trend lines shown (OLS). Check for non-linearity.</span>`;
+  } else {
+    const uGroups=[...new Set(ySeries.map(s=>getMeta(s.id).unitGroup))];
+    obs+=`<span class="hl">${all.length}</span> series · Y1: ${state.series.filter(s=>s.role==='Y1').length} · Y2: ${state.series.filter(s=>s.role==='Y2').length}`;
+    const offN=state.series.filter(s=>s.role==='off').length;
+    if(offN) obs+=` · ${offN} hidden`;
+    obs+='<br><br>';
+    if(uGroups.length===1) obs+=`<span class="hl-g">✓ All on same unit group (${uGroups[0]})</span><br>`;
+    else obs+=`<span class="hl-y">⚠ ${uGroups.length} unit groups mixed</span> — advisory only<br>`;
+  }
+
+  const norm=state.norm;
+  if(norm!=='none') obs+=`<br><span class="hl-g">✓ ${norm.toUpperCase()} active</span> — unified scale<br>`;
+
+  const pairs=[];
+  for(let i=0;i<all.length;i++) for(let j=i+1;j<all.length;j++){
+    const r=corrPearson(getSlice(getData(all[i].id)),getSlice(getData(all[j].id)));
+    if(r!=null) pairs.push({a:all[i],b:all[j],r});
+  }
+  if(pairs.length&&!scatter){
+    const top=pairs.sort((a,b)=>Math.abs(b.r)-Math.abs(a.r))[0];
+    const ma=getMeta(top.a.id),mb=getMeta(top.b.id);
+    obs+=`<br>Strongest: <b>${ma.name}</b>×<b>${mb.name}</b> r=<span class="hl">${top.r}</span>`;
+    if(Math.abs(top.r)>0.7) obs+=`<br><span class="hl-y">→ High correlation. Run Granger test to check causality.</span>`;
+  }
+  el.innerHTML=obs;
+}
+
+// ════════════════════════════════════════════════════════
+//  CONTROLS
+// ════════════════════════════════════════════════════════
+function setPeriod(btn,p){
+  document.querySelectorAll('#pgPeriod .pill').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on'); state.period=p; rebuildChart();
+}
+function setNorm(n){
+  ['nNone','nPct','nZscore','nLog'].forEach(id=>document.getElementById(id).classList.remove('on'));
+  document.getElementById({none:'nNone',pct:'nPct',zscore:'nZscore',log:'nLog'}[n]).classList.add('on');
+  state.norm=n;
+  const msgs={pct:'✦ % CHG — rebased to 0% at period start · single axis',zscore:'✦ Z-SCORE — (x−μ)/σ · ±2σ = extreme · compare any units on one axis',log:'✦ LOG RETURN — ln(x/x₀)×100 · symmetric · preferred for long periods'};
+  const b=document.getElementById('normBanner');
+  if(msgs[n]){b.textContent=msgs[n];b.classList.add('show');}else b.classList.remove('show');
+  rebuildChart();
+}
+
+// ════════════════════════════════════════════════════════
+//  MODAL
+// ════════════════════════════════════════════════════════
+function openModal(){
+  document.getElementById('addModal').classList.add('open');
+  document.getElementById('searchInput').value='';
+  setTimeout(()=>document.getElementById('searchInput').focus(),50);
+  renderCatalog();
+}
+function closeModal(){ document.getElementById('addModal').classList.remove('open'); }
+function maybeCloseModal(e){ if(e.target.id==='addModal') closeModal(); }
+
+function renderCatalog(){
+  const q=document.getElementById('searchInput').value.toLowerCase().trim();
+  const body=document.getElementById('modalBody');
+  const addedIds=new Set(state.series.map(s=>s.id));
+  const cats={};
+  CATALOG.forEach(item=>{
+    if(item.noRemove&&addedIds.has(item.id)) return; // hide TIME if already in state
+    const match=!q||item.name.toLowerCase().includes(q)||(item.tag||'').toLowerCase().includes(q)||item.cat.toLowerCase().includes(q)||(item.formula||'').toLowerCase().includes(q);
+    if(!match) return;
+    if(!cats[item.cat]) cats[item.cat]=[];
+    cats[item.cat].push(item);
+  });
+  if(!Object.keys(cats).length){ body.innerHTML='<div class="no-results">No results</div>'; return; }
+  body.innerHTML=Object.entries(cats).map(([cat,items])=>
+    `<div class="cat-title">${cat}</div>` +
+    items.map(item=>{
+      const isAdded=addedIds.has(item.id);
+      const formula=item.formula?`<br><span style="font-size:9px;color:var(--muted2)">= ${item.formula}</span>`:'';
+      return `<div class="series-option${isAdded?' added':''}" id="opt_${item.id}">
+        <div class="opt-dot" style="background:${item.color}"></div>
+        <div><span class="opt-name">${item.name}</span>${formula}<br><span class="opt-unit">${item.unit}</span></div>
+        <span class="opt-tag">${item.tag}</span>
+        <button class="opt-add" onclick="addSeries('${item.id}')" ${isAdded?'disabled':''}>${isAdded?'ADDED':'＋ ADD'}</button>
+      </div>`;
+    }).join('')
+  ).join('');
+}
+
+function addSeries(id){
+  if(state.series.find(s=>s.id===id)) return;
+  const m=getMeta(id);
+  // smart default: if Y1 has different unitGroup → assign Y2, else Y1
+  const y1g=state.series.filter(s=>s.role==='Y1').map(s=>getMeta(s.id).unitGroup);
+  const defaultRole=(y1g.length>0&&!y1g.includes(m.unitGroup))? 'Y2':'Y1';
+  state.series.push({id,role:defaultRole});
+  renderChips(); updateModeBar(); updateHint(); rebuildChart();
+  if(document.getElementById('addModal').classList.contains('open')) renderCatalog();
+}
+
+// ════════════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════════════
+document.getElementById('upTime').textContent=new Date().toLocaleTimeString();
+renderChips(); updateModeBar(); updateHint(); rebuildChart();
+</script>
+</body>
+</html>

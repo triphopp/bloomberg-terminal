@@ -1,0 +1,211 @@
+{
+  "n_folds": 8,
+  "threshold_stability": {
+    "divergent_trending": {
+      "mean": 0.4783,
+      "std": 0.0353,
+      "min": 0.4386,
+      "max": 0.524
+    },
+    "trending_riskoff": {
+      "mean": 0.6157,
+      "std": 0.0368,
+      "min": 0.5704,
+      "max": 0.6597
+    },
+    "riskoff_crisis": {
+      "mean": 0.7216,
+      "std": 0.0352,
+      "min": 0.6708,
+      "max": 0.784
+    }
+  },
+  "hit_rate": 1.0,
+  "spot_checks": [
+    {
+      "period": "COVID crash",
+      "expected": "CRISIS",
+      "actual": "CRISIS",
+      "avg_score": 0.8447,
+      "n_obs": 48,
+      "correct": true
+    },
+    {
+      "period": "Fed hike 2022",
+      "expected": "CRISIS",
+      "actual": "CRISIS",
+      "avg_score": 0.6772,
+      "n_obs": 127,
+      "correct": true
+    },
+    {
+      "period": "AI bull 2024",
+      "expected": "TRENDING",
+      "actual": "TRENDING",
+      "avg_score": 0.4652,
+      "n_obs": 124,
+      "correct": true
+    },
+    {
+      "period": "Low-vol 2017",
+      "expected": "DIVERGENT",
+      "actual": "DIVERGENT",
+      "avg_score": 0.3593,
+      "n_obs": 251,
+      "correct": true
+    },
+    {
+      "period": "GFC recovery",
+      "expected": "CRISIS",
+      "actual": "CRISIS",
+      "avg_score": 0.6932,
+      "n_obs": 128,
+      "correct": true
+    },
+    {
+      "period": "Euro crisis",
+      "expected": "CRISIS",
+      "actual": "CRISIS",
+      "avg_score": 0.8639,
+      "n_obs": 127,
+      "correct": true
+    }
+  ],
+  "fold_details": [
+    {
+      "fold": 1,
+      "train_period": "2000-04-04 \u2192 2010-04-13",
+      "test_period": "2010-04-14 \u2192 2011-04-11",
+      "thresholds": {
+        "divergent_trending": 0.4387,
+        "trending_riskoff": 0.5704,
+        "riskoff_crisis": 0.6708
+      },
+      "state_means": [
+        0.3534,
+        0.524,
+        0.6168,
+        0.7249
+      ]
+    },
+    {
+      "fold": 2,
+      "train_period": "2000-04-04 \u2192 2011-04-11",
+      "test_period": "2011-04-12 \u2192 2012-04-11",
+      "thresholds": {
+        "divergent_trending": 0.4386,
+        "trending_riskoff": 0.5708,
+        "riskoff_crisis": 0.6791
+      },
+      "state_means": [
+        0.3532,
+        0.5239,
+        0.6177,
+        0.7405
+      ]
+    },
+    {
+      "fold": 3,
+      "train_period": "2000-04-04 \u2192 2012-04-11",
+      "test_period": "2012-04-12 \u2192 2013-04-15",
+      "thresholds": {
+        "divergent_trending": 0.4392,
+        "trending_riskoff": 0.5767,
+        "riskoff_crisis": 0.6979
+      },
+      "state_means": [
+        0.3536,
+        0.5248,
+        0.6285,
+        0.7673
+      ]
+    },
+    {
+      "fold": 4,
+      "train_period": "2000-04-04 \u2192 2013-04-15",
+      "test_period": "2013-04-16 \u2192 2014-04-14",
+      "thresholds": {
+        "divergent_trending": 0.5088,
+        "trending_riskoff": 0.6597,
+        "riskoff_crisis": 0.784
+      },
+      "state_means": [
+        0.4149,
+        0.6026,
+        0.7167,
+        0.8513
+      ]
+    },
+    {
+      "fold": 5,
+      "train_period": "2000-04-04 \u2192 2014-04-14",
+      "test_period": "2014-04-15 \u2192 2015-04-15",
+      "thresholds": {
+        "divergent_trending": 0.5087,
+        "trending_riskoff": 0.6473,
+        "riskoff_crisis": 0.7421
+      },
+      "state_means": [
+        0.4154,
+        0.602,
+        0.6926,
+        0.7917
+      ]
+    },
+    {
+      "fold": 6,
+      "train_period": "2000-04-04 \u2192 2015-04-15",
+      "test_period": "2015-04-16 \u2192 2016-04-14",
+      "thresholds": {
+        "divergent_trending": 0.5098,
+        "trending_riskoff": 0.6461,
+        "riskoff_crisis": 0.7402
+      },
+      "state_means": [
+        0.4178,
+        0.6019,
+        0.6903,
+        0.7902
+      ]
+    },
+    {
+      "fold": 7,
+      "train_period": "2000-04-04 \u2192 2016-04-14",
+      "test_period": "2016-04-15 \u2192 2017-04-13",
+      "thresholds": {
+        "divergent_trending": 0.524,
+        "trending_riskoff": 0.6508,
+        "riskoff_crisis": 0.7389
+      },
+      "state_means": [
+        0.4356,
+        0.6124,
+        0.6891,
+        0.7888
+      ]
+    },
+    {
+      "fold": 8,
+      "train_period": "2000-04-04 \u2192 2017-04-13",
+      "test_period": "2017-04-17 \u2192 2018-04-16",
+      "thresholds": {
+        "divergent_trending": 0.4587,
+        "trending_riskoff": 0.6041,
+        "riskoff_crisis": 0.7198
+      },
+      "state_means": [
+        0.3679,
+        0.5495,
+        0.6587,
+        0.7809
+      ]
+    }
+  ],
+  "interpretation": {
+    "threshold_std_good": "< 0.02 per threshold \u2192 stable across market cycles",
+    "threshold_std_warn": "0.02\u20130.05 \u2192 moderate drift, watch for structural break",
+    "threshold_std_bad": "> 0.05 \u2192 thresholds unstable, consider shorter history",
+    "hit_rate_good": ">= 0.80 \u2192 model correctly identifies known regimes"
+  },
+  "validated_at": "2026-06-04T16:07:42.737090+00:00"
+}

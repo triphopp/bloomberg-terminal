@@ -1,0 +1,615 @@
+"""
+SQLite database connection and schema initialization.
+"""
+import json
+import sqlite3
+from contextlib import contextmanager
+
+from config import DB_PATH
+
+
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def init_db() -> None:
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS transactions (
+                id         TEXT PRIMARY KEY,
+                symbol     TEXT NOT NULL,
+                type       TEXT NOT NULL CHECK(type IN ('buy','sell')),
+                shares     REAL NOT NULL,
+                price      REAL NOT NULL,
+                date       TEXT NOT NULL,
+                commission REAL NOT NULL DEFAULT 0,
+                notes      TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_sym  ON transactions(symbol)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_date ON transactions(date)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pin_groups (
+                id         TEXT PRIMARY KEY,
+                name       TEXT NOT NULL,
+                color      TEXT NOT NULL DEFAULT '#f59e0b',
+                sort_order INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pinned_assets (
+                id           TEXT PRIMARY KEY,
+                symbol       TEXT NOT NULL,
+                group_id     TEXT NOT NULL REFERENCES pin_groups(id),
+                comment      TEXT NOT NULL DEFAULT '',
+                buy_target   REAL,
+                sell_target  REAL,
+                price_at_pin REAL,
+                priority     INTEGER NOT NULL DEFAULT 1 CHECK (priority BETWEEN 1 AND 3),
+                sort_order   INTEGER NOT NULL DEFAULT 0,
+                added_at     TEXT NOT NULL DEFAULT (date('now')),
+                updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        # Migration: add sort_order to existing DBs that don't have it yet
+        try:
+            conn.execute("ALTER TABLE pinned_assets ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass  # column already exists
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pin_tags (
+                id    TEXT PRIMARY KEY,
+                name  TEXT NOT NULL UNIQUE,
+                color TEXT NOT NULL DEFAULT '#94a3b8'
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pinned_asset_tags (
+                asset_id TEXT NOT NULL REFERENCES pinned_assets(id) ON DELETE CASCADE,
+                tag_id   TEXT NOT NULL REFERENCES pin_tags(id)      ON DELETE CASCADE,
+                PRIMARY KEY (asset_id, tag_id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pa_group ON pinned_assets(group_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pa_sym   ON pinned_assets(symbol)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS symbol_lists (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                list_id    TEXT NOT NULL,
+                symbol     TEXT NOT NULL,
+                label      TEXT,
+                region     TEXT,
+                meta       TEXT,
+                sort_order INTEGER DEFAULT 0,
+                enabled    INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sym_list_list ON symbol_lists(list_id)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sector_classifications (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol        TEXT NOT NULL,
+                country       TEXT NOT NULL,
+                exchange      TEXT,
+                sector_gics   TEXT,
+                industry_gics TEXT,
+                sector_local  TEXT,
+                sector_display TEXT,
+                company_name  TEXT,
+                market_cap    REAL,
+                index_tags    TEXT,
+                source        TEXT DEFAULT 'yfinance',
+                last_fetched  TEXT,
+                fetch_error   TEXT,
+                created_at    TEXT DEFAULT (datetime('now')),
+                updated_at    TEXT DEFAULT (datetime('now')),
+                UNIQUE(symbol, country)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sc_country_sector
+            ON sector_classifications(country, sector_display)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sc_symbol
+            ON sector_classifications(symbol)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sc_country_mcap
+            ON sector_classifications(country, market_cap)
+        """)
+
+
+def init_portfolio_v2() -> None:
+    """Create portfolio v2 tables (multi-account, trade log, cash, dividends)."""
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS portfolio_accounts (
+                id           TEXT PRIMARY KEY,
+                name         TEXT NOT NULL,
+                broker       TEXT DEFAULT '',
+                country      TEXT NOT NULL DEFAULT 'TH',
+                currency     TEXT NOT NULL DEFAULT 'THB',
+                account_type TEXT DEFAULT 'equity',
+                is_active    INTEGER DEFAULT 1,
+                created_at   TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS trades (
+                id                TEXT PRIMARY KEY,
+                account_id        TEXT NOT NULL,
+                symbol            TEXT NOT NULL,
+                sector            TEXT DEFAULT '',
+                date_entry        TEXT NOT NULL,
+                date_exit         TEXT,
+                price_entry       REAL NOT NULL DEFAULT 0,
+                price_exit        REAL,
+                price_stoploss    REAL,
+                price_target      REAL,
+                volume            REAL NOT NULL DEFAULT 0,
+                amount            REAL,
+                pnl_amount        REAL,
+                win_loss          TEXT DEFAULT 'P',
+                pnl_percent       REAL,
+                currency          TEXT NOT NULL DEFAULT 'THB',
+                exchange_rate     REAL DEFAULT 1,
+                strategy_name     TEXT DEFAULT '',
+                entry_trigger     TEXT DEFAULT '',
+                exit_trigger      TEXT DEFAULT '',
+                market_trend      TEXT DEFAULT '',
+                news_sentiment    TEXT DEFAULT '',
+                expectation_based TEXT DEFAULT '',
+                factor_based      TEXT DEFAULT '',
+                fear_greed_index  TEXT DEFAULT '',
+                vix_index         TEXT DEFAULT '',
+                note              TEXT DEFAULT '',
+                created_at        TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_account ON trades(account_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_symbol  ON trades(symbol)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_date    ON trades(date_entry)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_wl      ON trades(win_loss)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cash_ledger (
+                id            TEXT PRIMARY KEY,
+                account_id    TEXT NOT NULL,
+                date          TEXT NOT NULL,
+                income        REAL DEFAULT 0,
+                investment    REAL DEFAULT 0,
+                exchange_rate REAL DEFAULT 1,
+                note          TEXT DEFAULT '',
+                created_at    TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cash_account ON cash_ledger(account_id)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS dividends (
+                id                TEXT PRIMARY KEY,
+                account_id        TEXT NOT NULL,
+                asset             TEXT NOT NULL,
+                ex_date           TEXT,
+                pay_date          TEXT,
+                amount_per_unit   REAL DEFAULT 0,
+                total_received    REAL DEFAULT 0,
+                reinvested_amount REAL DEFAULT 0,
+                reinvest_asset    TEXT DEFAULT '',
+                reinvest_price    REAL DEFAULT 0,
+                reinvest_units    REAL DEFAULT 0,
+                created_at        TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_div_account ON dividends(account_id)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS option_positions (
+                id            TEXT PRIMARY KEY,
+                account_id    TEXT NOT NULL DEFAULT 'dime',
+                underlying    TEXT NOT NULL,
+                expiry        TEXT NOT NULL,
+                strike        REAL NOT NULL,
+                option_type   TEXT NOT NULL CHECK(option_type IN ('call','put')),
+                quantity      INTEGER NOT NULL,
+                entry_price   REAL NOT NULL,
+                entry_date    TEXT NOT NULL,
+                status        TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed','expired')),
+                notes         TEXT DEFAULT '',
+                created_at    TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_opt_account ON option_positions(account_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_opt_status  ON option_positions(status)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS regime_alerts (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_label  TEXT NOT NULL,
+                to_label    TEXT NOT NULL,
+                regime_type TEXT NOT NULL DEFAULT 'CORR',
+                detected_at TEXT NOT NULL DEFAULT (datetime('now')),
+                expires_at  TEXT NOT NULL
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS risk_snapshots (
+                id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id           TEXT NOT NULL,
+                snapshot_date        TEXT NOT NULL,
+                portfolio_value      REAL DEFAULT 0,
+                today_return_pct     REAL DEFAULT 0,
+                breach_count         INTEGER DEFAULT 0,
+                ensemble_signal      TEXT DEFAULT 'STABLE',
+                vol_regime           TEXT DEFAULT 'UNKNOWN',
+                cf_hist_ratio        REAL DEFAULT 1.0,
+                mc_hist_ratio        REAL DEFAULT 1.0,
+                ci_width_ratio       REAL DEFAULT 1.0,
+                avg_correlation      REAL DEFAULT 0,
+                current_drawdown_pct REAL DEFAULT 0,
+                var_backtest_rate    REAL DEFAULT 0,
+                risk_score           REAL DEFAULT 0,
+                ews                  INTEGER DEFAULT 0,
+                is_fat_tail_event    INTEGER DEFAULT 0,
+                created_at           TEXT DEFAULT (datetime('now')),
+                UNIQUE(account_id, snapshot_date)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rs_account_date ON risk_snapshots(account_id, snapshot_date)")
+        # Migrations for columns added after initial schema
+        try:
+            conn.execute("ALTER TABLE risk_snapshots ADD COLUMN regime_label TEXT DEFAULT 'UNKNOWN'")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE risk_snapshots ADD COLUMN avg_wedge REAL DEFAULT 0.5")
+        except Exception:
+            pass
+
+        # ── Paper Trading tables ─────────────────────────────────────────
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS paper_accounts (
+                id              TEXT PRIMARY KEY,
+                name            TEXT NOT NULL,
+                currency        TEXT NOT NULL DEFAULT 'USD',
+                initial_balance REAL NOT NULL DEFAULT 100000,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS paper_orders (
+                id           TEXT PRIMARY KEY,
+                account_id   TEXT NOT NULL REFERENCES paper_accounts(id) ON DELETE CASCADE,
+                symbol       TEXT NOT NULL,
+                side         TEXT NOT NULL CHECK(side IN ('buy','sell')),
+                order_type   TEXT NOT NULL CHECK(order_type IN ('market','limit','stop','stop_limit')),
+                quantity     REAL NOT NULL,
+                limit_price  REAL,
+                stop_price   REAL,
+                status       TEXT NOT NULL DEFAULT 'pending'
+                             CHECK(status IN ('pending','filled','partially_filled','cancelled','expired')),
+                filled_qty   REAL NOT NULL DEFAULT 0,
+                filled_price REAL,
+                filled_at    TEXT,
+                expires_at   TEXT,
+                created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_po_account ON paper_orders(account_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_po_status  ON paper_orders(status)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS paper_fills (
+                id         TEXT PRIMARY KEY,
+                order_id   TEXT NOT NULL REFERENCES paper_orders(id) ON DELETE CASCADE,
+                quantity   REAL NOT NULL,
+                price      REAL NOT NULL,
+                commission REAL NOT NULL DEFAULT 0,
+                filled_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pf_order ON paper_fills(order_id)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS paper_positions (
+                id           TEXT PRIMARY KEY,
+                account_id   TEXT NOT NULL REFERENCES paper_accounts(id) ON DELETE CASCADE,
+                symbol       TEXT NOT NULL,
+                quantity     REAL NOT NULL DEFAULT 0,
+                avg_cost     REAL NOT NULL DEFAULT 0,
+                realized_pnl REAL NOT NULL DEFAULT 0,
+                UNIQUE(account_id, symbol)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pp_account ON paper_positions(account_id)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS paper_snapshots (
+                id              TEXT PRIMARY KEY,
+                account_id      TEXT NOT NULL REFERENCES paper_accounts(id) ON DELETE CASCADE,
+                date            TEXT NOT NULL,
+                equity          REAL NOT NULL,
+                cash            REAL NOT NULL,
+                positions_value REAL NOT NULL DEFAULT 0,
+                UNIQUE(account_id, date)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ps_account ON paper_snapshots(account_id, date)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS paper_option_positions (
+                id            TEXT PRIMARY KEY,
+                account_id    TEXT NOT NULL REFERENCES paper_accounts(id) ON DELETE CASCADE,
+                underlying    TEXT NOT NULL,
+                expiry        TEXT NOT NULL,
+                strike        REAL NOT NULL,
+                option_type   TEXT NOT NULL CHECK(option_type IN ('call','put')),
+                quantity      INTEGER NOT NULL,
+                entry_price   REAL NOT NULL,
+                entry_date    TEXT NOT NULL,
+                exit_price    REAL,
+                exit_date     TEXT,
+                status        TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed','expired','exercised')),
+                commission    REAL NOT NULL DEFAULT 0,
+                realized_pnl  REAL,
+                notes         TEXT DEFAULT '',
+                created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pop_account ON paper_option_positions(account_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pop_status  ON paper_option_positions(status)")
+
+        # Seed default accounts
+        for acc_id, name, broker, country, currency, acc_type in [
+            ("th_equity", "TH Equity",  "TH Broker",    "TH",     "THB", "equity"),
+            ("us_equity", "US Equity",  "US Broker",    "US",     "USD", "equity"),
+            ("crypto",    "Crypto",     "Crypto Exchange", "CRYPTO", "THB", "crypto"),
+        ]:
+            conn.execute("""
+                INSERT OR IGNORE INTO portfolio_accounts (id, name, broker, country, currency, account_type)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (acc_id, name, broker, country, currency, acc_type))
+
+
+def get_sectors_by_country(country: str) -> list[str]:
+    """Return distinct sector_display names for a country, ordered alphabetically."""
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT DISTINCT sector_display
+            FROM sector_classifications
+            WHERE country = ? AND sector_display IS NOT NULL
+            ORDER BY sector_display
+        """, (country,)).fetchall()
+    return [r["sector_display"] for r in rows]
+
+
+def get_stocks_in_sector(country: str, sector: str, limit: int = 30) -> list[dict]:
+    """Return stocks in a sector ordered by market_cap DESC."""
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT symbol, company_name, sector_display, industry_gics,
+                   market_cap, exchange, index_tags, last_fetched
+            FROM sector_classifications
+            WHERE country = ? AND sector_display = ?
+            ORDER BY market_cap DESC
+            LIMIT ?
+        """, (country, sector, limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def upsert_sector_classification(symbol: str, country: str, data: dict) -> None:
+    """Insert or update a stock's sector classification."""
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO sector_classifications
+                (symbol, country, exchange, sector_gics, industry_gics,
+                 sector_local, sector_display, company_name, market_cap,
+                 index_tags, source, last_fetched, fetch_error, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
+            ON CONFLICT(symbol, country) DO UPDATE SET
+                exchange       = excluded.exchange,
+                sector_gics    = COALESCE(excluded.sector_gics,   sector_classifications.sector_gics),
+                industry_gics  = COALESCE(excluded.industry_gics, sector_classifications.industry_gics),
+                sector_display = COALESCE(excluded.sector_display, sector_classifications.sector_display),
+                company_name   = COALESCE(excluded.company_name,  sector_classifications.company_name),
+                market_cap     = COALESCE(excluded.market_cap,    sector_classifications.market_cap),
+                index_tags     = excluded.index_tags,
+                source         = excluded.source,
+                last_fetched   = excluded.last_fetched,
+                fetch_error    = excluded.fetch_error,
+                updated_at     = datetime('now')
+        """, (
+            symbol, country,
+            data.get("exchange"),
+            data.get("sector_gics"),
+            data.get("industry_gics"),
+            data.get("sector_local"),
+            data.get("sector_display") or data.get("sector_gics"),
+            data.get("company_name"),
+            data.get("market_cap"),
+            data.get("index_tags"),
+            data.get("source", "yfinance"),
+            data.get("last_fetched"),
+            data.get("fetch_error"),
+        ))
+
+
+def seed_symbol_lists() -> None:
+    """Populate symbol_lists from config.py defaults on first run."""
+    with get_db() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM symbol_lists").fetchone()[0]
+        if count > 0:
+            return
+
+        from config import INDICES, HEATMAP_GROUPS, FX_PAIRS, CRYPTO_LIST
+
+        sort = 0
+        for cfg in INDICES:
+            conn.execute(
+                "INSERT INTO symbol_lists (list_id, symbol, label, region, meta, sort_order) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("indices", cfg["symbol"], cfg["id"], cfg["region"],
+                 json.dumps({"num": cfg["num"]}), sort),
+            )
+            sort += 1
+
+        for group_name, items in HEATMAP_GROUPS.items():
+            list_id = f"heatmap_{group_name}"
+            sort = 0
+            for cfg in items:
+                conn.execute(
+                    "INSERT INTO symbol_lists (list_id, symbol, label, sort_order) "
+                    "VALUES (?, ?, ?, ?)",
+                    (list_id, cfg["symbol"], cfg["id"], sort),
+                )
+                sort += 1
+
+        sort = 0
+        for cfg in FX_PAIRS:
+            conn.execute(
+                "INSERT INTO symbol_lists (list_id, symbol, label, sort_order) "
+                "VALUES (?, ?, ?, ?)",
+                ("fx", cfg["symbol"], cfg["id"], sort),
+            )
+            sort += 1
+
+        sort = 0
+        for cfg in CRYPTO_LIST:
+            conn.execute(
+                "INSERT INTO symbol_lists (list_id, symbol, label, meta, sort_order) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("crypto", cfg["symbol"], cfg["id"],
+                 json.dumps({"name": cfg["name"]}), sort),
+            )
+            sort += 1
+
+
+def get_symbol_list(list_id: str) -> list[dict]:
+    """Return enabled symbols for a list, formatted like the old config lists."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM symbol_lists WHERE list_id = ? AND enabled = 1 "
+            "ORDER BY sort_order, id",
+            (list_id,),
+        ).fetchall()
+
+    result: list[dict] = []
+    for r in rows:
+        item: dict = {
+            "symbol": r["symbol"],
+            "id": r["label"],
+        }
+        if r["region"]:
+            item["region"] = r["region"]
+        if r["meta"]:
+            try:
+                meta = json.loads(r["meta"])
+            except (json.JSONDecodeError, TypeError):
+                meta = {}
+            if isinstance(meta, dict):
+                item.update(meta)
+        result.append(item)
+    return result
+
+
+def get_heatmap_groups() -> list[str]:
+    """Return available heatmap group names (without 'heatmap_' prefix)."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT list_id FROM symbol_lists "
+            "WHERE list_id LIKE 'heatmap_%' AND enabled = 1"
+        ).fetchall()
+    return [r["list_id"].replace("heatmap_", "", 1) for r in rows]
+
+
+def add_symbol_to_list(list_id: str, symbol: str, label: str = "",
+                       region: str = "", meta: dict | None = None) -> int:
+    """Add a symbol to a list. Returns the new row id."""
+    with get_db() as conn:
+        cur = conn.execute(
+            "INSERT INTO symbol_lists (list_id, symbol, label, region, meta) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (list_id, symbol, label, region,
+             json.dumps(meta) if meta else None),
+        )
+        return cur.lastrowid
+
+
+def remove_symbol_from_list(symbol_id: int) -> bool:
+    """Soft-delete a symbol by setting enabled=0. Returns True if a row was updated."""
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE symbol_lists SET enabled = 0 WHERE id = ?",
+            (symbol_id,),
+        )
+        return cur.rowcount > 0
+
+
+def update_symbol_in_list(symbol_id: int, **fields) -> bool:
+    """Update fields on a symbol_lists row. Only allowed: label, region, meta, sort_order, enabled."""
+    allowed = {"label", "region", "meta", "sort_order", "enabled"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return False
+    if "meta" in updates and isinstance(updates["meta"], dict):
+        updates["meta"] = json.dumps(updates["meta"])
+
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [symbol_id]
+    with get_db() as conn:
+        cur = conn.execute(
+            f"UPDATE symbol_lists SET {set_clause} WHERE id = ?",
+            values,
+        )
+        return cur.rowcount > 0
+
+
+def compute_holdings() -> list[dict]:
+    """Compute current holdings from transaction history using average-cost method."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM transactions ORDER BY date ASC, created_at ASC"
+        ).fetchall()
+    state: dict[str, dict] = {}
+    for r in rows:
+        sym = r["symbol"].upper()
+        if sym not in state:
+            state[sym] = {"symbol": sym, "shares": 0.0, "total_cost": 0.0,
+                          "first_date": r["date"], "last_date": r["date"]}
+        s = state[sym]
+        if r["type"] == "buy":
+            s["shares"]     += r["shares"]
+            s["total_cost"] += r["shares"] * r["price"] + r["commission"]
+            s["last_date"]   = r["date"]
+        else:
+            sold = min(r["shares"], s["shares"])
+            if s["shares"] > 0:
+                avg = s["total_cost"] / s["shares"]
+                s["total_cost"] -= sold * avg
+            s["shares"]   -= sold
+            s["last_date"] = r["date"]
+    result = []
+    for s in state.values():
+        if s["shares"] > 1e-6:
+            s["avg_cost"]      = round(s["total_cost"] / s["shares"], 4)
+            s["purchase_date"] = s["first_date"]
+            result.append(s)
+    return result

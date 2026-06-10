@@ -1,0 +1,39 @@
+{
+  "contraction_center": -2.0,
+  "contraction_sharpness": 0.5,
+  "f1_recession": 0.0,
+  "accuracy": 1.0,
+  "precision": 0.0,
+  "recall": 0.0,
+  "expansion_center": 0.0,
+  "expansion_sharpness": 0.5,
+  "f1_expansion": 0.8911,
+  "recession_threshold": -2.0,
+  "expansion_threshold": 0.0,
+  "n_days_calibrated": 677,
+  "nber_recessions_used": [
+    [
+      "1990-07-01",
+      "1991-03-31"
+    ],
+    [
+      "2001-03-01",
+      "2001-11-30"
+    ],
+    [
+      "2007-12-01",
+      "2009-06-30"
+    ],
+    [
+      "2020-02-01",
+      "2020-04-30"
+    ]
+  ],
+  "calibrated_at": "2026-06-05T13:00:10.910332",
+  "interpretation": {
+    "contraction_center": "cycle_score at which p_contraction=0.5 (recession boundary)",
+    "expansion_center": "cycle_score at which p_expansion=0.5 (expansion boundary)",
+    "recession_threshold": "use as phase_label RECESSION cutoff (replaces hardcoded -1.0)",
+    "expansion_threshold": "use as phase_label EARLY_RECOVERY cutoff (replaces hardcoded +1.0)"
+  }
+}

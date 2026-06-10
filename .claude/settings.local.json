@@ -1,0 +1,54 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(pip *)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8000/health\")",
+      "PowerShell(Invoke-WebRequest -Uri \"http://localhost:8000/health\" | Select-Object -ExpandProperty Content)",
+      "PowerShell(Invoke-WebRequest -Uri \"http://localhost:8000/api/market-data\" -TimeoutSec 30 | Select-Object -ExpandProperty Content | ConvertFrom-Json | Select-Object dataSource, lastUpdated, @{n='americas_count';e={$_.americas.Count}}, @{n='first';e={$_.americas[0] | Select-Object id, value, change, pctChange}})",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(python -c ' *)",
+      "Bash(npx tsc *)",
+      "Bash(python -c \"import main; print\\('OK  FRED_API_KEY =', bool\\(main.FRED_API_KEY\\)\\)\")",
+      "Bash(mkdir -p \"D:/Agents/Claude/bloomberg-terminal-main/app/api/sovereign/list\" && mkdir -p \"D:/Agents/Claude/bloomberg-terminal-main/app/api/sovereign/[code]\" && echo \"dirs created\")",
+      "Bash(find \"D:\\\\\\\\Agents\\\\\\\\Claude\\\\\\\\bloomberg-terminal-main\" -path \"*/node_modules\" -prune -o -type f -name \"*.ts\" -o -name \"*.tsx\")",
+      "Bash(grep -n \"interface StockViewProps\\\\|type StockViewProps\\\\|export default function StockView\\\\|function StockView\" \"D:\\\\\\\\Agents\\\\\\\\Claude\\\\\\\\bloomberg-terminal-main\\\\\\\\components\\\\\\\\bloomberg\\\\\\\\views\\\\\\\\stock-view.tsx\")",
+      "Bash(grep -A 5 \"handleCardClick\" \"D:\\\\\\\\Agents\\\\\\\\Claude\\\\\\\\bloomberg-terminal-main\\\\\\\\components\\\\\\\\bloomberg\\\\\\\\views\\\\\\\\market-view.tsx\")",
+      "Bash(python tools/thesis_to_html.py --input \"G:/My Drive/Obsidian Vault/wiki/theses\" --output \"G:/My Drive/Obsidian Vault/wiki/theses/html\")",
+      "PowerShell($token = \"eyJvcmciOiI2NzM1NzgwZWM4YzFlYjAwMDEyYTM3NzEiLCJpZCI6ImE4NzgwMTY5MzI4OTQ5MTk4OWI0ZWViMDNlZGM0NzA5IiwiaCI6Im11cm11cjEyOCJ9\"; try { $r = Invoke-RestMethod -Uri \"https://gateway.api.bot.or.th/categorylist\" -Headers @{ \"Authorization\" = $token; \"Accept\" = \"application/json\" } -TimeoutSec 15; $r | ConvertTo-Json -Depth 8 } catch { \"Error: $_\" })",
+      "WebSearch",
+      "PowerShell($token = \"eyJvcmciOiI2NzM1NzgwZWM4YzFlYjAwMDEyYTM3NzEiLCJpZCI6ImNkYmNmYWFiMTQ2NDQxM2I5NzhjODYzNTBiNDRlMGMwIiwiaCI6Im11cm11cjEyOCJ9\"; $headers = @{ \"Authorization\" = $token; \"Accept\" = \"application/xml, application/json\" }; try { $r = Invoke-RestMethod -Uri \"https://gateway.api.bot.or.th/categorylist/series_list/\" -Headers $headers -TimeoutSec 15; $json = $r | ConvertTo-Json -Depth 10; Write-Host \"SUCCESS\"; $json } catch { Write-Host \"Error: $\\($_.Exception.Response.StatusCode.value__\\) - $_\" })",
+      "PowerShell($token = \"eyJvcmciOiI2NzM1NzgwZWM4YzFlYjAwMDEyYTM3NzEiLCJpZCI6ImE4NzgwMTY5MzI4OTQ5MTk4OWI0ZWViMDNlZGM0NzA5IiwiaCI6Im11cm11cjEyOCJ9\"; $headers = @{ \"Authorization\" = $token; \"Accept\" = \"application/json\" }; try { $r = Invoke-RestMethod -Uri \"https://gateway.api.bot.or.th/categorylist/category_list/\" -Headers $headers -TimeoutSec 15; $json = $r | ConvertTo-Json -Depth 10; Write-Host \"SUCCESS - Length: $\\($json.Length\\)\"; $json } catch { \"Error: $\\($_.Exception.Response.StatusCode.value__\\) - $_\" })",
+      "PowerShell($token = \"eyJvcmciOiI2NzM1NzgwZWM4YzFlYjAwMDEyYTM3NzEiLCJpZCI6ImE4NzgwMTY5MzI4OTQ5MTk4OWI0ZWViMDNlZGM0NzA5IiwiaCI6Im11cm11cjEyOCJ9\"; $headers = @{ \"Authorization\" = $token; \"Accept\" = \"application/json\" }; $tests = @\\(\"https://gateway.api.bot.or.th/categorylist/series_list/?category=FM_RT_013\", \"https://gateway.api.bot.or.th/categorylist/series_list/FM_RT_013/\", \"https://gateway.api.bot.or.th/categorylist/series_list/?cat=FM_RT_013\", \"https://gateway.api.bot.or.th/categorylist/FM_RT_013/series_list/\"\\); foreach \\($url in $tests\\) { try { $r = Invoke-RestMethod -Uri $url -Headers $headers -TimeoutSec 10; $json = $r | ConvertTo-Json -Depth 5; Write-Host \"OK: $url\"; $json | Select-Object -First 20 } catch { Write-Host \"FAIL: $url — $_\" } })",
+      "PowerShell($token = \"eyJvcmciOiI2NzM1NzgwZWM4YzFlYjAwMDEyYTM3NzEiLCJpZCI6ImE4NzgwMTY5MzI4OTQ5MTk4OWI0ZWViMDNlZGM0NzA5IiwiaCI6Im11cm11cjEyOCJ9\"; $headers = @{ \"Authorization\" = $token; \"Accept\" = \"application/json\" }; $tests = @\\(\"https://gateway.api.bot.or.th/observations/?series_code=FMRTTHORD00003\", \"https://gateway.api.bot.or.th/observations/FMRTTHORD00003/\", \"https://gateway.api.bot.or.th/StatDataSeries/observations/?series_code=FMRTTHORD00003\", \"https://gateway.api.bot.or.th/StatDataSeries/observations/FMRTTHORD00003/\", \"https://gateway.api.bot.or.th/categorylist/observation/FMRTTHORD00003/\", \"https://gateway.api.bot.or.th/categorylist/series_observation/?series_code=FMRTTHORD00003\"\\); foreach \\($url in $tests\\) { try { $r = Invoke-RestMethod -Uri $url -Headers $headers -TimeoutSec 10; $json = $r | ConvertTo-Json -Depth 6; Write-Host \"OK: $url\"; $json | Select-Object -First 30 } catch { Write-Host \"FAIL: $url — $_\" } })",
+      "WebFetch(domain:api-portal.bot.or.th)",
+      "WebFetch(domain:portal.api.bot.or.th)",
+      "PowerShell($token = \"eyJvcmciOiI2NzM1NzgwZWM4YzFlYjAwMDEyYTM3NzEiLCJpZCI6ImE4NzgwMTY5MzI4OTQ5MTk4OWI0ZWViMDNlZGM0NzA5IiwiaCI6Im11cm11cjEyOCJ9\"; $headers = @{ \"Authorization\" = $token; \"Accept\" = \"application/json\" }; $tests = @\\(\"https://gateway.api.bot.or.th/search-series/?keyword=THOR\", \"https://gateway.api.bot.or.th/search-series/THOR/\", \"https://gateway.api.bot.or.th/searchseries/?keyword=THOR\", \"https://gateway.api.bot.or.th/statisticsobservations/?series_code=FMRTTHORD00003\", \"https://gateway.api.bot.or.th/stat-observations/?series_code=FMRTTHORD00003\", \"https://gateway.api.bot.or.th/statobservations/?series_code=FMRTTHORD00003\", \"https://gateway.api.bot.or.th/DataSeries/observations/?series_code=FMRTTHORD00003\"\\); foreach \\($url in $tests\\) { try { $r = Invoke-RestMethod -Uri $url -Headers $headers -TimeoutSec 10; $json = $r | ConvertTo-Json -Depth 5; Write-Host \"OK: $url\"; $json | Select-Object -First 20 } catch { Write-Host \"FAIL: $url — $_\" } })",
+      "PowerShell($token = \"eyJvcmciOiI2NzM1NzgwZWM4YzFlYjAwMDEyYTM3NzEiLCJpZCI6ImE4NzgwMTY5MzI4OTQ5MTk4OWI0ZWViMDNlZGM0NzA5IiwiaCI6Im11cm11cjEyOCJ9\"; $headers = @{ \"Authorization\" = $token; \"Accept\" = \"application/json\" }; $tests = @\\(\"https://gateway.api.bot.or.th/observations/?series_code=FMRTTHORD00003\", \"https://gateway.api.bot.or.th/observations/FMRTTHORD00003/\", \"https://gateway.api.bot.or.th/observation/FMRTTHORD00003/\", \"https://gateway.api.bot.or.th/stat-observation/?series_code=FMRTTHORD00003\", \"https://gateway.api.bot.or.th/get-series/?series_code=FMRTTHORD00003\", \"https://gateway.api.bot.or.th/getseries/?series_code=FMRTTHORD00003\", \"https://gateway.api.bot.or.th/series-data/?series_code=FMRTTHORD00003\"\\); foreach \\($url in $tests\\) { try { $r = Invoke-RestMethod -Uri $url -Headers $headers -TimeoutSec 10; $json = $r | ConvertTo-Json -Depth 4; Write-Host \"OK: $url\"; $json | Select-Object -First 15 } catch { Write-Host \"FAIL: $url — $_\" } })",
+      "PowerShell(New-Item *)",
+      "PowerShell($token = \"eyJvcmciOiI2NzM1NzgwZWM4YzFlYjAwMDEyYTM3NzEiLCJpZCI6ImE4NzgwMTY5MzI4OTQ5MTk4OWI0ZWViMDNlZGM0NzA5IiwiaCI6Im11cm11cjEyOCJ9\"; $headers = @{ \"Authorization\" = $token; \"Accept\" = \"application/json\" }; $r = Invoke-RestMethod -Uri \"https://gateway.api.bot.or.th/search-series/?keyword=Gross+Domestic+Product\" -Headers $headers -TimeoutSec 10; $results = $r.result.series_details; Write-Host \"GDP results: $\\($results.Count\\)\"; foreach \\($s in $results[0..5]\\) { Write-Host \"  $\\($s.series_code\\): $\\($s.series_name_eng\\) \\($\\($s.frequency\\)\\)\" })",
+      "PowerShell(python -c \"import py_compile; py_compile.compile\\('D:/Agents/Claude/bloomberg-terminal-main/backend/routers/bot.py', doraise=True\\); print\\('bot.py: syntax OK'\\)\")",
+      "PowerShell(python -c \"import py_compile; py_compile.compile\\('D:/Agents/Claude/bloomberg-terminal-main/backend/config.py', doraise=True\\); print\\('config.py: syntax OK'\\)\")",
+      "PowerShell(Move-Item *)",
+      "Bash(gcc src/hotkey.c -o build/HotkeyLanguageSwitcher.exe -mwindows -O2)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "WebFetch(domain:api.gdeltproject.org)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"Memory reminder: if code was changed this session → update memory files per CLAUDE.md maintenance map.\"}'",
+            "shell": "bash",
+            "statusMessage": "Memory maintenance check..."
+          }
+        ]
+      }
+    ]
+  }
+}

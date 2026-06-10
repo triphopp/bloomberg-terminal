@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mathematical Audit Report — Sector Probability System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
+<style>
+:root {
+  --bg: #0a0e17;
+  --bg2: #111827;
+  --bg3: #1a2234;
+  --bg4: #243049;
+  --text: #e2e8f0;
+  --text2: #94a3b8;
+  --text3: #64748b;
+  --accent: #38bdf8;
+  --accent2: #818cf8;
+  --red: #f87171;
+  --red-bg: rgba(248,113,113,0.08);
+  --orange: #fb923c;
+  --orange-bg: rgba(251,146,60,0.08);
+  --green: #4ade80;
+  --green-bg: rgba(74,222,128,0.08);
+  --yellow: #fbbf24;
+  --yellow-bg: rgba(251,191,36,0.08);
+  --cyan: #22d3ee;
+  --border: rgba(148,163,184,0.12);
+  --border2: rgba(148,163,184,0.06);
+  --radius: 12px;
+  --radius-sm: 8px;
+  --font: 'IBM Plex Sans Thai', sans-serif;
+  --mono: 'IBM Plex Mono', monospace;
+  --serif: 'Crimson Pro', serif;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+html { font-size:15px; scroll-behavior:smooth; }
+body { background:var(--bg); color:var(--text); font-family:var(--font); line-height:1.75; }
+
+/* === LAYOUT === */
+.container { max-width:900px; margin:0 auto; padding:0 24px; }
+
+/* === HEADER === */
+header {
+  padding:80px 0 60px;
+  border-bottom:1px solid var(--border);
+  position:relative;
+  overflow:hidden;
+}
+header::before {
+  content:'';
+  position:absolute; top:0; left:0; right:0; bottom:0;
+  background: radial-gradient(ellipse at 30% 20%, rgba(56,189,248,0.06) 0%, transparent 60%),
+              radial-gradient(ellipse at 70% 80%, rgba(129,140,248,0.04) 0%, transparent 50%);
+  pointer-events:none;
+}
+.report-badge {
+  display:inline-block;
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:0.15em;
+  text-transform:uppercase;
+  color:var(--accent);
+  background:rgba(56,189,248,0.1);
+  border:1px solid rgba(56,189,248,0.2);
+  padding:4px 14px;
+  border-radius:99px;
+  margin-bottom:24px;
+}
+h1 {
+  font-size:2.2rem;
+  font-weight:700;
+  line-height:1.25;
+  margin-bottom:16px;
+  background: linear-gradient(135deg, var(--text) 0%, var(--accent) 100%);
+  -webkit-background-clip:text;
+  -webkit-text-fill-color:transparent;
+}
+.subtitle { font-size:1.05rem; color:var(--text2); max-width:680px; line-height:1.7; }
+.meta-row {
+  display:flex; gap:24px; margin-top:28px; flex-wrap:wrap;
+}
+.meta-item { font-size:12px; color:var(--text3); font-family:var(--mono); }
+.meta-item span { color:var(--text2); }
+
+/* === TOC === */
+.toc {
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:28px 32px;
+  margin:48px 0;
+}
+.toc-title { font-size:13px; text-transform:uppercase; letter-spacing:0.1em; color:var(--text3); margin-bottom:16px; font-weight:600; }
+.toc ol { list-style:none; counter-reset:toc; }
+.toc li { counter-increment:toc; margin-bottom:8px; }
+.toc li::before { content:counter(toc, decimal-leading-zero) '.'; color:var(--accent); font-family:var(--mono); font-size:12px; margin-right:10px; }
+.toc a { color:var(--text); text-decoration:none; font-size:14px; transition:color .2s; }
+.toc a:hover { color:var(--accent); }
+
+/* === SECTIONS === */
+section { padding:56px 0; border-bottom:1px solid var(--border2); }
+section:last-of-type { border-bottom:none; }
+.section-num { font-family:var(--mono); font-size:12px; color:var(--accent); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:8px; display:block; }
+h2 { font-size:1.55rem; font-weight:600; margin-bottom:20px; line-height:1.35; }
+h3 { font-size:1.15rem; font-weight:600; margin:32px 0 14px; color:var(--text); }
+h4 { font-size:0.95rem; font-weight:600; margin:24px 0 10px; color:var(--text2); }
+p { margin-bottom:14px; color:var(--text2); }
+p strong { color:var(--text); font-weight:500; }
+
+/* === CARDS === */
+.card {
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:24px 28px;
+  margin:20px 0;
+}
+.card-danger { border-left:3px solid var(--red); }
+.card-warning { border-left:3px solid var(--orange); }
+.card-success { border-left:3px solid var(--green); }
+.card-info { border-left:3px solid var(--accent); }
+.card-title {
+  font-size:14px; font-weight:600; margin-bottom:10px; display:flex; align-items:center; gap:8px;
+}
+.card-title .icon { font-size:16px; }
+
+/* === SEVERITY BADGES === */
+.severity {
+  display:inline-block;
+  font-family:var(--mono);
+  font-size:10px;
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+  padding:3px 10px;
+  border-radius:99px;
+  font-weight:500;
+}
+.sev-critical { background:var(--red-bg); color:var(--red); border:1px solid rgba(248,113,113,0.2); }
+.sev-high { background:var(--orange-bg); color:var(--orange); border:1px solid rgba(251,146,60,0.2); }
+.sev-medium { background:var(--yellow-bg); color:var(--yellow); border:1px solid rgba(251,191,36,0.2); }
+.sev-low { background:var(--green-bg); color:var(--green); border:1px solid rgba(74,222,128,0.2); }
+
+/* === MATH === */
+.math-block {
+  background:var(--bg3);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  padding:20px 24px;
+  margin:16px 0;
+  overflow-x:auto;
+  font-size:0.95rem;
+}
+.math-block .katex { font-size:1.05em; }
+
+/* === CODE === */
+pre {
+  background:var(--bg3);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  padding:20px 24px;
+  margin:16px 0;
+  overflow-x:auto;
+  font-family:var(--mono);
+  font-size:13px;
+  line-height:1.65;
+  color:var(--text2);
+}
+code {
+  font-family:var(--mono);
+  font-size:0.88em;
+  background:rgba(56,189,248,0.08);
+  color:var(--accent);
+  padding:2px 6px;
+  border-radius:4px;
+}
+pre code { background:none; padding:0; color:inherit; font-size:inherit; }
+.kw { color:#c084fc; }
+.fn { color:#38bdf8; }
+.str { color:#4ade80; }
+.cm { color:#64748b; font-style:italic; }
+.num { color:#fbbf24; }
+
+/* === PIPELINE DIAGRAM === */
+.pipeline {
+  display:flex; align-items:center; gap:0; margin:24px 0; flex-wrap:wrap; justify-content:center;
+}
+.pipe-step {
+  background:var(--bg3);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  padding:14px 18px;
+  text-align:center;
+  min-width:120px;
+}
+.pipe-step .step-label { font-size:10px; text-transform:uppercase; letter-spacing:0.1em; color:var(--text3); margin-bottom:4px; }
+.pipe-step .step-name { font-size:13px; font-weight:600; color:var(--text); }
+.pipe-arrow { color:var(--text3); font-size:18px; padding:0 6px; }
+
+/* === TABLE === */
+table { width:100%; border-collapse:collapse; margin:16px 0; font-size:13px; }
+th { background:var(--bg3); color:var(--text2); font-weight:600; text-align:left; padding:10px 14px; border:1px solid var(--border); font-size:12px; text-transform:uppercase; letter-spacing:0.05em; }
+td { padding:10px 14px; border:1px solid var(--border); color:var(--text2); vertical-align:top; }
+tr:nth-child(even) { background:rgba(255,255,255,0.01); }
+
+/* === FINDINGS GRID === */
+.findings-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:20px 0; }
+@media(max-width:640px) { .findings-grid { grid-template-columns:1fr; } }
+.finding-card {
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  padding:18px 20px;
+}
+.finding-num { font-family:var(--mono); font-size:11px; color:var(--accent); margin-bottom:6px; }
+.finding-title { font-size:14px; font-weight:600; margin-bottom:6px; }
+.finding-desc { font-size:13px; color:var(--text3); line-height:1.6; }
+
+/* === REFERENCE LIST === */
+.ref-list { margin:16px 0; }
+.ref-item {
+  display:flex; gap:12px; padding:14px 0; border-bottom:1px solid var(--border2);
+}
+.ref-num {
+  font-family:var(--mono); font-size:11px; color:var(--accent);
+  background:rgba(56,189,248,0.08); width:28px; height:28px;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:6px; flex-shrink:0; margin-top:2px;
+}
+.ref-body { flex:1; }
+.ref-title { font-size:13px; font-weight:600; color:var(--text); margin-bottom:2px; }
+.ref-authors { font-size:12px; color:var(--text3); }
+.ref-journal { font-size:12px; color:var(--text3); font-style:italic; }
+.ref-link { font-size:12px; color:var(--accent); text-decoration:none; }
+
+/* === EXECUTIVE SUMMARY === */
+.exec-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin:24px 0; }
+@media(max-width:640px) { .exec-grid { grid-template-columns:1fr; } }
+.exec-card {
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:22px;
+  text-align:center;
+}
+.exec-num { font-size:2rem; font-weight:700; margin-bottom:4px; }
+.exec-label { font-size:12px; color:var(--text3); }
+
+/* === FIX MAPPING === */
+.fix-map {
+  background:var(--bg3);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:24px;
+  margin:20px 0;
+}
+.fix-row { display:flex; align-items:flex-start; gap:16px; padding:12px 0; border-bottom:1px solid var(--border2); }
+.fix-row:last-child { border-bottom:none; }
+.fix-where { font-family:var(--mono); font-size:12px; color:var(--accent); min-width:180px; flex-shrink:0; }
+.fix-what { font-size:13px; color:var(--text2); }
+.fix-paper { font-size:11px; color:var(--accent2); margin-top:4px; font-style:italic; }
+
+/* scrollbar */
+::-webkit-scrollbar { width:6px; height:6px; }
+::-webkit-scrollbar-track { background:var(--bg); }
+::-webkit-scrollbar-thumb { background:var(--bg4); border-radius:3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <div class="report-badge">Mathematical Audit Report v1.0</div>
+    <h1>การตรวจสอบความน่าเชื่อถือทางคณิตศาสตร์<br>ของ Sector Probability System</h1>
+    <p class="subtitle">
+      วิเคราะห์ทุกขั้นตอนการคำนวณในระบบ 3-Layer Confluence Signal ชี้จุดที่ไม่สมเหตุสมผลทางสถิติ
+      พร้อมแนวทางแก้ไขจาก research papers ที่เกี่ยวข้องกับ fat tail distribution
+    </p>
+    <div class="meta-row">
+      <div class="meta-item">ไฟล์อ้างอิง: <span>sector-tab.tsx</span></div>
+      <div class="meta-item">วันที่วิเคราะห์: <span>30 พฤษภาคม 2026</span></div>
+      <div class="meta-item">จุดบกพร่อง: <span style="color:var(--red)">7 จุด (3 วิกฤต, 2 สูง, 2 ปานกลาง)</span></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+<!-- TOC -->
+<nav class="toc">
+  <div class="toc-title">สารบัญ</div>
+  <ol>
+    <li><a href="#s1">สรุปผู้บริหาร — Executive Summary</a></li>
+    <li><a href="#s2">สถาปัตยกรรมคณิตศาสตร์ — ภาพรวม Pipeline</a></li>
+    <li><a href="#s3">จุดบกพร่อง #1 — Z-Score สมมติ Gaussian แต่ข้อมูลจริงเป็น Fat Tail</a></li>
+    <li><a href="#s4">จุดบกพร่อง #2 — Sigma Floor ไม่สม่ำเสมอ ทำให้ Z-Score ระเบิด</a></li>
+    <li><a href="#s5">จุดบกพร่อง #3 — Fixed Threshold ไม่มี Statistical Calibration</a></li>
+    <li><a href="#s6">จุดบกพร่อง #4 — Fixed Weight ไม่ปรับตาม Regime</a></li>
+    <li><a href="#s7">จุดบกพร่อง #5 — ไม่มี Macro Regime Filter (Tail Event Blind)</a></li>
+    <li><a href="#s8">จุดบกพร่อง #6 — 20-Day Lookback เดียวไม่จับ Multi-Horizon Signal</a></li>
+    <li><a href="#s9">จุดบกพร่อง #7 — ไม่มี Volatility Scaling เป็น Default</a></li>
+    <li><a href="#s10">Research Papers ที่แก้ปัญหา Fat Tail</a></li>
+    <li><a href="#s11">แผนที่แก้ไข — Fix Mapping ไปยัง sector-tab.tsx</a></li>
+    <li><a href="#s12">สรุปและคำแนะนำ</a></li>
+  </ol>
+</nav>
+
+<!-- ==================== SECTION 1 ==================== -->
+<section id="s1">
+  <span class="section-num">ส่วนที่ 01</span>
+  <h2>สรุปผู้บริหาร — Executive Summary</h2>
+  <p>
+    ระบบ Sector Probability ใน <code>sector-tab.tsx</code> ใช้สถาปัตยกรรม <strong>3-Layer Confluence Signal</strong> 
+    ที่รวม Layer C (Structural Position จาก FRED Z.1), Layer B (Fund Flows จาก ETF), 
+    และ Layer A (Market Momentum จาก SPY vs AGG) เข้าด้วยกันด้วย weighted score 
+    เพื่อคำนวณความน่าจะเป็น bullish/bearish ของแต่ละ sector
+  </p>
+  <p>
+    <strong>ปัญหาหลัก:</strong> ทุก layer ใช้ Z-score ที่ตั้งอยู่บนสมมติฐาน Gaussian distribution 
+    ซึ่งถือเป็นจุดอ่อนพื้นฐานที่สุดของระบบ เพราะ financial returns มี fat tail 
+    (excess kurtosis 5–20x ของ Gaussian) ทำให้ Z-score ที่คำนวณได้ <strong>ประเมินความเสี่ยงต่ำกว่าความเป็นจริงอย่างมาก</strong> 
+    ในช่วง extreme events
+  </p>
+
+  <div class="exec-grid">
+    <div class="exec-card">
+      <div class="exec-num" style="color:var(--red)">3</div>
+      <div class="exec-label">จุดบกพร่องวิกฤต</div>
+    </div>
+    <div class="exec-card">
+      <div class="exec-num" style="color:var(--orange)">2</div>
+      <div class="exec-label">จุดบกพร่องสูง</div>
+    </div>
+    <div class="exec-card">
+      <div class="exec-num" style="color:var(--yellow)">2</div>
+      <div class="exec-label">จุดบกพร่องปานกลาง</div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SECTION 2 ==================== -->
+<section id="s2">
+  <span class="section-num">ส่วนที่ 02</span>
+  <h2>สถาปัตยกรรมคณิตศาสตร์ — ภาพรวม Pipeline</h2>
+  <p>ทุกขั้นตอนการคำนวณในระบบสามารถแตกออกเป็น 5 ขั้นตอนหลัก:</p>
+
+  <div class="pipeline">
+    <div class="pipe-step"><div class="step-label">ขั้นที่ 1</div><div class="step-name">Raw Data</div></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><div class="step-label">ขั้นที่ 2</div><div class="step-name">Z-Score</div></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><div class="step-label">ขั้นที่ 3</div><div class="step-name">Threshold</div></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><div class="step-label">ขั้นที่ 4</div><div class="step-name">Weighted Score</div></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step"><div class="step-label">ขั้นที่ 5</div><div class="step-name">Probability</div></div>
+  </div>
+
+  <h3>ขั้นที่ 1 — Raw Data Ingestion</h3>
+  <p>ดึงข้อมูลดิบจาก 3 แหล่ง:</p>
+  <table>
+    <tr><th>Layer</th><th>แหล่งข้อมูล</th><th>ความถี่</th><th>ตัวแปร</th></tr>
+    <tr><td>C</td><td>FRED Z.1 (BOGZ1FL153064476Q)</td><td>รายไตรมาส</td><td>Household Equity Share</td></tr>
+    <tr><td>B</td><td>ETF Flow Data (SPY, QQQ, VOO)</td><td>รายสัปดาห์</td><td>Net Flow ($)</td></tr>
+    <tr><td>A</td><td>Yahoo Finance (SPY, AGG)</td><td>รายวัน</td><td>Adjusted Close Price</td></tr>
+  </table>
+
+  <h3>ขั้นที่ 2 — Z-Score Calculation (จุดวิกฤตอยู่ที่นี่)</h3>
+  <p>ทุก layer ใช้สูตร Z-score เหมือนกัน:</p>
+  <div class="math-block">
+    $$ Z = \frac{X - \mu}{\sigma} $$
+  </div>
+  <p>โดยที่:</p>
+  <div class="math-block">
+    $$ \mu = \frac{1}{N}\sum_{i=1}^{N} X_i \quad\quad \sigma = \sqrt{\frac{1}{N-1}\sum_{i=1}^{N}(X_i - \mu)^2} $$
+  </div>
+  <p>
+    <strong>สมมติฐานซ่อน:</strong> สูตรนี้ใช้งานได้ดีก็ต่อเมื่อ $X$ มาจาก distribution ที่มี finite variance 
+    และมี tails ที่ลดลงเร็วพอ (เช่น Gaussian) แต่ financial returns มี excess kurtosis สูง 
+    หมายความว่า events ที่ Z > 3 เกิดขึ้นบ่อยกว่าที่ Gaussian ทำนายไว้หลายเท่า
+  </p>
+
+  <h3>ขั้นที่ 3 — Threshold-based Scoring</h3>
+  <p>แปลง Z-score ต่อเนื่องเป็น discrete score {−1, 0, +1}:</p>
+  <div class="math-block">
+    $$ \text{score} = \begin{cases} +1 & \text{if } Z > +\tau \\ -1 & \text{if } Z < -\tau \\ 0 & \text{otherwise} \end{cases} $$
+  </div>
+  <p>Layer C ใช้ $\tau = 0.75$, Layer A และ B ใช้ $\tau = 0.50$</p>
+
+  <h3>ขั้นที่ 4 — Weighted Confluence</h3>
+  <div class="math-block">
+    $$ S_{\text{final}} = w_C \cdot s_C + w_B \cdot s_B + w_A \cdot s_A $$
+  </div>
+  <p>น้ำหนักคงที่: $w_C = 0.40$, $w_B = 0.35$, $w_A = 0.25$</p>
+
+  <h3>ขั้นที่ 5 — Probability Mapping (ปริยายจาก score)</h3>
+  <p>
+    ค่า $S_{\text{final}} \in [-1, +1]$ ถูกแปลงเป็น bullish/bearish probability 
+    โดยการ linear mapping หรือ logistic transformation ขึ้นอยู่กับ implementation 
+    แต่ปัญหาคือ ทั้ง pipeline ตั้งอยู่บน Z-score ที่ผิดหลักตั้งแต่ขั้นที่ 2
+  </p>
+</section>
+
+<!-- ==================== SECTION 3 ==================== -->
+<section id="s3">
+  <span class="section-num">ส่วนที่ 03</span>
+  <h2>จุดบกพร่อง #1 — Z-Score สมมติ Gaussian แต่ข้อมูลจริงเป็น Fat Tail</h2>
+  <div class="card card-danger">
+    <div class="card-title">
+      <span class="severity sev-critical">วิกฤต</span>
+      ปัญหาพื้นฐานที่สุด — Gaussian Assumption Violation
+    </div>
+  </div>
+
+  <h3>ปัญหาทางคณิตศาสตร์</h3>
+  <p>
+    Z-score แบบมาตรฐานสมมติว่าข้อมูลมาจาก distribution ที่มี <strong>kurtosis = 3</strong> (mesokurtic) 
+    แต่ financial returns มี kurtosis ประมาณ 7–25 (leptokurtic) ผลที่ตามมาคือ:
+  </p>
+
+  <table>
+    <tr><th>เหตุการณ์</th><th>ความถี่ตาม Gaussian</th><th>ความถี่จริง (empirical)</th><th>ประเมินต่ำกว่าจริง</th></tr>
+    <tr><td>|Z| > 3σ</td><td>0.27% (1 ใน 370 วัน)</td><td>1–2% (1 ใน 50–100 วัน)</td><td style="color:var(--red)">4–7x</td></tr>
+    <tr><td>|Z| > 4σ</td><td>0.006% (1 ใน 16,000 วัน)</td><td>0.1–0.3% (1 ใน 300–1000 วัน)</td><td style="color:var(--red)">16–50x</td></tr>
+    <tr><td>|Z| > 5σ</td><td>5.7 × 10⁻⁵%</td><td>~0.01–0.05%</td><td style="color:var(--red)">175–875x</td></tr>
+  </table>
+
+  <p>
+    Welch (2024) ใน <em>Financial Analysts Journal</em> แสดงให้เห็นว่าเหตุการณ์ 19 ตุลาคม 1987 
+    (Black Monday, return −17.1%) มี Z-score ประมาณ −17 ภายใต้ Gaussian assumption 
+    ซึ่งมีโอกาสเกิดขึ้น 1 ใน $10^{65}$ ครั้ง — ห่างไกลจากความเป็นจริงอย่างสิ้นเชิง
+  </p>
+
+  <h3>ผลกระทบต่อระบบ sector-tab.tsx</h3>
+  <p>เมื่อตลาดเกิด extreme event (เช่น tariff shock เมษายน 2025):</p>
+  <div class="card card-warning">
+    <p>1. Z-score ของ Layer A พุ่งไปที่ −4 หรือ −5 แต่ Gaussian ทำนายว่าเกิดได้ 1 ใน 16,000 วัน — ระบบจึง "ตกใจ" มากเกินไปกับสิ่งที่จริงๆ แล้วเกิดทุก 1–3 ปี</p>
+    <p>2. ในทางกลับกัน เมื่อ Z-score อยู่ที่ 2.5–3.0 ระบบอาจมองว่า "ยังปลอดภัย" แต่จริงๆ แล้วอยู่ใกล้ danger zone มากกว่าที่คิด</p>
+    <p>3. <strong>Probability output ทั้งหมดจึงเบี่ยงเบน</strong> เพราะ mapping จาก Z ไป probability ผิดตั้งแต่ต้น</p>
+  </div>
+
+  <h3>แนวทางแก้ไข — Cornish-Fisher Adjusted Z-Score</h3>
+  <p>
+    ใช้ <strong>Cornish-Fisher expansion</strong> (Cornish &amp; Fisher, 1937; ปรับปรุงโดย Maillard, 2012 
+    และ Mark &amp; Vaucher, 2023) เพื่อปรับ Z-score ให้คำนึงถึง skewness ($S$) และ excess kurtosis ($K$):
+  </p>
+  <div class="math-block">
+    $$ Z_{CF} = Z + \frac{S}{6}(Z^2 - 1) + \frac{K}{24}(Z^3 - 3Z) - \frac{S^2}{36}(2Z^3 - 5Z) $$
+  </div>
+
+  <p>
+    โดยที่ $S$ = sample skewness, $K$ = sample excess kurtosis (kurtosis − 3)
+  </p>
+
+  <pre><code><span class="kw">def</span> <span class="fn">cornish_fisher_z</span>(z_raw, skew, excess_kurt):
+    <span class="cm">"""
+    ปรับ Z-score ด้วย Cornish-Fisher expansion
+    Ref: Maillard (2012), Mark & Vaucher (2023)
+    """</span>
+    z = z_raw
+    s = skew
+    k = excess_kurt
+    
+    z_cf = (z 
+            + (s / <span class="num">6</span>) * (z**<span class="num">2</span> - <span class="num">1</span>)
+            + (k / <span class="num">24</span>) * (z**<span class="num">3</span> - <span class="num">3</span>*z)
+            - (s**<span class="num">2</span> / <span class="num">36</span>) * (<span class="num">2</span>*z**<span class="num">3</span> - <span class="num">5</span>*z))
+    <span class="kw">return</span> z_cf</code></pre>
+
+  <h3>แนวทางแก้ไขเสริม — Extreme Value Theory (EVT) สำหรับ Tail</h3>
+  <p>
+    สำหรับ events ที่เลย threshold $u$ (เช่น |Z| > 2) ใช้ <strong>Generalized Pareto Distribution (GPD)</strong> 
+    ตาม Peaks-Over-Threshold method แทนการใช้ Gaussian tail:
+  </p>
+  <div class="math-block">
+    $$ P(X > x \mid X > u) = \left(1 + \xi \cdot \frac{x - u}{\beta}\right)^{-1/\xi} $$
+  </div>
+  <p>
+    โดยที่ $\xi$ คือ shape parameter (ค่าบวก = fat tail), $\beta$ คือ scale parameter 
+    วิธีนี้ได้รับการพิสูจน์ว่าให้ผลแม่นยำกว่า Gaussian อย่างมากจาก Arian et al. (2020) 
+    "Uncertain EVT" ที่ให้ threshold เป็น dynamic random variable
+  </p>
+</section>
+
+<!-- ==================== SECTION 4 ==================== -->
+<section id="s4">
+  <span class="section-num">ส่วนที่ 04</span>
+  <h2>จุดบกพร่อง #2 — Sigma Floor ไม่สม่ำเสมอ ทำให้ Z-Score ระเบิด</h2>
+  <div class="card card-danger">
+    <div class="card-title">
+      <span class="severity sev-critical">วิกฤต</span>
+      Sigma Floor Inconsistency → Z-Score Explosion
+    </div>
+  </div>
+
+  <h3>ปัญหาทางคณิตศาสตร์</h3>
+  <p>
+    ในช่วง low-volatility ที่ยืดเยื้อ (เช่น 2017, 2019) ค่า $\sigma$ จาก rolling window 
+    จะลดต่ำลงมาก เมื่อเกิด small shock Z-score จะพุ่งสูงผิดปกติ:
+  </p>
+  <div class="math-block">
+    $$ \text{ถ้า } \sigma \to 0^+ \text{ แล้ว } Z = \frac{X - \mu}{\sigma} \to \pm\infty $$
+  </div>
+  <p>
+    Document ระบุว่าใช้ <code>σ = max(σ_realized, σ_long_run)</code> ใน risk table 
+    แต่ไม่ได้ implement จริงใน pseudocode — แต่ละ layer จึงคำนวณ sigma ต่างกัน
+  </p>
+
+  <h3>ตัวอย่างเชิงตัวเลข</h3>
+  <table>
+    <tr><th>สถานการณ์</th><th>σ (rolling 252d)</th><th>Shock</th><th>Z-score</th><th>ปัญหา</th></tr>
+    <tr><td>Post low-vol (2017)</td><td>0.003</td><td>−0.015</td><td style="color:var(--red)">−5.0</td><td>เกินจริง — shock ปกติดูเหมือน crisis</td></tr>
+    <tr><td>Post high-vol (2020)</td><td>0.025</td><td>−0.015</td><td>−0.6</td><td>ปกติ — signal ถูกต้อง</td></tr>
+  </table>
+
+  <h3>แนวทางแก้ไข — Unified Sigma Floor Utility</h3>
+  <pre><code><span class="kw">def</span> <span class="fn">safe_zscore</span>(series, rolling_window=<span class="num">252</span>, sigma_floor_pct=<span class="num">0.30</span>):
+    <span class="cm">"""
+    คำนวณ Z-score พร้อม sigma floor สม่ำเสมอทุก layer
+    sigma ต้องไม่ต่ำกว่า 30% ของ long-run sigma
+    Ref: Moreira & Muir (2017) — Volatility-Managed Portfolios
+    """</span>
+    mu = series.rolling(rolling_window).mean()
+    sigma = series.rolling(rolling_window).std()
+    
+    <span class="cm"># Sigma floor: ป้องกัน Z-score explosion</span>
+    long_run_sigma = sigma.expanding().mean()
+    sigma_floor = long_run_sigma * sigma_floor_pct
+    sigma_safe = sigma.clip(lower=sigma_floor)
+    
+    z = (series - mu) / sigma_safe
+    <span class="kw">return</span> z</code></pre>
+</section>
+
+<!-- ==================== SECTION 5 ==================== -->
+<section id="s5">
+  <span class="section-num">ส่วนที่ 05</span>
+  <h2>จุดบกพร่อง #3 — Fixed Threshold ไม่มี Statistical Calibration</h2>
+  <div class="card card-danger">
+    <div class="card-title">
+      <span class="severity sev-critical">วิกฤต</span>
+      Threshold เลือกโดยไม่มี empirical justification
+    </div>
+  </div>
+
+  <h3>ปัญหาทางคณิตศาสตร์</h3>
+  <p>
+    Threshold ±0.75 สำหรับ Layer C และ ±0.50 สำหรับ Layer A, B ถูกเลือกแบบ ad hoc 
+    ไม่มี calibration กับข้อมูลจริงว่าให้ <strong>precision/recall</strong> ที่ดีเพียงใดสำหรับ regime detection 
+    ปัญหาที่ตามมาคือ:
+  </p>
+  <p>
+    1. <strong>ถ้า threshold ต่ำเกินไป</strong> → False positive สูง ระบบส่ง signal มากเกินไป signal ไม่มีคุณค่า<br>
+    2. <strong>ถ้า threshold สูงเกินไป</strong> → False negative สูง ระบบพลาด regime change ที่สำคัญ<br>
+    3. <strong>ไม่ได้ปรับตาม distribution จริง</strong> → Z = 0.5 ใน Gaussian ≠ Z = 0.5 ใน fat-tailed distribution
+  </p>
+
+  <h3>แนวทางแก้ไข — Information Coefficient Calibration</h3>
+  <p>
+    ใช้ <strong>Spearman IC</strong> (Information Coefficient) ระหว่าง score กับ future returns 
+    ใน out-of-sample period เพื่อหา threshold ที่ optimal:
+  </p>
+  <div class="math-block">
+    $$ \tau^* = \arg\max_\tau \; \rho_S\bigl(\text{score}(Z, \tau),\; r_{t+h}\bigr) $$
+  </div>
+  <p>
+    โดย $\rho_S$ คือ Spearman rank correlation, $r_{t+h}$ คือ forward return ระยะ $h$ วัน 
+    ทดสอบ $\tau \in \{0.25, 0.50, 0.75, 1.00, 1.25\}$ แล้วเลือกค่าที่ให้ IC สูงสุดในข้อมูล out-of-sample
+  </p>
+</section>
+
+<!-- ==================== SECTION 6 ==================== -->
+<section id="s6">
+  <span class="section-num">ส่วนที่ 06</span>
+  <h2>จุดบกพร่อง #4 — Fixed Weight ไม่ปรับตาม Regime</h2>
+  <div class="card card-warning">
+    <div class="card-title">
+      <span class="severity sev-high">สูง</span>
+      Static Weights ไม่สะท้อน Data Quality หรือ Market Regime
+    </div>
+  </div>
+
+  <h3>ปัญหาทางคณิตศาสตร์</h3>
+  <p>
+    Weight $w_C=0.40, w_B=0.35, w_A=0.25$ คงที่ตลอดเวลา มี 2 ปัญหา:
+  </p>
+  <p>
+    <strong>ปัญหา A — Data Staleness:</strong> Layer C อัปเดตรายไตรมาส ถ้าเป็นเดือน 2 หลังจากข้อมูลล่าสุด 
+    Layer C จะ stale แต่ยังได้ weight 40% เท่าเดิม — ควรลด weight ลงเมื่อข้อมูลเก่า
+  </p>
+  <p>
+    <strong>ปัญหา B — Regime Blindness:</strong> ในช่วง crisis (VIX > 35) Layer B (fund flows) 
+    ถูก distort จาก mechanical rebalancing ของ model portfolios ไม่ใช่ sentiment จริง 
+    แต่ระบบยังให้ weight 35% เท่าเดิม
+  </p>
+
+  <h3>แนวทางแก้ไข — Dynamic Quality-Adjusted Weights</h3>
+  <div class="math-block">
+    $$ w_k^{\text{eff}} = w_k^{\text{base}} \times \begin{cases} 1.0 & \text{if layer $k$ is fresh} \\ 0.3 & \text{if layer $k$ is stale} \end{cases} $$
+  </div>
+  <div class="math-block">
+    $$ \hat{w}_k = \frac{w_k^{\text{eff}}}{\sum_{j} w_j^{\text{eff}}} \quad\quad S_{\text{final}} = \sum_k \hat{w}_k \cdot s_k $$
+  </div>
+  <p>
+    Layer ที่ stale ได้ weight ลดลง 70% แล้ว renormalize ให้ผลรวม = 1 
+    อ้างอิง Ilmanen &amp; Kizer (2012) และงานวิจัยรุ่นใหม่ที่แนะนำ regime-adaptive weights
+  </p>
+</section>
+
+<!-- ==================== SECTION 7 ==================== -->
+<section id="s7">
+  <span class="section-num">ส่วนที่ 07</span>
+  <h2>จุดบกพร่อง #5 — ไม่มี Macro Regime Filter (Tail Event Blind)</h2>
+  <div class="card card-warning">
+    <div class="card-title">
+      <span class="severity sev-high">สูง</span>
+      ระบบไม่สามารถรับรู้ Macro Stress → Fat Tail Events ผ่านเข้ามาโดยไม่มีตัวกรอง
+    </div>
+  </div>
+
+  <h3>ปัญหาทางคณิตศาสตร์</h3>
+  <p>
+    ระบบปัจจุบันไม่มี mechanism สำหรับ downscale confidence เมื่อ macro environment อยู่ใน stress regime 
+    ในช่วง tariff shock เมษายน 2025 equity ETF flows ยังเป็นบวก (นักลงทุนซื้อ dip) 
+    แต่ fundamental outlook แย่ลงมาก → Layer B ให้ false positive
+  </p>
+  <p>
+    <strong>นี่คือจุดที่ fat tail เข้ามาเล่นงานโดยตรง:</strong> เมื่อ VIX > 35, credit spread > 500 bps, 
+    หรือ yield curve inverted ลึก (< −0.50%) — ข้อมูลที่ใช้คำนวณ Z-score 
+    ไม่ได้มาจาก "same distribution" อีกต่อไป เกิด <strong>regime switch</strong> 
+    ที่ทำให้ Z-score ที่คำนวณจาก historical window ไม่มีความหมาย
+  </p>
+
+  <h3>แนวทางแก้ไข — Macro Override Layer</h3>
+  <div class="math-block">
+    $$ S_{\text{adjusted}} = S_{\text{final}} \times \lambda_{\text{macro}} $$
+  </div>
+  <p>โดยที่ $\lambda_{\text{macro}} \in [0.2, 1.0]$ กำหนดจากจำนวน stress flags:</p>
+  <div class="math-block">
+    $$ \lambda_{\text{macro}} = \max\bigl(0.2,\; 1.0 - 0.3 \times n_{\text{flags}}\bigr) $$
+  </div>
+  <table>
+    <tr><th>Stress Flag</th><th>เงื่อนไข</th><th>ที่มา</th></tr>
+    <tr><td>VIX_EXTREME</td><td>VIX > 35</td><td>CBOE VIX (FRED: VIXCLS)</td></tr>
+    <tr><td>CREDIT_STRESS</td><td>HY OAS > 500 bps</td><td>BofA HY Index (FRED: BAMLH0A0HYM2)</td></tr>
+    <tr><td>CURVE_INVERTED</td><td>10Y−2Y < −0.50%</td><td>FRED: T10Y2Y</td></tr>
+  </table>
+</section>
+
+<!-- ==================== SECTION 8 ==================== -->
+<section id="s8">
+  <span class="section-num">ส่วนที่ 08</span>
+  <h2>จุดบกพร่อง #6 — 20-Day Lookback เดียวไม่จับ Multi-Horizon Signal</h2>
+  <div class="card card-info">
+    <div class="card-title">
+      <span class="severity sev-medium">ปานกลาง</span>
+      Single Lookback ไม่เสถียรเพียงพอสำหรับ allocation signal
+    </div>
+  </div>
+
+  <h3>ปัญหาทางคณิตศาสตร์</h3>
+  <p>
+    Layer A ใช้ lookback 20 วันเดียว (~1 เดือน) ซึ่ง Moskowitz et al. (2012) 
+    พิสูจน์ว่า time-series momentum มีพลังที่สุดที่ 12-month lookback 
+    ส่วน 20 วันอยู่ใน "no man's land" ระหว่าง short-term reversal (1–5 วัน) 
+    และ medium-term momentum (3–12 เดือน)
+  </p>
+
+  <h3>แนวทางแก้ไข — Blended Lookback</h3>
+  <div class="math-block">
+    $$ Z_{\text{blended}} = \sum_{i=1}^{3} w_i \cdot Z_{\text{lb}_i} \quad\text{where } \text{lb} \in \{20, 60, 120\} \text{ days} $$
+  </div>
+  <p>
+    ใช้น้ำหนัก $w = [0.50, 0.30, 0.20]$ เพื่อให้ short-term ยังมี real-time sensitivity 
+    แต่ medium-term ช่วย smooth noise ออก ลด whipsaw signal อ้างอิง Moskowitz et al. (2012) 
+    และ AQR research (2024)
+  </p>
+</section>
+
+<!-- ==================== SECTION 9 ==================== -->
+<section id="s9">
+  <span class="section-num">ส่วนที่ 09</span>
+  <h2>จุดบกพร่อง #7 — ไม่มี Volatility Scaling เป็น Default</h2>
+  <div class="card card-info">
+    <div class="card-title">
+      <span class="severity sev-medium">ปานกลาง</span>
+      Z-score ไม่ปรับตาม Realized Volatility
+    </div>
+  </div>
+
+  <h3>ปัญหาทางคณิตศาสตร์</h3>
+  <p>
+    ในช่วง high-volatility Z-score พุ่งสูงผิดปกติเพราะ denominator ($\sigma$) จาก rolling window 
+    ล่าช้ากว่า realized vol จริง (lagging indicator) ทำให้ signal เกินจริง
+  </p>
+  <p>
+    Moreira &amp; Muir (2017) ใน <em>Journal of Finance</em> พิสูจน์ว่า 
+    volatility-managed portfolios ที่ scale exposure ตาม inverse ของ realized vol 
+    ให้ Sharpe ratio สูงกว่า unmanaged portfolios อย่างมีนัยสำคัญ
+  </p>
+
+  <h3>แนวทางแก้ไข — Volatility-Adjusted Z-Score</h3>
+  <div class="math-block">
+    $$ Z_{\text{adj}} = Z_{\text{raw}} \times \frac{\sigma_{\text{target}}}{\sigma_{\text{realized}}} $$
+  </div>
+  <p>โดย clip scaling factor ไว้ที่ $[0.25, 4.0]$ เพื่อป้องกัน extreme scaling:</p>
+  <div class="math-block">
+    $$ \text{scale} = \text{clip}\left(\frac{\sigma_{\text{target}}}{\sigma_{\text{realized}}},\; 0.25,\; 4.0\right) $$
+  </div>
+</section>
+
+<!-- ==================== SECTION 10 ==================== -->
+<section id="s10">
+  <span class="section-num">ส่วนที่ 10</span>
+  <h2>Research Papers ที่แก้ปัญหา Fat Tail</h2>
+  <p>
+    รายการ papers หลักที่เกี่ยวข้องโดยตรงกับการแก้ไขจุดบกพร่องในระบบ 
+    เรียงตามลำดับความสำคัญต่อการ implement:
+  </p>
+
+  <div class="ref-list">
+    <div class="ref-item">
+      <div class="ref-num">1</div>
+      <div class="ref-body">
+        <div class="ref-title">Statistical Consequences of Fat Tails: Real World Preasymptotics, Epistemology, and Applications</div>
+        <div class="ref-authors">Nassim Nicholas Taleb (2020, 3rd ed.)</div>
+        <div class="ref-journal">Technical Incerto, arXiv: 2001.10488</div>
+        <div style="margin-top:6px; font-size:13px; color:var(--text2);">
+          <strong style="color:var(--red)">แก้จุดบกพร่อง #1</strong> — 
+          ตำราหลักที่พิสูจน์ว่า sample mean, sample variance, และ Z-score ทั้งหมดไม่ converge 
+          ตามที่ classical statistics ทำนายเมื่อ distribution มี fat tail 
+          แนะนำการใช้ robust estimators แทน moment-based statistics
+        </div>
+      </div>
+    </div>
+
+    <div class="ref-item">
+      <div class="ref-num">2</div>
+      <div class="ref-body">
+        <div class="ref-title">A Heuristic for Fat-Tailed Stock Market Returns</div>
+        <div class="ref-authors">Ivo Welch (2024)</div>
+        <div class="ref-journal">Financial Analysts Journal, pp.18–26</div>
+        <div style="margin-top:6px; font-size:13px; color:var(--text2);">
+          <strong style="color:var(--red)">แก้จุดบกพร่อง #1, #2</strong> — 
+          เสนอ adjusted Z-score ($Z'$) สำหรับ fat-tailed returns 
+          โดยแสดงว่า unadjusted Z-score ประเมินโอกาส extreme events 
+          ผิดไปหลายระดับ (Black Monday: Z = −17 ภายใต้ Gaussian ซึ่งเป็นไปไม่ได้)
+        </div>
+      </div>
+    </div>
+
+    <div class="ref-item">
+      <div class="ref-num">3</div>
+      <div class="ref-body">
+        <div class="ref-title">Risk Parity Portfolio Optimization under Heavy-Tailed Returns and Time-Varying Volatility</div>
+        <div class="ref-authors">Marc S. Paolella et al. (2023)</div>
+        <div class="ref-journal">University of Zurich Working Paper</div>
+        <div style="margin-top:6px; font-size:13px; color:var(--text2);">
+          <strong style="color:var(--orange)">แก้จุดบกพร่อง #4, #7</strong> — 
+          ใช้ elliptical multivariate generalized hyperbolic distribution (ไม่สมมติ Gaussian) 
+          ร่วมกับ Expected Shortfall แทน VaR เป็น risk measure 
+          พิสูจน์ว่า allocation ที่คำนึงถึง fat tails มี sensitivity ต่อ volatility shocks น้อยกว่า 
+          และให้ portfolio turnover ต่ำกว่า
+        </div>
+      </div>
+    </div>
+
+    <div class="ref-item">
+      <div class="ref-num">4</div>
+      <div class="ref-body">
+        <div class="ref-title">Cornish-Fisher Downside Risk: Estimation, Decomposition, and Backtesting</div>
+        <div class="ref-authors">Michael Mark &amp; Benoit Vaucher (2023)</div>
+        <div class="ref-journal">SSRN: 4796363 / Journal of Empirical Finance (2025)</div>
+        <div style="margin-top:6px; font-size:13px; color:var(--text2);">
+          <strong style="color:var(--red)">แก้จุดบกพร่อง #1</strong> — 
+          เสนอ corrected Cornish-Fisher expansion ที่แก้ปัญหา monotonicity violation 
+          ของ CF ดั้งเดิม ให้ VaR/CVaR ที่แม่นยำกว่าใน fat-tailed data 
+          สามารถ implement แทน Z-score ดั้งเดิมในทุก layer ได้ทันที
+        </div>
+      </div>
+    </div>
+
+    <div class="ref-item">
+      <div class="ref-num">5</div>
+      <div class="ref-body">
+        <div class="ref-title">Portfolio Tail Risk: A Multivariate Extreme Value Theory Approach</div>
+        <div class="ref-authors">Radivojević et al. (2020)</div>
+        <div class="ref-journal">Mathematics, MDPI / PMC: 7767159</div>
+        <div style="margin-top:6px; font-size:13px; color:var(--text2);">
+          <strong style="color:var(--red)">แก้จุดบกพร่อง #1, #5</strong> — 
+          พิสูจน์ว่า multivariate EVT (Generalized Pareto Distribution) 
+          ไม่ถูก reject ที่ confidence level ใดเลย ในขณะที่ Gaussian assumption 
+          ถูก reject ในเกือบทุก eigenvector สำหรับ tail events 
+          สามารถใช้สร้าง "tail probability overlay" เสริม Z-score ได้
+        </div>
+      </div>
+    </div>
+
+    <div class="ref-item">
+      <div class="ref-num">6</div>
+      <div class="ref-body">
+        <div class="ref-title">Volatility-Managed Portfolios</div>
+        <div class="ref-authors">Alan Moreira &amp; Tyler Muir (2017)</div>
+        <div class="ref-journal">Journal of Finance, Vol. 72, No. 4</div>
+        <div style="margin-top:6px; font-size:13px; color:var(--text2);">
+          <strong style="color:var(--yellow)">แก้จุดบกพร่อง #7</strong> — 
+          พิสูจน์ว่าการ scale exposure ตาม inverse realized volatility 
+          ให้ Sharpe ratio สูงกว่า unmanaged approach สำหรับ equity, bond, credit, forex 
+          ควรเป็น default behavior ไม่ใช่ optional enhancement
+        </div>
+      </div>
+    </div>
+
+    <div class="ref-item">
+      <div class="ref-num">7</div>
+      <div class="ref-body">
+        <div class="ref-title">The Uncertain Shape of Grey Swans: Extreme Value Theory with Uncertain Threshold</div>
+        <div class="ref-authors">Arian, Poorvasei, Sharifi, &amp; Zamani (2020)</div>
+        <div class="ref-journal">arXiv: 2011.06693</div>
+        <div style="margin-top:6px; font-size:13px; color:var(--text2);">
+          <strong style="color:var(--orange)">แก้จุดบกพร่อง #3, #5</strong> — 
+          เสนอ "Uncertain EVT" ที่ให้ threshold เป็น dynamic random variable 
+          (Break-Even Risk Threshold) แทนค่าคงที่ 
+          VaR ที่ได้ outperform ทั้ง EVT ดั้งเดิมและ VaR models ทั่วไปใน backtesting
+        </div>
+      </div>
+    </div>
+
+    <div class="ref-item">
+      <div class="ref-num">8</div>
+      <div class="ref-body">
+        <div class="ref-title">Time Series Momentum</div>
+        <div class="ref-authors">Moskowitz, Ooi, &amp; Pedersen (2012)</div>
+        <div class="ref-journal">Journal of Financial Economics, Vol. 104, No. 2</div>
+        <div style="margin-top:6px; font-size:13px; color:var(--text2);">
+          <strong style="color:var(--yellow)">แก้จุดบกพร่อง #6</strong> — 
+          Benchmark paper ที่พิสูจน์ momentum ที่ 12-month lookback 
+          สำหรับ 58 futures contracts ใน equity, bond, currency, commodity 
+          ยืนยันว่า 20-day lookback เดียวอยู่ในเขต noisy
+        </div>
+      </div>
+    </div>
+
+    <div class="ref-item">
+      <div class="ref-num">9</div>
+      <div class="ref-body">
+        <div class="ref-title">Investment Risk Forecasting: EVT Combined with Machine Learning</div>
+        <div class="ref-authors">Various authors (2024)</div>
+        <div class="ref-journal">AIMS Mathematics</div>
+        <div style="margin-top:6px; font-size:13px; color:var(--text2);">
+          <strong style="color:var(--red)">แก้จุดบกพร่อง #1, #3</strong> — 
+          รวม EVT (Peak-Over-Threshold + GPD) กับ RNN/LSTM/GRU 
+          เพื่อ detect heavy tail patterns โดยอัตโนมัติ ผลลัพธ์ VaR_GPD-ML 
+          ผ่าน backtesting ทั้ง 95% และ 99% confidence level
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SECTION 11 ==================== -->
+<section id="s11">
+  <span class="section-num">ส่วนที่ 11</span>
+  <h2>แผนที่แก้ไข — Fix Mapping ไปยัง sector-tab.tsx</h2>
+  <p>แสดงว่าแต่ละจุดบกพร่องต้องแก้ไขที่ส่วนไหนของ code และใช้ paper ใดเป็นฐาน:</p>
+
+  <div class="fix-map">
+    <div class="fix-row">
+      <div class="fix-where">Z-Score Calculation<br>(ทุก Layer: A, B, C)</div>
+      <div>
+        <div class="fix-what">เปลี่ยนจาก standard Z-score เป็น Cornish-Fisher adjusted Z-score ที่คำนึงถึง skewness และ excess kurtosis ของ rolling window</div>
+        <div class="fix-paper">📄 Paper #2 (Welch 2024), #4 (Mark & Vaucher 2023), #1 (Taleb 2020)</div>
+      </div>
+    </div>
+    <div class="fix-row">
+      <div class="fix-where">safe_zscore() utility<br>(สร้างใหม่ ใช้ทุก Layer)</div>
+      <div>
+        <div class="fix-what">สร้าง unified function ที่มี sigma floor เป็น 30% ของ long-run sigma ป้องกัน Z-score explosion ในช่วง low-vol</div>
+        <div class="fix-paper">📄 Paper #6 (Moreira & Muir 2017)</div>
+      </div>
+    </div>
+    <div class="fix-row">
+      <div class="fix-where">score_layer_x()<br>(Threshold Scoring)</div>
+      <div>
+        <div class="fix-what">เพิ่ม calibration step ด้วย Information Coefficient (Spearman IC) กับ out-of-sample forward returns ก่อน go-live — threshold ต้องมี empirical justification</div>
+        <div class="fix-paper">📄 Paper #7 (Arian et al. 2020) — dynamic threshold</div>
+      </div>
+    </div>
+    <div class="fix-row">
+      <div class="fix-where">compute_weighted_score()<br>(Confluence Logic)</div>
+      <div>
+        <div class="fix-what">เปลี่ยนจาก fixed weights เป็น quality-adjusted weights ที่ลด weight ของ layer ที่ stale แล้ว renormalize</div>
+        <div class="fix-paper">📄 Paper #3 (Paolella et al. 2023) — regime-adaptive allocation</div>
+      </div>
+    </div>
+    <div class="fix-row">
+      <div class="fix-where">เพิ่ม macro_override()<br>(Layer ใหม่)</div>
+      <div>
+        <div class="fix-what">เพิ่ม Macro Override Layer ที่ใช้ VIX, HY spread, yield curve เป็น stress indicator ลด confidence เมื่อ macro stress สูง</div>
+        <div class="fix-paper">📄 Paper #5 (Radivojević et al. 2020) — tail risk overlay</div>
+      </div>
+    </div>
+    <div class="fix-row">
+      <div class="fix-where">compute_layer_a()<br>(Momentum Signal)</div>
+      <div>
+        <div class="fix-what">เปลี่ยนจาก single 20-day lookback เป็น blended [20, 60, 120] day ด้วยน้ำหนัก [0.50, 0.30, 0.20]</div>
+        <div class="fix-paper">📄 Paper #8 (Moskowitz et al. 2012)</div>
+      </div>
+    </div>
+    <div class="fix-row">
+      <div class="fix-where">vol_adjusted_z()<br>(Volatility Scaling)</div>
+      <div>
+        <div class="fix-what">เปลี่ยน volatility scaling จาก optional เป็น default สำหรับ Layer A — scale Z-score ด้วย σ_target / σ_realized พร้อม clip [0.25, 4.0]</div>
+        <div class="fix-paper">📄 Paper #6 (Moreira & Muir 2017)</div>
+      </div>
+    </div>
+    <div class="fix-row">
+      <div class="fix-where">EVT Tail Overlay<br>(เพิ่มใหม่ — Optional)</div>
+      <div>
+        <div class="fix-what">สำหรับ advanced implementation: เพิ่ม GPD tail estimation เมื่อ |Z| > 2 เพื่อคำนวณ tail probability ที่แม่นยำกว่า Gaussian assumption</div>
+        <div class="fix-paper">📄 Paper #5 (Radivojević 2020), #7 (Arian 2020), #9 (AIMS 2024)</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SECTION 12 ==================== -->
+<section id="s12">
+  <span class="section-num">ส่วนที่ 12</span>
+  <h2>สรุปและคำแนะนำ</h2>
+
+  <h3>สิ่งที่ระบบทำถูกต้อง</h3>
+  <div class="card card-success">
+    <p style="color:var(--text)">
+      1. <strong>สถาปัตยกรรม Multi-Signal Confluence ถูกต้อง</strong> — งานวิจัยปี 2024–2026 ยังใช้ multi-signal approach สำหรับ systematic macro<br>
+      2. <strong>References หลัก (Moskowitz 2012, Ben-David 2018, Moreira &amp; Muir 2017) ยังเป็นปัจจุบัน</strong> — ไม่มีงานที่หักล้างโดยตรง<br>
+      3. <strong>Data sources (FRED Z.1, ETF flows, SPY/AGG) เหมาะสม</strong> — ยังเป็น proxy ที่ดีในปี 2026<br>
+      4. <strong>Conflict detection logic มีอยู่แล้ว</strong> — แค่ต้องขยายให้ครอบคลุม partial conflicts
+    </p>
+  </div>
+
+  <h3>ลำดับความสำคัญในการแก้ไข</h3>
+  <table>
+    <tr><th>ลำดับ</th><th>จุดบกพร่อง</th><th>ความรุนแรง</th><th>ผลกระทบ</th><th>ความยากในการ implement</th></tr>
+    <tr><td>1</td><td>#1 — Cornish-Fisher Z-Score</td><td style="color:var(--red)">วิกฤต</td><td>ทุก layer</td><td>ปานกลาง (50 LOC)</td></tr>
+    <tr><td>2</td><td>#2 — Sigma Floor</td><td style="color:var(--red)">วิกฤต</td><td>ทุก layer</td><td>ง่าย (20 LOC)</td></tr>
+    <tr><td>3</td><td>#5 — Macro Override</td><td style="color:var(--orange)">สูง</td><td>Confluence</td><td>ปานกลาง (40 LOC)</td></tr>
+    <tr><td>4</td><td>#3 — Threshold Calibration</td><td style="color:var(--red)">วิกฤต</td><td>ทุก layer</td><td>สูง (ต้อง backtest)</td></tr>
+    <tr><td>5</td><td>#4 — Dynamic Weights</td><td style="color:var(--orange)">สูง</td><td>Confluence</td><td>ง่าย (30 LOC)</td></tr>
+    <tr><td>6</td><td>#6 — Blended Lookback</td><td style="color:var(--yellow)">ปานกลาง</td><td>Layer A</td><td>ง่าย (15 LOC)</td></tr>
+    <tr><td>7</td><td>#7 — Vol Scaling Default</td><td style="color:var(--yellow)">ปานกลาง</td><td>Layer A</td><td>ง่าย (15 LOC)</td></tr>
+  </table>
+
+  <h3>คำเตือนสำคัญ</h3>
+  <div class="card card-danger">
+    <div class="card-title" style="color:var(--red)">⚠ Fat Tail ไม่สามารถ "แก้" ได้ 100% — ทำได้แค่ลดผลกระทบ</div>
+    <p style="color:var(--text2)">
+      ตามที่ Taleb (2020) เน้นย้ำ: fat tail distributions มีคุณสมบัติที่ sample statistics 
+      (mean, variance, Z-score) <strong>ไม่ converge</strong> ตาม classical asymptotics 
+      ไม่มี model ใดจะจับ tail events ได้ 100% สิ่งที่ทำได้คือ:
+    </p>
+    <p style="color:var(--text2)">
+      1. <strong>รู้ตัวว่า model ผิด</strong> → ไม่ overconfident ใน probability output<br>
+      2. <strong>ใช้ robust estimators</strong> → Cornish-Fisher, EVT แทน Gaussian Z-score<br>
+      3. <strong>มี circuit breaker</strong> → Macro Override ที่ลด confidence ในช่วง stress<br>
+      4. <strong>Backtest สม่ำเสมอ</strong> → ตรวจสอบว่า out-of-sample performance ยังสอดคล้อง
+    </p>
+  </div>
+</section>
+
+</main>
+
+<footer style="padding:48px 24px; text-align:center; border-top:1px solid var(--border); color:var(--text3); font-size:12px;">
+  Mathematical Audit Report — Sector Probability System v1.0<br>
+  สร้างจากการวิเคราะห์ sector-tab.tsx และ 3-Layer Confluence Architecture<br>
+  อ้างอิง research papers 9 ฉบับ · วิเคราะห์ 30 พฤษภาคม 2026
+</footer>
+
+</body>
+</html>
