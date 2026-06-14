@@ -82,7 +82,7 @@ class ProviderRegistry:
                 "healthy": self._is_healthy(p),
                 "active": p.name == self._active,
                 "auto_failover": self._auto_failover,
-                "last_served": p.name == self._last_served,
+                "last_served": p.name in (self._last_served or "").split("+"),
             })
         return out
 
@@ -102,20 +102,37 @@ class ProviderRegistry:
     # ── Quote-path operations (with failover) ─────────────────────────────────
 
     def get_quotes(self, symbols: list[str]) -> BatchQuoteResult:
+        """Gap-fill across providers.
+
+        Run the active provider first, then route only the still-missing
+        symbols (``last_price is None``) to each next provider in priority
+        order, merging the results.  A mixed batch (e.g. TH ``.BK`` + US
+        tickers) is served by whichever provider can price each symbol —
+        no provider needs to declare what it supports; the gaps drive it.
+        """
         if not symbols:
             return BatchQuoteResult(quotes={})
-        last: BatchQuoteResult = BatchQuoteResult(
-            quotes={s: QuoteSnapshot(symbol=s) for s in symbols})
+        merged: dict[str, QuoteSnapshot] = {s: QuoteSnapshot(symbol=s) for s in symbols}
+        pending = list(symbols)
+        served: list[str] = []
         for p in self._candidates():
+            if not pending:
+                break
             try:
-                res = p.get_quotes(symbols)
+                res = p.get_quotes(pending)
             except Exception:
                 continue
-            if _has_any_price(res):
-                self._last_served = p.name
-                return res
-            last = res
-        return last
+            filled = False
+            for sym, q in res.quotes.items():
+                if q and q.last_price is not None and merged[sym].last_price is None:
+                    merged[sym] = q
+                    filled = True
+            if filled:
+                served.append(p.name)
+            pending = [s for s in pending if merged[s].last_price is None]
+        if served:
+            self._last_served = served[0] if len(served) == 1 else "+".join(served)
+        return BatchQuoteResult(quotes=merged)
 
     def get_quote(self, symbol: str) -> QuoteSnapshot:
         for p in self._candidates():
@@ -148,24 +165,30 @@ class ProviderRegistry:
                  interval: str = "1d") -> BatchPriceResult:
         if not symbols:
             return BatchPriceResult(prices={})
-        last = BatchPriceResult(prices={s: None for s in symbols})
+        merged: dict[str, Optional[float]] = {s: None for s in symbols}
+        pending = list(symbols)
+        served: list[str] = []
         for p in self._candidates():
+            if not pending:
+                break
             try:
-                res = p.download(symbols, period=period, interval=interval)
+                res = p.download(pending, period=period, interval=interval)
             except Exception:
                 continue
-            if any(v is not None for v in res.prices.values()):
-                self._last_served = p.name
-                return res
-            last = res
-        return last
+            filled = False
+            for sym, val in res.prices.items():
+                if val is not None and merged[sym] is None:
+                    merged[sym] = val
+                    filled = True
+            if filled:
+                served.append(p.name)
+            pending = [s for s in pending if merged[s] is None]
+        if served:
+            self._last_served = served[0] if len(served) == 1 else "+".join(served)
+        return BatchPriceResult(prices=merged)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-def _has_any_price(res: BatchQuoteResult) -> bool:
-    return any(q.last_price is not None for q in res.quotes.values())
-
 
 def _empty_df():
     import pandas as pd
