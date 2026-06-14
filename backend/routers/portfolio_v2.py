@@ -293,6 +293,25 @@ def patch_account(account_id: str, body: AccountPatch):
     return {"ok": True}
 
 
+@router.delete("/accounts/{account_id}")
+def delete_account(account_id: str):
+    with get_db() as conn:
+        n_trades = conn.execute(
+            "SELECT COUNT(*) FROM trades WHERE account_id = ?", (account_id,)
+        ).fetchone()[0]
+        if n_trades > 0:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Account has {n_trades} trade(s). Delete or move them first.",
+            )
+        cur = conn.execute("DELETE FROM portfolio_accounts WHERE id = ?", (account_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Account not found")
+        conn.execute("DELETE FROM cash_ledger WHERE account_id = ?", (account_id,))
+        conn.execute("DELETE FROM dividends   WHERE account_id = ?", (account_id,))
+    return {"ok": True}
+
+
 # ── Trades ───────────────────────────────────────────────────────────────────
 
 @router.get("/trades")

@@ -76,7 +76,10 @@
 - `POST /api/portfolio/db/import` — bulk import CSV
 
 ## Portfolio v2 (`routers/portfolio_v2.py`)
-- `GET /api/v2/portfolio/accounts` — list accounts
+- `GET /api/v2/portfolio/accounts` — list accounts (no default seed; users create their own)
+- `POST /api/v2/portfolio/accounts` — create account (id, name, country, currency, account_type)
+- `PATCH /api/v2/portfolio/accounts/{id}` — update name/broker/is_active
+- `DELETE /api/v2/portfolio/accounts/{id}` — delete account (409 if it has trades; also clears its cash/dividends)
 - `GET /api/v2/portfolio/trades` — trade log (filter by account/symbol)
 - `POST /api/v2/portfolio/trades` — add trade (17 fields incl. is_option, vat_amount)
 - `PATCH /api/v2/portfolio/trades/{id}` — edit trade

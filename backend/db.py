@@ -377,16 +377,8 @@ def init_portfolio_v2() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pop_account ON paper_option_positions(account_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pop_status  ON paper_option_positions(status)")
 
-        # Seed default accounts
-        for acc_id, name, broker, country, currency, acc_type in [
-            ("th_equity", "TH Equity",  "TH Broker",    "TH",     "THB", "equity"),
-            ("us_equity", "US Equity",  "US Broker",    "US",     "USD", "equity"),
-            ("crypto",    "Crypto",     "Crypto Exchange", "CRYPTO", "THB", "crypto"),
-        ]:
-            conn.execute("""
-                INSERT OR IGNORE INTO portfolio_accounts (id, name, broker, country, currency, account_type)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (acc_id, name, broker, country, currency, acc_type))
+        # No default accounts — users create their own via the portfolio UI
+        # (POST /api/v2/portfolio/accounts).
 
 
 def get_sectors_by_country(country: str) -> list[str]:
