@@ -3,6 +3,7 @@
 import React from "react";
 import { Moon, Search, Settings, Sun } from "lucide-react";
 import { bloombergColors } from "../lib/theme-config";
+import { ProviderSwitch } from "./provider-switch";
 
 export interface NavItem {
   id: string;
@@ -86,6 +87,9 @@ export function TerminalHeader({
 
       {/* RIGHT — status controls, always visible */}
       <div className="flex items-center shrink-0">
+        {/* Quote provider switch + health */}
+        <ProviderSwitch isDarkMode={isDarkMode} />
+
         {/* %YTD / %DAILY toggle */}
         <button
           type="button"

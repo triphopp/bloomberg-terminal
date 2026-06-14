@@ -126,6 +126,8 @@ memory/
 | **Strategy Fit classifier (7 strategies, Gaussian scoring)** (ทำเสร็จแล้ว) | `plans/completed/strategy-classifier.md` |
 | **Frontend code splitting & perf** (ทำเสร็จแล้ว) | `plans/completed/frontend-code-splitting.md` |
 | **Production infrastructure** (Docker, CI/CD, logging, DB, Redis) | `plans/infra/production-infrastructure.md` |
+| **Multi-provider quote registry + failover + header switch** (Phase 0) | ✅ done 2026-06-14 — `plans/scaling/provider-registry.md` |
+| **Concurrent-scaling roadmap** (Phase 1 SSE fan-out, Phase 2 WS paid feed) | 📋 planned — `plans/scaling/` (`README.md`, `live-data-transport.md`) |
 | **Computation analysis — Rust/native viability** | `reports/computation-analysis-report.md` |
 | **Production readiness — 100K users (47 gaps)** | `reports/production-readiness-report.md` |
 | **Frontend performance — bundle & rendering audit** | `reports/frontend-performance-report.md` |

@@ -276,6 +276,18 @@ Auth: static token in `Authorization` header (no "Bearer" prefix — IBM API Con
 
 ---
 
+## Quote Providers (`routers/providers.py`)
+Controls the live-quote registry (manual switch + auto-failover, capability-scoped).
+- `GET /api/providers` — `{active, providers: [{name, label, healthy, active, auto_failover, last_served}]}`
+- `POST /api/providers/active` — body `{name}` — pin active provider (404 if unknown)
+- `POST /api/providers/auto-failover` — body `{enabled}` — toggle failover to next healthy
+
+**Next.js proxy:** `app/api/providers/{route,active/route,auto-failover/route}.ts`
+**Frontend:** `layout/provider-switch.tsx` (header chip), `hooks/useProviders.ts`, `hooks/useLiveQuery.ts` (cadence seam)
+**Providers:** `YFQuoteProvider` (default) → `StooqQuoteProvider` (keyless fallback). Add via `registry.register()` in `sources/__init__.py`.
+
+---
+
 ## Caching Strategy
 
 | Data | Cache | Where |

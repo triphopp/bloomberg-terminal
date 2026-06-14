@@ -3,6 +3,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useLiveQuery } from "./useLiveQuery";
 import {
   fetchAllMarketData,
   fetchMarketItemById,
@@ -33,13 +34,10 @@ export function useAllMarketData() {
 
   const queryClient = useQueryClient();
 
-  // Main query for all market data
-  const marketDataQuery = useQuery({
+  // Main query for all market data — cadence centralized in useLiveQuery
+  const marketDataQuery = useLiveQuery({
     queryKey: queryKeys.marketData.list(),
     queryFn: fetchAllMarketData,
-    refetchInterval: isRealTimeEnabled ? 60000 : 300000, // 60s in real-time mode (aligned with backend CACHE_TTL=60), 5m otherwise
-    staleTime: 55000, // 55s — buffer 5s before backend cache expires at 60s
-    refetchOnWindowFocus: false,
     gcTime: 3600000, // 1 hour
   });
 
@@ -172,16 +170,9 @@ export function useRegionMarketData(regions: string[] = ["americas", "emea", "as
  * Hook for fetching market movers
  */
 export function useMarketMovers() {
-  const [isRealTimeEnabled] = useAtom(isRealTimeEnabledAtom);
-  const queryClient = useQueryClient();
-
-  // First check if we already have market data in the cache
-  const marketDataQuery = useQuery({
+  const marketDataQuery = useLiveQuery({
     queryKey: queryKeys.marketMovers.list(),
     queryFn: fetchMarketMovers,
-    refetchInterval: isRealTimeEnabled ? 60000 : 300000,
-    staleTime: 55000,
-    refetchOnWindowFocus: false,
     gcTime: 3600000,
   });
 
@@ -192,15 +183,9 @@ export function useMarketMovers() {
  * Hook for fetching volatile markets
  */
 export function useVolatileMarkets() {
-  const [isRealTimeEnabled] = useAtom(isRealTimeEnabledAtom);
-  const queryClient = useQueryClient();
-
-  const volatilityQuery = useQuery({
+  const volatilityQuery = useLiveQuery({
     queryKey: queryKeys.volatility.list(),
     queryFn: fetchVolatileMarkets,
-    refetchInterval: isRealTimeEnabled ? 60000 : 300000,
-    staleTime: 55000,
-    refetchOnWindowFocus: false,
     gcTime: 3600000,
   });
 
@@ -211,14 +196,9 @@ export function useVolatileMarkets() {
  * Hook for fetching a specific market item by ID
  */
 export function useMarketItem(id: string) {
-  const [isRealTimeEnabled] = useAtom(isRealTimeEnabledAtom);
-
-  const itemQuery = useQuery({
+  const itemQuery = useLiveQuery({
     queryKey: queryKeys.marketData.detail(id),
     queryFn: () => fetchMarketItemById(id),
-    refetchInterval: isRealTimeEnabled ? 60000 : 300000,
-    staleTime: 55000,
-    refetchOnWindowFocus: false,
     gcTime: 3600000,
     // Only fetch if we have an ID
     enabled: !!id,

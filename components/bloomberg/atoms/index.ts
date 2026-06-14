@@ -101,7 +101,9 @@ export const lastUpdatedAtom = atom<Date | null>(null);
 export const lastServerFetchAtom = atom<Date | null>(null);
 export const dataSourceAtom = atom<string>("local");
 export const isFromRedisAtom = atom(false);
-export const isRealTimeEnabledAtom = atom(false);
+// Live polling on by default (60s cadence, aligned with backend CACHE_TTL).
+// Persisted so a user who turns it off stays off across reloads.
+export const isRealTimeEnabledAtom = atomWithStorage<boolean>("market:realtime", true);
 export const lastSparklineUpdateAtom = atom<Date | null>(null);
 export const updatedCellsAtom = atom<Record<string, boolean>>({});
 export const updatedSparklinesAtom = atom<Record<string, boolean>>({});

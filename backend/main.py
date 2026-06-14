@@ -20,7 +20,7 @@ from config import CORS_ORIGINS
 from db import init_db, init_portfolio_v2, seed_symbol_lists
 from analytics.regime_calibration import ensure_model_fresh
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, stoploss, alerts, ticker, analytics, fear_greed, tail_risk, paper_trading
+from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, stoploss, alerts, ticker, analytics, fear_greed, tail_risk, paper_trading, providers
 
 app = FastAPI(title="Market Data API")
 
@@ -83,6 +83,7 @@ app.include_router(analytics.router)
 app.include_router(fear_greed.router)
 app.include_router(tail_risk.router)
 app.include_router(paper_trading.router, tags=["Paper Trading"])
+app.include_router(providers.router, tags=["Providers"])
 
 
 @app.exception_handler(StarletteHTTPException)

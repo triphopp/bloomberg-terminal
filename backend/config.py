@@ -227,6 +227,12 @@ YTD_CACHE_TTL = 3600
 ETF_SIZE_CACHE_TTL = 3600
 MEM_CACHE_TTL = 300  # 5 minutes — used by bot, central_banks, crisis, macro, sovereign, polymarket
 
+# ── Quote provider registry (live-quote path) ───────────────────────────────────
+# Default active price vendor + whether to auto-fail-over to the next healthy
+# provider when the active one errors / returns empty. Override via env.
+QUOTE_PROVIDER_DEFAULT = os.getenv("QUOTE_PROVIDER_DEFAULT", "yfinance")
+QUOTE_AUTO_FAILOVER = os.getenv("QUOTE_AUTO_FAILOVER", "true").lower() == "true"
+
 # ── HTTP defaults ──────────────────────────────────────────────────────────────
 DEFAULT_HTTP_TIMEOUT = 15  # seconds — shared by central_banks, bot, polymarket
 
