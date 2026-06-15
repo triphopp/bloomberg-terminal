@@ -64,3 +64,6 @@ next-env.d.ts
 .claude/settings.local.json
 .claude/launch.json
 .claude/
+
+# Codex tool config
+.codex/
