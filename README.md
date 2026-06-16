@@ -26,6 +26,19 @@ A personal Bloomberg-style financial terminal built for local use. Real-time mar
 
 ---
 
+## Multi-Provider Quote System
+
+Market quotes are served through a **provider registry** with automatic gap-fill failover:
+
+1. **Yahoo Finance** (primary) — full coverage, real-time
+2. **Stooq** (fallback) — keyless, end-of-day, US equities + major indices
+
+For a mixed batch (e.g. `PTT.BK` Thai stocks + `AAPL` US), each provider fills only the symbols it can price — gaps from the primary are routed to the fallback automatically.
+
+The active provider can be switched from the terminal header chip. Status is visible at `GET /api/providers`.
+
+---
+
 ## Stack
 
 | Layer | Tech |
@@ -84,6 +97,17 @@ cp .env.local.example .env.local
 ```
 
 ### 4. Run
+
+**One command (all platforms):**
+
+```bash
+npm run dev:all          # backend + frontend + Ollama
+npm run dev:no-ollama    # backend + frontend only (if Ollama not installed)
+```
+
+Output is color-coded per process — `Ctrl+C` stops everything at once.
+
+**Manual (separate terminals):**
 
 ```bash
 # Terminal 1 — backend
@@ -195,6 +219,24 @@ GET /api/stoploss/atr?symbols=SPY
 | Black-Scholes + Gram-Charlier | `greeks.py` | BSM |
 | Ledoit-Wolf covariance | `routers/risk.py` | Ledoit & Wolf (2004) |
 | VaR / CVaR | `routers/risk.py` | Historical + Parametric |
+
+---
+
+## Troubleshooting
+
+### macOS: data shows empty or search returns nothing
+The backend must be running before the frontend. If using mobile hotspot, Yahoo Finance requests may be blocked or rate-limited by your carrier's DNS — switch to a regular WiFi connection.
+
+```bash
+# Verify backend is running
+curl http://localhost:8000/api/market-data
+```
+
+### `npm ci` fails with peer dependency error
+The project uses `date-fns@4` alongside `react-day-picker@8` which expects `date-fns@^3`. `.npmrc` sets `legacy-peer-deps=true` to resolve this. If you hit the error after a fresh clone, ensure `.npmrc` is present in the project root.
+
+### Database empty on first run
+`symbol_lists` (indices, FX pairs, crypto) are seeded automatically from `config.py` on backend first start. If the market view shows no data after the backend starts, check the backend terminal for seed errors.
 
 ---
 
