@@ -301,7 +301,10 @@ def _compute_portfolio_risk(positions: list[dict], lookback: int, confidence: fl
     # Duplicate rows → sample corr = 1.0 → Ledoit-Wolf shrinks to < 1.0
     # → correlation matrix shows e.g. MSFT/MSFT = 0.89 (wrong).
     sym_value_map: dict[str, float] = {}
-    sym_to_yf: dict[str, str] = {}  # yf_sym → display name
+    sym_price_map: dict[str, float] = {}       # yf_sym → latest market price
+    sym_entry_value_map: dict[str, float] = {} # yf_sym → sum(price_entry * volume) for avg cost
+    sym_volume_map: dict[str, float] = {}      # yf_sym → total shares held
+    sym_to_yf: dict[str, str] = {}             # yf_sym → display name
 
     for pos in positions:
         yf_sym = _get_yf_symbol(pos["symbol"], pos["account_id"])
@@ -312,7 +315,13 @@ def _compute_portfolio_risk(positions: list[dict], lookback: int, confidence: fl
         val = float(price or 0) * vol
         if val > 0:
             sym_value_map[yf_sym] = sym_value_map.get(yf_sym, 0.0) + val
+            if price:
+                sym_price_map[yf_sym] = float(price)
             sym_to_yf[yf_sym] = pos["symbol"]  # last display name wins
+        entry_price = float(pos.get("price_entry") or 0)
+        if entry_price > 0 and vol > 0:
+            sym_entry_value_map[yf_sym] = sym_entry_value_map.get(yf_sym, 0.0) + entry_price * vol
+            sym_volume_map[yf_sym] = sym_volume_map.get(yf_sym, 0.0) + vol
 
     if not sym_value_map:
         return _empty_metrics()
@@ -530,7 +539,10 @@ def _compute_portfolio_risk(positions: list[dict], lookback: int, confidence: fl
             "matrix": [[round(float(corr[i][j]), 3) for j in range(n)] for i in range(n)],
         },
         # Trim signals
-        "trim_signals": _compute_trim_signals(asset_details, w, cov, valid_syms, sym_to_yf, port_vol_daily),
+        "trim_signals": _compute_trim_signals(
+            asset_details, w, cov, valid_syms, sym_to_yf, port_vol_daily,
+            sym_value_map, sym_price_map, sym_entry_value_map, sym_volume_map,
+        ),
         # DCC-EWMA correlation monitor
         "dcc": _dcc_ewma_correlation(R),
         # Internal: popped before JSON serialization, used for backfill
@@ -538,31 +550,96 @@ def _compute_portfolio_risk(positions: list[dict], lookback: int, confidence: fl
     }
 
 
-def _compute_trim_signals(assets: list, weights: np.ndarray, cov: np.ndarray,
-                           symbols: list, sym_map: dict, port_vol: float) -> list:
-    """Generate trim recommendations when risk contribution is excessive."""
+def _compute_trim_signals(
+    assets: list, weights: np.ndarray, cov: np.ndarray,
+    symbols: list, sym_map: dict, port_vol: float,
+    sym_value_map: dict | None = None,
+    sym_price_map: dict | None = None,
+    sym_entry_value_map: dict | None = None,
+    sym_volume_map: dict | None = None,
+) -> list:
+    """Generate TRIM + BUY recommendations based on ERC deviation."""
     n = len(weights)
-    target_rc = 1.0 / n  # ERC target
+    target_rc = 1.0 / n  # equal risk contribution target
     signals = []
 
     marginal = cov @ weights
     rc = weights * marginal / port_vol
     rc_norm = rc / rc.sum()
 
+    _val = sym_value_map or {}
+    _price = sym_price_map or {}
+    _entry_val = sym_entry_value_map or {}
+    _vol = sym_volume_map or {}
+
     for i, sym in enumerate(symbols):
-        excess = float(rc_norm[i] - target_rc)
-        if excess > 0.05:  # >5% excess risk contribution
-            # How much to trim to reach target
-            trim_pct = min(excess / float(rc_norm[i]), 0.5) * 100
+        rc_i = float(rc_norm[i])
+        excess = rc_i - target_rc  # positive = overweight, negative = underweight
+
+        current_value = _val.get(sym, 0.0)
+        current_price = _price.get(sym, 0.0)
+        total_vol = _vol.get(sym, 0.0)
+        entry_total = _entry_val.get(sym, 0.0)
+        avg_entry_price = entry_total / total_vol if total_vol > 0 else 0.0
+        current_shares = round(current_value / current_price, 4) if current_price > 0 else None
+
+        if excess > 0.05:  # TRIM: >5pp above ERC target
+            trim_fraction = min(excess / rc_i, 0.5)
+            trim_pct = trim_fraction * 100
+            trim_value = current_value * trim_fraction
+            shares_to_trim = round(trim_value / current_price, 4) if current_price > 0 else None
+
+            # P&L if sold at current price vs avg cost
+            trim_pnl: float | None = None
+            trim_pnl_pct: float | None = None
+            if shares_to_trim is not None and avg_entry_price > 0 and current_price > 0:
+                trim_pnl = round((current_price - avg_entry_price) * shares_to_trim, 2)
+                trim_pnl_pct = round((current_price / avg_entry_price - 1) * 100, 2)
+
             signals.append({
                 "symbol": sym_map.get(sym, sym),
                 "action": "TRIM",
-                "reason": f"Risk contribution {rc_norm[i]*100:.1f}% vs target {target_rc*100:.1f}%",
+                "reason": f"Risk contribution {rc_i*100:.1f}% vs target {target_rc*100:.1f}%",
                 "excess_rc_pct": round(excess * 100, 2),
                 "suggested_trim_pct": round(trim_pct, 1),
+                "current_shares": current_shares,
+                "shares_to_trim": shares_to_trim,
+                "current_price": round(current_price, 4) if current_price > 0 else None,
+                "avg_entry_price": round(avg_entry_price, 4) if avg_entry_price > 0 else None,
+                "trim_value": round(trim_value, 2) if current_value > 0 else None,
+                "trim_pnl": trim_pnl,
+                "trim_pnl_pct": trim_pnl_pct,
+                # BUY-only fields
+                "shares_to_buy": None,
+                "buy_value": None,
             })
 
-    return sorted(signals, key=lambda x: -x["excess_rc_pct"])
+        elif excess < -0.05:  # BUY: >5pp below ERC target
+            deficit = -excess  # how far below target
+            # Fraction of current position value to add to reach target
+            buy_fraction = min(deficit / target_rc, 1.0)
+            buy_value = current_value * buy_fraction
+            shares_to_buy = round(buy_value / current_price, 4) if current_price > 0 else None
+
+            signals.append({
+                "symbol": sym_map.get(sym, sym),
+                "action": "BUY",
+                "reason": f"Risk contribution {rc_i*100:.1f}% vs target {target_rc*100:.1f}%",
+                "excess_rc_pct": round(excess * 100, 2),  # negative for BUY
+                "suggested_trim_pct": 0.0,
+                "current_shares": current_shares,
+                "shares_to_trim": None,
+                "current_price": round(current_price, 4) if current_price > 0 else None,
+                "avg_entry_price": round(avg_entry_price, 4) if avg_entry_price > 0 else None,
+                "trim_value": None,
+                "trim_pnl": None,
+                "trim_pnl_pct": None,
+                "shares_to_buy": shares_to_buy,
+                "buy_value": round(buy_value, 2) if current_value > 0 else None,
+            })
+
+    # Sort: TRIM (excess > 0) first by severity, then BUY (excess < 0) by severity
+    return sorted(signals, key=lambda x: -abs(x["excess_rc_pct"]))
 
 
 def _dcc_empty() -> dict:
