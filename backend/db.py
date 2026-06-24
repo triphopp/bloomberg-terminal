@@ -377,6 +377,33 @@ def init_portfolio_v2() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pop_account ON paper_option_positions(account_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pop_status  ON paper_option_positions(status)")
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS trade_audit_log (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                trade_id       TEXT NOT NULL,
+                action         TEXT NOT NULL,
+                fields_changed TEXT DEFAULT '{}',
+                reason         TEXT DEFAULT '',
+                snapshot       TEXT DEFAULT '{}',
+                created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tal_trade ON trade_audit_log(trade_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tal_time  ON trade_audit_log(created_at)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS position_cost_overrides (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id TEXT NOT NULL,
+                symbol     TEXT NOT NULL,
+                avg_cost   REAL NOT NULL,
+                reason     TEXT DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(account_id, symbol)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pco_account ON position_cost_overrides(account_id)")
+
         # No default accounts — users create their own via the portfolio UI
         # (POST /api/v2/portfolio/accounts).
 

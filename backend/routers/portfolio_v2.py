@@ -3,6 +3,7 @@ Portfolio v2 — Multi-account, multi-currency trade tracking.
 Supports TH equity, US equity, and crypto accounts.
 """
 import io
+import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -171,6 +172,42 @@ def _get_thb_per_usd() -> float:
     return 33.5
 
 
+# ── Audit helpers ────────────────────────────────────────────────────────────
+
+def _write_audit_log(
+    conn,
+    trade_id: str,
+    action: str,
+    old_row: dict,
+    new_values: dict | None = None,
+    reason: str = "",
+) -> None:
+    """Append one immutable event to trade_audit_log."""
+    fields_changed: dict = {}
+    if new_values:
+        for k, v in new_values.items():
+            old_v = old_row.get(k)
+            if old_v != v:
+                fields_changed[k] = {"old": old_v, "new": v}
+
+    conn.execute(
+        """INSERT INTO trade_audit_log
+               (trade_id, action, fields_changed, reason, snapshot)
+           VALUES (?, ?, ?, ?, ?)""",
+        (
+            trade_id,
+            action,
+            json.dumps(fields_changed),
+            reason or "",
+            json.dumps({k: old_row.get(k) for k in [
+                "symbol", "price_entry", "volume", "date_entry",
+                "price_exit", "date_exit", "win_loss", "pnl_amount",
+                "price_stoploss", "price_target", "note",
+            ]}),
+        ),
+    )
+
+
 # ── Pydantic Models ──────────────────────────────────────────────────────────
 
 class AccountIn(BaseModel):
@@ -236,6 +273,8 @@ class TradePatch(BaseModel):
     win_loss:        Optional[str]   = None
     pnl_percent:     Optional[float] = None
     exit_trigger:    Optional[str]   = None
+    # Audit meta — NOT persisted to trades table, only to audit log
+    adjustment_reason: Optional[str] = None
 
 
 class CashIn(BaseModel):
@@ -371,6 +410,7 @@ def create_trade(body: TradeIn):
 @router.patch("/trades/{trade_id}")
 def patch_trade(trade_id: str, body: TradePatch):
     updates = body.model_dump(exclude_none=True)
+    reason = updates.pop("adjustment_reason", "") or ""
     if not updates:
         raise HTTPException(status_code=400, detail="Nothing to update")
     if "symbol" in updates and updates["symbol"]:
@@ -379,19 +419,123 @@ def patch_trade(trade_id: str, body: TradePatch):
         updates["win_loss"] = updates["win_loss"].upper()
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     with get_db() as conn:
+        old = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
+        if not old:
+            raise HTTPException(status_code=404, detail="Trade not found")
+        old_dict = dict(old)
         cur = conn.execute(f"UPDATE trades SET {set_clause} WHERE id = ?",
                            list(updates.values()) + [trade_id])
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Trade not found")
+        _write_audit_log(conn, trade_id, "PATCH", old_dict, updates, reason)
     return {"ok": True}
 
 
 @router.delete("/trades/{trade_id}")
 def delete_trade(trade_id: str):
     with get_db() as conn:
-        cur = conn.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
-        if cur.rowcount == 0:
+        old = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
+        if not old:
             raise HTTPException(status_code=404, detail="Trade not found")
+        _write_audit_log(conn, trade_id, "DELETE", dict(old), None, "")
+        conn.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+    return {"ok": True}
+
+
+# ── Trade Audit Log ─────────────────────────────────────────────────────────
+
+@router.get("/trades/{trade_id}/audit-log")
+def get_trade_audit_log(trade_id: str, limit: int = Query(50)):
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM trade_audit_log WHERE trade_id = ? ORDER BY created_at DESC LIMIT ?",
+            (trade_id, limit),
+        ).fetchall()
+    entries = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["fields_changed"] = json.loads(d["fields_changed"] or "{}")
+        except Exception:
+            d["fields_changed"] = {}
+        try:
+            d["snapshot"] = json.loads(d["snapshot"] or "{}")
+        except Exception:
+            d["snapshot"] = {}
+        entries.append(d)
+    return {"audit_log": entries}
+
+
+@router.get("/audit-log")
+def get_recent_audit_log(limit: int = Query(100), account_id: Optional[str] = Query(None)):
+    with get_db() as conn:
+        if account_id and account_id != "all":
+            rows = conn.execute(
+                """SELECT l.* FROM trade_audit_log l
+                   JOIN trades t ON l.trade_id = t.id
+                   WHERE t.account_id = ?
+                   ORDER BY l.created_at DESC LIMIT ?""",
+                (account_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM trade_audit_log ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+    entries = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["fields_changed"] = json.loads(d["fields_changed"] or "{}")
+        except Exception:
+            d["fields_changed"] = {}
+        try:
+            d["snapshot"] = json.loads(d["snapshot"] or "{}")
+        except Exception:
+            d["snapshot"] = {}
+        entries.append(d)
+    return {"audit_log": entries}
+
+
+# ── Position Cost Overrides (manual avg cost correction) ────────────────────
+
+class CostOverrideIn(BaseModel):
+    account_id: str
+    symbol: str
+    avg_cost: float
+    reason: Optional[str] = ""
+
+@router.get("/cost-overrides")
+def get_cost_overrides(account_id: Optional[str] = Query(None)):
+    with get_db() as conn:
+        if account_id and account_id != "all":
+            rows = conn.execute(
+                "SELECT * FROM position_cost_overrides WHERE account_id = ?",
+                (account_id,)
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM position_cost_overrides").fetchall()
+    return [dict(r) for r in rows]
+
+@router.post("/cost-overrides")
+def set_cost_override(body: CostOverrideIn):
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO position_cost_overrides (account_id, symbol, avg_cost, reason, updated_at)
+               VALUES (?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(account_id, symbol) DO UPDATE SET
+               avg_cost = excluded.avg_cost, reason = excluded.reason, updated_at = excluded.updated_at""",
+            (body.account_id, body.symbol, body.avg_cost, body.reason or "")
+        )
+    return {"ok": True}
+
+@router.delete("/cost-overrides/{account_id}/{symbol}")
+def delete_cost_override(account_id: str, symbol: str):
+    with get_db() as conn:
+        conn.execute(
+            "DELETE FROM position_cost_overrides WHERE account_id = ? AND symbol = ?",
+            (account_id, symbol)
+        )
     return {"ok": True}
 
 
@@ -461,7 +605,18 @@ def sell_position(body: SellIn):
         if sell_vol > total_volume:
             raise HTTPException(status_code=400, detail=f"Sell volume ({sell_vol}) exceeds position volume ({total_volume})")
 
-        entry_price = float(pos["price_entry"])
+        # Use weighted average across all open lots for this symbol+account (AVCO method)
+        all_lots = conn.execute(
+            "SELECT price_entry, volume FROM trades WHERE account_id = ? AND symbol = ? AND win_loss = 'P'",
+            (pos["account_id"], pos["symbol"])
+        ).fetchall()
+        total_vol_all = sum(float(l["volume"]) for l in all_lots)
+        if total_vol_all > 0:
+            avg_cost = sum(float(l["price_entry"]) * float(l["volume"]) for l in all_lots) / total_vol_all
+        else:
+            avg_cost = float(pos["price_entry"])
+
+        entry_price = avg_cost
         exit_price  = float(body.sell_price)
         remaining   = round(total_volume - sell_vol, 8)
 
@@ -469,10 +624,13 @@ def sell_position(body: SellIn):
             # ── Full sell: close the position ────────────────────────────────
             pnl = round((exit_price - entry_price) * total_volume, 2)
             pnl_pct = round(((exit_price / entry_price) - 1) * 100, 2) if entry_price > 0 else 0
-            # Account for commission if provided
             pnl_net = round(pnl - float(body.commission), 2)
             wl = "W" if pnl_net >= 0 else "L"
 
+            new_vals = {
+                "date_exit": body.sell_date, "price_exit": exit_price,
+                "pnl_amount": pnl_net, "win_loss": wl, "pnl_percent": pnl_pct,
+            }
             conn.execute(
                 """UPDATE trades SET date_exit = ?, price_exit = ?,
                    pnl_amount = ?, win_loss = ?, pnl_percent = ?, note = note || ?
@@ -481,6 +639,8 @@ def sell_position(body: SellIn):
                  f"\n[SOLD {body.sell_date}] @ {exit_price} | P&L: {pnl_net}",
                  body.trade_id),
             )
+            _write_audit_log(conn, body.trade_id, "SELL_FULL", pos, new_vals,
+                             f"full sell {total_volume} @ {exit_price}")
 
             return {
                 "ok": True,
@@ -498,30 +658,39 @@ def sell_position(body: SellIn):
             sold_pnl_net = round(sold_pnl - float(body.commission), 2)
             sold_wl = "W" if sold_pnl_net >= 0 else "L"
 
-            # 1) Create closed trade for sold portion
-            import uuid
-            sold_id = str(uuid.uuid4())
+            import uuid as _uuid
+            sold_id = str(_uuid.uuid4())
             conn.execute(
                 """INSERT INTO trades (id, account_id, symbol, sector, date_entry, date_exit,
                    price_entry, price_exit, volume, pnl_amount, win_loss, pnl_percent,
                    currency, exchange_rate, strategy_name, note)
                    SELECT ?, account_id, symbol, sector, date_entry, ?,
-                   price_entry, ?, ?, ?, ?, ?,
+                   ?, ?, ?, ?, ?, ?,
                    currency, exchange_rate, strategy_name, ?
                    FROM trades WHERE id = ?""",
-                (sold_id, body.sell_date, exit_price, sold_volume,
+                (sold_id, body.sell_date, avg_cost, exit_price, sold_volume,
                  sold_pnl_net, sold_wl, sold_pnl_pct,
                  f"[PARTIAL SELL {body.sell_date}] @ {exit_price} | P&L: {sold_pnl_net}",
                  body.trade_id),
             )
 
-            # 2) Reduce original position volume
             conn.execute(
                 "UPDATE trades SET volume = ?, note = note || ? WHERE id = ?",
                 (remaining,
                  f"\n[PARTIAL SELL {body.sell_date}] {sold_volume} shares @ {exit_price}",
                  body.trade_id),
             )
+
+            # Log on BOTH the original lot (volume reduced) and the new sold record
+            _write_audit_log(conn, body.trade_id, "SELL_PARTIAL", pos,
+                             {"volume": remaining},
+                             f"partial sell {sold_volume} @ {exit_price}, avg_cost={round(avg_cost,4)}, remaining={remaining}")
+            sold_snap = {k: pos.get(k) for k in ["symbol", "price_entry", "date_entry"]}
+            _write_audit_log(conn, sold_id, "SELL_PARTIAL_CREATED", sold_snap,
+                             {"volume": sold_volume, "price_entry": avg_cost,
+                              "price_exit": exit_price,
+                              "win_loss": sold_wl, "pnl_amount": sold_pnl_net},
+                             f"created from partial sell of {body.trade_id}")
 
             return {
                 "ok": True,

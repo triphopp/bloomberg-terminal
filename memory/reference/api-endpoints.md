@@ -82,8 +82,10 @@
 - `DELETE /api/v2/portfolio/accounts/{id}` — delete account (409 if it has trades; also clears its cash/dividends)
 - `GET /api/v2/portfolio/trades` — trade log (filter by account/symbol)
 - `POST /api/v2/portfolio/trades` — add trade (17 fields incl. is_option, vat_amount)
-- `PATCH /api/v2/portfolio/trades/{id}` — edit trade
-- `DELETE /api/v2/portfolio/trades/{id}` — delete trade
+- `PATCH /api/v2/portfolio/trades/{id}` — edit trade (optional `adjustment_reason` field → audit log only, not stored in trades table)
+- `DELETE /api/v2/portfolio/trades/{id}` — delete trade (auto-logs to audit before delete)
+- `GET /api/v2/portfolio/trades/{id}/audit-log` — immutable change history for one trade
+- `GET /api/v2/portfolio/audit-log` — recent changes across all trades (filter: account_id)
 - `PATCH /api/v2/portfolio/trades/bulk-patch-sector` — bulk sector override
 - `GET /api/v2/portfolio/open-positions` — open positions with live prices
 - `POST /api/v2/portfolio/sell` — sell (partial or full)

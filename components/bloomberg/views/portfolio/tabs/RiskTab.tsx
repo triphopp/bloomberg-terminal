@@ -220,38 +220,53 @@ export function RiskTab({
   const [optionsRisk, setOptionsRisk] = useState<OptionsRiskData | null>(null);
   const [loadingOpts, setLoadingOpts] = useState(false);
 
-  const loadMetrics = useCallback(async () => {
-    setLoading(true);
-    try {
-      const qs = accountId !== "all" ? `&account_id=${accountId}` : "";
-      const r = await fetch(`/api/v2/portfolio/risk/metrics?confidence=0.95&lookback=252${qs}`);
-      setMetrics(await r.json());
-    } catch {
-      /* ignore */
-    } finally {
-      setLoading(false);
-    }
-  }, [accountId]);
+  const loadMetrics = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoading(true);
+      try {
+        const qs = accountId !== "all" ? `&account_id=${accountId}` : "";
+        const r = await fetch(`/api/v2/portfolio/risk/metrics?confidence=0.95&lookback=252${qs}`, {
+          signal,
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        setMetrics(await r.json());
+      } catch (e) {
+        if ((e as Error)?.name === "AbortError") return;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [accountId]
+  );
 
   useEffect(() => {
-    loadMetrics();
+    const ac = new AbortController();
+    loadMetrics(ac.signal);
+    return () => ac.abort();
   }, [loadMetrics]);
 
-  const loadOptionsRisk = useCallback(async () => {
-    setLoadingOpts(true);
-    try {
-      const qs = accountId !== "all" ? `?account_id=${accountId}` : "";
-      const r = await fetch(`/api/options/greeks/portfolio${qs}`);
-      setOptionsRisk(await r.json());
-    } catch {
-      /* ignore */
-    } finally {
-      setLoadingOpts(false);
-    }
-  }, [accountId]);
+  const loadOptionsRisk = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoadingOpts(true);
+      try {
+        const qs = accountId !== "all" ? `?account_id=${accountId}` : "";
+        const r = await fetch(`/api/options/greeks/portfolio${qs}`, { signal });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        setOptionsRisk(await r.json());
+      } catch (e) {
+        if ((e as Error)?.name === "AbortError") return;
+      } finally {
+        setLoadingOpts(false);
+      }
+    },
+    [accountId]
+  );
 
   useEffect(() => {
-    if (subTab === "options") loadOptionsRisk();
+    if (subTab !== "options") return;
+    const ac = new AbortController();
+    loadOptionsRisk(ac.signal);
+    return () => ac.abort();
   }, [subTab, loadOptionsRisk]);
 
   const sym = currency === "THB" ? "฿" : "$";
@@ -282,7 +297,12 @@ export function RiskTab({
             {t.label}
           </button>
         ))}
-        <button type="button" onClick={loadMetrics} disabled={loading} className="ml-auto p-0.5">
+        <button
+          type="button"
+          onClick={() => loadMetrics()}
+          disabled={loading}
+          className="ml-auto p-0.5"
+        >
           {loading ? (
             <Loader2 className="h-3 w-3 animate-spin" style={{ color: colors.textSecondary }} />
           ) : (
@@ -326,23 +346,30 @@ function EWSHistorySection({ accountId, colors }: { accountId: string; colors: C
   const [fatDates, setFatDates] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const qs = accountId !== "all" ? `&account_id=${accountId}` : "";
-      const r = await fetch(`/api/v2/portfolio/risk/history?days=30${qs}`);
-      const d = await r.json();
-      setHistory(d.snapshots ?? []);
-      setFatDates(d.fat_tail_dates ?? []);
-    } catch {
-      /* ignore */
-    } finally {
-      setLoading(false);
-    }
-  }, [accountId]);
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoading(true);
+      try {
+        const qs = accountId !== "all" ? `&account_id=${accountId}` : "";
+        const r = await fetch(`/api/v2/portfolio/risk/history?days=30${qs}`, { signal });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = await r.json();
+        setHistory(d.snapshots ?? []);
+        setFatDates(d.fat_tail_dates ?? []);
+      } catch (e) {
+        if ((e as Error)?.name === "AbortError") return;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [accountId]
+  );
 
   useEffect(() => {
-    if (open && history.length === 0) load();
+    if (!open || history.length > 0) return;
+    const ac = new AbortController();
+    load(ac.signal);
+    return () => ac.abort();
   }, [open, history.length, load]);
 
   // ── Signal color helpers ──
@@ -1071,13 +1098,20 @@ function OverviewSection({
 
   useEffect(() => {
     if (chartView !== "parity" || parity || parityLoading) return;
+    const ac = new AbortController();
     setParityLoading(true);
     const qs = accountId !== "all" ? `&account_id=${accountId}` : "";
-    fetch(`/api/v2/portfolio/risk/risk-parity?lookback=252${qs}`)
-      .then((r) => r.json())
+    fetch(`/api/v2/portfolio/risk/risk-parity?lookback=252${qs}`, { signal: ac.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error();
+        return r.json();
+      })
       .then((d) => setParity(d))
-      .catch(() => {})
+      .catch((e) => {
+        if (e?.name === "AbortError") return;
+      })
       .finally(() => setParityLoading(false));
+    return () => ac.abort();
   }, [chartView, parity, parityLoading, accountId]);
   const scale = Math.sqrt(varHorizon.days);
   const breachCount = [metrics.breach_hist, metrics.breach_cf, metrics.breach_mc].filter(
