@@ -144,7 +144,12 @@ async def get_x():
 สร้าง `memory/plans/<name>.md` → เพิ่ม `- [ ] **Feature** — desc (\`plans/<name>.md\`)` ใน `project_summary.md` → เพิ่มใน `INDEX.md`
 
 **Rule 2 — Plan completed:**
-ย้ายไฟล์ → `plans/completed/` → เปลี่ยน `[ ]` เป็น `[x] done YYYY-MM-DD` ใน `project_summary.md` → อัปเดต `INDEX.md`
+ต้องผ่าน **2 เงื่อนไข** ก่อน move — ขาดข้อใดข้อหนึ่ง = ห้าม move:
+1. ไม่มี `- [ ]` เหลือในไฟล์ (checkbox ครบ)
+2. มี `## ✅ Completion Evidence` section พร้อม **วันที่ + หลักฐาน ≥ 1 ชิ้น** (git commit / test pass / manual verify)
+
+ถ้าครบ → ย้ายไฟล์ → `plans/completed/` → เปลี่ยน `[ ]` เป็น `[x] done YYYY-MM-DD` ใน `project_summary.md` → อัปเดต `INDEX.md`
+ถ้าไม่ครบ → เขียน `BLOCKED: missing evidence` แล้วหยุด รอมนุษย์ยืนยัน
 
 **Rule 3 — Bug risk spotted:**
 ไม่แก้ถ้าไม่ใช่ scope → สร้าง `memory/reports/<topic>-risk-report.md` พร้อม: ไฟล์, บรรทัด, พฤติกรรม, ความเสี่ยง, วิธี reproduce → เพิ่มใน `gotchas.md` ถ้าเป็น pattern

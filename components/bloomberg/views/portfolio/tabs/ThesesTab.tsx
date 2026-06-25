@@ -1,37 +1,66 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
 import { BookOpen, FlaskConical, Loader2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import type { Colors } from "../helpers";
 import type { ThesisData } from "../types";
-import { type Colors } from "../helpers";
+
+function renderInline(text: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
+  return parts.map((part, j) => {
+    const k = `${j}-${part.slice(0, 8)}`;
+    if (part.startsWith("**") && part.endsWith("**"))
+      return <strong key={k}>{part.slice(2, -2)}</strong>;
+    if (part.startsWith("*") && part.endsWith("*")) return <em key={k}>{part.slice(1, -1)}</em>;
+    return part;
+  });
+}
 
 function renderMarkdown(text: string, colors: Colors) {
   return text.split("\n").map((line, i) => {
+    const k = `${i}-${line.slice(0, 12)}`;
     if (line.startsWith("### "))
-      return <h4 key={i} className="font-bold text-xs mt-3 mb-1" style={{ color: colors.accent }}>{line.slice(4)}</h4>;
+      return (
+        <h4 key={k} className="font-bold text-xs mt-3 mb-1" style={{ color: colors.accent }}>
+          {line.slice(4)}
+        </h4>
+      );
     if (line.startsWith("## "))
-      return <h3 key={i} className="font-bold text-sm mt-4 mb-1" style={{ color: colors.accent }}>{line.slice(3)}</h3>;
+      return (
+        <h3 key={k} className="font-bold text-sm mt-4 mb-1" style={{ color: colors.accent }}>
+          {line.slice(3)}
+        </h3>
+      );
     if (line.startsWith("- "))
-      return <li key={i} className="text-xs ml-3 mb-0.5" style={{ color: colors.textSecondary }}>{line.slice(2)}</li>;
+      return (
+        <li key={k} className="text-xs ml-3 mb-0.5" style={{ color: colors.textSecondary }}>
+          {renderInline(line.slice(2))}
+        </li>
+      );
     if (line.trim())
-      return <p key={i} className="text-xs mb-1 leading-relaxed" style={{ color: colors.textSecondary }}
-        dangerouslySetInnerHTML={{ __html: line.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/\*([^*]+)\*/g, "<em>$1</em>") }} />;
-    return <br key={i} />;
+      return (
+        <p key={k} className="text-xs mb-1 leading-relaxed" style={{ color: colors.textSecondary }}>
+          {renderInline(line)}
+        </p>
+      );
+    return <br key={k} />;
   });
 }
 
 export function ThesesTab({ colors }: { colors: Colors }) {
-  const [theses, setTheses]         = useState<(ThesisData["meta"] & { file: string; symbol: string })[]>([]);
-  const [selected, setSelected]     = useState<ThesisData | null>(null);
-  const [streaming, setStreaming]    = useState(false);
-  const [streamText, setStreamText]  = useState("");
+  const [theses, setTheses] = useState<(ThesisData["meta"] & { file: string; symbol: string })[]>(
+    []
+  );
+  const [selected, setSelected] = useState<ThesisData | null>(null);
+  const [streaming, setStreaming] = useState(false);
+  const [streamText, setStreamText] = useState("");
   const [loadingList, setLoadingList] = useState(false);
   const textRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setLoadingList(true);
     fetch("/api/portfolio/theses")
-      .then(r => r.json())
-      .then(d => setTheses(d.theses ?? []))
+      .then((r) => r.json())
+      .then((d) => setTheses(d.theses ?? []))
       .catch(() => {})
       .finally(() => setLoadingList(false));
   }, []);
@@ -41,11 +70,14 @@ export function ThesesTab({ colors }: { colors: Colors }) {
       const r = await fetch(`/api/portfolio/thesis?symbol=${encodeURIComponent(symbol)}`);
       setSelected(await r.json());
       setStreamText("");
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   };
 
   const runResearch = async (symbol: string) => {
-    setStreaming(true); setStreamText("");
+    setStreaming(true);
+    setStreamText("");
     try {
       const r = await fetch("/api/portfolio/research", {
         method: "POST",
@@ -63,14 +95,21 @@ export function ThesesTab({ colors }: { colors: Colors }) {
           if (!line.startsWith("data:")) continue;
           try {
             const ev = JSON.parse(line.slice(5));
-            if (ev.token) setStreamText(t => t + ev.token);
+            if (ev.token) setStreamText((t) => t + ev.token);
             if (ev.done) break;
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
       }
-    } catch { /* ignore */ } finally { setStreaming(false); }
+    } catch {
+      /* ignore */
+    } finally {
+      setStreaming(false);
+    }
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: textRef is stable
   useEffect(() => {
     if (textRef.current) textRef.current.scrollTop = textRef.current.scrollHeight;
   }, [streamText]);
@@ -78,22 +117,50 @@ export function ThesesTab({ colors }: { colors: Colors }) {
   return (
     <div className="flex" style={{ minHeight: "400px", height: "100%" }}>
       {/* List */}
-      <div className="w-48 border-r overflow-y-auto flex-shrink-0" style={{ borderColor: colors.border }}>
-        <div className="px-2 py-1 text-[9px] font-bold tracking-widest border-b" style={{ color: colors.accent, borderColor: colors.border }}>
+      <div
+        className="w-48 border-r overflow-y-auto flex-shrink-0"
+        style={{ borderColor: colors.border }}
+      >
+        <div
+          className="px-2 py-1 text-[9px] font-bold tracking-widest border-b"
+          style={{ color: colors.accent, borderColor: colors.border }}
+        >
           THESES
         </div>
-        {loadingList && <div className="p-2"><Loader2 className="h-3 w-3 animate-spin" style={{ color: colors.accent }} /></div>}
-        {theses.map(t => (
-          <button key={t.file} onClick={() => loadThesis(t.symbol)}
+        {loadingList && (
+          <div className="p-2">
+            <Loader2 className="h-3 w-3 animate-spin" style={{ color: colors.accent }} />
+          </div>
+        )}
+        {theses.map((t) => (
+          <button
+            type="button"
+            key={t.file}
+            onClick={() => loadThesis(t.symbol)}
             className="w-full text-left px-2 py-1 border-b hover:opacity-80"
-            style={{ borderColor: colors.border, background: selected?.symbol === t.symbol ? "#0a1628" : "transparent" }}>
-            <div className="font-bold text-[10px]" style={{ color: colors.accent }}>{t.symbol}</div>
-            <div className="text-[8px] truncate" style={{ color: colors.textSecondary }}>{t.title}</div>
-            <div className="text-[8px]" style={{ color: t.status === "active" ? "#4ade80" : "#666" }}>{t.status}</div>
+            style={{
+              borderColor: colors.border,
+              background: selected?.symbol === t.symbol ? "#0a1628" : "transparent",
+            }}
+          >
+            <div className="font-bold text-[10px]" style={{ color: colors.accent }}>
+              {t.symbol}
+            </div>
+            <div className="text-[8px] truncate" style={{ color: colors.textSecondary }}>
+              {t.title}
+            </div>
+            <div
+              className="text-[8px]"
+              style={{ color: t.status === "active" ? "#4ade80" : "#666" }}
+            >
+              {t.status}
+            </div>
           </button>
         ))}
         {!loadingList && theses.length === 0 && (
-          <div className="p-2 text-[9px]" style={{ color: colors.textSecondary }}>No theses found</div>
+          <div className="p-2 text-[9px]" style={{ color: colors.textSecondary }}>
+            No theses found
+          </div>
         )}
       </div>
 
@@ -103,15 +170,25 @@ export function ThesesTab({ colors }: { colors: Colors }) {
           <>
             <div className="flex items-start justify-between mb-2">
               <div>
-                <div className="font-bold text-sm" style={{ color: colors.accent }}>{selected.symbol}</div>
-                <div className="text-[10px]" style={{ color: colors.textSecondary }}>{selected.meta.title}</div>
+                <div className="font-bold text-sm" style={{ color: colors.accent }}>
+                  {selected.symbol}
+                </div>
+                <div className="text-[10px]" style={{ color: colors.textSecondary }}>
+                  {selected.meta.title}
+                </div>
               </div>
               <button
+                type="button"
                 onClick={() => runResearch(selected.symbol)}
                 disabled={streaming}
                 className="flex items-center gap-1 text-[9px] px-2 py-1 border font-bold hover:opacity-80 disabled:opacity-40"
-                style={{ borderColor: colors.accent, color: colors.accent }}>
-                {streaming ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <FlaskConical className="h-2.5 w-2.5" />}
+                style={{ borderColor: colors.accent, color: colors.accent }}
+              >
+                {streaming ? (
+                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                ) : (
+                  <FlaskConical className="h-2.5 w-2.5" />
+                )}
                 AI ANALYSIS
               </button>
             </div>
@@ -122,7 +199,10 @@ export function ThesesTab({ colors }: { colors: Colors }) {
             )}
           </>
         ) : (
-          <div className="h-full flex items-center justify-center" style={{ color: colors.textSecondary }}>
+          <div
+            className="h-full flex items-center justify-center"
+            style={{ color: colors.textSecondary }}
+          >
             <div className="text-center">
               <BookOpen className="h-8 w-8 mx-auto mb-2 opacity-20" />
               <div className="text-xs">Select a thesis</div>

@@ -1,6 +1,15 @@
 "use client";
+import {
+  AlertTriangle,
+  Clock,
+  Loader2,
+  Plus,
+  RefreshCw,
+  TrendingDown,
+  TrendingUp,
+  X,
+} from "lucide-react";
 import React, { useState, useEffect, useCallback } from "react";
-import { Clock, AlertTriangle, Plus, X, RefreshCw, Loader2, TrendingUp, TrendingDown } from "lucide-react";
 import type { Colors } from "../helpers";
 import { fmt, pnlColor } from "../helpers";
 
@@ -61,8 +70,7 @@ function FreshnessBadge({ freshness }: { freshness: DataFreshness }) {
       onMouseEnter={() => setShow(true)}
       onMouseLeave={() => setShow(false)}
     >
-      <Clock className="w-2.5 h-2.5" />
-      ~{freshness.delay_minutes}m delay
+      <Clock className="w-2.5 h-2.5" />~{freshness.delay_minutes}m delay
       {show && (
         <span
           className="absolute bottom-full left-0 mb-1 z-50 w-56 rounded px-2 py-1.5 text-[10px] leading-snug shadow-lg border"
@@ -72,7 +80,8 @@ function FreshnessBadge({ freshness }: { freshness: DataFreshness }) {
           {freshness.warning}
           <br />
           <span style={{ color: "#666" }}>
-            Source: {freshness.source} · fetched {new Date(freshness.fetched_at).toLocaleTimeString()}
+            Source: {freshness.source} · fetched{" "}
+            {new Date(freshness.fetched_at).toLocaleTimeString()}
           </span>
         </span>
       )}
@@ -83,21 +92,27 @@ function FreshnessBadge({ freshness }: { freshness: DataFreshness }) {
 // ── Add position form ─────────────────────────────────────────────────────────
 
 const EMPTY_FORM = {
-  underlying: "", expiry: "", strike: "", option_type: "call" as "call" | "put",
-  quantity: "1", entry_price: "", entry_date: new Date().toISOString().slice(0, 10),
+  underlying: "",
+  expiry: "",
+  strike: "",
+  option_type: "call" as "call" | "put",
+  quantity: "1",
+  entry_price: "",
+  entry_date: new Date().toISOString().slice(0, 10),
   notes: "",
 };
 
 function AddPositionForm({
-  accountId, colors, onAdded,
+  accountId,
+  colors,
+  onAdded,
 }: { accountId: string; colors: Colors; onAdded: () => void }) {
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [verifyStatus, setVerifyStatus] = useState<"idle" | "ok" | "not_found">("idle");
 
-  const set = (k: keyof typeof EMPTY_FORM, v: string) =>
-    setForm(f => ({ ...f, [k]: v }));
+  const set = (k: keyof typeof EMPTY_FORM, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   const canVerify = form.underlying && form.expiry && form.strike && form.option_type;
 
@@ -105,11 +120,16 @@ function AddPositionForm({
     if (!canVerify) return;
     try {
       const r = await fetch(`/api/options/${form.underlying.toUpperCase()}`);
-      if (!r.ok) { setVerifyStatus("not_found"); return; }
+      if (!r.ok) {
+        setVerifyStatus("not_found");
+        return;
+      }
       const data = await r.json();
       const found = data.expirations?.includes(form.expiry);
       setVerifyStatus(found ? "ok" : "not_found");
-    } catch { setVerifyStatus("not_found"); }
+    } catch {
+      setVerifyStatus("not_found");
+    }
   }, [form.underlying, form.expiry, canVerify]);
 
   const submit = async () => {
@@ -117,7 +137,8 @@ function AddPositionForm({
       setError("Fill all required fields");
       return;
     }
-    setSaving(true); setError("");
+    setSaving(true);
+    setError("");
     try {
       const r = await fetch("/api/options/positions", {
         method: "POST",
@@ -126,10 +147,10 @@ function AddPositionForm({
           account_id: accountId === "all" ? "dime" : accountId,
           underlying: form.underlying.toUpperCase(),
           expiry: form.expiry,
-          strike: parseFloat(form.strike),
+          strike: Number.parseFloat(form.strike),
           option_type: form.option_type,
-          quantity: parseInt(form.quantity),
-          entry_price: parseFloat(form.entry_price),
+          quantity: Number.parseInt(form.quantity),
+          entry_price: Number.parseFloat(form.entry_price),
           entry_date: form.entry_date,
           notes: form.notes,
         }),
@@ -138,54 +159,87 @@ function AddPositionForm({
       setForm({ ...EMPTY_FORM });
       setVerifyStatus("idle");
       onAdded();
-    } catch (e: any) { setError(e.message); }
-    finally { setSaving(false); }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const labelCls = "text-[9px] font-bold mb-0.5 block";
-  const inputCls = `w-full text-[10px] px-2 py-1 font-mono border rounded bg-transparent outline-none`;
+  const inputCls =
+    "w-full text-[10px] px-2 py-1 font-mono border rounded bg-transparent outline-none";
 
   return (
     <div className="border rounded p-3 mb-3" style={{ borderColor: colors.border }}>
-      <div className="text-[10px] font-bold mb-2 flex items-center gap-1" style={{ color: colors.accent }}>
+      <div
+        className="text-[10px] font-bold mb-2 flex items-center gap-1"
+        style={{ color: colors.accent }}
+      >
         <Plus className="w-3 h-3" /> ADD OPTION POSITION
       </div>
 
       <div className="grid grid-cols-4 gap-2 mb-2">
         <div>
-          <label className={labelCls} style={{ color: colors.textSecondary }}>Underlying *</label>
+          <label
+            htmlFor="opt-underlying"
+            className={labelCls}
+            style={{ color: colors.textSecondary }}
+          >
+            Underlying *
+          </label>
           <input
-            className={inputCls} placeholder="AAPL"
+            id="opt-underlying"
+            className={inputCls}
+            placeholder="AAPL"
             style={{ borderColor: colors.border, color: colors.text }}
             value={form.underlying}
-            onChange={e => { set("underlying", e.target.value.toUpperCase()); setVerifyStatus("idle"); }}
+            onChange={(e) => {
+              set("underlying", e.target.value.toUpperCase());
+              setVerifyStatus("idle");
+            }}
           />
         </div>
         <div>
-          <label className={labelCls} style={{ color: colors.textSecondary }}>Expiry *</label>
+          <label htmlFor="opt-expiry" className={labelCls} style={{ color: colors.textSecondary }}>
+            Expiry *
+          </label>
           <input
-            type="date" className={inputCls}
+            id="opt-expiry"
+            type="date"
+            className={inputCls}
             style={{ borderColor: colors.border, color: colors.text }}
             value={form.expiry}
-            onChange={e => { set("expiry", e.target.value); setVerifyStatus("idle"); }}
+            onChange={(e) => {
+              set("expiry", e.target.value);
+              setVerifyStatus("idle");
+            }}
           />
         </div>
         <div>
-          <label className={labelCls} style={{ color: colors.textSecondary }}>Strike (K) *</label>
+          <label htmlFor="opt-strike" className={labelCls} style={{ color: colors.textSecondary }}>
+            Strike (K) *
+          </label>
           <input
-            type="number" className={inputCls} placeholder="150.00"
+            id="opt-strike"
+            type="number"
+            className={inputCls}
+            placeholder="150.00"
             style={{ borderColor: colors.border, color: colors.text }}
             value={form.strike}
-            onChange={e => set("strike", e.target.value)}
+            onChange={(e) => set("strike", e.target.value)}
           />
         </div>
         <div>
-          <label className={labelCls} style={{ color: colors.textSecondary }}>Type *</label>
+          <label htmlFor="opt-type" className={labelCls} style={{ color: colors.textSecondary }}>
+            Type *
+          </label>
           <select
+            id="opt-type"
             className={inputCls}
             style={{ borderColor: colors.border, color: colors.text, background: colors.bg }}
             value={form.option_type}
-            onChange={e => set("option_type", e.target.value as "call" | "put")}
+            onChange={(e) => set("option_type", e.target.value as "call" | "put")}
           >
             <option value="call">CALL</option>
             <option value="put">PUT</option>
@@ -195,34 +249,53 @@ function AddPositionForm({
 
       <div className="grid grid-cols-4 gap-2 mb-2">
         <div>
-          <label className={labelCls} style={{ color: colors.textSecondary }}>Qty (contracts)</label>
+          <label htmlFor="opt-qty" className={labelCls} style={{ color: colors.textSecondary }}>
+            Qty (contracts)
+          </label>
           <input
-            type="number" className={inputCls} placeholder="1"
+            id="opt-qty"
+            type="number"
+            className={inputCls}
+            placeholder="1"
             style={{ borderColor: colors.border, color: colors.text }}
             value={form.quantity}
-            onChange={e => set("quantity", e.target.value)}
+            onChange={(e) => set("quantity", e.target.value)}
           />
         </div>
         <div>
-          <label className={labelCls} style={{ color: colors.textSecondary }}>Entry premium *</label>
+          <label htmlFor="opt-premium" className={labelCls} style={{ color: colors.textSecondary }}>
+            Entry premium *
+          </label>
           <input
-            type="number" className={inputCls} placeholder="3.20"
+            id="opt-premium"
+            type="number"
+            className={inputCls}
+            placeholder="3.20"
             style={{ borderColor: colors.border, color: colors.text }}
             value={form.entry_price}
-            onChange={e => set("entry_price", e.target.value)}
+            onChange={(e) => set("entry_price", e.target.value)}
           />
         </div>
         <div>
-          <label className={labelCls} style={{ color: colors.textSecondary }}>Entry date</label>
+          <label
+            htmlFor="opt-entry-date"
+            className={labelCls}
+            style={{ color: colors.textSecondary }}
+          >
+            Entry date
+          </label>
           <input
-            type="date" className={inputCls}
+            id="opt-entry-date"
+            type="date"
+            className={inputCls}
             style={{ borderColor: colors.border, color: colors.text }}
             value={form.entry_date}
-            onChange={e => set("entry_date", e.target.value)}
+            onChange={(e) => set("entry_date", e.target.value)}
           />
         </div>
         <div className="flex items-end gap-1">
           <button
+            type="button"
             onClick={verify}
             disabled={!canVerify}
             className="px-2 py-1 text-[9px] font-bold border rounded disabled:opacity-40"
@@ -231,7 +304,9 @@ function AddPositionForm({
             VERIFY
           </button>
           {verifyStatus === "ok" && <span className="text-[9px] text-green-400">✓ found</span>}
-          {verifyStatus === "not_found" && <span className="text-[9px] text-red-400">✗ not found</span>}
+          {verifyStatus === "not_found" && (
+            <span className="text-[9px] text-red-400">✗ not found</span>
+          )}
         </div>
       </div>
 
@@ -242,11 +317,17 @@ function AddPositionForm({
           * Verify confirms contract exists in market data provider
         </p>
         <button
-          onClick={submit} disabled={saving}
+          type="button"
+          onClick={submit}
+          disabled={saving}
           className="flex items-center gap-1 px-3 py-1 text-[9px] font-bold border rounded"
           style={{ borderColor: colors.accent, color: colors.accent }}
         >
-          {saving ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}
+          {saving ? (
+            <Loader2 className="w-2.5 h-2.5 animate-spin" />
+          ) : (
+            <Plus className="w-2.5 h-2.5" />
+          )}
           SAVE
         </button>
       </div>
@@ -257,7 +338,10 @@ function AddPositionForm({
 // ── Position row ──────────────────────────────────────────────────────────────
 
 function PositionRow({
-  pos, colors, onClose, onDelete,
+  pos,
+  colors,
+  onClose,
+  onDelete,
 }: { pos: OptionPosition; colors: Colors; onClose: () => void; onDelete: () => void }) {
   const [quote, setQuote] = useState<PositionQuote | null>(null);
   const [loadingQuote, setLoadingQuote] = useState(false);
@@ -267,15 +351,25 @@ function PositionRow({
     try {
       const r = await fetch(`/api/options/positions/${pos.id}/quote`);
       if (r.ok) setQuote(await r.json());
-    } catch { /* ignore */ } finally { setLoadingQuote(false); }
+    } catch {
+      /* ignore */
+    } finally {
+      setLoadingQuote(false);
+    }
   }, [pos.id]);
 
-  useEffect(() => { loadQuote(); }, [loadQuote]);
+  useEffect(() => {
+    loadQuote();
+  }, [loadQuote]);
 
   const currentPrice = quote?.last_price ?? null;
-  const pnlPerShare = currentPrice !== null ? (currentPrice - pos.entry_price) * (pos.option_type === "call" ? 1 : 1) : null;
+  const pnlPerShare =
+    currentPrice !== null
+      ? (currentPrice - pos.entry_price) * (pos.option_type === "call" ? 1 : 1)
+      : null;
   const pnlTotal = pnlPerShare !== null ? pnlPerShare * pos.quantity * 100 : null;
-  const pnlPct = pnlPerShare !== null && pos.entry_price > 0 ? (pnlPerShare / pos.entry_price) * 100 : null;
+  const pnlPct =
+    pnlPerShare !== null && pos.entry_price > 0 ? (pnlPerShare / pos.entry_price) * 100 : null;
 
   const isCall = pos.option_type === "call";
   const typeColor = isCall ? "#00FF00" : "#FF4444";
@@ -283,20 +377,36 @@ function PositionRow({
   return (
     <tr className="border-b text-[10px] font-mono" style={{ borderColor: colors.border }}>
       <td className="px-2 py-1.5">
-        <span className="font-bold" style={{ color: colors.text }}>{pos.underlying}</span>
+        <span className="font-bold" style={{ color: colors.text }}>
+          {pos.underlying}
+        </span>
       </td>
       <td className="px-2 py-1.5">
-        <span className="font-bold text-[9px] px-1 rounded" style={{ color: typeColor, border: `1px solid ${typeColor}` }}>
+        <span
+          className="font-bold text-[9px] px-1 rounded"
+          style={{ color: typeColor, border: `1px solid ${typeColor}` }}
+        >
           {pos.option_type.toUpperCase()}
         </span>
       </td>
-      <td className="px-2 py-1.5 text-right" style={{ color: colors.text }}>${fmt(pos.strike)}</td>
-      <td className="px-2 py-1.5 text-right" style={{ color: colors.textSecondary }}>{pos.expiry}</td>
-      <td className="px-2 py-1.5 text-right" style={{ color: colors.text }}>{pos.quantity}</td>
-      <td className="px-2 py-1.5 text-right" style={{ color: colors.textSecondary }}>${fmt(pos.entry_price, 2)}</td>
+      <td className="px-2 py-1.5 text-right" style={{ color: colors.text }}>
+        ${fmt(pos.strike)}
+      </td>
+      <td className="px-2 py-1.5 text-right" style={{ color: colors.textSecondary }}>
+        {pos.expiry}
+      </td>
+      <td className="px-2 py-1.5 text-right" style={{ color: colors.text }}>
+        {pos.quantity}
+      </td>
+      <td className="px-2 py-1.5 text-right" style={{ color: colors.textSecondary }}>
+        ${fmt(pos.entry_price, 2)}
+      </td>
       <td className="px-2 py-1.5 text-right">
         {loadingQuote ? (
-          <Loader2 className="w-3 h-3 animate-spin inline" style={{ color: colors.textSecondary }} />
+          <Loader2
+            className="w-3 h-3 animate-spin inline"
+            style={{ color: colors.textSecondary }}
+          />
         ) : currentPrice !== null ? (
           <span style={{ color: colors.text }}>${fmt(currentPrice, 2)}</span>
         ) : (
@@ -308,10 +418,15 @@ function PositionRow({
           <span style={{ color: pnlColor(pnlTotal) }}>
             {pnlTotal >= 0 ? "+" : ""}${fmt(Math.abs(pnlTotal), 0)}
             {pnlPct !== null && (
-              <span className="text-[9px] ml-1">({pnlPct >= 0 ? "+" : ""}{fmt(pnlPct, 1)}%)</span>
+              <span className="text-[9px] ml-1">
+                ({pnlPct >= 0 ? "+" : ""}
+                {fmt(pnlPct, 1)}%)
+              </span>
             )}
           </span>
-        ) : <span style={{ color: colors.textSecondary }}>—</span>}
+        ) : (
+          <span style={{ color: colors.textSecondary }}>—</span>
+        )}
       </td>
       <td className="px-2 py-1.5">
         {quote?.freshness && <FreshnessBadge freshness={quote.freshness} />}
@@ -319,6 +434,7 @@ function PositionRow({
       <td className="px-2 py-1.5">
         <div className="flex items-center gap-1">
           <button
+            type="button"
             onClick={loadQuote}
             className="p-0.5 opacity-50 hover:opacity-100"
             title="Refresh quote"
@@ -326,6 +442,7 @@ function PositionRow({
             <RefreshCw className="w-2.5 h-2.5" style={{ color: colors.textSecondary }} />
           </button>
           <button
+            type="button"
             onClick={onClose}
             className="text-[8px] px-1 border rounded opacity-60 hover:opacity-100"
             style={{ borderColor: colors.textSecondary, color: colors.textSecondary }}
@@ -333,7 +450,11 @@ function PositionRow({
           >
             CLOSE
           </button>
-          <button onClick={onDelete} className="p-0.5 opacity-40 hover:opacity-100 hover:text-red-400">
+          <button
+            type="button"
+            onClick={onDelete}
+            className="p-0.5 opacity-40 hover:opacity-100 hover:text-red-400"
+          >
             <X className="w-2.5 h-2.5" style={{ color: colors.textSecondary }} />
           </button>
         </div>
@@ -344,13 +465,11 @@ function PositionRow({
 
 // ── Main tab ──────────────────────────────────────────────────────────────────
 
-export function OptionsTab({
-  accountId, colors,
-}: { accountId: string; colors: Colors }) {
+export function OptionsTab({ accountId, colors }: { accountId: string; colors: Colors }) {
   const [positions, setPositions] = useState<OptionPosition[]>([]);
-  const [loading, setLoading]     = useState(false);
-  const [showForm, setShowForm]   = useState(false);
-  const [seeding, setSeeding]     = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [seeding, setSeeding] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -359,10 +478,16 @@ export function OptionsTab({
       if (accountId !== "all") qs.set("account_id", accountId);
       const r = await fetch(`/api/options/positions/list?${qs}`);
       setPositions(await r.json());
-    } catch { /* ignore */ } finally { setLoading(false); }
+    } catch {
+      /* ignore */
+    } finally {
+      setLoading(false);
+    }
   }, [accountId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const handleClose = async (id: string) => {
     await fetch(`/api/options/positions/${id}/close`, { method: "PATCH" });
@@ -379,7 +504,11 @@ export function OptionsTab({
     try {
       await fetch("/api/options/positions/seed-demo", { method: "POST" });
       load();
-    } catch { /* ignore */ } finally { setSeeding(false); }
+    } catch {
+      /* ignore */
+    } finally {
+      setSeeding(false);
+    }
   };
 
   const handleClearDemo = async () => {
@@ -387,8 +516,8 @@ export function OptionsTab({
     load();
   };
 
-  const calls = positions.filter(p => p.option_type === "call");
-  const puts  = positions.filter(p => p.option_type === "put");
+  const calls = positions.filter((p) => p.option_type === "call");
+  const puts = positions.filter((p) => p.option_type === "put");
 
   return (
     <div className="p-2">
@@ -403,16 +532,15 @@ export function OptionsTab({
           )}
         </div>
         <div className="flex items-center gap-1">
-          <button
-            onClick={load}
-            className="p-0.5 opacity-60 hover:opacity-100"
-          >
-            {loading
-              ? <Loader2 className="w-3 h-3 animate-spin" style={{ color: colors.textSecondary }} />
-              : <RefreshCw className="w-3 h-3" style={{ color: colors.textSecondary }} />
-            }
+          <button type="button" onClick={load} className="p-0.5 opacity-60 hover:opacity-100">
+            {loading ? (
+              <Loader2 className="w-3 h-3 animate-spin" style={{ color: colors.textSecondary }} />
+            ) : (
+              <RefreshCw className="w-3 h-3" style={{ color: colors.textSecondary }} />
+            )}
           </button>
           <button
+            type="button"
             onClick={handleSeedDemo}
             disabled={seeding}
             className="flex items-center gap-1 px-2 py-0.5 text-[8px] font-bold border rounded opacity-60 hover:opacity-100"
@@ -423,6 +551,7 @@ export function OptionsTab({
             DEMO
           </button>
           <button
+            type="button"
             onClick={handleClearDemo}
             className="px-2 py-0.5 text-[8px] font-bold border rounded opacity-50 hover:opacity-100"
             style={{ borderColor: "#FF4444", color: "#FF4444" }}
@@ -431,7 +560,8 @@ export function OptionsTab({
             CLEAR DEMO
           </button>
           <button
-            onClick={() => setShowForm(v => !v)}
+            type="button"
+            onClick={() => setShowForm((v) => !v)}
             className="flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold border rounded"
             style={{ borderColor: colors.accent, color: colors.accent }}
           >
@@ -447,14 +577,18 @@ export function OptionsTab({
         style={{ borderColor: "#f59e0b44", background: "#f59e0b11", color: "#f59e0b" }}
       >
         <Clock className="w-3 h-3 flex-shrink-0" />
-        Market data via Yahoo Finance · ~15 min delay · Greeks not available · For position tracking only, not active trading decisions
+        Market data via Yahoo Finance · ~15 min delay · Greeks not available · For position tracking
+        only, not active trading decisions
       </div>
 
       {showForm && (
         <AddPositionForm
           accountId={accountId}
           colors={colors}
-          onAdded={() => { load(); setShowForm(false); }}
+          onAdded={() => {
+            load();
+            setShowForm(false);
+          }}
         />
       )}
 
@@ -467,15 +601,30 @@ export function OptionsTab({
           <table className="w-full text-[10px] font-mono">
             <thead>
               <tr className="text-left border-b" style={{ borderColor: colors.border }}>
-                {["Underlying", "Type", "Strike", "Expiry", "Qty", "Entry", "Last", "P&L", "Data", ""].map(h => (
-                  <th key={h} className="px-2 py-1 font-bold text-[9px]" style={{ color: colors.textSecondary }}>
+                {[
+                  "Underlying",
+                  "Type",
+                  "Strike",
+                  "Expiry",
+                  "Qty",
+                  "Entry",
+                  "Last",
+                  "P&L",
+                  "Data",
+                  "",
+                ].map((h) => (
+                  <th
+                    key={h}
+                    className="px-2 py-1 font-bold text-[9px]"
+                    style={{ color: colors.textSecondary }}
+                  >
                     {h}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {positions.map(pos => (
+              {positions.map((pos) => (
                 <PositionRow
                   key={pos.id}
                   pos={pos}

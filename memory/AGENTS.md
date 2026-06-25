@@ -211,6 +211,20 @@ Step 2 (~Xm) — ...
 ## ข้อควรระวัง
 
 - bullet points เรื่องที่ต้องระวัง
+
+---
+
+## ✅ Completion Evidence
+
+> **บังคับกรอกก่อน OP-4 จะย้ายไป `plans/completed/`** — ถ้าไม่มี section นี้ plan จะไม่ถูก move แม้ checkbox ครบ
+
+**วันที่เสร็จ:** YYYY-MM-DD
+**ยืนยันโดย:** <ชื่อ agent หรือมนุษย์>
+**หลักฐาน:** <เลือกอย่างน้อย 1>
+- Git commit: `<hash>` / PR #N
+- Test output: pass (N/N)
+- Manual verify: <สิ่งที่ตรวจ + ผลที่เห็น>
+**หมายเหตุ:** <optional — edge case, known limitation>
 ```
 
 ---
@@ -290,11 +304,19 @@ Step 2 (~Xm) — ...
 3. เพิ่มใน `memory/INDEX.md` → plans section
 
 ### เมื่อ Plan เสร็จสมบูรณ์ (implement ครบ + verify แล้ว)
-1. ย้ายไฟล์: `memory/plans/<task>.md` → `memory/plans/completed/<task>.md`
-2. อัปเดต `memory/project_summary.md`:
+
+> ⚠️ **ต้องผ่าน 2 เงื่อนไข** ก่อน move — ถ้าขาดข้อใดข้อหนึ่ง ห้าม move:
+> 1. checkbox ครบทุกอัน (ไม่มี `- [ ]` เหลือ)
+> 2. มี `## ✅ Completion Evidence` section พร้อม **วันที่เสร็จ + หลักฐานอย่างน้อย 1 ชิ้น**
+>
+> ถ้าเงื่อนไขไม่ครบ → เขียน **"BLOCKED: missing evidence"** ใน report แล้วหยุด รอมนุษย์ยืนยัน
+
+1. กรอก `## ✅ Completion Evidence` ในไฟล์ plan (format ดู Section 4c)
+2. ย้ายไฟล์: `memory/plans/<task>.md` → `memory/plans/completed/<task>.md`
+3. อัปเดต `memory/project_summary.md`:
    - เปลี่ยน `- [ ]` เป็น `- [x]` พร้อมวันที่: `- [x] **<Feature>** — done YYYY-MM-DD`
-3. อัปเดต `memory/INDEX.md` → เปลี่ยน path ใน plans section ให้ชี้ไป `plans/completed/`
-4. สร้าง session report ตาม format 4a
+4. อัปเดต `memory/INDEX.md` → เปลี่ยน path ใน plans section ให้ชี้ไป `plans/completed/`
+5. สร้าง session report ตาม format 4a
 
 ### เมื่อพบ Bug Risk ระหว่างแก้ไข
 หาก agent พบจุดที่มีโอกาสเป็น bug (ไม่ว่าจะเกี่ยวกับงานหลักหรือไม่):

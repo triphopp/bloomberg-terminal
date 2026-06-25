@@ -1,11 +1,11 @@
-import { NextResponse } from "next/server";
 import { PYTHON_API as API } from "@/lib/constants";
+import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const qs = searchParams.toString();
-    const r = await fetch(`${API}/api/v2/portfolio/analytics${qs ? "?" + qs : ""}`, {
+    const r = await fetch(`${API}/api/v2/portfolio/analytics${qs ? `?${qs}` : ""}`, {
       signal: AbortSignal.timeout(15_000),
     });
     const d = await r.json();

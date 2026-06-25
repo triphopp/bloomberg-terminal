@@ -42,7 +42,25 @@ $backendCmd = "cd /d `"$root\backend`" && " +
 Write-Host "  [1/2] Starting backend (cmd window)..." -ForegroundColor Green
 Start-Process cmd -ArgumentList "/k", "title Bloomberg Backend :$BackendPort && $backendCmd"
 
-Start-Sleep -Seconds 2   # give backend a moment to bind port
+# ── Wait for backend to be ready ──────────────────────────────────────────────
+Write-Host "  Waiting for backend on :$BackendPort" -NoNewline -ForegroundColor Yellow
+$maxWait = 30
+$ready   = $false
+for ($i = 0; $i -lt $maxWait; $i++) {
+    Start-Sleep -Seconds 1
+    try {
+        $r = Invoke-WebRequest -Uri "http://localhost:$BackendPort/health" `
+                               -TimeoutSec 1 -UseBasicParsing -ErrorAction Stop
+        if ($r.StatusCode -eq 200) { $ready = $true; break }
+    } catch { }
+    Write-Host "." -NoNewline -ForegroundColor DarkGray
+}
+Write-Host ""
+if (-not $ready) {
+    Write-Host "  [WARN] Backend did not respond after ${maxWait}s — starting frontend anyway." -ForegroundColor Red
+} else {
+    Write-Host "  Backend ready." -ForegroundColor Green
+}
 
 # ── Frontend: new cmd window ───────────────────────────────────────────────────
 # node.exe directly instead of npm.ps1 → no execution-policy issue

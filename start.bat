@@ -12,8 +12,10 @@ echo.
 :: Start backend in a new window
 start "Bloomberg Backend :8000" cmd /k "%~dp0start-backend.bat"
 
-:: Wait 3 seconds for backend to bind
-timeout /t 3 /nobreak >nul
+:: Poll /health until backend is ready (up to 30s)
+echo  Waiting for backend...
+powershell -NoProfile -Command ^
+  "$ok=$false; for($i=0;$i-lt30;$i++){Start-Sleep 1; try{$r=Invoke-WebRequest -Uri 'http://localhost:8000/health' -TimeoutSec 1 -UseBasicParsing -EA Stop; if($r.StatusCode-eq200){$ok=$true;break}}catch{} Write-Host '.' -NoNewline}; Write-Host ''; if(-not $ok){Write-Host '[WARN] backend not ready'}"
 
 :: Start frontend in a new window
 start "Bloomberg Frontend :3000" cmd /k "%~dp0start-frontend.bat"

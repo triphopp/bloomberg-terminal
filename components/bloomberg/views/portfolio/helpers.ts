@@ -1,4 +1,4 @@
-import { bloombergColors } from "../../lib/theme-config";
+import type { bloombergColors } from "../../lib/theme-config";
 import type { Trade } from "./types";
 
 export const fmt = (n: number, d = 2) =>
@@ -19,11 +19,15 @@ export const wlColor = (wl: string) =>
   wl === "W" ? "#00FF00" : wl === "L" ? "#FF4444" : "#ff9900";
 
 export const FLAG: Record<string, string> = {
-  TH: "🇹🇭", US: "🇺🇸", CRYPTO: "₿", EU: "🇪🇺", KR: "🇰🇷",
+  TH: "🇹🇭",
+  US: "🇺🇸",
+  CRYPTO: "₿",
+  EU: "🇪🇺",
+  KR: "🇰🇷",
 };
 
 export function groupKey(p: Trade): string {
-  if (p.note && p.note.startsWith("Finansia")) return p.note;
+  if (p.note?.startsWith("Finansia")) return p.note;
   if (p.account_id === "dime") return "Dime";
   if (p.account_id === "innovestx") return "InnovestX";
   return p.acc_name || p.account_id || "Unknown";
