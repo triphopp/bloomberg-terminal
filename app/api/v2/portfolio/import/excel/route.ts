@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
 import { PYTHON_API as API } from "@/lib/constants";
+import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
   try {

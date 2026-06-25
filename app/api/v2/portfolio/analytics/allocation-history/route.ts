@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
 import { PYTHON_API as API } from "@/lib/constants";
+import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
   try {
@@ -7,7 +7,7 @@ export async function GET(req: Request) {
     const qs = searchParams.toString();
     const r = await fetch(
       `${API}/api/v2/portfolio/analytics/allocation-history${qs ? `?${qs}` : ""}`,
-      { signal: AbortSignal.timeout(20_000) },
+      { signal: AbortSignal.timeout(20_000) }
     );
     const d = await r.json();
     return NextResponse.json(d, { status: r.status });
