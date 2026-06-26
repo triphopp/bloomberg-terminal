@@ -78,6 +78,16 @@ export function AnalyticsTab({
   const thb_per_usd = summary?.thb_per_usd ?? 33.5;
   const sym = currency === "THB" ? "฿" : "$";
 
+  // Explicit light text so tooltips stay readable without Dark Reader inverting them.
+  const tooltipContentStyle = {
+    background: "#111",
+    border: "1px solid #333",
+    fontSize: 10,
+    color: "#e5e5e5",
+  };
+  const tooltipLabelStyle = { color: "#e5e5e5" };
+  const tooltipItemStyle = { color: "#e5e5e5" };
+
   const monthData = (analytics?.by_month ?? []).map((m) => ({
     month: m.month,
     pnl: m.pnl,
@@ -170,7 +180,7 @@ export function AnalyticsTab({
           >
             MONTHLY P&L
           </div>
-          <ResponsiveContainer width="100%" height={120}>
+          <ResponsiveContainer width="100%" height={150}>
             <BarChart data={monthData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
               <XAxis dataKey="month" tick={{ fill: "#666", fontSize: 8 }} tickLine={false} />
@@ -178,10 +188,14 @@ export function AnalyticsTab({
                 tick={{ fill: "#666", fontSize: 8 }}
                 tickLine={false}
                 axisLine={false}
+                // Always include the zero baseline so bar heights stay proportional
+                domain={[(min: number) => Math.min(0, min), (max: number) => Math.max(0, max)]}
                 tickFormatter={(v) => fmtK(v)}
               />
               <Tooltip
-                contentStyle={{ background: "#111", border: "1px solid #333", fontSize: 10 }}
+                contentStyle={tooltipContentStyle}
+                labelStyle={tooltipLabelStyle}
+                itemStyle={tooltipItemStyle}
                 // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
                 formatter={(v: any) => [`${sym}${fmtK(v)}`, "P&L"]}
               />
@@ -206,7 +220,7 @@ export function AnalyticsTab({
           >
             CUMULATIVE P&L
           </div>
-          <ResponsiveContainer width="100%" height={100}>
+          <ResponsiveContainer width="100%" height={140}>
             <AreaChart data={cumulativeData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="cumGrad" x1="0" y1="0" x2="0" y2="1">
@@ -220,10 +234,14 @@ export function AnalyticsTab({
                 tick={{ fill: "#666", fontSize: 8 }}
                 tickLine={false}
                 axisLine={false}
+                // Anchor the scale at zero so the filled area reflects true magnitude
+                domain={[(min: number) => Math.min(0, min), (max: number) => Math.max(0, max)]}
                 tickFormatter={(v) => fmtK(v)}
               />
               <Tooltip
-                contentStyle={{ background: "#111", border: "1px solid #333", fontSize: 10 }}
+                contentStyle={tooltipContentStyle}
+                labelStyle={tooltipLabelStyle}
+                itemStyle={tooltipItemStyle}
                 // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
                 formatter={(v: any) => [`${sym}${fmtK(v)}`, "Cumulative"]}
               />
@@ -233,6 +251,7 @@ export function AnalyticsTab({
                 stroke="#22c55e"
                 strokeWidth={1.5}
                 fill="url(#cumGrad)"
+                baseValue={0}
                 dot={false}
               />
             </AreaChart>
@@ -269,7 +288,7 @@ export function AnalyticsTab({
                 ))}
               </div>
             </div>
-            <ResponsiveContainer width="100%" height={120}>
+            <ResponsiveContainer width="100%" height={150}>
               <BarChart data={divByMonth} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
                 <XAxis dataKey="month" tick={{ fill: "#666", fontSize: 7 }} tickLine={false} />
@@ -277,10 +296,14 @@ export function AnalyticsTab({
                   tick={{ fill: "#666", fontSize: 7 }}
                   tickLine={false}
                   axisLine={false}
+                  // Dividends are always positive — pin the axis to zero so bars are honest
+                  domain={[0, "auto"]}
                   tickFormatter={(v) => fmtK(v)}
                 />
                 <Tooltip
-                  contentStyle={{ background: "#111", border: "1px solid #333", fontSize: 10 }}
+                  contentStyle={tooltipContentStyle}
+                  labelStyle={tooltipLabelStyle}
+                  itemStyle={tooltipItemStyle}
                   // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
                   formatter={(v: any) => [`฿${fmtK(v)}`, "Dividend"]}
                 />
@@ -318,8 +341,9 @@ export function AnalyticsTab({
                           cy="50%"
                           innerRadius="42%"
                           outerRadius="72%"
-                          paddingAngle={2}
-                          strokeWidth={0}
+                          paddingAngle={0}
+                          stroke="#0a0a0a"
+                          strokeWidth={1}
                           // biome-ignore lint/suspicious/noExplicitAny: recharts event payload
                           onClick={(d: any) =>
                             setSelectedSector((s) => (s === d.sector ? null : d.sector))
@@ -336,11 +360,9 @@ export function AnalyticsTab({
                           ))}
                         </Pie>
                         <Tooltip
-                          contentStyle={{
-                            background: "#111",
-                            border: "1px solid #333",
-                            fontSize: 9,
-                          }}
+                          contentStyle={{ ...tooltipContentStyle, fontSize: 9 }}
+                          labelStyle={tooltipLabelStyle}
+                          itemStyle={tooltipItemStyle}
                           // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
                           formatter={(v: any, _: any, p: any) => [
                             `฿${fmtK(v)} (${total > 0 ? ((v / total) * 100).toFixed(1) : 0}%)`,
