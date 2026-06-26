@@ -171,91 +171,91 @@ export function AnalyticsTab({
         ))}
       </div>
 
-      {/* Monthly P&L */}
+      {/* Monthly + Cumulative P&L side by side for a tighter aspect ratio */}
       {monthData.length > 0 && (
-        <div className="mx-2 mb-2 border p-2" style={{ borderColor: colors.border }}>
-          <div
-            className="text-[9px] font-bold tracking-widest mb-2"
-            style={{ color: colors.accent }}
-          >
-            MONTHLY P&L
+        <div className="grid gap-2 mx-2 mb-2" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          <div className="border p-2" style={{ borderColor: colors.border }}>
+            <div
+              className="text-[9px] font-bold tracking-widest mb-2"
+              style={{ color: colors.accent }}
+            >
+              MONTHLY P&L
+            </div>
+            <ResponsiveContainer width="100%" height={170}>
+              <BarChart data={monthData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
+                <XAxis dataKey="month" tick={{ fill: "#666", fontSize: 8 }} tickLine={false} />
+                <YAxis
+                  tick={{ fill: "#666", fontSize: 8 }}
+                  tickLine={false}
+                  axisLine={false}
+                  // Always include the zero baseline so bar heights stay proportional
+                  domain={[(min: number) => Math.min(0, min), (max: number) => Math.max(0, max)]}
+                  tickFormatter={(v) => fmtK(v)}
+                />
+                <Tooltip
+                  contentStyle={tooltipContentStyle}
+                  labelStyle={tooltipLabelStyle}
+                  itemStyle={tooltipItemStyle}
+                  // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
+                  formatter={(v: any) => [`${sym}${fmtK(v)}`, "P&L"]}
+                />
+                <ReferenceLine y={0} stroke="#444" />
+                <Bar dataKey="pnl" radius={[2, 2, 0, 0]}>
+                  {monthData.map((m, i) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: stable month order
+                    <Cell key={i} fill={m.pnl >= 0 ? "#22c55e" : "#ef4444"} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
-          <ResponsiveContainer width="100%" height={150}>
-            <BarChart data={monthData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
-              <XAxis dataKey="month" tick={{ fill: "#666", fontSize: 8 }} tickLine={false} />
-              <YAxis
-                tick={{ fill: "#666", fontSize: 8 }}
-                tickLine={false}
-                axisLine={false}
-                // Always include the zero baseline so bar heights stay proportional
-                domain={[(min: number) => Math.min(0, min), (max: number) => Math.max(0, max)]}
-                tickFormatter={(v) => fmtK(v)}
-              />
-              <Tooltip
-                contentStyle={tooltipContentStyle}
-                labelStyle={tooltipLabelStyle}
-                itemStyle={tooltipItemStyle}
-                // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
-                formatter={(v: any) => [`${sym}${fmtK(v)}`, "P&L"]}
-              />
-              <ReferenceLine y={0} stroke="#444" />
-              <Bar dataKey="pnl" radius={[2, 2, 0, 0]}>
-                {monthData.map((m, i) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: stable month order
-                  <Cell key={i} fill={m.pnl >= 0 ? "#22c55e" : "#ef4444"} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
 
-      {/* Cumulative P&L */}
-      {cumulativeData.length > 0 && (
-        <div className="mx-2 mb-2 border p-2" style={{ borderColor: colors.border }}>
-          <div
-            className="text-[9px] font-bold tracking-widest mb-2"
-            style={{ color: colors.accent }}
-          >
-            CUMULATIVE P&L
+          {/* Cumulative P&L */}
+          <div className="border p-2" style={{ borderColor: colors.border }}>
+            <div
+              className="text-[9px] font-bold tracking-widest mb-2"
+              style={{ color: colors.accent }}
+            >
+              CUMULATIVE P&L
+            </div>
+            <ResponsiveContainer width="100%" height={170}>
+              <AreaChart data={cumulativeData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="cumGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
+                <XAxis dataKey="month" tick={{ fill: "#666", fontSize: 8 }} tickLine={false} />
+                <YAxis
+                  tick={{ fill: "#666", fontSize: 8 }}
+                  tickLine={false}
+                  axisLine={false}
+                  // Anchor the scale at zero so the filled area reflects true magnitude
+                  domain={[(min: number) => Math.min(0, min), (max: number) => Math.max(0, max)]}
+                  tickFormatter={(v) => fmtK(v)}
+                />
+                <Tooltip
+                  contentStyle={tooltipContentStyle}
+                  labelStyle={tooltipLabelStyle}
+                  itemStyle={tooltipItemStyle}
+                  // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
+                  formatter={(v: any) => [`${sym}${fmtK(v)}`, "Cumulative"]}
+                />
+                <ReferenceLine y={0} stroke="#444" />
+                <Area
+                  dataKey="cumPnl"
+                  stroke="#22c55e"
+                  strokeWidth={1.5}
+                  fill="url(#cumGrad)"
+                  baseValue={0}
+                  dot={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
-          <ResponsiveContainer width="100%" height={140}>
-            <AreaChart data={cumulativeData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="cumGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
-              <XAxis dataKey="month" tick={{ fill: "#666", fontSize: 8 }} tickLine={false} />
-              <YAxis
-                tick={{ fill: "#666", fontSize: 8 }}
-                tickLine={false}
-                axisLine={false}
-                // Anchor the scale at zero so the filled area reflects true magnitude
-                domain={[(min: number) => Math.min(0, min), (max: number) => Math.max(0, max)]}
-                tickFormatter={(v) => fmtK(v)}
-              />
-              <Tooltip
-                contentStyle={tooltipContentStyle}
-                labelStyle={tooltipLabelStyle}
-                itemStyle={tooltipItemStyle}
-                // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
-                formatter={(v: any) => [`${sym}${fmtK(v)}`, "Cumulative"]}
-              />
-              <ReferenceLine y={0} stroke="#444" />
-              <Area
-                dataKey="cumPnl"
-                stroke="#22c55e"
-                strokeWidth={1.5}
-                fill="url(#cumGrad)"
-                baseValue={0}
-                dot={false}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
         </div>
       )}
 
