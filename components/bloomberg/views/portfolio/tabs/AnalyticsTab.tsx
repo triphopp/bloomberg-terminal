@@ -178,7 +178,7 @@ export function AnalyticsTab({
   const navData = navHistory.map((r) => ({
     date: typeof r.snapshot_date === "string" ? r.snapshot_date.slice(5) : r.snapshot_date,
     value: toDisp(r.total_value ?? 0),
-    invested: toDisp(r.invested_capital ?? 0),
+    cost: toDisp(r.open_cost_basis ?? 0),
   }));
 
   return (
@@ -318,7 +318,7 @@ export function AnalyticsTab({
                 // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
                 formatter={(v: any, name: any) => [
                   `${sym}${fmtK(v)}`,
-                  name === "value" ? "NAV" : "Invested",
+                  name === "value" ? "NAV" : "Cost basis",
                 ]}
               />
               <Area
@@ -329,7 +329,7 @@ export function AnalyticsTab({
                 dot={navData.length < 2}
               />
               <Line
-                dataKey="invested"
+                dataKey="cost"
                 stroke="#888"
                 strokeWidth={1}
                 strokeDasharray="4 3"

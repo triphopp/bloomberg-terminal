@@ -1127,7 +1127,10 @@ def _maybe_capture_nav() -> None:
             dividends = div_map.get(aid, 0.0)              # already THB
             c = cost.get(aid, 0.0)
             u = unreal.get(aid, 0.0)
-            total = invested + realized + dividends + u
+            # NAV = mark-to-market value of current holdings. Deposit-independent
+            # (cash_ledger deposits are often incomplete); realized/invested/dividends
+            # are stored alongside for context but do not inflate the asset value.
+            total = c + u
             rows.append((aid, today, total, c, u, realized, invested, dividends))
             g["total"] += total; g["cost"] += c; g["unreal"] += u
             g["real"] += realized; g["inv"] += invested; g["div"] += dividends
