@@ -8,6 +8,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Line,
   Pie,
   PieChart,
   ReferenceLine,
@@ -41,6 +42,8 @@ export function AnalyticsTab({
   } | null>(null);
   const [dividends, setDividends] = useState<Dividend[]>([]);
   const [openPos, setOpenPos] = useState<Trade[]>([]);
+  // biome-ignore lint/suspicious/noExplicitAny: untyped API response
+  const [navHistory, setNavHistory] = useState<any[]>([]);
   const [divPeriod, setDivPeriod] = useState<"M" | "Q" | "Y">("M");
   const [loading, setLoading] = useState(false);
 
@@ -49,7 +52,7 @@ export function AnalyticsTab({
       setLoading(true);
       try {
         const qs = accountId !== "all" ? `?account_id=${accountId}` : "";
-        const [ar, dr, op] = await Promise.all([
+        const [ar, dr, op, nv] = await Promise.all([
           fetch(`/api/v2/portfolio/analytics${qs}`, { signal }).then((r) => {
             if (!r.ok) throw new Error();
             return r.json();
@@ -62,10 +65,15 @@ export function AnalyticsTab({
             if (!r.ok) throw new Error();
             return r.json();
           }),
+          fetch(`/api/v2/portfolio/nav-history${qs}`, { signal }).then((r) => {
+            if (!r.ok) throw new Error();
+            return r.json();
+          }),
         ]);
         setAnalytics(ar);
         setDividends(Array.isArray(dr) ? dr : []);
         setOpenPos(Array.isArray(op?.positions) ? op.positions : []);
+        setNavHistory(Array.isArray(nv) ? nv : []);
       } catch (e) {
         if ((e as Error)?.name === "AbortError") return;
       } finally {
@@ -167,6 +175,12 @@ export function AnalyticsTab({
   // THB base → active display currency
   const toDisp = (thb: number) => (currency === "USD" ? thb / thb_per_usd : thb);
 
+  const navData = navHistory.map((r) => ({
+    date: typeof r.snapshot_date === "string" ? r.snapshot_date.slice(5) : r.snapshot_date,
+    value: toDisp(r.total_value ?? 0),
+    invested: toDisp(r.invested_capital ?? 0),
+  }));
+
   return (
     <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 220px)" }}>
       {/* Per-account summary */}
@@ -265,6 +279,64 @@ export function AnalyticsTab({
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* Portfolio value (NAV) over time — built from daily capture-on-view snapshots */}
+      {navData.length > 0 && (
+        <div className="mx-2 mb-2 border p-2" style={{ borderColor: colors.border }}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[9px] font-bold tracking-widest" style={{ color: colors.accent }}>
+              PORTFOLIO VALUE (NAV)
+            </div>
+            {navData.length < 2 && (
+              <div className="text-[7px] font-mono" style={{ color: "#666" }}>
+                เก็บข้อมูลรายวัน — กราฟจะสมบูรณ์ขึ้นเมื่อมีหลายวัน
+              </div>
+            )}
+          </div>
+          <ResponsiveContainer width="100%" height={160}>
+            <AreaChart data={navData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="navGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#60a5fa" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
+              <XAxis dataKey="date" tick={{ fill: "#666", fontSize: 8 }} tickLine={false} />
+              <YAxis
+                tick={{ fill: "#666", fontSize: 8 }}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v) => fmtK(v)}
+              />
+              <Tooltip
+                contentStyle={tooltipContentStyle}
+                labelStyle={tooltipLabelStyle}
+                itemStyle={tooltipItemStyle}
+                // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
+                formatter={(v: any, name: any) => [
+                  `${sym}${fmtK(v)}`,
+                  name === "value" ? "NAV" : "Invested",
+                ]}
+              />
+              <Area
+                dataKey="value"
+                stroke="#60a5fa"
+                strokeWidth={1.5}
+                fill="url(#navGrad)"
+                dot={navData.length < 2}
+              />
+              <Line
+                dataKey="invested"
+                stroke="#888"
+                strokeWidth={1}
+                strokeDasharray="4 3"
+                dot={false}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
       )}
 

@@ -284,6 +284,27 @@ def init_portfolio_v2() -> None:
         except Exception:
             pass
 
+        # ── Portfolio NAV snapshots (daily mark-to-market, THB base) ──────
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS portfolio_nav_snapshots (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id       TEXT NOT NULL,
+                snapshot_date    TEXT NOT NULL,
+                total_value      REAL DEFAULT 0,
+                open_cost_basis  REAL DEFAULT 0,
+                unrealized_pnl   REAL DEFAULT 0,
+                realized_pnl     REAL DEFAULT 0,
+                invested_capital REAL DEFAULT 0,
+                dividends        REAL DEFAULT 0,
+                created_at       TEXT DEFAULT (datetime('now')),
+                UNIQUE(account_id, snapshot_date)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_nav_account_date "
+            "ON portfolio_nav_snapshots(account_id, snapshot_date)"
+        )
+
         # ── Paper Trading tables ─────────────────────────────────────────
         conn.execute("""
             CREATE TABLE IF NOT EXISTS paper_accounts (
