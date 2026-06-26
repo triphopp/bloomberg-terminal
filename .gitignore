@@ -27,6 +27,8 @@ backend/**/__pycache__/
 backend/*.db
 backend/*.db-wal
 backend/*.db-shm
+backend/.sync_state.json
+backend/*.db.bak*
 backend/.pytest_cache/
 backend/analytics/__pycache__/
 backend/routers/__pycache__/

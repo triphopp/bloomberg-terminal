@@ -115,3 +115,10 @@
 | `BINANCE_API_KEY` | `/api/crypto/footprint` fails |
 | `FACEBOOK_ACCESS_TOKEN` | FB social feed falls back to RSSHub (may be rate-limited) |
 | `CLIPPINGS_DIR` | Clippings view empty (default: `./data/clippings`) |
+| `SYNC_DIR` (unset/unreachable) | Cloud sync silent no-op — app runs local-only (fail-soft, never blocks startup); SYNC chip shows OFFLINE |
+
+## Anti-pattern: SQLite `.db` on a cloud drive
+
+**Never put `portfolio.db` (or any SQLite file) directly inside a Google Drive / Dropbox / OneDrive folder.** Cloud clients sync raw bytes and do not understand SQLite's WAL (`-wal`/`-shm`) sidecar files or file locks. Two machines touching the same synced `.db` → corruption.
+
+**Correct pattern (see `backend/sync/`):** keep the `.db` local (working copy); exchange only validated **JSON snapshots** through the cloud folder. Snapshot writes are atomic (temp + `os.replace`) and hash-validated on read so a half-synced Drive file is skipped, not loaded. Merge is row-level last-write-wins on `updated_at`; deletes use `sync_tombstones` (trigger-recorded) so a deleted row does not resurrect on the next merge.

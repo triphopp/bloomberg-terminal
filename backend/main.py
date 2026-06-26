@@ -17,10 +17,11 @@ logging.basicConfig(
 logger = logging.getLogger("api")
 
 from config import CORS_ORIGINS
-from db import init_db, init_portfolio_v2, seed_symbol_lists
+from db import init_db, init_portfolio_v2, init_sync_layer, seed_symbol_lists
 from analytics.regime_calibration import ensure_model_fresh
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, stoploss, alerts, ticker, analytics, fear_greed, tail_risk, paper_trading, providers
+from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, stoploss, alerts, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router
+import sync
 
 app = FastAPI(title="Market Data API")
 
@@ -34,7 +35,12 @@ app.add_middleware(
 # ── Initialize database ───────────────────────────────────────────────────────
 init_db()
 init_portfolio_v2()
+init_sync_layer()
 seed_symbol_lists()
+
+# ── Cloud sync: pull latest from G: (read cloud first), then start pusher ──────
+sync.sync_startup()
+sync.start_background_push()
 
 # ── Regime model (trains in background if missing/stale) ──────────────────────
 ensure_model_fresh(triggered_by="startup")
@@ -84,6 +90,7 @@ app.include_router(fear_greed.router)
 app.include_router(tail_risk.router)
 app.include_router(paper_trading.router, tags=["Paper Trading"])
 app.include_router(providers.router, tags=["Providers"])
+app.include_router(sync_router.router, tags=["Sync"])
 
 
 @app.exception_handler(StarletteHTTPException)

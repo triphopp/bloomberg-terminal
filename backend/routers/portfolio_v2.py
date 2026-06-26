@@ -374,7 +374,10 @@ def list_trades(
     sql = "SELECT * FROM trades"
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY date_entry DESC, created_at DESC LIMIT ? OFFSET ?"
+    # Order by most-recent activity: a freshly-closed trade keeps its old
+    # date_entry, so sort by exit date when present (else entry) to surface
+    # recent sells at the top instead of burying them by entry date.
+    sql += " ORDER BY COALESCE(date_exit, date_entry) DESC, created_at DESC LIMIT ? OFFSET ?"
     params += [limit, offset]
     with get_db() as conn:
         rows = conn.execute(sql, params).fetchall()
@@ -670,15 +673,15 @@ def sell_position(body: SellIn):
                    FROM trades WHERE id = ?""",
                 (sold_id, body.sell_date, avg_cost, exit_price, sold_volume,
                  sold_pnl_net, sold_wl, sold_pnl_pct,
-                 f"[PARTIAL SELL {body.sell_date}] @ {exit_price} | P&L: {sold_pnl_net}",
+                 "",
                  body.trade_id),
             )
 
+            # Reduce the remaining open lot. The partial sell is captured in the
+            # audit log (below) — no auto-note appended to keep notes user-owned.
             conn.execute(
-                "UPDATE trades SET volume = ?, note = note || ? WHERE id = ?",
-                (remaining,
-                 f"\n[PARTIAL SELL {body.sell_date}] {sold_volume} shares @ {exit_price}",
-                 body.trade_id),
+                "UPDATE trades SET volume = ? WHERE id = ?",
+                (remaining, body.trade_id),
             )
 
             # Log on BOTH the original lot (volume reduced) and the new sold record

@@ -42,10 +42,18 @@ export function SummaryBar({
         FX: <span style={{ color: colors.text }}>1 USD = ฿{summary.thb_per_usd.toFixed(2)}</span>
       </div>
       <div
-        className="ml-auto text-[8px] px-2 py-0.5 border font-bold animate-pulse"
+        className="ml-auto flex items-center gap-1 text-[8px] px-2 py-0.5 border font-bold"
         style={{ borderColor: "#ff990044", color: "#ff9900" }}
       >
-        Y = {currency === "THB" ? "→ USD" : "→ THB"}
+        <kbd
+          className="px-1 leading-none rounded-sm"
+          style={{ background: "#ff990022", border: "1px solid #ff990055", fontSize: 7 }}
+        >
+          Y
+        </kbd>
+        <span style={{ letterSpacing: "0.05em" }}>
+          VIEW IN {currency === "THB" ? "USD" : "THB"}
+        </span>
       </div>
     </div>
   );
