@@ -102,6 +102,8 @@ export function AnalyticsTab({
     });
   }, [monthData]);
 
+  const totalPnl = cumulativeData.at(-1)?.cumPnl ?? 0;
+
   const divByMonth = useMemo(() => {
     const map: Record<string, number> = {};
     // biome-ignore lint/complexity/noForEach: pre-existing pattern
@@ -255,6 +257,74 @@ export function AnalyticsTab({
                 />
               </AreaChart>
             </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Monthly breakdown table — exact figures the outlier-dominated chart can't show */}
+      {monthData.length > 0 && (
+        <div className="mx-2 mb-2 border p-2" style={{ borderColor: colors.border }}>
+          <div
+            className="text-[9px] font-bold tracking-widest mb-1"
+            style={{ color: colors.accent }}
+          >
+            MONTHLY BREAKDOWN
+          </div>
+          <div className="max-h-[200px] overflow-y-auto">
+            <table className="w-full text-[9px] font-mono">
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  {["MONTH", "P&L", "WIN%", "CUMULATIVE"].map((h, i) => (
+                    <th
+                      key={h}
+                      className={`py-0.5 sticky top-0 ${i === 0 ? "text-left" : "text-right"}`}
+                      style={{ color: colors.textSecondary, background: "#0a0a0a" }}
+                    >
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {monthData.map((m, i) => (
+                  <tr key={m.month} style={{ borderBottom: "1px solid #1a1a1a" }}>
+                    <td className="py-0.5" style={{ color: colors.text }}>
+                      {m.month}
+                    </td>
+                    <td className="text-right py-0.5 font-bold" style={{ color: pnlColor(m.pnl) }}>
+                      {sym}
+                      {fmtK(Math.abs(m.pnl))} {m.pnl >= 0 ? "▲" : "▼"}
+                    </td>
+                    <td
+                      className="text-right py-0.5"
+                      style={{ color: m.win_rate >= 50 ? "#4ade80" : "#f87171" }}
+                    >
+                      {m.win_rate != null ? `${m.win_rate.toFixed(0)}%` : "—"}
+                    </td>
+                    <td
+                      className="text-right py-0.5"
+                      style={{ color: pnlColor(cumulativeData[i]?.cumPnl ?? 0) }}
+                    >
+                      {sym}
+                      {fmtK(cumulativeData[i]?.cumPnl ?? 0)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop: `1px solid ${colors.border}` }}>
+                  <td className="py-0.5 font-bold" style={{ color: colors.textSecondary }}>
+                    TOTAL
+                  </td>
+                  <td className="text-right py-0.5 font-bold" style={{ color: pnlColor(totalPnl) }}>
+                    {sym}
+                    {fmtK(Math.abs(totalPnl))} {totalPnl >= 0 ? "▲" : "▼"}
+                  </td>
+                  <td />
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
           </div>
         </div>
       )}
