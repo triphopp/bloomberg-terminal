@@ -18,7 +18,7 @@ import {
 } from "recharts";
 import { ALLOC_COLORS } from "../constants";
 import { type Colors, fmtK, pnlColor } from "../helpers";
-import type { Dividend, Summary } from "../types";
+import type { Dividend, Summary, Trade } from "../types";
 import { AccBadge } from "../ui/AccBadge";
 
 export function AnalyticsTab({
@@ -40,6 +40,7 @@ export function AnalyticsTab({
     open_by_sector: any[];
   } | null>(null);
   const [dividends, setDividends] = useState<Dividend[]>([]);
+  const [openPos, setOpenPos] = useState<Trade[]>([]);
   const [divPeriod, setDivPeriod] = useState<"M" | "Q" | "Y">("M");
   const [loading, setLoading] = useState(false);
 
@@ -48,7 +49,7 @@ export function AnalyticsTab({
       setLoading(true);
       try {
         const qs = accountId !== "all" ? `?account_id=${accountId}` : "";
-        const [ar, dr] = await Promise.all([
+        const [ar, dr, op] = await Promise.all([
           fetch(`/api/v2/portfolio/analytics${qs}`, { signal }).then((r) => {
             if (!r.ok) throw new Error();
             return r.json();
@@ -57,9 +58,14 @@ export function AnalyticsTab({
             if (!r.ok) throw new Error();
             return r.json();
           }),
+          fetch(`/api/v2/portfolio/open-positions${qs}`, { signal }).then((r) => {
+            if (!r.ok) throw new Error();
+            return r.json();
+          }),
         ]);
         setAnalytics(ar);
         setDividends(Array.isArray(dr) ? dr : []);
+        setOpenPos(Array.isArray(op?.positions) ? op.positions : []);
       } catch (e) {
         if ((e as Error)?.name === "AbortError") return;
       } finally {
@@ -135,6 +141,32 @@ export function AnalyticsTab({
   const filteredStats =
     accountId === "all" ? accStats : accStats.filter((a) => a.account.id === accountId);
 
+  // Capital snapshot — everything normalised to THB base, then shown in the active currency.
+  const capital = useMemo(() => {
+    const realized = filteredStats.reduce((s, a) => s + (a.pnl_base ?? 0), 0);
+    const invested = filteredStats.reduce((s, a) => s + (a.total_invested ?? 0), 0);
+    const dividends = filteredStats.reduce((s, a) => s + (a.total_dividends ?? 0), 0);
+    let unrealized = 0;
+    let openCost = 0;
+    for (const p of openPos) {
+      unrealized += p.unrealized_pnl_thb ?? 0;
+      const costNative = p.amount ?? p.price_entry * p.volume;
+      openCost += p.acc_currency === "USD" ? costNative * thb_per_usd : costNative;
+    }
+    return {
+      realized,
+      unrealized,
+      totalPnl: realized + unrealized,
+      openCost,
+      marketValue: openCost + unrealized,
+      invested,
+      dividends,
+    };
+  }, [filteredStats, openPos, thb_per_usd]);
+
+  // THB base → active display currency
+  const toDisp = (thb: number) => (currency === "USD" ? thb / thb_per_usd : thb);
+
   return (
     <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 220px)" }}>
       {/* Per-account summary */}
@@ -172,6 +204,69 @@ export function AnalyticsTab({
           </div>
         ))}
       </div>
+
+      {/* Capital snapshot — realized vs unrealized split, cost basis, invested capital */}
+      {(openPos.length > 0 || filteredStats.length > 0) && (
+        <div className="mx-2 mb-2 border p-2" style={{ borderColor: colors.border }}>
+          <div
+            className="text-[9px] font-bold tracking-widest mb-2"
+            style={{ color: colors.accent }}
+          >
+            CAPITAL BREAKDOWN
+          </div>
+          <div className="grid gap-px" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+            {(
+              [
+                { label: "REALIZED P&L", value: capital.realized, tone: "pnl", hint: "closed" },
+                { label: "UNREALIZED P&L", value: capital.unrealized, tone: "pnl", hint: "open" },
+                {
+                  label: "TOTAL P&L",
+                  value: capital.totalPnl,
+                  tone: "pnl",
+                  hint: "realized + unrealized",
+                },
+                { label: "DIVIDENDS", value: capital.dividends, tone: "pos", hint: "received" },
+                {
+                  label: "OPEN COST BASIS",
+                  value: capital.openCost,
+                  tone: "neutral",
+                  hint: "capital deployed",
+                },
+                {
+                  label: "MARKET VALUE",
+                  value: capital.marketValue,
+                  tone: "neutral",
+                  hint: "cost + unrealized",
+                },
+                {
+                  label: "INVESTED CAPITAL",
+                  value: capital.invested,
+                  tone: "neutral",
+                  hint: "deposits",
+                },
+              ] as const
+            ).map((t) => {
+              const color =
+                t.tone === "pnl" ? pnlColor(t.value) : t.tone === "pos" ? "#4ade80" : "#e5e5e5";
+              return (
+                <div key={t.label} className="p-2" style={{ background: "#080808" }}>
+                  <div className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
+                    {t.label}
+                  </div>
+                  <div className="text-[11px] font-mono font-bold mt-0.5" style={{ color }}>
+                    {sym}
+                    {fmtK(Math.abs(toDisp(t.value)))}
+                    {t.tone === "pnl" ? (t.value >= 0 ? " ▲" : " ▼") : ""}
+                  </div>
+                  <div className="text-[7px] font-mono mt-0.5" style={{ color: "#555" }}>
+                    {t.hint}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Monthly + Cumulative P&L side by side for a tighter aspect ratio */}
       {monthData.length > 0 && (
