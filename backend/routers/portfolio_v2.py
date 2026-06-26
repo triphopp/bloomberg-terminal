@@ -608,16 +608,23 @@ def sell_position(body: SellIn):
         if sell_vol > total_volume:
             raise HTTPException(status_code=400, detail=f"Sell volume ({sell_vol}) exceeds position volume ({total_volume})")
 
-        # Use weighted average across all open lots for this symbol+account (AVCO method)
-        all_lots = conn.execute(
-            "SELECT price_entry, volume FROM trades WHERE account_id = ? AND symbol = ? AND win_loss = 'P'",
+        # Cost override takes priority; fall back to AVCO across all open lots
+        override_row = conn.execute(
+            "SELECT avg_cost FROM position_cost_overrides WHERE account_id = ? AND symbol = ?",
             (pos["account_id"], pos["symbol"])
-        ).fetchall()
-        total_vol_all = sum(float(l["volume"]) for l in all_lots)
-        if total_vol_all > 0:
-            avg_cost = sum(float(l["price_entry"]) * float(l["volume"]) for l in all_lots) / total_vol_all
+        ).fetchone()
+        if override_row:
+            avg_cost = float(override_row["avg_cost"])
         else:
-            avg_cost = float(pos["price_entry"])
+            all_lots = conn.execute(
+                "SELECT price_entry, volume FROM trades WHERE account_id = ? AND symbol = ? AND win_loss = 'P'",
+                (pos["account_id"], pos["symbol"])
+            ).fetchall()
+            total_vol_all = sum(float(l["volume"]) for l in all_lots)
+            if total_vol_all > 0:
+                avg_cost = sum(float(l["price_entry"]) * float(l["volume"]) for l in all_lots) / total_vol_all
+            else:
+                avg_cost = float(pos["price_entry"])
 
         entry_price = avg_cost
         exit_price  = float(body.sell_price)

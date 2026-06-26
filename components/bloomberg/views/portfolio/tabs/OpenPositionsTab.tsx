@@ -253,7 +253,11 @@ export function OpenPositionsTab({
   });
   const [showColPicker, setShowColPicker] = useState(false);
   const [filter, setFilter] = useState("");
-  const [sellTarget, setSellTarget] = useState<Trade | null>(null);
+  const [sellCtx, setSellCtx] = useState<{
+    target: Trade;
+    avgEntry?: number;
+    allLots?: Trade[];
+  } | null>(null);
   const [editTarget, setEditTarget] = useState<Trade | null>(null);
   const [editMeta, setEditMeta] = useState<{
     mergedAvg: number;
@@ -840,7 +844,11 @@ export function OpenPositionsTab({
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setSellTarget(p.lots[0]);
+                                    setSellCtx({
+                                      target: p.lots[0],
+                                      avgEntry: costOverrides[p.symbol] ?? p.avg_entry,
+                                      allLots: p.lots,
+                                    });
                                   }}
                                   className="text-[7px] px-2 py-0.5 border font-bold hover:opacity-80 whitespace-nowrap"
                                   style={{
@@ -914,7 +922,10 @@ export function OpenPositionsTab({
                                           type="button"
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            setSellTarget(lot);
+                                            setSellCtx({
+                                              target: lot,
+                                              avgEntry: costOverrides[lot.symbol] ?? undefined,
+                                            });
                                           }}
                                           className="text-[7px] px-1 py-0.5 border font-bold hover:opacity-80"
                                           style={{
@@ -944,11 +955,13 @@ export function OpenPositionsTab({
       {/* Derivatives section — below equities, collapsible */}
       <DerivativesSection accountId={accountId} colors={colors} />
 
-      {sellTarget && (
+      {sellCtx && (
         <SellModal
-          target={sellTarget}
+          target={sellCtx.target}
+          avgEntry={sellCtx.avgEntry}
+          allLots={sellCtx.allLots}
           colors={colors}
-          onClose={() => setSellTarget(null)}
+          onClose={() => setSellCtx(null)}
           onSold={load}
         />
       )}
