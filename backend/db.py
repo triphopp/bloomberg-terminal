@@ -284,6 +284,27 @@ def init_portfolio_v2() -> None:
         except Exception:
             pass
 
+        # ── Portfolio NAV snapshots (daily mark-to-market, THB base) ──────
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS portfolio_nav_snapshots (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id       TEXT NOT NULL,
+                snapshot_date    TEXT NOT NULL,
+                total_value      REAL DEFAULT 0,
+                open_cost_basis  REAL DEFAULT 0,
+                unrealized_pnl   REAL DEFAULT 0,
+                realized_pnl     REAL DEFAULT 0,
+                invested_capital REAL DEFAULT 0,
+                dividends        REAL DEFAULT 0,
+                created_at       TEXT DEFAULT (datetime('now')),
+                UNIQUE(account_id, snapshot_date)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_nav_account_date "
+            "ON portfolio_nav_snapshots(account_id, snapshot_date)"
+        )
+
         # ── Paper Trading tables ─────────────────────────────────────────
         conn.execute("""
             CREATE TABLE IF NOT EXISTS paper_accounts (
@@ -406,6 +427,79 @@ def init_portfolio_v2() -> None:
 
         # No default accounts — users create their own via the portfolio UI
         # (POST /api/v2/portfolio/accounts).
+
+
+def init_sync_layer() -> None:
+    """Cloud-sync support: per-row `updated_at` (LWW) + delete tombstones.
+
+    Adds an `updated_at` column + an AFTER UPDATE trigger to every synced table,
+    plus an AFTER DELETE trigger that records the deleted natural key into
+    `sync_tombstones` (so deletes survive a merge instead of resurrecting).
+
+    All triggers are gated by `_sync_guard.active`; the restore path raises that
+    flag so importing remote rows neither re-stamps `updated_at` nor fabricates
+    tombstones. Safe to call on every startup (idempotent)."""
+    from sync.config import SYNC_TABLES, TOMB_SEP
+    sep = TOMB_SEP  # char(31) unit separator, embedded literally below
+
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sync_tombstones (
+                table_name TEXT NOT NULL,
+                row_id     TEXT NOT NULL,
+                deleted_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (table_name, row_id)
+            )
+        """)
+        conn.execute("CREATE TABLE IF NOT EXISTS _sync_guard (active INTEGER NOT NULL)")
+        if conn.execute("SELECT COUNT(*) FROM _sync_guard").fetchone()[0] == 0:
+            conn.execute("INSERT INTO _sync_guard (active) VALUES (0)")
+
+        for table, pk in SYNC_TABLES:
+            # 1) updated_at column (skip if table absent or column exists)
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN updated_at TEXT")
+            except Exception:
+                pass
+            try:
+                conn.execute(
+                    f"UPDATE {table} SET updated_at = datetime('now') WHERE updated_at IS NULL"
+                )
+            except Exception:
+                continue  # table not present in this DB
+
+            # 2a) stamp updated_at on INSERT when caller didn't set it (else NULL
+            #     breaks last-write-wins comparisons during merge)
+            conn.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS trg_{table}_sync_ins
+                AFTER INSERT ON {table} FOR EACH ROW
+                WHEN (SELECT active FROM _sync_guard) = 0 AND NEW.updated_at IS NULL
+                BEGIN
+                    UPDATE {table} SET updated_at = datetime('now') WHERE rowid = NEW.rowid;
+                END;
+            """)
+
+            # 2b) auto-stamp updated_at on UPDATE (match by rowid — always unique)
+            conn.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS trg_{table}_sync_upd
+                AFTER UPDATE ON {table} FOR EACH ROW
+                WHEN (SELECT active FROM _sync_guard) = 0
+                BEGIN
+                    UPDATE {table} SET updated_at = datetime('now') WHERE rowid = NEW.rowid;
+                END;
+            """)
+
+            # 3) record tombstone on DELETE (natural key joined by char(31))
+            row_expr = " || char(31) || ".join(f"CAST(OLD.{c} AS TEXT)" for c in pk)
+            conn.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS trg_{table}_sync_del
+                AFTER DELETE ON {table} FOR EACH ROW
+                WHEN (SELECT active FROM _sync_guard) = 0
+                BEGIN
+                    INSERT OR REPLACE INTO sync_tombstones (table_name, row_id, deleted_at)
+                    VALUES ('{table}', {row_expr}, datetime('now'));
+                END;
+            """)
 
 
 def get_sectors_by_country(country: str) -> list[str]:

@@ -6,18 +6,23 @@ import type { Trade } from "../types";
 
 interface Props {
   target: Trade;
+  avgEntry?: number; // weighted avg across all lots (position-level)
+  allLots?: Trade[]; // all open lots — enables multi-lot full sell
   colors: Colors;
   onClose: () => void;
   onSold: () => void;
 }
 
-export function SellModal({ target, colors, onClose, onSold }: Props) {
+export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }: Props) {
+  const effectiveAvgEntry = avgEntry ?? target.price_entry;
+  const positionVolume = allLots ? allLots.reduce((s, l) => s + l.volume, 0) : target.volume;
+
   const [sellPrice, setSellPrice] = useState(
     target.current_price != null
       ? Number.parseFloat(target.current_price.toFixed(4)).toString()
       : ""
   );
-  const [sellVolume, setSellVolume] = useState(target.volume.toString());
+  const [sellVolume, setSellVolume] = useState(positionVolume.toString());
   const [sellDate, setSellDate] = useState(new Date().toISOString().slice(0, 10));
   const [sellPartial, setSellPartial] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -28,22 +33,40 @@ export function SellModal({ target, colors, onClose, onSold }: Props) {
     if (!price || price <= 0) return;
     if (sellPartial) {
       const vol = Number.parseFloat(sellVolume);
-      if (!vol || vol <= 0 || vol > target.volume) return;
+      if (!vol || vol <= 0 || vol > positionVolume) return;
     }
     setLoading(true);
     try {
-      const vol = sellPartial ? Number.parseFloat(sellVolume) : 0;
-      const r = await fetch("/api/v2/portfolio/sell", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          trade_id: target.id,
-          sell_volume: vol,
-          sell_price: price,
-          sell_date: sellDate,
-        }),
-      });
-      if (!r.ok) throw new Error(await r.text());
+      const isMultiLot = allLots && allLots.length > 1;
+      if (!sellPartial && isMultiLot) {
+        // Close every lot individually so all are marked sold
+        for (const lot of allLots) {
+          const r = await fetch("/api/v2/portfolio/sell", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              trade_id: lot.id,
+              sell_volume: 0,
+              sell_price: price,
+              sell_date: sellDate,
+            }),
+          });
+          if (!r.ok) throw new Error(await r.text());
+        }
+      } else {
+        const vol = sellPartial ? Number.parseFloat(sellVolume) : 0;
+        const r = await fetch("/api/v2/portfolio/sell", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            trade_id: target.id,
+            sell_volume: vol,
+            sell_price: price,
+            sell_date: sellDate,
+          }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+      }
       onSold();
       onClose();
     } catch (e) {
@@ -51,14 +74,27 @@ export function SellModal({ target, colors, onClose, onSold }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [target, sellPrice, sellVolume, sellDate, sellPartial, onSold, onClose]);
+  }, [
+    target,
+    allLots,
+    positionVolume,
+    sellPrice,
+    sellVolume,
+    sellDate,
+    sellPartial,
+    onSold,
+    onClose,
+  ]);
 
   const sellDisabled =
     loading ||
     !sellDate ||
     !sellPrice ||
     Number.parseFloat(sellPrice) <= 0 ||
-    (sellPartial && (!sellVolume || Number.parseFloat(sellVolume) <= 0));
+    (sellPartial &&
+      (!sellVolume ||
+        Number.parseFloat(sellVolume) <= 0 ||
+        Number.parseFloat(sellVolume) > positionVolume));
 
   return (
     <div
@@ -94,14 +130,14 @@ export function SellModal({ target, colors, onClose, onSold }: Props) {
           <div className="flex justify-between">
             <span style={{ color: colors.textSecondary }}>Position</span>
             <span style={{ color: colors.text }}>
-              {target.symbol} × {target.volume.toLocaleString()}
+              {target.symbol} × {positionVolume.toLocaleString()}
             </span>
           </div>
           <div className="flex justify-between">
             <span style={{ color: colors.textSecondary }}>Avg Entry</span>
             <span style={{ color: colors.text }}>
               {target.acc_currency === "USD" ? "$" : "฿"}
-              {fmt(target.price_entry, 4)}
+              {fmt(effectiveAvgEntry, 4)}
             </span>
           </div>
           <div className="flex justify-between">
@@ -109,7 +145,7 @@ export function SellModal({ target, colors, onClose, onSold }: Props) {
             <span
               style={{
                 color:
-                  target.current_price != null && target.current_price >= target.price_entry
+                  target.current_price != null && target.current_price >= effectiveAvgEntry
                     ? "#4ade80"
                     : "#f87171",
               }}
@@ -142,7 +178,7 @@ export function SellModal({ target, colors, onClose, onSold }: Props) {
               className="text-[8px] font-mono"
               style={{ color: colors.textSecondary }}
             >
-              Sell Volume (remaining: {target.volume.toLocaleString()})
+              Sell Volume (remaining: {positionVolume.toLocaleString()})
             </label>
             <input
               id="sell-volume"
@@ -213,8 +249,8 @@ export function SellModal({ target, colors, onClose, onSold }: Props) {
               <span style={{ color: colors.textSecondary }}>Est. P&L</span>
               {(() => {
                 const ep = Number.parseFloat(sellPrice) || 0;
-                const vol = sellPartial ? Number.parseFloat(sellVolume) || 0 : target.volume;
-                const pnl = (ep - target.price_entry) * vol;
+                const vol = sellPartial ? Number.parseFloat(sellVolume) || 0 : positionVolume;
+                const pnl = (ep - effectiveAvgEntry) * vol;
                 return (
                   <span className="font-bold" style={{ color: pnl >= 0 ? "#4ade80" : "#f87171" }}>
                     {pnl >= 0 ? "+" : ""}

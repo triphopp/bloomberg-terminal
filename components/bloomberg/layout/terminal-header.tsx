@@ -1,9 +1,10 @@
 "use client";
 
-import React from "react";
 import { Moon, Search, Settings, Sun } from "lucide-react";
+import type React from "react";
 import { bloombergColors } from "../lib/theme-config";
 import { ProviderSwitch } from "./provider-switch";
+import { SyncStatus } from "./sync-status";
 
 export interface NavItem {
   id: string;
@@ -71,7 +72,10 @@ export function TerminalHeader({
               }}
               title={`${item.label} (${item.shortcut})`}
             >
-              <span className="font-bold mr-0.5" style={{ color: isActive ? "#000" : colors.accent, fontSize: 9 }}>
+              <span
+                className="font-bold mr-0.5"
+                style={{ color: isActive ? "#000" : colors.accent, fontSize: 9 }}
+              >
                 {item.shortcut}
               </span>
               <span>{item.label}</span>
@@ -90,12 +94,20 @@ export function TerminalHeader({
         {/* Quote provider switch + health */}
         <ProviderSwitch isDarkMode={isDarkMode} />
 
+        {/* Portfolio cloud-sync status (hidden when sync disabled) */}
+        <SyncStatus isDarkMode={isDarkMode} />
+
         {/* %YTD / %DAILY toggle */}
         <button
           type="button"
           onClick={onYTDToggle}
           className="flex items-center gap-0.5 px-2 h-full transition-opacity hover:opacity-100"
-          style={{ color: showYTD ? colors.positive : colors.accent, fontSize: 9, borderLeft: sep, opacity: 0.85 }}
+          style={{
+            color: showYTD ? colors.positive : colors.accent,
+            fontSize: 9,
+            borderLeft: sep,
+            opacity: 0.85,
+          }}
           title="Toggle %YTD / %Daily (Y)"
         >
           <span className="font-bold">%{showYTD ? "YTD" : "DAILY"}</span>
@@ -103,8 +115,8 @@ export function TerminalHeader({
         </button>
 
         {/* Esc:back — sub-views only, clickable when onBack provided */}
-        {currentView !== "market" && (
-          onBack ? (
+        {currentView !== "market" &&
+          (onBack ? (
             <button
               type="button"
               onClick={onBack}
@@ -121,8 +133,7 @@ export function TerminalHeader({
             >
               Esc:back
             </span>
-          )
-        )}
+          ))}
 
         {/* Theme toggle */}
         <button
@@ -135,52 +146,54 @@ export function TerminalHeader({
           {isDarkMode ? <Sun className="h-2.5 w-2.5" /> : <Moon className="h-2.5 w-2.5" />}
         </button>
 
-      <button
-        type="button"
-        onClick={onHelpClick}
-        className="flex items-center gap-0.5 px-1.5 h-full transition-colors hover:opacity-70"
-        style={{ color: colors.textSecondary, fontSize: 9, borderLeft: sep }}
-        title="Keyboard shortcuts (?)"
-      >
-        <span className="font-bold" style={{ color: colors.accent, fontSize: 8 }}>?</span>
-        <span>HELP</span>
-      </button>
-
-      {/* Search */}
-      <button
-        type="button"
-        onClick={onSearchClick}
-        className="flex items-center gap-1 px-2 h-full transition-colors hover:opacity-70"
-        style={{
-          color: colors.textSecondary,
-          fontSize: 9,
-          borderLeft: sep,
-          backgroundColor: `${colors.accent}08`,
-        }}
-        title="Search (/ or Ctrl+K)"
-      >
-        <Search className="h-2.5 w-2.5" style={{ color: colors.accent }} />
-        <span className="hidden sm:inline">Search</span>
-        <kbd
-          className="hidden sm:inline px-1 py-0 font-mono ml-0.5"
-          style={{ background: `${colors.border}66`, color: colors.textSecondary, fontSize: 8 }}
-        >
-          /
-        </kbd>
-      </button>
-
-      {/* Layout settings — market view only */}
-      {onSettingsClick && currentView === "market" && (
         <button
           type="button"
-          onClick={onSettingsClick}
+          onClick={onHelpClick}
           className="flex items-center gap-0.5 px-1.5 h-full transition-colors hover:opacity-70"
           style={{ color: colors.textSecondary, fontSize: 9, borderLeft: sep }}
-          title="Layout settings"
+          title="Keyboard shortcuts (?)"
         >
-          <Settings className="h-2.5 w-2.5" />
+          <span className="font-bold" style={{ color: colors.accent, fontSize: 8 }}>
+            ?
+          </span>
+          <span>HELP</span>
         </button>
-      )}
+
+        {/* Search */}
+        <button
+          type="button"
+          onClick={onSearchClick}
+          className="flex items-center gap-1 px-2 h-full transition-colors hover:opacity-70"
+          style={{
+            color: colors.textSecondary,
+            fontSize: 9,
+            borderLeft: sep,
+            backgroundColor: `${colors.accent}08`,
+          }}
+          title="Search (/ or Ctrl+K)"
+        >
+          <Search className="h-2.5 w-2.5" style={{ color: colors.accent }} />
+          <span className="hidden sm:inline">Search</span>
+          <kbd
+            className="hidden sm:inline px-1 py-0 font-mono ml-0.5"
+            style={{ background: `${colors.border}66`, color: colors.textSecondary, fontSize: 8 }}
+          >
+            /
+          </kbd>
+        </button>
+
+        {/* Layout settings — market view only */}
+        {onSettingsClick && currentView === "market" && (
+          <button
+            type="button"
+            onClick={onSettingsClick}
+            className="flex items-center gap-0.5 px-1.5 h-full transition-colors hover:opacity-70"
+            style={{ color: colors.textSecondary, fontSize: 9, borderLeft: sep }}
+            title="Layout settings"
+          >
+            <Settings className="h-2.5 w-2.5" />
+          </button>
+        )}
       </div>
     </div>
   );

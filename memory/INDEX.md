@@ -61,6 +61,7 @@ memory/
 │       ├── strategy-classifier.md       ← done 2026-05-22
 │       ├── trade-edit-and-sector-standard.md ← TradePatch 17 fields + bulk-patch-sector + TradeEditModal done 2026-05-23
 │       ├── us-sector-rotation.md        ← ⛔ DEPRECATED — merged into sector-selection-signal.md
+│       ├── portfolio-cloud-sync.md      ← ✅ PC↔Mac Google Drive sync: JSON snapshots, startup pull, row-LWW + tombstones, SYNC chip, no login (done 2026-06-26)
 │       └── view-consolidation.md        ← done 2026-05-21
 │
 └── sessions/

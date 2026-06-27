@@ -374,7 +374,10 @@ def list_trades(
     sql = "SELECT * FROM trades"
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY date_entry DESC, created_at DESC LIMIT ? OFFSET ?"
+    # Order by most-recent activity: a freshly-closed trade keeps its old
+    # date_entry, so sort by exit date when present (else entry) to surface
+    # recent sells at the top instead of burying them by entry date.
+    sql += " ORDER BY COALESCE(date_exit, date_entry) DESC, created_at DESC LIMIT ? OFFSET ?"
     params += [limit, offset]
     with get_db() as conn:
         rows = conn.execute(sql, params).fetchall()
@@ -605,16 +608,23 @@ def sell_position(body: SellIn):
         if sell_vol > total_volume:
             raise HTTPException(status_code=400, detail=f"Sell volume ({sell_vol}) exceeds position volume ({total_volume})")
 
-        # Use weighted average across all open lots for this symbol+account (AVCO method)
-        all_lots = conn.execute(
-            "SELECT price_entry, volume FROM trades WHERE account_id = ? AND symbol = ? AND win_loss = 'P'",
+        # Cost override takes priority; fall back to AVCO across all open lots
+        override_row = conn.execute(
+            "SELECT avg_cost FROM position_cost_overrides WHERE account_id = ? AND symbol = ?",
             (pos["account_id"], pos["symbol"])
-        ).fetchall()
-        total_vol_all = sum(float(l["volume"]) for l in all_lots)
-        if total_vol_all > 0:
-            avg_cost = sum(float(l["price_entry"]) * float(l["volume"]) for l in all_lots) / total_vol_all
+        ).fetchone()
+        if override_row:
+            avg_cost = float(override_row["avg_cost"])
         else:
-            avg_cost = float(pos["price_entry"])
+            all_lots = conn.execute(
+                "SELECT price_entry, volume FROM trades WHERE account_id = ? AND symbol = ? AND win_loss = 'P'",
+                (pos["account_id"], pos["symbol"])
+            ).fetchall()
+            total_vol_all = sum(float(l["volume"]) for l in all_lots)
+            if total_vol_all > 0:
+                avg_cost = sum(float(l["price_entry"]) * float(l["volume"]) for l in all_lots) / total_vol_all
+            else:
+                avg_cost = float(pos["price_entry"])
 
         entry_price = avg_cost
         exit_price  = float(body.sell_price)
@@ -670,15 +680,15 @@ def sell_position(body: SellIn):
                    FROM trades WHERE id = ?""",
                 (sold_id, body.sell_date, avg_cost, exit_price, sold_volume,
                  sold_pnl_net, sold_wl, sold_pnl_pct,
-                 f"[PARTIAL SELL {body.sell_date}] @ {exit_price} | P&L: {sold_pnl_net}",
+                 "",
                  body.trade_id),
             )
 
+            # Reduce the remaining open lot. The partial sell is captured in the
+            # audit log (below) — no auto-note appended to keep notes user-owned.
             conn.execute(
-                "UPDATE trades SET volume = ?, note = note || ? WHERE id = ?",
-                (remaining,
-                 f"\n[PARTIAL SELL {body.sell_date}] {sold_volume} shares @ {exit_price}",
-                 body.trade_id),
+                "UPDATE trades SET volume = ? WHERE id = ?",
+                (remaining, body.trade_id),
             )
 
             # Log on BOTH the original lot (volume reduced) and the new sold record
@@ -1025,10 +1035,147 @@ def get_summary(base_currency: str = Query("THB")):
     }
 
 
+# ── NAV snapshots (daily mark-to-market history) ────────────────────────────────
+
+def _maybe_capture_nav() -> None:
+    """Capture today's portfolio NAV once per day (capture-on-view).
+
+    Writes one row per active account plus a global 'all' row, all in THB base.
+    Cheap no-op if today's snapshot already exists. Never raises into callers.
+    """
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        with get_db() as conn:
+            if conn.execute(
+                "SELECT 1 FROM portfolio_nav_snapshots WHERE snapshot_date = ? LIMIT 1",
+                (today,),
+            ).fetchone():
+                return
+
+            accounts = {
+                a["id"]: dict(a)
+                for a in conn.execute(
+                    "SELECT id, currency FROM portfolio_accounts WHERE is_active = 1"
+                ).fetchall()
+            }
+            if not accounts:
+                return
+
+            realized_map = {
+                r["account_id"]: float(r["realized"] or 0)
+                for r in conn.execute(
+                    "SELECT account_id, SUM(COALESCE(pnl_amount,0)) realized "
+                    "FROM trades WHERE win_loss != 'P' GROUP BY account_id"
+                ).fetchall()
+            }
+            invested_map = {
+                r["account_id"]: float(r["invested"] or 0)
+                for r in conn.execute(
+                    "SELECT account_id, SUM(COALESCE(investment,0)) invested "
+                    "FROM cash_ledger GROUP BY account_id"
+                ).fetchall()
+            }
+            div_map = {
+                r["account_id"]: float(r["div"] or 0)
+                for r in conn.execute(
+                    "SELECT account_id, SUM(COALESCE(total_received,0)) div "
+                    "FROM dividends GROUP BY account_id"
+                ).fetchall()
+            }
+            open_rows = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT account_id, symbol, price_entry, volume, amount "
+                    "FROM trades WHERE win_loss = 'P'"
+                ).fetchall()
+            ]
+
+        thb_per_usd = _get_thb_per_usd()
+
+        # Live prices for all open symbols, in one batch
+        yf_map: dict[int, Optional[str]] = {}
+        wanted: set[str] = set()
+        for i, p in enumerate(open_rows):
+            ys = _get_yf_symbol(p["symbol"], p["account_id"])
+            yf_map[i] = ys
+            if ys:
+                wanted.add(ys)
+        price_lookup = _batch_fetch_prices(list(wanted))
+
+        from collections import defaultdict as _dd
+        unreal: dict = _dd(float)
+        cost: dict = _dd(float)
+        for i, p in enumerate(open_rows):
+            acc = accounts.get(p["account_id"])
+            if not acc:
+                continue
+            fx = thb_per_usd if acc["currency"] == "USD" else 1.0
+            vol = _to_float_or_zero(p["volume"])
+            entry = _to_float_or_zero(p["price_entry"])
+            cost_native = _to_float_or_zero(p["amount"]) or entry * vol
+            cost[p["account_id"]] += cost_native * fx
+            price = price_lookup.get(yf_map.get(i)) if yf_map.get(i) else None
+            if price and entry > 0:
+                unreal[p["account_id"]] += (price - entry) * vol * fx
+
+        rows: list[tuple] = []
+        g = {"total": 0.0, "cost": 0.0, "unreal": 0.0, "real": 0.0, "inv": 0.0, "div": 0.0}
+        for aid, acc in accounts.items():
+            fx = thb_per_usd if acc["currency"] == "USD" else 1.0
+            realized = realized_map.get(aid, 0.0) * fx     # native → THB
+            invested = invested_map.get(aid, 0.0)          # already THB
+            dividends = div_map.get(aid, 0.0)              # already THB
+            c = cost.get(aid, 0.0)
+            u = unreal.get(aid, 0.0)
+            # NAV = mark-to-market value of current holdings. Deposit-independent
+            # (cash_ledger deposits are often incomplete); realized/invested/dividends
+            # are stored alongside for context but do not inflate the asset value.
+            total = c + u
+            rows.append((aid, today, total, c, u, realized, invested, dividends))
+            g["total"] += total; g["cost"] += c; g["unreal"] += u
+            g["real"] += realized; g["inv"] += invested; g["div"] += dividends
+        rows.append(("all", today, g["total"], g["cost"], g["unreal"],
+                     g["real"], g["inv"], g["div"]))
+
+        with get_db() as conn:
+            conn.executemany("""
+                INSERT INTO portfolio_nav_snapshots
+                    (account_id, snapshot_date, total_value, open_cost_basis,
+                     unrealized_pnl, realized_pnl, invested_capital, dividends)
+                VALUES (?,?,?,?,?,?,?,?)
+                ON CONFLICT(account_id, snapshot_date) DO UPDATE SET
+                    total_value      = excluded.total_value,
+                    open_cost_basis  = excluded.open_cost_basis,
+                    unrealized_pnl   = excluded.unrealized_pnl,
+                    realized_pnl     = excluded.realized_pnl,
+                    invested_capital = excluded.invested_capital,
+                    dividends        = excluded.dividends
+            """, rows)
+    except Exception:
+        pass
+
+
+@router.get("/nav-history")
+def get_nav_history(account_id: Optional[str] = Query(None), days: int = Query(365)):
+    """Daily NAV time series (THB base) for charting total asset value."""
+    aid = account_id if (account_id and account_id != "all") else "all"
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT snapshot_date, total_value, open_cost_basis, unrealized_pnl,
+                      realized_pnl, invested_capital, dividends
+               FROM portfolio_nav_snapshots
+               WHERE account_id = ?
+               ORDER BY snapshot_date DESC LIMIT ?""",
+            (aid, max(1, days)),
+        ).fetchall()
+    return [dict(r) for r in reversed(rows)]
+
+
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
 @router.get("/analytics")
 def get_analytics(account_id: Optional[str] = Query(None)):
+    _maybe_capture_nav()
     where, params = ["win_loss != 'P'"], []
     if account_id and account_id != "all":
         where.append("account_id = ?")

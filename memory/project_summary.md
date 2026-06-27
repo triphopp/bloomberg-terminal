@@ -74,6 +74,12 @@ BOT_FX_TOKEN        — BOT Exchange Rates
 BOT_STATS_TOKEN     — BOT Statistics
 PORTFOLIO_DB        — default portfolio.db
 
+# Portfolio Cloud Sync (PC ↔ MacOS via Google Drive) — backend/sync/
+SYNC_ENABLED        — "true" to activate (default off)
+SYNC_DIR            — shared cloud folder, e.g. "G:\My Drive\Investment Portfolio" (Win) / "/Users/you/Google Drive/Investment Portfolio" (Mac)
+SYNC_DEVICE_ID      — blank → auto from hostname
+SYNC_PUSH_INTERVAL  — background push cadence sec (default 60)
+
 # SEC Thailand — OLD portal (expires 2026-06-30)
 SEC_COMMON_PRIMARY / SEC_FUND_FACTSHEET_PRIMARY / SEC_FUND_DAILY_PRIMARY
 SEC_BOND_PRIMARY (dead) / SEC_DIGITAL_ASSET_PRIMARY / SEC_ONE_REPORT_PRIMARY
@@ -129,6 +135,7 @@ OPENAI_API_KEY      — optional
 | `analytics.py` | `/api/analytics/{corr,beta,vol,return,drawdown,sharpe,zscore,rsi,compare,rank}` | yfinance + TTLCache 300s |
 | `paper_trading.py` | `/api/paper/*` (accounts, orders, positions, fills, equity-curve) | yfinance + SQLite |
 | `providers.py` | `/api/providers` (list+health), `/api/providers/active` (switch), `/api/providers/auto-failover` | quote registry |
+| `sync_router.py` | `/api/sync/status`, `/api/sync/pull`, `/api/sync/push` | cloud-sync (`backend/sync/`) |
 
 ### Quote Provider Registry (live-quote path)
 `market_data` singleton = `FailoverSource` facade. Quote path (`download_quotes`/`get_fast_info`/`download`/`get_history`) → `ProviderRegistry` (manual switch + auto-failover, capability-scoped). Batch quote/download use **gap-fill merge** — per-symbol routing across providers so mixed portfolios (TH `.BK` + US) get priced by whichever provider supports each symbol. Heavy methods (options/financials/etf/news) → primary yfinance. Providers: `YFQuoteProvider` (default) → `StooqQuoteProvider` (keyless fallback). Add provider: implement `QuoteProvider` + `registry.register()` in `sources/__init__.py`. Env: `QUOTE_PROVIDER_DEFAULT`, `QUOTE_AUTO_FAILOVER`. FE seam: `useLiveQuery` (cadence) + header `ProviderSwitch`. Scaling roadmap: `plans/scaling/`.
@@ -157,8 +164,12 @@ paper_orders        (id, account_id, symbol, side buy/sell, order_type market/li
 paper_fills         (id, order_id, quantity, price, commission, filled_at)
 paper_positions     (id, account_id, symbol, quantity, avg_cost, realized_pnl) UNIQUE(account_id, symbol)
 paper_snapshots     (id, account_id, date, equity, cash, positions_value) UNIQUE(account_id, date)
+sync_tombstones     (table_name, row_id, deleted_at) PK(table_name,row_id)  -- cloud-sync delete log
+_sync_guard         (active)  -- flag; raised during restore to silence sync triggers
 ```
 Holdings computed via **average-cost method** in `db.compute_holdings()`.
+
+**Cloud sync (`backend/sync/`):** `init_sync_layer()` adds `updated_at` + AFTER INSERT/UPDATE/DELETE triggers to synced tables (LWW + tombstones, all gated by `_sync_guard`). Local `.db` stays working copy; JSON snapshots (user tables only — excludes sector/risk/regime caches) exchanged via `SYNC_DIR`. **Never put `.db` on the cloud drive** (Drive byte-sync + WAL → corruption). Startup `sync.sync_startup()` = pull→merge→push; background pusher every `SYNC_PUSH_INTERVAL`s. Plan: `plans/completed/portfolio-cloud-sync.md`.
 
 ---
 
@@ -204,6 +215,7 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24). Stock analysis (9 tabs)
 - [ ] Seed sector data: POST /api/sectors/fetch for TH/KR/HK/EU/US
 
 ### Features
+- [x] **Portfolio Cloud Sync** — PC↔Mac sync via Google Drive JSON snapshots, startup pull, row-LWW merge + tombstones, no login done 2026-06-26 (`plans/completed/portfolio-cloud-sync.md`)
 - [ ] Polymarket: dashboard view in frontend
 - [ ] BOT: frontend view for Bond Auction + yield trend chart
 - [ ] BOT: activate Stat-ExchangeRate → add THB FX view

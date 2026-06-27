@@ -716,7 +716,7 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
                     <td className="px-2 py-1" style={{ color: colors.textSecondary }}>
                       {c.exchange_rate !== 1 ? c.exchange_rate.toFixed(3) : "—"}
                     </td>
-                    <td className="px-2 py-1 whitespace-nowrap opacity-0 group-hover:opacity-100">
+                    <td className="px-2 py-1 whitespace-nowrap opacity-60 group-hover:opacity-100">
                       <button
                         type="button"
                         onClick={() => editCash(c)}
@@ -791,7 +791,7 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
                   <td className="px-2 py-1 font-bold" style={{ color: "#4ade80" }}>
                     ฿{fmtK(d.total_received)}
                   </td>
-                  <td className="px-2 py-1 whitespace-nowrap opacity-0 group-hover:opacity-100">
+                  <td className="px-2 py-1 whitespace-nowrap opacity-60 group-hover:opacity-100">
                     <button
                       type="button"
                       onClick={() => editDiv(d)}
@@ -885,7 +885,7 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
                     <td className="px-2 py-1">
                       {d.reinvest_units > 0 ? d.reinvest_units.toFixed(4) : "—"}
                     </td>
-                    <td className="px-2 py-1 whitespace-nowrap opacity-0 group-hover:opacity-100">
+                    <td className="px-2 py-1 whitespace-nowrap opacity-60 group-hover:opacity-100">
                       <button
                         type="button"
                         onClick={() => editDiv(d)}
