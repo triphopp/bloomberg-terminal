@@ -51,21 +51,22 @@ export function AnalyticsTab({
     async (signal?: AbortSignal) => {
       setLoading(true);
       try {
-        const qs = accountId !== "all" ? `?account_id=${accountId}` : "";
+        const qs = new URLSearchParams({ base_currency: currency });
+        if (accountId !== "all") qs.set("account_id", accountId);
         const [ar, dr, op, nv] = await Promise.all([
-          fetch(`/api/v2/portfolio/analytics${qs}`, { signal }).then((r) => {
+          fetch(`/api/v2/portfolio/analytics?${qs}`, { signal }).then((r) => {
             if (!r.ok) throw new Error();
             return r.json();
           }),
-          fetch(`/api/v2/portfolio/dividends${qs}`, { signal }).then((r) => {
+          fetch(`/api/v2/portfolio/dividends?${qs}`, { signal }).then((r) => {
             if (!r.ok) throw new Error();
             return r.json();
           }),
-          fetch(`/api/v2/portfolio/open-positions${qs}`, { signal }).then((r) => {
+          fetch(`/api/v2/portfolio/open-positions?${qs}`, { signal }).then((r) => {
             if (!r.ok) throw new Error();
             return r.json();
           }),
-          fetch(`/api/v2/portfolio/nav-history${qs}`, { signal }).then((r) => {
+          fetch(`/api/v2/portfolio/nav-history?${qs}`, { signal }).then((r) => {
             if (!r.ok) throw new Error();
             return r.json();
           }),
@@ -80,7 +81,7 @@ export function AnalyticsTab({
         setLoading(false);
       }
     },
-    [accountId]
+    [accountId, currency]
   );
 
   useEffect(() => {
@@ -542,7 +543,7 @@ export function AnalyticsTab({
                   labelStyle={tooltipLabelStyle}
                   itemStyle={tooltipItemStyle}
                   // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
-                  formatter={(v: any) => [`฿${fmtK(v)}`, "Dividend"]}
+                  formatter={(v: any) => [`${sym}${fmtK(v)}`, "Dividend"]}
                 />
                 <Bar dataKey="total" fill="#4ade80" radius={[2, 2, 0, 0]} />
               </BarChart>
@@ -602,7 +603,7 @@ export function AnalyticsTab({
                           itemStyle={tooltipItemStyle}
                           // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
                           formatter={(v: any, _: any, p: any) => [
-                            `฿${fmtK(v)} (${total > 0 ? ((v / total) * 100).toFixed(1) : 0}%)`,
+                            `${sym}${fmtK(v)} (${total > 0 ? ((v / total) * 100).toFixed(1) : 0}%)`,
                             p.payload.sector,
                           ]}
                         />

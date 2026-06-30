@@ -38,6 +38,10 @@ export interface Trade {
   unrealized_pnl_thb?: number;
   acc_currency?: string;
   acc_name?: string;
+  prev_close?: number;
+  day_pnl?: number;
+  day_pnl_thb?: number;
+  day_pct?: number;
 }
 
 export interface CashEntry {

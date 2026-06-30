@@ -209,6 +209,8 @@ function mergePositions(positions: Trade[]): MergedPosition[] {
     const base = lots[0];
     const unrealPnl = lots.reduce((s, l) => s + (l.unrealized_pnl ?? 0), 0);
     const unrealThb = lots.reduce((s, l) => s + (l.unrealized_pnl_thb ?? 0), 0);
+    const dayPnl = lots.reduce((s, l) => s + (l.day_pnl ?? 0), 0);
+    const dayPnlThb = lots.reduce((s, l) => s + (l.day_pnl_thb ?? 0), 0);
     const curPrice = base.current_price ?? null;
     result.push({
       ...base,
@@ -220,6 +222,9 @@ function mergePositions(positions: Trade[]): MergedPosition[] {
       unrealized_pnl: unrealPnl || null,
       unrealized_pnl_thb: unrealThb || null,
       unrealized_pct: curPrice && avgEntry > 0 ? ((curPrice - avgEntry) / avgEntry) * 100 : null,
+      day_pnl: dayPnl || null,
+      day_pnl_thb: dayPnlThb || null,
+      day_pct: base.day_pct ?? null,
     } as MergedPosition);
   }
   return result;
@@ -380,6 +385,12 @@ export function OpenPositionsTab({
     if (p.acc_currency === "USD") return a + (p.unrealized_pnl ?? 0);
     return a + (p.unrealized_pnl ?? 0) / thb_per_usd;
   }, 0);
+  const totalDayPnl = positions.reduce((a, p) => {
+    if (currency === "THB") return a + (p.day_pnl_thb ?? 0);
+    if (p.acc_currency === "USD") return a + (p.day_pnl ?? 0);
+    return a + (p.day_pnl ?? 0) / thb_per_usd;
+  }, 0);
+  const hasDayData = positions.some((p) => p.day_pnl != null);
   const totalCost = positions.reduce((a, p) => {
     const cost = p.price_entry * p.volume;
     return a + toBase(cost, p.acc_currency as "USD" | "THB");
@@ -415,6 +426,16 @@ export function OpenPositionsTab({
               {fmtK(totalCost)}
             </span>
           </span>
+          {hasDayData && (
+            <span>
+              Today{" "}
+              <span className="font-bold" style={{ color: pnlColor(totalDayPnl) }}>
+                {totalDayPnl >= 0 ? "+" : "-"}
+                {csym}
+                {fmtK(Math.abs(totalDayPnl))}
+              </span>
+            </span>
+          )}
           {totalUnreal !== 0 && (
             <span>
               Unreal{" "}
@@ -736,6 +757,31 @@ export function OpenPositionsTab({
                             {fmtK(costVal)}
                           </span>
                         ),
+                        "DAY P&L": (() => {
+                          const dayPnl =
+                            currency === "THB"
+                              ? (p.day_pnl_thb ?? null)
+                              : acc === "USD"
+                                ? (p.day_pnl ?? null)
+                                : p.day_pnl != null
+                                  ? p.day_pnl / thb_per_usd
+                                  : null;
+                          if (dayPnl == null)
+                            return <span style={{ color: colors.textSecondary }}>—</span>;
+                          return (
+                            <span className="font-bold" style={{ color: pnlColor(dayPnl) }}>
+                              {dayPnl >= 0 ? "+" : "-"}
+                              {sym}
+                              {fmtK(Math.abs(dayPnl))}
+                              {p.day_pct != null && (
+                                <span className="text-[8px] ml-0.5 font-normal">
+                                  ({p.day_pct >= 0 ? "+" : ""}
+                                  {p.day_pct.toFixed(2)}%)
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })(),
                         UNREAL:
                           pnl != null ? (
                             <span className="font-bold" style={{ color: pnlColor(pnl) }}>

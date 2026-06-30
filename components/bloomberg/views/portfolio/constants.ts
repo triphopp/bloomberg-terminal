@@ -10,6 +10,7 @@ export const ALL_COLS = [
   "CURRENT",
   "VOL",
   "COST",
+  "DAY P&L",
   "UNREAL",
   "% RTN",
   "TARGET",
@@ -26,6 +27,7 @@ export const DEFAULT_COLS: ColName[] = [
   "CURRENT",
   "VOL",
   "COST",
+  "DAY P&L",
   "UNREAL",
   "% RTN",
 ];
