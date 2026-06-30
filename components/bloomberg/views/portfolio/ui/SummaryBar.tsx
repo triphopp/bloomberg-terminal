@@ -9,10 +9,7 @@ export function SummaryBar({
 }: { summary: Summary | null; currency: "THB" | "USD"; colors: Colors }) {
   if (!summary) return null;
 
-  const totalPnl =
-    currency === "THB"
-      ? summary.total_pnl_base
-      : summary.total_pnl_base / (summary.thb_per_usd || 33.5);
+  const totalPnl = summary.total_pnl_base;
   const sym = currency === "THB" ? "฿" : "$";
   const openCount = summary.accounts.reduce((a, s) => a + s.open_count, 0);
 

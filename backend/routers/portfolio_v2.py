@@ -108,18 +108,21 @@ def _get_live_price(symbol: str, account_id: str) -> Optional[float]:
         return None
 
 
-def _batch_fetch_prices(symbols: list[str]) -> dict[str, Optional[float]]:
-    """Batch-fetch current prices for multiple yfinance symbols in one HTTP call.
-    Falls back to individual fetch for symbols that fail.
-    Uses cache — only fetches symbols not already cached.
+_prev_cache: TTLCache = TTLCache(ttl=300, maxsize=300)
+
+
+def _batch_fetch_prices(symbols: list[str]) -> dict[str, dict]:
+    """Batch-fetch current prices + prev_close for multiple yfinance symbols.
+    Returns dict[sym] = {"price": float|None, "prev_close": float|None}.
     """
-    result: dict[str, Optional[float]] = {}
+    result: dict[str, dict] = {}
     to_fetch = []
 
     for sym in symbols:
-        cached = _price_cache.get(sym)
-        if cached is not None:
-            result[sym] = cached
+        cached_price = _price_cache.get(sym)
+        cached_prev  = _prev_cache.get(sym)
+        if cached_price is not None:
+            result[sym] = {"price": cached_price, "prev_close": cached_prev}
         else:
             to_fetch.append(sym)
 
@@ -127,30 +130,35 @@ def _batch_fetch_prices(symbols: list[str]) -> dict[str, Optional[float]]:
         return result
 
     try:
-        # Typed batch download via market_data contract
-        batch = market_data.download(to_fetch, period="1d", interval="1d")
+        batch = market_data.download_quotes(to_fetch)
         for sym in to_fetch:
-            price = batch.prices.get(sym)
-            if price is not None:
-                result[sym] = price
+            snap = batch.quotes.get(sym) if hasattr(batch, "quotes") else None
+            price = snap.last_price if snap else None
+            prev  = snap.previous_close if snap else None
+            result[sym] = {"price": price, "prev_close": prev}
+            if price:
                 _price_cache.set(sym, price)
-            else:
-                result[sym] = None
+            if prev:
+                _prev_cache.set(sym, prev)
     except Exception:
         pass
 
-    # Fill any missing with individual fallback
+    # Fill missing with individual fallback
     for sym in to_fetch:
-        if sym not in result or result[sym] is None:
+        if sym not in result or result[sym].get("price") is None:
             try:
-                info = market_data.get_fast_info(sym)
+                info  = market_data.get_fast_info(sym)
                 price = getattr(info, "last_price", None) or getattr(info, "regular_market_price", None)
+                prev  = getattr(info, "previous_close", None)
                 p = float(price) if price else None
-                result[sym] = p
+                pv = float(prev) if prev else None
+                result[sym] = {"price": p, "prev_close": pv}
                 if p:
                     _price_cache.set(sym, p)
+                if pv:
+                    _prev_cache.set(sym, pv)
             except Exception:
-                result[sym] = None
+                result[sym] = {"price": None, "prev_close": None}
 
     return result
 
@@ -715,6 +723,52 @@ def sell_position(body: SellIn):
             }
 
 
+class SellAllLotsIn(BaseModel):
+    account_id: str
+    symbol: str
+    sell_price: float
+    sell_date: str
+    commission: float = 0
+
+
+@router.post("/sell-all-lots", status_code=201)
+def sell_all_lots(body: SellAllLotsIn):
+    """Close ALL open lots for a given account+symbol in one call.
+    Uses AVCO across all lots. Calls the same full-sell logic per lot.
+    """
+    with get_db() as conn:
+        lots = conn.execute(
+            "SELECT * FROM trades WHERE account_id = ? AND symbol = ? AND win_loss = 'P'",
+            (body.account_id, body.symbol),
+        ).fetchall()
+        if not lots:
+            raise HTTPException(status_code=404, detail="No open positions found")
+
+        lots = [dict(r) for r in lots]
+        total_vol = sum(float(l["volume"]) for l in lots)
+        avg_cost  = sum(float(l["price_entry"]) * float(l["volume"]) for l in lots) / total_vol
+        exit_price = float(body.sell_price)
+        closed_ids = []
+
+        for pos in lots:
+            vol = float(pos["volume"])
+            pnl = round((exit_price - avg_cost) * vol, 2)
+            pnl_pct = round(((exit_price / avg_cost) - 1) * 100, 2) if avg_cost > 0 else 0
+            pnl_net = round(pnl - float(body.commission) / len(lots), 2)
+            wl = "W" if pnl_net >= 0 else "L"
+            conn.execute(
+                """UPDATE trades SET date_exit = ?, price_exit = ?,
+                   pnl_amount = ?, win_loss = ?, pnl_percent = ?, note = note || ?
+                   WHERE id = ?""",
+                (body.sell_date, exit_price, pnl_net, wl, pnl_pct,
+                 f"\n[SOLD {body.sell_date}] @ {exit_price} | P&L: {pnl_net}",
+                 pos["id"]),
+            )
+            closed_ids.append(pos["id"])
+
+        return {"ok": True, "action": "sell_all_lots", "closed_ids": closed_ids, "lots_closed": len(closed_ids)}
+
+
 # ── Cash Ledger ───────────────────────────────────────────────────────────────
 
 @router.get("/cash")
@@ -926,8 +980,11 @@ def get_open_positions(
     enriched = []
     for i, pos in enumerate(positions):
         yf_sym = pos_yf_map.get(i)
-        price = price_lookup.get(yf_sym) if yf_sym else None
+        quote   = price_lookup.get(yf_sym) if yf_sym else {}
+        price   = quote.get("price") if quote else None
+        prev_close = quote.get("prev_close") if quote else None
         pos["current_price"] = price
+        pos["prev_close"] = prev_close
         if price and pos["price_entry"] and pos["price_entry"] > 0:
             vol = _to_float_or_zero(pos["volume"])
             entry = _to_float_or_zero(pos["price_entry"])
@@ -942,6 +999,20 @@ def get_open_positions(
             pos["unrealized_pnl"] = None
             pos["unrealized_pct"] = None
             pos["unrealized_pnl_thb"] = None
+        # ── Day P&L (today's move vs previous close) ──────────────────────────
+        if price and prev_close and prev_close > 0:
+            vol = _to_float_or_zero(pos["volume"])
+            day_pnl = (price - prev_close) * vol
+            pos["day_pnl"] = round(day_pnl, 4)
+            pos["day_pct"] = round((price - prev_close) / prev_close * 100, 2)
+            if pos["acc_currency"] == "USD":
+                pos["day_pnl_thb"] = round(day_pnl * thb_per_usd, 2)
+            else:
+                pos["day_pnl_thb"] = round(day_pnl, 2)
+        else:
+            pos["day_pnl"] = None
+            pos["day_pnl_thb"] = None
+            pos["day_pct"] = None
         enriched.append(pos)
 
     return {"positions": enriched, "thb_per_usd": thb_per_usd}
@@ -979,7 +1050,7 @@ def get_summary(base_currency: str = Query("THB")):
             FROM dividends GROUP BY account_id
         """).fetchall()
 
-    thb_per_usd = _get_thb_per_usd() if base_currency == "THB" else 1.0
+    thb_per_usd = _get_thb_per_usd()
 
     stats_map = {r["account_id"]: dict(r) for r in trade_stats}
     cash_map  = {r["account_id"]: dict(r) for r in cash_stats}
@@ -1005,6 +1076,8 @@ def get_summary(base_currency: str = Query("THB")):
         pnl_native = float(s.get("total_pnl_native") or 0)
         if acc["currency"] == "USD" and base_currency == "THB":
             pnl_base = pnl_native * thb_per_usd
+        elif acc["currency"] == "THB" and base_currency == "USD":
+            pnl_base = pnl_native / thb_per_usd
         else:
             pnl_base = pnl_native
 
@@ -1174,11 +1247,11 @@ def get_nav_history(account_id: Optional[str] = Query(None), days: int = Query(3
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
 @router.get("/analytics")
-def get_analytics(account_id: Optional[str] = Query(None)):
+def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = Query("THB")):
     _maybe_capture_nav()
-    where, params = ["win_loss != 'P'"], []
+    where, params = ["t.win_loss != 'P'"], []
     if account_id and account_id != "all":
-        where.append("account_id = ?")
+        where.append("t.account_id = ?")
         params.append(account_id)
     cond = " AND ".join(where)
 
@@ -1191,73 +1264,80 @@ def get_analytics(account_id: Optional[str] = Query(None)):
 
     thb_per_usd = _get_thb_per_usd()
 
+    # SQL expression to convert each trade's pnl_amount to base_currency
+    # Uses COALESCE(a.currency,'THB') so LEFT JOIN nulls fall back to THB
+    if base_currency == "USD":
+        pnl_expr = f"CASE WHEN COALESCE(a.currency,'THB')='THB' THEN COALESCE(t.pnl_amount,0) / {thb_per_usd} ELSE COALESCE(t.pnl_amount,0) END"
+        cost_expr = f"CASE WHEN COALESCE(a.currency,'THB')='USD' THEN COALESCE(t.amount, t.price_entry * t.volume) ELSE COALESCE(t.amount, t.price_entry * t.volume) / {thb_per_usd} END"
+    else:
+        pnl_expr = f"CASE WHEN COALESCE(a.currency,'THB')='USD' THEN COALESCE(t.pnl_amount,0) * {thb_per_usd} ELSE COALESCE(t.pnl_amount,0) END"
+        cost_expr = f"CASE WHEN COALESCE(a.currency,'THB')='USD' THEN COALESCE(t.amount, t.price_entry * t.volume) * {thb_per_usd} ELSE COALESCE(t.amount, t.price_entry * t.volume) END"
+
     with get_db() as conn:
         by_sector = conn.execute(f"""
-            SELECT sector, COUNT(*) cnt,
-                   SUM(CASE WHEN win_loss='W' THEN 1 ELSE 0 END) wins,
-                   SUM(COALESCE(pnl_amount,0)) pnl
-            FROM trades WHERE {cond} AND sector != ''
-            GROUP BY sector ORDER BY pnl DESC
+            SELECT t.sector sector, COUNT(*) cnt,
+                   SUM(CASE WHEN t.win_loss='W' THEN 1 ELSE 0 END) wins,
+                   SUM({pnl_expr}) pnl
+            FROM trades t LEFT JOIN portfolio_accounts a ON t.account_id = a.id
+            WHERE {cond} AND t.sector != ''
+            GROUP BY t.sector ORDER BY pnl DESC
         """, params).fetchall()
 
         by_strategy = conn.execute(f"""
-            SELECT strategy_name, COUNT(*) cnt,
-                   SUM(CASE WHEN win_loss='W' THEN 1 ELSE 0 END) wins,
-                   SUM(COALESCE(pnl_amount,0)) pnl
-            FROM trades WHERE {cond} AND strategy_name != ''
-            GROUP BY strategy_name ORDER BY pnl DESC
+            SELECT t.strategy_name strategy_name, COUNT(*) cnt,
+                   SUM(CASE WHEN t.win_loss='W' THEN 1 ELSE 0 END) wins,
+                   SUM({pnl_expr}) pnl
+            FROM trades t LEFT JOIN portfolio_accounts a ON t.account_id = a.id
+            WHERE {cond} AND t.strategy_name != ''
+            GROUP BY t.strategy_name ORDER BY pnl DESC
         """, params).fetchall()
 
         by_month = conn.execute(f"""
-            SELECT substr(date_entry,1,7) month,
+            SELECT substr(t.date_entry,1,7) month,
                    COUNT(*) cnt,
-                   SUM(CASE WHEN win_loss='W' THEN 1 ELSE 0 END) wins,
-                   SUM(COALESCE(pnl_amount,0)) pnl
-            FROM trades WHERE {cond}
-            GROUP BY month ORDER BY month
+                   SUM(CASE WHEN t.win_loss='W' THEN 1 ELSE 0 END) wins,
+                   SUM({pnl_expr}) pnl
+            FROM trades t LEFT JOIN portfolio_accounts a ON t.account_id = a.id
+            WHERE {cond}
+            GROUP BY substr(t.date_entry,1,7) ORDER BY substr(t.date_entry,1,7)
         """, params).fetchall()
 
         top_symbols = conn.execute(f"""
-            SELECT symbol, COUNT(*) cnt,
-                   SUM(CASE WHEN win_loss='W' THEN 1 ELSE 0 END) wins,
-                   SUM(COALESCE(pnl_amount,0)) pnl
-            FROM trades WHERE {cond}
-            GROUP BY symbol ORDER BY pnl DESC LIMIT 15
+            SELECT t.symbol symbol, COUNT(*) cnt,
+                   SUM(CASE WHEN t.win_loss='W' THEN 1 ELSE 0 END) wins,
+                   SUM({pnl_expr}) pnl
+            FROM trades t LEFT JOIN portfolio_accounts a ON t.account_id = a.id
+            WHERE {cond}
+            GROUP BY t.symbol ORDER BY pnl DESC LIMIT 15
         """, params).fetchall()
 
         open_by_sector = conn.execute(f"""
             SELECT
                 COALESCE(NULLIF(t.sector,''), 'Other') sector,
-                SUM(CASE WHEN a.currency='USD'
-                    THEN COALESCE(t.amount, t.price_entry * t.volume) * ?
-                    ELSE COALESCE(t.amount, t.price_entry * t.volume)
-                END) cost_basis_thb
+                SUM({cost_expr}) cost_base
             FROM trades t
-            JOIN portfolio_accounts a ON t.account_id = a.id
+            LEFT JOIN portfolio_accounts a ON t.account_id = a.id
             WHERE {open_cond}
-            GROUP BY sector ORDER BY cost_basis_thb DESC
-        """, [thb_per_usd] + open_params).fetchall()
+            GROUP BY sector ORDER BY cost_base DESC
+        """, open_params).fetchall()
 
         open_symbols = conn.execute(f"""
             SELECT
                 COALESCE(NULLIF(t.sector,''), 'Other') sector,
                 t.symbol,
                 t.volume,
-                CASE WHEN a.currency='USD'
-                    THEN COALESCE(t.amount, t.price_entry * t.volume) * ?
-                    ELSE COALESCE(t.amount, t.price_entry * t.volume)
-                END cost_thb
+                {cost_expr} cost_base
             FROM trades t
-            JOIN portfolio_accounts a ON t.account_id = a.id
+            LEFT JOIN portfolio_accounts a ON t.account_id = a.id
             WHERE {open_cond}
-            ORDER BY sector, cost_thb DESC
-        """, [thb_per_usd] + open_params).fetchall()
+            ORDER BY sector, cost_base DESC
+        """, open_params).fetchall()
 
     # group symbols by sector
     from collections import defaultdict as _dd
     syms_by_sector: dict = _dd(list)
     for r in open_symbols:
-        cost = round(r["cost_thb"] or 0, 0)
+        cost = round(r["cost_base"] or 0, 0)
         syms_by_sector[r["sector"]].append({
             "symbol": r["symbol"],
             "volume": r["volume"],
@@ -1281,10 +1361,10 @@ def get_analytics(account_id: Optional[str] = Query(None)):
         "open_by_sector": [
             {
                 "sector":  r["sector"],
-                "value":   round(r["cost_basis_thb"] or 0, 2),
+                "value":   round(r["cost_base"] or 0, 2),
                 "symbols": syms_by_sector[r["sector"]],
             }
-            for r in open_by_sector if (r["cost_basis_thb"] or 0) > 0
+            for r in open_by_sector if (r["cost_base"] or 0) > 0
         ],
     }
 

@@ -131,6 +131,14 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
             <span style={{ color: colors.textSecondary }}>Position</span>
             <span style={{ color: colors.text }}>
               {target.symbol} × {positionVolume.toLocaleString()}
+              {allLots && allLots.length > 1 && (
+                <span
+                  className="ml-1 text-[7px] px-1 rounded"
+                  style={{ background: "#f59e0b22", color: "#f59e0b" }}
+                >
+                  {allLots.length} lots
+                </span>
+              )}
             </span>
           </div>
           <div className="flex justify-between">
