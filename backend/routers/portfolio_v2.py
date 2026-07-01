@@ -4,6 +4,7 @@ Supports TH equity, US equity, and crypto accounts.
 """
 import io
 import json
+import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -882,10 +883,11 @@ def delete_dividend(div_id: str):
 
 @router.get("/dividend-suggestions")
 def get_dividend_suggestions(account_id: Optional[str] = Query(None)):
-    """Fetch recent dividend data from yfinance for open positions.
+    """Fetch dividend data from yfinance for open positions, from the date each
+    position was entered onward — never dividends predating the purchase.
 
     Returns one suggestion per symbol with: asset, amount_per_unit, ex_date, pay_date.
-    Only includes symbols where yfinance actually returned dividend data.
+    Skips ex-dates already recorded in the dividends table (no duplicate suggestions).
     """
     where = ["win_loss = 'P'"]
     params = []
@@ -895,10 +897,15 @@ def get_dividend_suggestions(account_id: Optional[str] = Query(None)):
 
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT t.symbol, t.account_id FROM trades t "
-            f"WHERE {' AND '.join(where)} ORDER BY t.symbol",
+            "SELECT symbol, account_id, MIN(date_entry) date_entry FROM trades t "
+            f"WHERE {' AND '.join(where)} GROUP BY symbol, account_id ORDER BY symbol",
             params,
         ).fetchall()
+
+        existing = {
+            (r["asset"], r["account_id"], r["ex_date"])
+            for r in conn.execute("SELECT asset, account_id, ex_date FROM dividends").fetchall()
+        }
 
     if not rows:
         return {"suggestions": []}
@@ -907,28 +914,28 @@ def get_dividend_suggestions(account_id: Optional[str] = Query(None)):
     for r in rows:
         symbol = r["symbol"]
         acct = r["account_id"]
+        held_since = r["date_entry"]
         try:
             yf_sym = _get_yf_symbol(symbol, acct)
             if not yf_sym:
                 continue
             # Typed dividend access via market_data contract
             div_records = market_data.get_dividends(yf_sym)
-            if div_records:
-                # Filter to last 6 months + get most recent
-                cutoff = pd.Timestamp.now() - pd.DateOffset(months=6)
-                recent = [d for d in div_records
-                         if pd.Timestamp(d.ex_date) >= cutoff]
-                if not recent:
-                    recent = div_records  # fall back to all
-                best = max(recent, key=lambda d: d.ex_date)
-
-                if best.amount > 0:
+            if not div_records:
+                continue
+            # Only dividends paid while the position was actually held
+            eligible = [d for d in div_records if d.ex_date >= held_since]
+            eligible = [d for d in eligible if (symbol, acct, d.ex_date) not in existing]
+            if not eligible:
+                continue
+            for d in sorted(eligible, key=lambda d: d.ex_date):
+                if d.amount > 0:
                     suggestions.append({
                         "asset": symbol,
                         "account_id": acct,
-                        "amount_per_unit": round(best.amount, 6),
-                        "ex_date": best.ex_date,
-                        "pay_date": best.ex_date,  # ex-date used for pay_date
+                        "amount_per_unit": round(d.amount, 6),
+                        "ex_date": d.ex_date,
+                        "pay_date": d.ex_date,  # ex-date used for pay_date
                         "source": "yfinance",
                     })
         except Exception:
@@ -1293,13 +1300,14 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
         """, params).fetchall()
 
         by_month = conn.execute(f"""
-            SELECT substr(t.date_entry,1,7) month,
+            SELECT substr(COALESCE(t.date_exit, t.date_entry),1,7) month,
                    COUNT(*) cnt,
                    SUM(CASE WHEN t.win_loss='W' THEN 1 ELSE 0 END) wins,
                    SUM({pnl_expr}) pnl
             FROM trades t LEFT JOIN portfolio_accounts a ON t.account_id = a.id
             WHERE {cond}
-            GROUP BY substr(t.date_entry,1,7) ORDER BY substr(t.date_entry,1,7)
+            GROUP BY substr(COALESCE(t.date_exit, t.date_entry),1,7)
+            ORDER BY substr(COALESCE(t.date_exit, t.date_entry),1,7)
         """, params).fetchall()
 
         top_symbols = conn.execute(f"""
@@ -1309,6 +1317,13 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
             FROM trades t LEFT JOIN portfolio_accounts a ON t.account_id = a.id
             WHERE {cond}
             GROUP BY t.symbol ORDER BY pnl DESC LIMIT 15
+        """, params).fetchall()
+
+        subport_rows = conn.execute(f"""
+            SELECT t.note note, t.win_loss win_loss, COALESCE(a.name, t.account_id) acc_name,
+                   {pnl_expr} pnl
+            FROM trades t LEFT JOIN portfolio_accounts a ON t.account_id = a.id
+            WHERE {cond}
         """, params).fetchall()
 
         open_by_sector = conn.execute(f"""
@@ -1344,6 +1359,32 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
             "value":  cost,
         })
 
+    # Sub-port breakdown. New trades store "AccName (subport-id) | freeform | VAT: x"
+    # (see helpers.ts splitNote). Sold trades additionally get "\n[SOLD ...]"
+    # appended directly (see /sell, /sell-all-lots) — so the sub-port tag is only
+    # ever guaranteed to be the leading segment of the note. Match from the start.
+    def _extract_subport(note: Optional[str]) -> Optional[str]:
+        if not note:
+            return None
+        m = re.match(r"^[^(\n|]*\(([^)]+)\)", note.strip())
+        return m.group(1) if m else None
+
+    subport_agg: dict = _dd(lambda: {"cnt": 0, "wins": 0, "pnl": 0.0})
+    for r in subport_rows:
+        sub = _extract_subport(r["note"])
+        label = f"{r['acc_name']} ({sub})" if sub else r["acc_name"]
+        agg = subport_agg[label]
+        agg["cnt"] += 1
+        agg["wins"] += 1 if r["win_loss"] == "W" else 0
+        agg["pnl"] += r["pnl"] or 0
+    by_subport = sorted(
+        (
+            {"subport": k, "cnt": v["cnt"], "wins": v["wins"], "pnl": round(v["pnl"], 2)}
+            for k, v in subport_agg.items()
+        ),
+        key=lambda d: -d["pnl"],
+    )
+
     def _fmt(rows) -> list[dict]:
         result = []
         for r in rows:
@@ -1358,6 +1399,7 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
         "by_strategy":   _fmt(by_strategy),
         "by_month":      _fmt(by_month),
         "top_symbols":   _fmt(top_symbols),
+        "by_subport":    _fmt(by_subport),
         "open_by_sector": [
             {
                 "sector":  r["sector"],

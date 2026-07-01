@@ -1,8 +1,15 @@
 "use client";
 import { AlertTriangle, ChevronDown, ChevronRight, Clock, Loader2, RefreshCw } from "lucide-react";
 import React, { useState, useCallback, useEffect, useMemo } from "react";
-import { ALL_COLS, type ColName, DEFAULT_COLS, DENSE_COLS, GROUP_COLORS } from "../constants";
-import { type Colors, fmt, fmtK, fmtPct, groupKey, pnlColor } from "../helpers";
+import {
+  ALL_COLS,
+  type ColName,
+  DEFAULT_COLS,
+  DENSE_COLS,
+  GROUP_COLORS,
+  SUBPORT_COLORS,
+} from "../constants";
+import { type Colors, fmt, fmtK, fmtPct, groupKey, pnlColor, subPortLabel } from "../helpers";
 import { AvgCostModal } from "../modals/AvgCostModal";
 import { SellModal } from "../modals/SellModal";
 import { TradeEditModal } from "../modals/TradeEditModal";
@@ -189,7 +196,10 @@ interface MergedPosition extends Trade {
 function mergePositions(positions: Trade[]): MergedPosition[] {
   const map = new Map<string, Trade[]>();
   for (const p of positions) {
-    const key = `${p.account_id}::${p.symbol}`;
+    // Keep Finansia sub-ports separate so lots from different sub-accounts
+    // (e.g. DCON held in both 6065151 and 6065157) never merge into one row.
+    const subKey = p.note?.startsWith("Finansia") ? p.note : "";
+    const key = `${p.account_id}::${p.symbol}::${subKey}`;
     if (!map.has(key)) map.set(key, []);
     map.get(key)?.push(p);
   }
@@ -677,7 +687,7 @@ export function OpenPositionsTab({
                       const slNative =
                         p.price_stoploss != null ? toBase(p.price_stoploss, acc) : null;
                       const hasMultiLots = p.lots.length > 1;
-                      const lotKey = `${p.account_id}::${p.symbol}`;
+                      const lotKey = `${p.account_id}::${p.symbol}::${p.note ?? ""}`;
                       const lotsExpanded = !!expandedLots[lotKey];
 
                       const cellMap: Record<ColName, React.ReactNode> = {
@@ -714,6 +724,17 @@ export function OpenPositionsTab({
                                 style={{ background: `${groupColor}22`, color: groupColor }}
                               >
                                 {p.lots.length}
+                              </span>
+                            )}
+                            {subPortLabel(p) && (
+                              <span
+                                className="text-[7px] px-1 rounded font-mono"
+                                style={{
+                                  background: `${SUBPORT_COLORS[subPortLabel(p) as string] ?? "#555"}22`,
+                                  color: SUBPORT_COLORS[subPortLabel(p) as string] ?? "#555",
+                                }}
+                              >
+                                {subPortLabel(p)}
                               </span>
                             )}
                           </div>

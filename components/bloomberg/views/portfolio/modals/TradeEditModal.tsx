@@ -2,8 +2,9 @@
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { SECTORS_BY_CURRENCY, STRATEGIES, TH_SECTORS } from "../constants";
-import { type Colors, fmt } from "../helpers";
+import { type Colors, composeNote, fmt, splitNote } from "../helpers";
 import type { Trade, TradeEditState } from "../types";
+import { SubPortSelect } from "../ui/SubPortSelect";
 
 interface AuditEntry {
   id: number;
@@ -436,6 +437,21 @@ export function TradeEditModal({
         )}
 
         <div className="mb-3">
+          <div className={lCls} style={{ color: colors.textSecondary }}>
+            SUB-PORT
+          </div>
+          <SubPortSelect
+            accountId={trade.account_id}
+            value={splitNote(form.note).subPort}
+            onChange={(v) =>
+              setForm((f) => ({ ...f, note: composeNote(v, splitNote(f.note).rest) }))
+            }
+            colors={colors}
+            inputStyle={{ ...iSty, padding: "3px 6px", fontSize: 10, width: "100%" }}
+          />
+        </div>
+
+        <div className="mb-3">
           <label htmlFor="te-note" className={lCls} style={{ color: colors.textSecondary }}>
             NOTE
           </label>
@@ -444,8 +460,13 @@ export function TradeEditModal({
             className={`${iCls} resize-none`}
             style={iSty}
             rows={2}
-            value={form.note}
-            onChange={set("note")}
+            value={splitNote(form.note).rest}
+            onChange={(e) =>
+              setForm((f) => ({
+                ...f,
+                note: composeNote(splitNote(f.note).subPort, e.target.value),
+              }))
+            }
           />
         </div>
 

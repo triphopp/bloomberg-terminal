@@ -27,10 +27,36 @@ export const FLAG: Record<string, string> = {
 };
 
 export function groupKey(p: Trade): string {
-  if (p.note?.startsWith("Finansia")) return p.note;
   if (p.account_id === "dime") return "Dime";
   if (p.account_id === "innovestx") return "InnovestX";
   return p.acc_name || p.account_id || "Unknown";
+}
+
+// note stores sub-port + freeform text + VAT joined by " | " (same pattern
+// used for the VAT suffix). splitNote/composeNote let a form show sub-port
+// and freeform text as two separate inputs while keeping one string field.
+export function splitNote(note: string | undefined): { subPort: string; rest: string } {
+  if (!note) return { subPort: "", rest: "" };
+  const parts = note
+    .split(" | ")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const subIdx = parts.findIndex((p) => /^.+\s\([^)]+\)$/.test(p) && !p.startsWith("VAT:"));
+  if (subIdx === -1) return { subPort: "", rest: note };
+  const subPort = parts[subIdx];
+  const rest = parts.filter((_, i) => i !== subIdx).join(" | ");
+  return { subPort, rest };
+}
+
+export const composeNote = (subPort: string, rest: string) =>
+  [subPort, rest].filter(Boolean).join(" | ");
+
+// Sub-port label extracted from note, e.g. "Finansia (0153717)" → "0153717"
+export function subPortLabel(p: Trade): string | null {
+  const { subPort } = splitNote(p.note);
+  if (!subPort) return null;
+  const m = subPort.match(/\(([^)]+)\)\s*$/);
+  return m ? m[1] : null;
 }
 
 export type Colors = typeof bloombergColors.dark;

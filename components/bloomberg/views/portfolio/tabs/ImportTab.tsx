@@ -8,7 +8,8 @@ import {
   STRATEGIES,
   TH_SECTORS,
 } from "../constants";
-import type { Colors } from "../helpers";
+import { type Colors, composeNote, splitNote } from "../helpers";
+import { SubPortSelect } from "../ui/SubPortSelect";
 
 export function ImportTab({ colors }: { colors: Colors }) {
   const [mode, setMode] = useState<"excel" | "manual">("excel");
@@ -387,6 +388,30 @@ export function ImportTab({ colors }: { colors: Colors }) {
             </div>
           </div>
 
+          <div style={{ maxWidth: 220 }}>
+            <div
+              className="text-[8px] mb-0.5 font-bold tracking-wider"
+              style={{ color: colors.textSecondary }}
+            >
+              SUB-PORT
+            </div>
+            <SubPortSelect
+              accountId={form.account_id}
+              value={splitNote(form.note).subPort}
+              onChange={(v) =>
+                setForm((f) => ({ ...f, note: composeNote(v, splitNote(f.note).rest) }))
+              }
+              colors={colors}
+              inputStyle={{
+                ...iStyle,
+                padding: "3px 6px",
+                fontSize: 10,
+                width: "100%",
+                border: `1px solid ${colors.border}`,
+              }}
+            />
+          </div>
+
           {/* Option toggle + attributes */}
           <div className="flex items-center gap-3 flex-wrap">
             <label
@@ -731,8 +756,13 @@ export function ImportTab({ colors }: { colors: Colors }) {
               className="text-[10px] font-mono px-2 py-1 border outline-none w-full resize-none"
               style={{ ...iStyle, height: 48 }}
               placeholder="บันทึกเพิ่มเติม…"
-              value={form.note}
-              onChange={set("note")}
+              value={splitNote(form.note).rest}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  note: composeNote(splitNote(f.note).subPort, e.target.value),
+                }))
+              }
             />
           </div>
 
