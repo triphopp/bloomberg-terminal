@@ -39,6 +39,7 @@
 | yfinance data not updating | In-memory cache still warm | DELETE `/api/stock/cache` or restart backend |
 | Macro/Crisis view shows nothing | `FRED_API_KEY` not set | Set env var — without it FRED calls fail silently |
 | Backend startup error: missing module | numpy/scipy not installed (required for greeks.py) | `pip install numpy>=1.26 scipy>=1.12` |
+| NAV chart empty / `portfolio_nav_snapshots` 0 rows | `_batch_fetch_prices` return shape changed float→dict (aeb4ee4) but `_maybe_capture_nav` still does `(price - entry)` → TypeError swallowed by `except Exception: pass` | Unpack `quote.get("price")` like open-positions does; never `except: pass` around DB writes — log it. See `memory/reports/analytics-db-nav-risk-report.md` |
 
 ### Next.js / Proxy
 

@@ -215,6 +215,7 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24). Stock analysis (9 tabs)
 - [ ] Seed sector data: POST /api/sectors/fetch for TH/KR/HK/EU/US
 
 ### Features
+- [ ] **System Audit 2026-07 — Bug Fixes & Refactor** — 9 fix items (F01 NAV snapshot dead 🔴, F02 AVCO basis drift 🔴, F03 async blocking 🔴, F04–F09) + 6 refactor items (R01–R06); tracker table + per-item detail (`plans/system-audit-2026-07/README.md`)
 - [x] **Portfolio Cloud Sync** — PC↔Mac sync via Google Drive JSON snapshots, startup pull, row-LWW merge + tombstones, no login done 2026-06-26 (`plans/completed/portfolio-cloud-sync.md`)
 - [ ] Polymarket: dashboard view in frontend
 - [ ] BOT: frontend view for Bond Auction + yield trend chart

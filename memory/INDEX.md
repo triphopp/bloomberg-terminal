@@ -22,6 +22,7 @@ memory/
 │   └── terminal-commands.md        ← command mode reference: ALERT/VIEW/DISPLAY/INFO commands + ticker crawl
 │
 ├── plans/
+│   ├── system-audit-2026-07/        ← 🔍 Bug audit ทั้งระบบ: fixes/ (F01–F09) + refactor/ (R01–R06) + README tracker [ACTIVE 2026-07-02]
 │   ├── completed/analytics-charts-enhancement.md ← ✅ PORT Analytics: Dividend M/Q/Y + stacked bar + currency fix (done 2026-06-05)
 │   ├── completed/dcc-correlation-monitor.md ← ✅ EWMA-DCC correlation spike detection + EWS integration + backtest (done 2026-06-06)
 │   ├── completed/trade-edit-and-sector-standard.md ← ✅ TradeEditModal + TradePatch 17 fields + bulk-patch-sector (done 2026-05-23)
