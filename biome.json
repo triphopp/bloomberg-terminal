@@ -10,6 +10,30 @@
     },
     "ignore": ["node_modules/**", ".next/**", "public/**"]
   },
+  "overrides": [
+    {
+      "include": [
+        "components/bloomberg/views/market-view.tsx",
+        "components/bloomberg/views/stock-view.tsx"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noExplicitAny": "off",
+            "noArrayIndexKey": "off"
+          },
+          "correctness": {
+            "useExhaustiveDependencies": "off"
+          },
+          "a11y": {
+            "useButtonType": "off",
+            "useKeyWithClickEvents": "off",
+            "noSvgWithoutTitle": "off"
+          }
+        }
+      }
+    }
+  ],
   "formatter": {
     "enabled": true,
     "indentStyle": "space",

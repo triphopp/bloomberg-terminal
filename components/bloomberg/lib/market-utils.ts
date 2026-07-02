@@ -62,3 +62,44 @@ export function calculate10DayAverage(historicalData: number[]): number {
   const sum = historicalData.reduce((acc, val) => acc + val, 0);
   return sum / historicalData.length;
 }
+
+/**
+ * Estimate the Hurst exponent via rescaled-range (R/S) analysis on log returns.
+ * H < 0.5 → mean-reverting, H ~ 0.5 → random walk, H > 0.5 → trending.
+ * Returns 0.5 (random walk / neutral) when there isn't enough price history.
+ */
+export function calcHurst(prices: number[]): number {
+  if (prices.length < 32) return 0.5;
+  const logR: number[] = [];
+  for (let i = 1; i < prices.length; i++) {
+    if (prices[i - 1] > 0) logR.push(Math.log(prices[i] / prices[i - 1]));
+  }
+  const sizes = [8, 16, 32, 64].filter((s) => s * 4 <= logR.length);
+  if (sizes.length < 2) return 0.5;
+  const rsArr = sizes.map((n) => {
+    const chunks = Math.floor(logR.length / n);
+    let rsSum = 0;
+    for (let c = 0; c < chunks; c++) {
+      const chunk = logR.slice(c * n, (c + 1) * n);
+      const mean = chunk.reduce((a, b) => a + b, 0) / n;
+      let cum = 0;
+      const cumDevs: number[] = [];
+      for (const v of chunk) {
+        cum += v - mean;
+        cumDevs.push(cum);
+      }
+      const R = Math.max(...cumDevs) - Math.min(...cumDevs);
+      const S = Math.sqrt(chunk.reduce((a, v) => a + (v - mean) ** 2, 0) / n);
+      rsSum += S > 0 ? R / S : 1;
+    }
+    return rsSum / chunks;
+  });
+  const xs = sizes.map(Math.log);
+  const ys = rsArr.map(Math.log);
+  const n = xs.length;
+  const mx = xs.reduce((a, b) => a + b) / n;
+  const my = ys.reduce((a, b) => a + b) / n;
+  const num = xs.reduce((s, x, i) => s + (x - mx) * (ys[i] - my), 0);
+  const den = xs.reduce((s, x) => s + (x - mx) ** 2, 0);
+  return den > 0 ? Math.max(0.1, Math.min(0.9, num / den)) : 0.5;
+}
