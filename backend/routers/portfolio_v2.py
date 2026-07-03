@@ -4,6 +4,7 @@ Supports TH equity, US equity, and crypto accounts.
 """
 import io
 import json
+import logging
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -25,6 +26,8 @@ _price_cache: TTLCache = TTLCache(ttl=60,  maxsize=300)
 _rate_cache:  TTLCache = TTLCache(ttl=120, maxsize=5)
 
 router = APIRouter(prefix="/api/v2/portfolio")
+
+logger = logging.getLogger("api.portfolio_v2")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1194,7 +1197,8 @@ def _maybe_capture_nav() -> None:
             entry = _to_float_or_zero(p["price_entry"])
             cost_native = _to_float_or_zero(p["amount"]) or entry * vol
             cost[p["account_id"]] += cost_native * fx
-            price = price_lookup.get(yf_map.get(i)) if yf_map.get(i) else None
+            quote = price_lookup.get(yf_map.get(i)) if yf_map.get(i) else None
+            price = quote.get("price") if quote else None
             if price and entry > 0:
                 unreal[p["account_id"]] += (price - entry) * vol * fx
 
@@ -1232,7 +1236,7 @@ def _maybe_capture_nav() -> None:
                     dividends        = excluded.dividends
             """, rows)
     except Exception:
-        pass
+        logger.exception("NAV snapshot capture failed")
 
 
 @router.get("/nav-history")
