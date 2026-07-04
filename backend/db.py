@@ -189,6 +189,17 @@ def init_portfolio_v2() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_symbol  ON trades(symbol)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_date    ON trades(date_entry)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_wl      ON trades(win_loss)")
+        # Migration: symbol resolver (plans/port-redesign.md Step 1)
+        # resolved_symbol = provider-canonical ticker (e.g. TU.BK), market = US/TH/CRYPTO
+        for ddl in (
+            "ALTER TABLE trades ADD COLUMN resolved_symbol TEXT",
+            "ALTER TABLE trades ADD COLUMN market TEXT",
+            "ALTER TABLE portfolio_accounts ADD COLUMN markets TEXT",
+        ):
+            try:
+                conn.execute(ddl)
+            except Exception:
+                pass  # column already exists
         conn.execute("""
             CREATE TABLE IF NOT EXISTS cash_ledger (
                 id            TEXT PRIMARY KEY,

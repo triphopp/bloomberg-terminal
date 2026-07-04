@@ -76,12 +76,13 @@
 - `POST /api/portfolio/db/import` — bulk import CSV
 
 ## Portfolio v2 (`routers/portfolio_v2.py`)
+- `GET /api/v2/portfolio/resolve-symbol?q=X&account_id=Y` — resolve bare ticker → canonical provider symbols, filtered to account's markets (`markets` JSON col; default US+TH, crypto→CRYPTO); returns `{query, markets, matches:[{resolved_symbol, market, currency, name, exchange}]}`; TTLCache 1h, home-country ranked first (`plans/port-redesign.md` Step 1)
 - `GET /api/v2/portfolio/accounts` — list accounts (no default seed; users create their own)
 - `POST /api/v2/portfolio/accounts` — create account (id, name, country, currency, account_type)
 - `PATCH /api/v2/portfolio/accounts/{id}` — update name/broker/is_active
 - `DELETE /api/v2/portfolio/accounts/{id}` — delete account (409 if it has trades; also clears its cash/dividends)
 - `GET /api/v2/portfolio/trades` — trade log (filter by account/symbol)
-- `POST /api/v2/portfolio/trades` — add trade (17 fields incl. is_option, vat_amount)
+- `POST /api/v2/portfolio/trades` — add trade (17 fields incl. is_option, vat_amount; + optional `resolved_symbol`/`market` from resolver)
 - `PATCH /api/v2/portfolio/trades/{id}` — edit trade (optional `adjustment_reason` field → audit log only, not stored in trades table)
 - `DELETE /api/v2/portfolio/trades/{id}` — delete trade (auto-logs to audit before delete)
 - `GET /api/v2/portfolio/trades/{id}/audit-log` — immutable change history for one trade

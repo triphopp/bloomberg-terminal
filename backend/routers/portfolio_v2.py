@@ -240,6 +240,8 @@ class AccountPatch(BaseModel):
 class TradeIn(BaseModel):
     account_id: str
     symbol: str
+    resolved_symbol: Optional[str] = None
+    market: Optional[str] = None
     sector: str = ""
     date_entry: str
     date_exit: Optional[str] = None
@@ -309,6 +311,145 @@ class DividendIn(BaseModel):
     reinvest_asset: str = ""
     reinvest_price: float = 0
     reinvest_units: float = 0
+
+
+# ── Symbol Resolver (plans/port-redesign.md Step 1) ──────────────────────────
+# Resolve once at write time: user types a bare ticker, we search only the
+# markets the account trades and return canonical provider symbols.  The
+# chosen resolved_symbol is persisted on the trade so no read path ever has
+# to guess exchange suffixes again (root cause of F06).
+
+_MARKET_SUFFIX = {"TH": ".BK", "US": ""}
+_MARKET_CURRENCY = {"TH": "THB", "US": "USD"}
+_resolve_cache: TTLCache = TTLCache(ttl=3600, maxsize=500)
+
+
+def _classify_market(sym: str, quote_type: str = "") -> Optional[str]:
+    s = sym.upper()
+    qt = (quote_type or "").upper()
+    if s.endswith(".BK"):
+        return "TH"
+    if "CRYPTO" in qt or ("-" in s and s.rsplit("-", 1)[-1] in ("USD", "THB", "USDT")):
+        return "CRYPTO"
+    if "." not in s:
+        return "US"
+    return None  # other exchange suffixes — unsupported for now
+
+
+def _account_markets(acc: dict) -> list[str]:
+    raw = acc.get("markets")
+    if raw:
+        try:
+            parsed = [str(m).upper() for m in json.loads(raw)]
+            if parsed:
+                return parsed
+        except Exception:
+            pass
+    return ["CRYPTO"] if acc.get("account_type") == "crypto" else ["US", "TH"]
+
+
+@router.get("/resolve-symbol")
+def resolve_symbol(q: str = Query(..., min_length=1), account_id: str = Query(...)):
+    query = q.strip().upper()
+    if not query:
+        raise HTTPException(status_code=400, detail="Empty query")
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM portfolio_accounts WHERE id = ?",
+                           (account_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Unknown account")
+    acc = dict(row)
+    markets = _account_markets(acc)
+
+    cache_key = f"{query}|{','.join(markets)}"
+    cached = _resolve_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    matches: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(sym: str, market: str, name: str, exchange: str) -> None:
+        if sym in seen or market not in markets:
+            return
+        seen.add(sym)
+        matches.append({
+            "resolved_symbol": sym,
+            "market": market,
+            "currency": _MARKET_CURRENCY.get(market)
+                        or (sym.rsplit("-", 1)[-1] if "-" in sym else None),
+            "name": name,
+            "exchange": exchange,
+        })
+
+    def _add_from_result(r, market_hint: Optional[str] = None) -> None:
+        sym = str(getattr(r, "symbol", "") or "").upper()
+        if not sym:
+            return
+        market = market_hint or _classify_market(sym, str(getattr(r, "quote_type", "") or ""))
+        if not market:
+            return
+        name = str(getattr(r, "long_name", "") or getattr(r, "short_name", "") or "")
+        _add(sym, market, name, str(getattr(r, "exchange", "") or ""))
+
+    # 1) free-text search (catches cross-market listings).  Keep only results
+    # whose ticker starts with the query — this is a ticker field, and Yahoo's
+    # name-relevance matches (e.g. "TU" → APPS "Digital Turbine") are noise.
+    try:
+        for r in market_data.search(query, max_results=10):
+            sym = str(getattr(r, "symbol", "") or "").upper()
+            if sym.split(".")[0].split("-")[0].startswith(query):
+                _add_from_result(r)
+    except Exception:
+        logger.warning("resolve-symbol search failed for %r", query, exc_info=True)
+
+    # 2) direct suffix probes — exact tickers the free-text search often misses
+    probes: list[tuple[str, str]] = []  # (candidate, market)
+    for m in markets:
+        if m == "CRYPTO":
+            if "-" in query:
+                probes.append((query, m))
+            elif query.endswith(("THB", "USD")) and len(query) > 3:
+                base = query[:-3]
+                # THB pairs are mostly delisted on Yahoo — offer USD too
+                probes.append((f"{base}-{query[-3:]}", m))
+                probes.append((f"{base}-USD", m))
+            else:
+                probes.append((f"{query}-USD", m))
+        else:
+            suffix = _MARKET_SUFFIX.get(m)
+            if suffix is not None:
+                probes.append((f"{query}{suffix}", m))
+    for cand, m in probes:
+        if cand in seen:
+            continue
+        found = False
+        try:
+            for r in market_data.search(cand, max_results=3):
+                if str(getattr(r, "symbol", "") or "").upper() == cand:
+                    _add_from_result(r, market_hint=m)
+                    found = True
+                    break
+        except Exception:
+            pass
+        if not found:
+            # Yahoo Search doesn't index some symbols (e.g. BTC-THB) that the
+            # quote API prices fine — validate via a live quote instead.
+            try:
+                snap = market_data.get_fast_info(cand)
+                if snap is not None and snap.last_price is not None:
+                    _add(cand, m, "", "")
+            except Exception:
+                continue
+
+    # rank: account home country first, then declared markets order
+    home = str(acc.get("country") or "").upper()
+    order = {mk: i for i, mk in enumerate(markets)}
+    matches.sort(key=lambda x: (x["market"] != home, order.get(x["market"], 99)))
+    result = {"query": query, "markets": markets, "matches": matches}
+    if matches:  # don't cache misses — provider hiccup would stick for an hour
+        _resolve_cache.set(cache_key, result)
+    return result
 
 
 # ── Accounts ─────────────────────────────────────────────────────────────────
@@ -404,14 +545,17 @@ def create_trade(body: TradeIn):
                            (body.account_id,)).fetchone()
         currency = acc["currency"] if acc else "THB"
         conn.execute("""
-            INSERT INTO trades (id, account_id, symbol, sector, date_entry, date_exit,
+            INSERT INTO trades (id, account_id, symbol, resolved_symbol, market,
+                sector, date_entry, date_exit,
                 price_entry, price_exit, price_stoploss, price_target, volume, amount,
                 pnl_amount, win_loss, pnl_percent, currency, exchange_rate,
                 strategy_name, entry_trigger, exit_trigger, market_trend,
                 news_sentiment, expectation_based, factor_based,
                 fear_greed_index, vix_index, note)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """, (trade_id, body.account_id, body.symbol.upper(), body.sector,
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (trade_id, body.account_id, body.symbol.upper(),
+              (body.resolved_symbol or "").upper() or None,
+              (body.market or "").upper() or None, body.sector,
               body.date_entry, body.date_exit,
               body.price_entry, body.price_exit, body.price_stoploss, body.price_target,
               body.volume, body.amount, body.pnl_amount, body.win_loss.upper(),

@@ -143,6 +143,8 @@ OPENAI_API_KEY      — optional
 ### SQLite Database Schema (`portfolio.db`)
 ```sql
 transactions        (id, symbol, type buy/sell, shares, price, date, commission, notes, created_at)
+-- 2026-07-04 (port-redesign Step 1): trades += resolved_symbol TEXT, market TEXT (canonical provider ticker,
+--   set at write time by /resolve-symbol); portfolio_accounts += markets TEXT (JSON e.g. ["US","TH"])
 pin_groups          (id, name, color, sort_order, created_at)
 pinned_assets       (id, symbol, group_id, comment, buy_target, sell_target, price_at_pin, priority 1-3, added_at, updated_at)
 pin_tags            (id, name, color)
@@ -217,6 +219,7 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24). Stock analysis (9 tabs)
 ### Features
 - [ ] **System Audit 2026-07 — Bug Fixes & Refactor** — 9 fix items (F01 NAV snapshot dead 🔴, F02 AVCO basis drift 🔴, F03 async blocking 🔴, F04–F09) + 6 refactor items (R01–R06); tracker table + per-item detail (`plans/system-audit-2026-07/README.md`)
 - [x] **Portfolio Cloud Sync** — PC↔Mac sync via Google Drive JSON snapshots, startup pull, row-LWW merge + tombstones, no login done 2026-06-26 (`plans/completed/portfolio-cloud-sync.md`)
+- [ ] **Port Redesign** — symbol resolver (resolve-at-write), sub_portfolios table จริง, currency module, ลบ `_get_yf_symbol`/ปิด F06 (`plans/port-redesign.md`)
 - [ ] Polymarket: dashboard view in frontend
 - [ ] BOT: frontend view for Bond Auction + yield trend chart
 - [ ] BOT: activate Stat-ExchangeRate → add THB FX view
