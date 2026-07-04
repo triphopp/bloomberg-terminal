@@ -236,6 +236,10 @@ Auth: static token in `Authorization` header (no "Bearer" prefix — IBM API Con
   - Calibration math: `backend/analytics/regime_calibration.py`
 - `GET /api/regime/calibrated?period=3m|6m|1y|1m` — CORR + GEOM both, with conflict detection
 
+## Theme/Sector Rotation (`routers/rotation.py`)
+- `GET /api/rotation/table?bench=SPY` — momentum table: 24 theme ETF proxies (ARKG, IBB, CIBR, SMH, MAGS…) + 11 SPDR sectors; per row: d1/w1/m1/m3 %, m1_vs_bench, RRG quadrant (Leading/Improving/Weakening/Lagging from weekly RS-Ratio/RS-Momentum vs bench) + mom_dir up|down; 15min cache, one batch yf.download 9mo
+  - Used by: MKT view REGIME panel → ROT mode (`rotation-table.tsx`), compact panel + expanded modal
+
 ## Stop Loss Engine (`routers/stoploss.py`)
 - `GET /api/stoploss/regime` — exceedance correlation regime (CRISIS/RISK-OFF/TRENDING/DIVERGENT), 5min cache
 - `GET /api/stoploss/atr?symbols=X,Y&account_id=dime` — adaptive ATR + vol percentile + trend factor

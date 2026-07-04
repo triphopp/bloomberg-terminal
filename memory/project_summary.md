@@ -129,6 +129,7 @@ OPENAI_API_KEY      — optional
 | `country_rotation.py` | `/api/country-rotation/*` (scores, history, universe) | yfinance + World Bank |
 | `sector.py` (sector selection) | `/api/sector/*` (signal, factors, history) | FRED + yfinance |
 | `regime.py` | `/api/regime/correlation` | yfinance (5min cache) |
+| `rotation.py` | `/api/rotation/table` (theme/sector momentum + RRG quadrant vs SPY) | yfinance batch (15min cache) |
 | `stoploss.py` | `/api/stoploss/{regime,atr,compute}` | yfinance (5min cache) |
 | `fear_greed.py` | `/api/fear-greed`, `/api/fear-greed/history` | yfinance ^VIX/SPY/TLT/HYG/LQD/RSP (5min/60min cache) |
 | `alerts.py` | `/api/alerts` | stoploss + regime + SQLite (60s cache) |

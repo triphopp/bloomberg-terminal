@@ -20,7 +20,7 @@ from config import CORS_ORIGINS
 from db import init_db, init_portfolio_v2, init_sync_layer, seed_symbol_lists
 from analytics.regime_calibration import ensure_model_fresh
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, stoploss, alerts, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router
+from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router
 import sync
 
 app = FastAPI(title="Market Data API")
@@ -82,6 +82,7 @@ app.include_router(sector.router)
 app.include_router(sec.router)
 app.include_router(sec_v2.router)
 app.include_router(regime.router)
+app.include_router(rotation.router)
 app.include_router(stoploss.router)
 app.include_router(alerts.router)
 app.include_router(ticker.router)

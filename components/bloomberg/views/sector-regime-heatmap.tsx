@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Maximize2, X } from "lucide-react";
-import { bloombergColors } from "../lib/theme-config";
+import { useEffect, useRef, useState } from "react";
+import type { bloombergColors } from "../lib/theme-config";
+import { RotationTable } from "./rotation-table";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -12,10 +13,11 @@ const PERIODS = ["1m", "3m", "6m", "1y"] as const;
 const MODES = [
   { key: "corr", label: "CORR", desc: "Pearson Correlation Matrix" },
   { key: "geom", label: "GEOM", desc: "Geometric: Wedge Product / Gram Determinant" },
+  { key: "rot", label: "ROT", desc: "Theme/Sector rotation table vs SPY (RRG quadrants)" },
 ] as const;
 
 type Period = (typeof PERIODS)[number];
-type Mode = "corr" | "geom";
+type Mode = "corr" | "geom" | "rot";
 type GeomView = "matrix" | "space";
 
 // One distinct vivid colour per sector (dark-background safe)
@@ -78,14 +80,24 @@ function loadDefaults(): { mode: Mode; period: Period; geomView: GeomView } {
     if (s) {
       const p = JSON.parse(s);
       if (MODES.some((m) => m.key === p.mode) && PERIODS.includes(p.period))
-        return { mode: p.mode, period: p.period, geomView: p.geomView === "space" ? "space" : "matrix" };
+        return {
+          mode: p.mode,
+          period: p.period,
+          geomView: p.geomView === "space" ? "space" : "matrix",
+        };
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return { mode: "corr", period: "3m", geomView: "matrix" };
 }
 
 function saveDefaults(mode: Mode, period: Period, geomView: GeomView) {
-  try { localStorage.setItem(LS_DEFAULTS, JSON.stringify({ mode, period, geomView })); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(LS_DEFAULTS, JSON.stringify({ mode, period, geomView }));
+  } catch {
+    /* ignore */
+  }
 }
 
 // ── Color scales — Bloomberg Terminal theme ───────────────────────────────────
@@ -126,7 +138,8 @@ function convexHull(pts: [number, number][]): [number, number][] {
   if (pts.length < 3) return pts;
   let start = 0;
   for (let i = 1; i < pts.length; i++) {
-    if (pts[i][0] < pts[start][0] || (pts[i][0] === pts[start][0] && pts[i][1] < pts[start][1])) start = i;
+    if (pts[i][0] < pts[start][0] || (pts[i][0] === pts[start][0] && pts[i][1] < pts[start][1]))
+      start = i;
   }
   const hull: [number, number][] = [];
   let cur = start;
@@ -134,8 +147,9 @@ function convexHull(pts: [number, number][]): [number, number][] {
     hull.push(pts[cur]);
     let nxt = (cur + 1) % pts.length;
     for (let i = 0; i < pts.length; i++) {
-      const cross = (pts[nxt][0] - pts[cur][0]) * (pts[i][1] - pts[cur][1])
-        - (pts[nxt][1] - pts[cur][1]) * (pts[i][0] - pts[cur][0]);
+      const cross =
+        (pts[nxt][0] - pts[cur][0]) * (pts[i][1] - pts[cur][1]) -
+        (pts[nxt][1] - pts[cur][1]) * (pts[i][0] - pts[cur][0]);
       if (cross < 0) nxt = i;
     }
     cur = nxt;
@@ -197,9 +211,26 @@ function WedgeGeometryView({ data, svgW, svgH, compact, colors }: WedgeProps) {
 
   return (
     <svg width={svgW} height={svgH} style={{ display: "block" }} aria-label="Wedge geometry plot">
+      <title>Wedge geometry plot</title>
       {/* Reference circles */}
-      <circle cx={cx} cy={cy} r={R}       fill="none" stroke="#2a2a2a" strokeWidth={0.8} strokeDasharray="5 4" />
-      <circle cx={cx} cy={cy} r={R * 0.5} fill="none" stroke="#1e1e1e" strokeWidth={0.5} strokeDasharray="2 5" />
+      <circle
+        cx={cx}
+        cy={cy}
+        r={R}
+        fill="none"
+        stroke="#2a2a2a"
+        strokeWidth={0.8}
+        strokeDasharray="5 4"
+      />
+      <circle
+        cx={cx}
+        cy={cy}
+        r={R * 0.5}
+        fill="none"
+        stroke="#1e1e1e"
+        strokeWidth={0.5}
+        strokeDasharray="2 5"
+      />
 
       {/* Axes */}
       <line x1={cx - R} y1={cy} x2={cx + R} y2={cy} stroke="#222" strokeWidth={0.5} />
@@ -208,8 +239,26 @@ function WedgeGeometryView({ data, svgW, svgH, compact, colors }: WedgeProps) {
       {/* Axis labels */}
       {!compact && (
         <>
-          <text x={cx + R + 2} y={cy + 3} fontSize={7} fill="#333" fontFamily="monospace" textAnchor="start">PC1</text>
-          <text x={cx + 2} y={cy - R - 2} fontSize={7} fill="#333" fontFamily="monospace" textAnchor="start">PC2</text>
+          <text
+            x={cx + R + 2}
+            y={cy + 3}
+            fontSize={7}
+            fill="#333"
+            fontFamily="monospace"
+            textAnchor="start"
+          >
+            PC1
+          </text>
+          <text
+            x={cx + 2}
+            y={cy - R - 2}
+            fontSize={7}
+            fill="#333"
+            fontFamily="monospace"
+            textAnchor="start"
+          >
+            PC2
+          </text>
         </>
       )}
 
@@ -217,8 +266,8 @@ function WedgeGeometryView({ data, svgW, svgH, compact, colors }: WedgeProps) {
       {hull.length > 2 && (
         <polygon
           points={hull.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ")}
-          fill={regime_color + "1A"}
-          stroke={regime_color + "55"}
+          fill={`${regime_color}1A`}
+          stroke={`${regime_color}55`}
           strokeWidth={compact ? 0.8 : 1.2}
           strokeDasharray="4 2"
         />
@@ -242,11 +291,13 @@ function WedgeGeometryView({ data, svgW, svgH, compact, colors }: WedgeProps) {
         const ly = cy - (py / norm) * (R + (compact ? 12 : 20));
 
         return (
-          <g key={i}>
+          <g key={sectors[i]}>
             {/* Shaft */}
             <line
-              x1={cx} y1={cy}
-              x2={tx} y2={ty}
+              x1={cx}
+              y1={cy}
+              x2={tx}
+              y2={ty}
               stroke={color}
               strokeWidth={strokeW}
               opacity={0.88}
@@ -338,11 +389,24 @@ function HeatmapSVG({ data, svgW, svgH, compact, colors }: HeatmapSVGProps) {
   if (!matrix?.length) return null;
 
   return (
-    <svg width={svgW} height={svgH} style={{ display: "block" }} aria-label="Sector correlation heatmap">
+    <svg
+      width={svgW}
+      height={svgH}
+      style={{ display: "block" }}
+      aria-label="Sector correlation heatmap"
+    >
+      <title>Sector correlation heatmap</title>
       {/* Y-axis labels */}
       {labels.map((lbl, i) => (
-        <text key={`y${i}`} x={labelW - 3} y={labelH + i * ch + ch / 2 + fs * 0.35}
-          textAnchor="end" fontSize={fs} fill={colors.textSecondary} fontFamily="monospace">
+        <text
+          key={`y-${lbl}`}
+          x={labelW - 3}
+          y={labelH + i * ch + ch / 2 + fs * 0.35}
+          textAnchor="end"
+          fontSize={fs}
+          fill={colors.textSecondary}
+          fontFamily="monospace"
+        >
           {compact ? lbl : lbl.slice(0, 13)}
         </text>
       ))}
@@ -352,9 +416,16 @@ function HeatmapSVG({ data, svgW, svgH, compact, colors }: HeatmapSVGProps) {
         const cx2 = labelW + j * cw + cw / 2;
         const cy2 = labelH - 3;
         return (
-          <text key={`x${j}`} x={cx2} y={cy2} textAnchor="start" fontSize={fs}
-            fill={colors.textSecondary} fontFamily="monospace"
-            transform={`rotate(-55 ${cx2} ${cy2})`}>
+          <text
+            key={`x-${lbl}`}
+            x={cx2}
+            y={cy2}
+            textAnchor="start"
+            fontSize={fs}
+            fill={colors.textSecondary}
+            fontFamily="monospace"
+            transform={`rotate(-55 ${cx2} ${cy2})`}
+          >
             {compact ? lbl : lbl.slice(0, 10)}
           </text>
         );
@@ -367,14 +438,28 @@ function HeatmapSVG({ data, svgW, svgH, compact, colors }: HeatmapSVGProps) {
           const x = labelW + j * cw;
           const y = labelH + i * ch;
           return (
-            <g key={`${i}-${j}`}>
-              <rect x={x} y={y} width={Math.max(1, cw - 0.5)} height={Math.max(1, ch - 0.5)}
-                fill={cellBg(val, mode, isDiag)} stroke="#0d0d0d" strokeWidth={0.4}>
+            <g key={`${sectors[i]}-${sectors[j]}`}>
+              <rect
+                x={x}
+                y={y}
+                width={Math.max(1, cw - 0.5)}
+                height={Math.max(1, ch - 0.5)}
+                fill={cellBg(val, mode, isDiag)}
+                stroke="#0d0d0d"
+                strokeWidth={0.4}
+              >
                 <title>{`${sectors[i]} × ${sectors[j]}: ${val.toFixed(4)}`}</title>
               </rect>
               {!compact && !isDiag && cw > 44 && (
-                <text x={x + cw / 2} y={y + ch / 2 + vfs * 0.35} textAnchor="middle"
-                  fontSize={vfs} fill={cellFg(val, mode, isDiag)} fontFamily="monospace" fontWeight="bold">
+                <text
+                  x={x + cw / 2}
+                  y={y + ch / 2 + vfs * 0.35}
+                  textAnchor="middle"
+                  fontSize={vfs}
+                  fill={cellFg(val, mode, isDiag)}
+                  fontFamily="monospace"
+                  fontWeight="bold"
+                >
                   {val.toFixed(2)}
                 </text>
               )}
@@ -383,8 +468,15 @@ function HeatmapSVG({ data, svgW, svgH, compact, colors }: HeatmapSVGProps) {
         })
       )}
 
-      <rect x={labelW} y={labelH} width={gridW} height={gridH}
-        fill="none" stroke="#333" strokeWidth={0.5} />
+      <rect
+        x={labelW}
+        y={labelH}
+        width={gridW}
+        height={gridH}
+        fill="none"
+        stroke="#333"
+        strokeWidth={0.5}
+      />
     </svg>
   );
 }
@@ -395,13 +487,20 @@ function ColorLegend({ mode, width }: { mode: Mode; width: number }) {
   const steps = 60;
   const bw = Math.max(40, width);
   return (
-    <svg width={bw} height={6} style={{ display: "block" }}>
+    <svg width={bw} height={6} style={{ display: "block" }} aria-label="Color scale legend">
+      <title>Color scale legend</title>
       {Array.from({ length: steps }).map((_, i) => {
         const t = i / (steps - 1);
         const v = mode === "corr" ? -1 + t * 2 : t;
         return (
-          <rect key={i} x={(i / steps) * bw} y={0} width={bw / steps + 0.5} height={6}
-            fill={mode === "corr" ? corrColor(v) : geomColor(v)} />
+          <rect
+            key={t}
+            x={(i / steps) * bw}
+            y={0}
+            width={bw / steps + 0.5}
+            height={6}
+            fill={mode === "corr" ? corrColor(v) : geomColor(v)}
+          />
         );
       })}
     </svg>
@@ -416,13 +515,13 @@ const PERIOD_ORDER = ["1m", "3m", "6m", "1y"] as const;
 
 // Short label map: CORR labels
 const SHORT_LABEL: Record<string, string> = {
-  "DIVERGENT":  "DIV",
-  "TRENDING":   "TRD",
-  "RISK-OFF":   "R/O",
-  "CRISIS":     "CRS",
-  "CORRELATED": "COR",
-  "MIXED":      "MIX",
-  "N/A":        "N/A",
+  DIVERGENT: "DIV",
+  TRENDING: "TRD",
+  "RISK-OFF": "R/O",
+  CRISIS: "CRS",
+  CORRELATED: "COR",
+  MIXED: "MIX",
+  "N/A": "N/A",
 };
 
 interface RegimeTrendStripProps {
@@ -435,7 +534,9 @@ interface RegimeTrendStripProps {
 function RegimeTrendStrip({ mode, colors, onPeriodClick, activePeriod }: RegimeTrendStripProps) {
   // mounted guard — prevents SSR/client hydration mismatch from dynamic bar heights
   const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const { data, isLoading } = useQuery<RegimeTrend>({
     queryKey: ["regime-trend", mode],
@@ -449,28 +550,34 @@ function RegimeTrendStrip({ mode, colors, onPeriodClick, activePeriod }: RegimeT
   });
 
   // Same skeleton on server and client until mounted — avoids hydration mismatch
-  if (!mounted || isLoading || !data) return (
-    <div className="flex items-center gap-1 px-1 py-0.5"
-      style={{ borderBottom: `1px solid ${colors.border}`, background: "#060606" }}>
-      {mounted && <Loader2 className="h-2 w-2 animate-spin" style={{ color: colors.textSecondary }} />}
-      <span className="text-[6px] font-mono" style={{ color: colors.textSecondary }}>
-        {mounted ? "loading trend…" : ""}
-      </span>
-    </div>
-  );
+  if (!mounted || isLoading || !data)
+    return (
+      <div
+        className="flex items-center gap-1 px-1 py-0.5"
+        style={{ borderBottom: `1px solid ${colors.border}`, background: "#060606" }}
+      >
+        {mounted && (
+          <Loader2 className="h-2 w-2 animate-spin" style={{ color: colors.textSecondary }} />
+        )}
+        <span className="text-[6px] font-mono" style={{ color: colors.textSecondary }}>
+          {mounted ? "loading trend…" : ""}
+        </span>
+      </div>
+    );
 
   const { periods, trend, trend_color, risk_delta } = data;
 
   // Max score for bar scaling
-  const scores = PERIOD_ORDER.map(p => periods[p]?.score ?? 0);
+  const scores = PERIOD_ORDER.map((p) => periods[p]?.score ?? 0);
   const maxScore = Math.max(...scores, 0.01);
 
   const trendArrow = trend === "CONTRACTING" ? "→" : trend === "EXPANDING" ? "←" : "—";
-  const trendLabel = trend === "CONTRACTING"
-    ? "risk↑ (sectors converging)"
-    : trend === "EXPANDING"
-    ? "risk↓ (sectors diverging)"
-    : "stable";
+  const trendLabel =
+    trend === "CONTRACTING"
+      ? "risk↑ (sectors converging)"
+      : trend === "EXPANDING"
+        ? "risk↓ (sectors diverging)"
+        : "stable";
 
   return (
     <div
@@ -481,7 +588,11 @@ function RegimeTrendStrip({ mode, colors, onPeriodClick, activePeriod }: RegimeT
       {/* Period columns */}
       <div className="flex items-end gap-0.5 mb-0.5">
         {PERIOD_ORDER.map((p) => {
-          const raw = periods[p] as any;
+          const raw = periods[p] as Partial<PeriodScore> & {
+            regime_score?: number;
+            regime_label?: string;
+            regime_color?: string;
+          };
           if (!raw) return null;
           // Normalise: backend may return {score} or legacy {regime_score}
           const ps: PeriodScore = {
@@ -493,6 +604,7 @@ function RegimeTrendStrip({ mode, colors, onPeriodClick, activePeriod }: RegimeT
           const isActive = p === activePeriod;
           return (
             <button
+              type="button"
               key={p}
               className="flex flex-col items-center gap-px flex-1 cursor-pointer hover:opacity-80"
               style={{ outline: isActive ? `1px solid ${ps.color}44` : "none" }}
@@ -522,7 +634,10 @@ function RegimeTrendStrip({ mode, colors, onPeriodClick, activePeriod }: RegimeT
                 {p}
               </span>
               {/* Regime short label */}
-              <span className="text-[5px] font-mono leading-none" style={{ color: ps.color + "99" }}>
+              <span
+                className="text-[5px] font-mono leading-none"
+                style={{ color: `${ps.color}99` }}
+              >
                 {SHORT_LABEL[ps.label] ?? ps.label.slice(0, 3)}
               </span>
             </button>
@@ -536,7 +651,8 @@ function RegimeTrendStrip({ mode, colors, onPeriodClick, activePeriod }: RegimeT
           {trendArrow} {trend}
         </span>
         <span className="text-[5.5px] font-mono" style={{ color: colors.textSecondary }}>
-          Δ{risk_delta > 0 ? "+" : ""}{risk_delta.toFixed(3)} (1m vs 1y)
+          Δ{risk_delta > 0 ? "+" : ""}
+          {risk_delta.toFixed(3)} (1m vs 1y)
         </span>
       </div>
     </div>
@@ -559,7 +675,9 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [cSize, setCSize] = useState({ w: 240, h: 220 });
 
-  useEffect(() => { saveDefaults(mode, period, geomView); }, [mode, period, geomView]);
+  useEffect(() => {
+    saveDefaults(mode, period, geomView);
+  }, [mode, period, geomView]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -573,10 +691,14 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
 
   useEffect(() => {
     if (!expanded) return;
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape") setExpanded(false); };
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [expanded]);
+
+  const isRot = mode === "rot";
 
   const { data, isLoading, isError, refetch } = useQuery<RegimeData>({
     queryKey: ["regime-correlation", mode, period],
@@ -587,14 +709,16 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
     },
     staleTime: 5 * 60 * 1000,
     retry: 1,
+    enabled: !isRot,
   });
 
-  const hasData = !!data && !data.error && data.matrix.length > 0;
+  const hasData = !isRot && !!data && !data.error && data.matrix.length > 0;
   const isGeom = mode === "geom";
   const hasGeom = isGeom && hasData && !!data.positions_2d?.length;
   const showSpace = isGeom && geomView === "space" && hasGeom;
 
   const [modalDims, setModalDims] = useState({ w: 900, h: 640 });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure viewport each time the modal opens
   useEffect(() => {
     setModalDims({
       w: Math.min(window.innerWidth - 60, 960),
@@ -609,22 +733,29 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
     <>
       {/* ── Compact panel ───────────────────────────────────────────────────── */}
       <div className="flex flex-col h-full overflow-hidden" style={{ background: "#000" }}>
-
         {/* Header */}
-        <div className="flex items-center gap-1 px-1 py-0.5 shrink-0"
-          style={{ background: "#0a0a0a", borderBottom: `1px solid ${colors.border}` }}>
-          <span className="text-[8px] font-bold tracking-widest" style={{ color: "#FF9800" }}>REGIME</span>
+        <div
+          className="flex items-center gap-1 px-1 py-0.5 shrink-0"
+          style={{ background: "#0a0a0a", borderBottom: `1px solid ${colors.border}` }}
+        >
+          <span className="text-[8px] font-bold tracking-widest" style={{ color: "#FF9800" }}>
+            REGIME
+          </span>
 
           <div className="flex overflow-hidden border ml-1" style={{ borderColor: colors.border }}>
             {MODES.map(({ key, label, desc }) => (
-              <button key={key} title={desc}
+              <button
+                type="button"
+                key={key}
+                title={desc}
                 className="text-[7px] font-bold px-1.5 py-0 leading-4"
                 style={{
                   background: mode === key ? "#FF980020" : "transparent",
                   color: mode === key ? "#FF9800" : colors.textSecondary,
                   borderRight: key === "corr" ? `1px solid ${colors.border}` : undefined,
                 }}
-                onClick={() => setMode(key as Mode)}>
+                onClick={() => setMode(key as Mode)}
+              >
                 {label}
               </button>
             ))}
@@ -632,115 +763,198 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
 
           {/* GEOM sub-toggle: MATRIX | SPACE */}
           {isGeom && (
-            <div className="flex overflow-hidden border ml-1" style={{ borderColor: colors.border }}>
+            <div
+              className="flex overflow-hidden border ml-1"
+              style={{ borderColor: colors.border }}
+            >
               {(["matrix", "space"] as GeomView[]).map((v) => (
-                <button key={v}
+                <button
+                  type="button"
+                  key={v}
                   className="text-[7px] font-bold px-1 py-0 leading-4"
                   style={{
                     background: geomView === v ? "#57CC9920" : "transparent",
                     color: geomView === v ? "#57CC99" : colors.textSecondary,
                     borderRight: v === "matrix" ? `1px solid ${colors.border}` : undefined,
                   }}
-                  onClick={() => setGeomView(v)}>
+                  onClick={() => setGeomView(v)}
+                >
                   {v === "matrix" ? "MTX" : "SPC"}
                 </button>
               ))}
             </div>
           )}
 
-          <div className="flex ml-auto gap-px">
-            {PERIODS.map((p) => (
-              <button key={p}
-                className="text-[7px] font-bold px-0.5 py-0 leading-4"
-                style={{ color: period === p ? "#FF9800" : colors.textSecondary }}
-                onClick={() => setPeriod(p)}>
-                {p}
-              </button>
-            ))}
-          </div>
+          {!isRot && (
+            <div className="flex ml-auto gap-px">
+              {PERIODS.map((p) => (
+                <button
+                  type="button"
+                  key={p}
+                  className="text-[7px] font-bold px-0.5 py-0 leading-4"
+                  style={{ color: period === p ? "#FF9800" : colors.textSecondary }}
+                  onClick={() => setPeriod(p)}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          )}
+          {isRot && <div className="ml-auto" />}
 
-          <button className="ml-1 p-0.5 hover:opacity-70" title="Expand (full view)" onClick={() => setExpanded(true)}>
+          <button
+            type="button"
+            className="ml-1 p-0.5 hover:opacity-70"
+            title="Expand (full view)"
+            onClick={() => setExpanded(true)}
+          >
             <Maximize2 className="h-2.5 w-2.5" style={{ color: colors.textSecondary }} />
           </button>
         </div>
 
         {/* Regime badge */}
-        <div className="flex items-center gap-2 px-1 py-0.5 shrink-0"
-          style={{ background: "#080808", borderBottom: `1px solid ${colors.border}` }}>
-          {isLoading && <Loader2 className="h-2.5 w-2.5 animate-spin" style={{ color: colors.textSecondary }} />}
-          {isError && (
-            <span className="text-[7px] font-mono" style={{ color: "#FF4444" }}>
-              ERROR <button className="underline hover:opacity-70" onClick={() => refetch()}>RETRY</button>
-            </span>
-          )}
-          {hasData && (
-            <>
-              <span className="text-[8px] font-bold font-mono" style={{ color: data.regime_color }}>
-                ◉ {data.regime_label}
+        {!isRot && (
+          <div
+            className="flex items-center gap-2 px-1 py-0.5 shrink-0"
+            style={{ background: "#080808", borderBottom: `1px solid ${colors.border}` }}
+          >
+            {isLoading && (
+              <Loader2
+                className="h-2.5 w-2.5 animate-spin"
+                style={{ color: colors.textSecondary }}
+              />
+            )}
+            {isError && (
+              <span className="text-[7px] font-mono" style={{ color: "#FF4444" }}>
+                ERROR{" "}
+                <button
+                  type="button"
+                  className="underline hover:opacity-70"
+                  onClick={() => refetch()}
+                >
+                  RETRY
+                </button>
               </span>
+            )}
+            {hasData && (
+              <>
+                <span
+                  className="text-[8px] font-bold font-mono"
+                  style={{ color: data.regime_color }}
+                >
+                  ◉ {data.regime_label}
+                </span>
+                <span className="text-[7px] font-mono" style={{ color: colors.textSecondary }}>
+                  {data.regime_score.toFixed(3)}
+                </span>
+                {isGeom && data.k_signal !== undefined && (
+                  <span
+                    className="text-[6px] font-mono px-0.5"
+                    style={{
+                      color: `${data.regime_color}CC`,
+                      border: `1px solid ${data.regime_color}44`,
+                    }}
+                  >
+                    k={data.k_signal}
+                  </span>
+                )}
+                {isGeom && data.variance_explained && (
+                  <span
+                    className="text-[6px] font-mono"
+                    style={{ color: `${colors.textSecondary}88` }}
+                  >
+                    PC1+2:
+                    {((data.variance_explained[0] + data.variance_explained[1]) * 100).toFixed(0)}%
+                  </span>
+                )}
+                <span
+                  className="ml-auto text-[6px] font-mono"
+                  style={{ color: `${colors.textSecondary}55` }}
+                >
+                  {data.calibration_method === "RMT" || data.calibration_method === "MRS"
+                    ? data.calibration_method
+                    : mode.toUpperCase()}
+                  ·{period.toUpperCase()}
+                </span>
+              </>
+            )}
+            {!isLoading && !isError && !hasData && (
               <span className="text-[7px] font-mono" style={{ color: colors.textSecondary }}>
-                {data.regime_score.toFixed(3)}
+                —
               </span>
-              {isGeom && data.k_signal !== undefined && (
-                <span className="text-[6px] font-mono px-0.5"
-                  style={{ color: data.regime_color + "CC", border: `1px solid ${data.regime_color}44` }}>
-                  k={data.k_signal}
-                </span>
-              )}
-              {isGeom && data.variance_explained && (
-                <span className="text-[6px] font-mono" style={{ color: colors.textSecondary + "88" }}>
-                  PC1+2:{((data.variance_explained[0] + data.variance_explained[1]) * 100).toFixed(0)}%
-                </span>
-              )}
-              <span className="ml-auto text-[6px] font-mono" style={{ color: colors.textSecondary + "55" }}>
-                {data.calibration_method === "RMT" || data.calibration_method === "MRS"
-                  ? data.calibration_method
-                  : mode.toUpperCase()}·{period.toUpperCase()}
-              </span>
-            </>
-          )}
-          {!isLoading && !isError && !hasData && (
-            <span className="text-[7px] font-mono" style={{ color: colors.textSecondary }}>—</span>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
         {/* Trend strip — all periods + direction */}
-        <RegimeTrendStrip
-          mode={mode}
-          colors={colors}
-          activePeriod={period}
-          onPeriodClick={(p) => setPeriod(p)}
-        />
+        {!isRot && (
+          <RegimeTrendStrip
+            mode={mode}
+            colors={colors}
+            activePeriod={period}
+            onPeriodClick={(p) => setPeriod(p)}
+          />
+        )}
 
         {/* Visualisation area */}
-        <div ref={containerRef} className="flex-1 min-h-0 overflow-hidden cursor-zoom-in"
-          title="Click to expand" onClick={() => hasData && setExpanded(true)}>
-          {showSpace ? (
-            <WedgeGeometryView data={data} svgW={cSize.w} svgH={cSize.h} compact colors={colors} />
-          ) : hasData ? (
-            <HeatmapSVG data={data} svgW={cSize.w} svgH={cSize.h} compact colors={colors} />
-          ) : isLoading ? (
-            <div className="flex items-center justify-center h-full">
-              <span className="text-[7px] font-mono" style={{ color: colors.textSecondary }}>LOADING…</span>
-            </div>
-          ) : null}
-        </div>
+        {isRot ? (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <RotationTable colors={colors} compact />
+          </div>
+        ) : (
+          <div
+            ref={containerRef}
+            className="flex-1 min-h-0 overflow-hidden cursor-zoom-in"
+            title="Click to expand"
+            role="presentation"
+            onClick={() => hasData && setExpanded(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && hasData) setExpanded(true);
+            }}
+          >
+            {showSpace ? (
+              <WedgeGeometryView
+                data={data}
+                svgW={cSize.w}
+                svgH={cSize.h}
+                compact
+                colors={colors}
+              />
+            ) : hasData ? (
+              <HeatmapSVG data={data} svgW={cSize.w} svgH={cSize.h} compact colors={colors} />
+            ) : isLoading ? (
+              <div className="flex items-center justify-center h-full">
+                <span className="text-[7px] font-mono" style={{ color: colors.textSecondary }}>
+                  LOADING…
+                </span>
+              </div>
+            ) : null}
+          </div>
+        )}
 
         {/* Legend strip */}
         {hasData && !showSpace && (
-          <div className="shrink-0 flex items-center gap-1.5 px-1 py-0.5"
-            style={{ borderTop: `1px solid ${colors.border}`, background: "#060606" }}>
+          <div
+            className="shrink-0 flex items-center gap-1.5 px-1 py-0.5"
+            style={{ borderTop: `1px solid ${colors.border}`, background: "#060606" }}
+          >
             <span className="text-[6px] font-mono" style={{ color: colors.textSecondary }}>
               {mode === "corr" ? "-1" : "0"}
             </span>
-            <div className="flex-1"><ColorLegend mode={mode} width={cSize.w - 36} /></div>
-            <span className="text-[6px] font-mono" style={{ color: colors.textSecondary }}>+1</span>
+            <div className="flex-1">
+              <ColorLegend mode={mode} width={cSize.w - 36} />
+            </div>
+            <span className="text-[6px] font-mono" style={{ color: colors.textSecondary }}>
+              +1
+            </span>
           </div>
         )}
         {showSpace && (
-          <div className="shrink-0 px-1 py-0.5"
-            style={{ borderTop: `1px solid ${colors.border}`, background: "#060606" }}>
-            <span className="text-[6px] font-mono" style={{ color: colors.textSecondary + "66" }}>
+          <div
+            className="shrink-0 px-1 py-0.5"
+            style={{ borderTop: `1px solid ${colors.border}`, background: "#060606" }}
+          >
+            <span className="text-[6px] font-mono" style={{ color: `${colors.textSecondary}66` }}>
               angle ≈ arccos(ρ) · hull = regime volume
             </span>
           </div>
@@ -749,62 +963,95 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
 
       {/* ── Expanded Modal ───────────────────────────────────────────────────── */}
       {expanded && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center"
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center"
           style={{ background: "rgba(0,0,0,0.88)" }}
-          onClick={(e) => { if (e.target === e.currentTarget) setExpanded(false); }}>
-          <div className="relative flex flex-col"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setExpanded(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setExpanded(false);
+          }}
+        >
+          <div
+            className="relative flex flex-col"
             style={{
-              width: modalW, maxWidth: "calc(100vw - 40px)",
-              background: "#050505", border: `1px solid ${colors.border}`,
+              width: modalW,
+              maxWidth: "calc(100vw - 40px)",
+              background: "#050505",
+              border: `1px solid ${colors.border}`,
               boxShadow: "0 0 60px rgba(0,0,0,0.9)",
-            }}>
-
+            }}
+          >
             {/* Modal header */}
-            <div className="flex items-center gap-2 px-3 py-1.5 shrink-0"
-              style={{ borderBottom: `1px solid ${colors.border}`, background: "#0c0c0c" }}>
+            <div
+              className="flex items-center gap-2 px-3 py-1.5 shrink-0"
+              style={{ borderBottom: `1px solid ${colors.border}`, background: "#0c0c0c" }}
+            >
               <span className="text-[10px] font-bold tracking-widest" style={{ color: "#FF9800" }}>
                 US SECTOR REGIME DETECTION
               </span>
 
-              <div className="flex border overflow-hidden ml-2" style={{ borderColor: colors.border }}>
+              <div
+                className="flex border overflow-hidden ml-2"
+                style={{ borderColor: colors.border }}
+              >
                 {MODES.map(({ key, label, desc }) => (
-                  <button key={key} title={desc}
+                  <button
+                    type="button"
+                    key={key}
+                    title={desc}
                     className="text-[9px] font-bold px-2 py-0.5"
                     style={{
                       background: mode === key ? "#FF980020" : "transparent",
                       color: mode === key ? "#FF9800" : colors.textSecondary,
                       borderRight: key === "corr" ? `1px solid ${colors.border}` : undefined,
                     }}
-                    onClick={() => setMode(key as Mode)}>
+                    onClick={() => setMode(key as Mode)}
+                  >
                     {label}
                   </button>
                 ))}
               </div>
 
-              <div className="flex gap-1 ml-2">
-                {PERIODS.map((p) => (
-                  <button key={p}
-                    className="text-[9px] font-bold px-1.5 py-0.5 border"
-                    style={{
-                      borderColor: period === p ? "#FF9800" : colors.border,
-                      background: period === p ? "#FF980015" : "transparent",
-                      color: period === p ? "#FF9800" : colors.textSecondary,
-                    }}
-                    onClick={() => setPeriod(p)}>
-                    {p.toUpperCase()}
-                  </button>
-                ))}
-              </div>
+              {!isRot && (
+                <div className="flex gap-1 ml-2">
+                  {PERIODS.map((p) => (
+                    <button
+                      type="button"
+                      key={p}
+                      className="text-[9px] font-bold px-1.5 py-0.5 border"
+                      style={{
+                        borderColor: period === p ? "#FF9800" : colors.border,
+                        background: period === p ? "#FF980015" : "transparent",
+                        color: period === p ? "#FF9800" : colors.textSecondary,
+                      }}
+                      onClick={() => setPeriod(p)}
+                    >
+                      {p.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               <div className="ml-auto flex items-center gap-3">
                 {hasData && (
                   <>
-                    <span className="text-[9px] font-bold font-mono" style={{ color: data.regime_color }}>
+                    <span
+                      className="text-[9px] font-bold font-mono"
+                      style={{ color: data.regime_color }}
+                    >
                       ◉ {data.regime_label}
                     </span>
                     {isGeom && data.k_signal !== undefined && (
-                      <span className="text-[8px] font-mono px-1"
-                        style={{ color: data.regime_color + "CC", border: `1px solid ${data.regime_color}44` }}>
+                      <span
+                        className="text-[8px] font-mono px-1"
+                        style={{
+                          color: `${data.regime_color}CC`,
+                          border: `1px solid ${data.regime_color}44`,
+                        }}
+                      >
                         k={data.k_signal} / λ={data.lambda_max?.toFixed(2)}
                       </span>
                     )}
@@ -812,13 +1059,21 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
                       score: {data.regime_score.toFixed(4)}
                     </span>
                     {data.calibration_method && (
-                      <span className="text-[7px] font-mono" style={{ color: colors.textSecondary + "66" }}>
+                      <span
+                        className="text-[7px] font-mono"
+                        style={{ color: `${colors.textSecondary}66` }}
+                      >
                         [{data.calibration_method}]
                       </span>
                     )}
                   </>
                 )}
-                <button className="ml-2 p-0.5 hover:opacity-70" title="Close (Esc)" onClick={() => setExpanded(false)}>
+                <button
+                  type="button"
+                  className="ml-2 p-0.5 hover:opacity-70"
+                  title="Close (Esc)"
+                  onClick={() => setExpanded(false)}
+                >
                   <X className="h-4 w-4" style={{ color: colors.textSecondary }} />
                 </button>
               </div>
@@ -826,26 +1081,38 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
 
             {/* GEOM sub-toggle inside modal header row */}
             {isGeom && (
-              <div className="px-3 py-1 shrink-0 flex items-center gap-2"
-                style={{ background: "#080808", borderBottom: `1px solid ${colors.border}` }}>
-                <span className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>VIEW</span>
+              <div
+                className="px-3 py-1 shrink-0 flex items-center gap-2"
+                style={{ background: "#080808", borderBottom: `1px solid ${colors.border}` }}
+              >
+                <span className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
+                  VIEW
+                </span>
                 <div className="flex border overflow-hidden" style={{ borderColor: colors.border }}>
                   {(["matrix", "space"] as GeomView[]).map((v) => (
-                    <button key={v}
+                    <button
+                      type="button"
+                      key={v}
                       className="text-[8px] font-bold px-2 py-0.5"
                       style={{
                         background: geomView === v ? "#57CC9920" : "transparent",
                         color: geomView === v ? "#57CC99" : colors.textSecondary,
                         borderRight: v === "matrix" ? `1px solid ${colors.border}` : undefined,
                       }}
-                      onClick={() => setGeomView(v)}>
+                      onClick={() => setGeomView(v)}
+                    >
                       {v === "matrix" ? "MATRIX  |sin θ|" : "WEDGE SPACE  PCA"}
                     </button>
                   ))}
                 </div>
                 {geomView === "space" && data?.variance_explained && (
-                  <span className="text-[8px] font-mono ml-2" style={{ color: colors.textSecondary + "88" }}>
-                    PC1+PC2: {((data.variance_explained[0] + data.variance_explained[1]) * 100).toFixed(0)}% variance
+                  <span
+                    className="text-[8px] font-mono ml-2"
+                    style={{ color: `${colors.textSecondary}88` }}
+                  >
+                    PC1+PC2:{" "}
+                    {((data.variance_explained[0] + data.variance_explained[1]) * 100).toFixed(0)}%
+                    variance
                   </span>
                 )}
               </div>
@@ -853,12 +1120,14 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
 
             {/* Content area — always single view, full width */}
             <div className="overflow-hidden" style={{ height: modalContentH, background: "#000" }}>
-              {isLoading && (
+              {!isRot && isLoading && (
                 <div className="flex items-center justify-center h-full">
                   <Loader2 className="h-6 w-6 animate-spin" style={{ color: "#FF9800" }} />
                 </div>
               )}
-              {showSpace ? (
+              {isRot ? (
+                <RotationTable colors={colors} compact={false} />
+              ) : showSpace ? (
                 <div className="p-3 h-full">
                   <WedgeGeometryView
                     data={data}
@@ -882,22 +1151,36 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
             </div>
 
             {/* Footer */}
-            <div className="shrink-0 px-3 py-1.5 flex items-center gap-2"
-              style={{ borderTop: `1px solid ${colors.border}`, background: "#0a0a0a" }}>
+            <div
+              className="shrink-0 px-3 py-1.5 flex items-center gap-2"
+              style={{ borderTop: `1px solid ${colors.border}`, background: "#0a0a0a" }}
+            >
               {!showSpace && hasData && (
                 <>
-                  <span className="text-[8px] font-mono shrink-0" style={{ color: colors.textSecondary }}>
+                  <span
+                    className="text-[8px] font-mono shrink-0"
+                    style={{ color: colors.textSecondary }}
+                  >
                     {mode === "corr" ? "−1.0" : "0.0"}
                   </span>
-                  <div className="flex-1"><ColorLegend mode={mode} width={modalW - 160} /></div>
-                  <span className="text-[8px] font-mono shrink-0" style={{ color: colors.textSecondary }}>
+                  <div className="flex-1">
+                    <ColorLegend mode={mode} width={modalW - 160} />
+                  </div>
+                  <span
+                    className="text-[8px] font-mono shrink-0"
+                    style={{ color: colors.textSecondary }}
+                  >
                     {mode === "corr" ? "+1.0" : "+1.0 (⊥)"}
                   </span>
                 </>
               )}
               {showSpace && (
-                <span className="text-[7px] font-mono" style={{ color: colors.textSecondary + "66" }}>
-                  Arrow angle ≈ arccos(ρ) · Convex hull area ∝ det(Gram)^(1/N) · Hover arrow for sector name
+                <span
+                  className="text-[7px] font-mono"
+                  style={{ color: `${colors.textSecondary}66` }}
+                >
+                  Arrow angle ≈ arccos(ρ) · Convex hull area ∝ det(Gram)^(1/N) · Hover arrow for
+                  sector name
                 </span>
               )}
             </div>
