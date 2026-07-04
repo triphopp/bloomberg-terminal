@@ -237,8 +237,9 @@ Auth: static token in `Authorization` header (no "Bearer" prefix — IBM API Con
 - `GET /api/regime/calibrated?period=3m|6m|1y|1m` — CORR + GEOM both, with conflict detection
 
 ## Theme/Sector Rotation (`routers/rotation.py`)
-- `GET /api/rotation/table?bench=SPY` — momentum table: 24 theme ETF proxies (ARKG, IBB, CIBR, SMH, MAGS…) + 11 SPDR sectors; per row: d1/w1/m1/m3 %, m1_vs_bench, RRG quadrant (Leading/Improving/Weakening/Lagging from weekly RS-Ratio/RS-Momentum vs bench) + mom_dir up|down; 15min cache, one batch yf.download 9mo
-  - Used by: MKT view REGIME panel → ROT mode (`rotation-table.tsx`), compact panel + expanded modal
+- `GET /api/rotation/table?market=US|TH&bench=SPY` — momentum table; US: 24 theme ETF proxies (ARKG, IBB, CIBR, SMH, MAGS…) + 11 SPDR sectors vs SPY; TH: 13 equal-weight sector baskets (Banking, Energy, ICT, Commerce…) vs ^SET.BK; per row: d1/w1/m1/m3 %, m1_vs_bench, RRG quadrant + mom_dir; 15min cache, one batch yf.download 9mo
+- `GET /api/rotation/constituents?market=US|TH&id=X` — drill-down stocks in a group with same return columns; US id=ETF symbol → yf funds_data top-10 holdings (1d cache); TH id=group name → basket members
+  - Used by: MKT view REGIME panel → ROT mode (`rotation-table.tsx`) — US|TH toggle, click row to expand constituents
 
 ## Stop Loss Engine (`routers/stoploss.py`)
 - `GET /api/stoploss/regime` — exceedance correlation regime (CRISIS/RISK-OFF/TRENDING/DIVERGENT), 5min cache
