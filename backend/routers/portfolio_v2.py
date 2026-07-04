@@ -94,6 +94,19 @@ def _get_yf_symbol(symbol: str, account_id: str) -> Optional[str]:
     return sym  # Dime: US symbols as-is
 
 
+def _trade_yf_symbol(row: dict) -> Optional[str]:
+    """Provider symbol for a trade row.
+
+    Prefer the resolved_symbol persisted at entry time (symbol resolver,
+    plans/port-redesign.md); fall back to the legacy account-id heuristic
+    for rows created before the resolver existed (F06 transition path).
+    """
+    rs = row.get("resolved_symbol")
+    if rs:
+        return str(rs).strip().upper()
+    return _get_yf_symbol(row.get("symbol") or "", row.get("account_id") or "")
+
+
 def _get_live_price(symbol: str, account_id: str) -> Optional[float]:
     yf_sym = _get_yf_symbol(symbol, account_id)
     if not yf_sym:
@@ -827,10 +840,12 @@ def sell_position(body: SellIn):
             import uuid as _uuid
             sold_id = str(_uuid.uuid4())
             conn.execute(
-                """INSERT INTO trades (id, account_id, symbol, sector, date_entry, date_exit,
+                """INSERT INTO trades (id, account_id, symbol, resolved_symbol, market,
+                   sector, date_entry, date_exit,
                    price_entry, price_exit, volume, pnl_amount, win_loss, pnl_percent,
                    currency, exchange_rate, strategy_name, note)
-                   SELECT ?, account_id, symbol, sector, date_entry, ?,
+                   SELECT ?, account_id, symbol, resolved_symbol, market,
+                   sector, date_entry, ?,
                    ?, ?, ?, ?, ?, ?,
                    currency, exchange_rate, strategy_name, ?
                    FROM trades WHERE id = ?""",
@@ -1044,7 +1059,8 @@ def get_dividend_suggestions(account_id: Optional[str] = Query(None)):
 
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT symbol, account_id, MIN(date_entry) date_entry FROM trades t "
+            "SELECT symbol, account_id, MIN(date_entry) date_entry, "
+            "MAX(resolved_symbol) resolved_symbol FROM trades t "
             f"WHERE {' AND '.join(where)} GROUP BY symbol, account_id ORDER BY symbol",
             params,
         ).fetchall()
@@ -1063,7 +1079,7 @@ def get_dividend_suggestions(account_id: Optional[str] = Query(None)):
         acct = r["account_id"]
         held_since = r["date_entry"]
         try:
-            yf_sym = _get_yf_symbol(symbol, acct)
+            yf_sym = _trade_yf_symbol(dict(r))
             if not yf_sym:
                 continue
             # Typed dividend access via market_data contract
@@ -1123,7 +1139,7 @@ def get_open_positions(
     pos_yf_map: dict[int, str] = {}   # position index → yf_symbol
 
     for i, pos in enumerate(positions):
-        yf_sym = _get_yf_symbol(pos["symbol"], pos["account_id"])
+        yf_sym = _trade_yf_symbol(pos)
         if yf_sym:
             yf_sym_map[yf_sym] = yf_sym
             pos_yf_map[i] = yf_sym
@@ -1312,7 +1328,7 @@ def _maybe_capture_nav() -> None:
             open_rows = [
                 dict(r)
                 for r in conn.execute(
-                    "SELECT account_id, symbol, price_entry, volume, amount "
+                    "SELECT account_id, symbol, resolved_symbol, price_entry, volume, amount "
                     "FROM trades WHERE win_loss = 'P'"
                 ).fetchall()
             ]
@@ -1323,7 +1339,7 @@ def _maybe_capture_nav() -> None:
         yf_map: dict[int, Optional[str]] = {}
         wanted: set[str] = set()
         for i, p in enumerate(open_rows):
-            ys = _get_yf_symbol(p["symbol"], p["account_id"])
+            ys = _trade_yf_symbol(p)
             yf_map[i] = ys
             if ys:
                 wanted.add(ys)
