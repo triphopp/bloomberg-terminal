@@ -58,9 +58,9 @@ function cellFg(v: number | null): string {
   return v >= 0 ? "#4ade80" : "#f87171";
 }
 
-function fmt(v: number | null): string {
+function fmt(v: number | null, compact = false): string {
   if (v === null) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(2)}`;
+  return `${v >= 0 ? "+" : ""}${v.toFixed(compact ? 1 : 2)}`;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -111,12 +111,9 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
     .filter((r) => kind === "all" || r.kind === kind)
     .sort((a, b) => (b[sortKey] ?? -999) - (a[sortKey] ?? -999));
 
-  const fs = compact ? "text-[6.5px]" : "text-[9px]";
+  const fs = compact ? "text-[6px]" : "text-[9px]";
   const cellPad = compact ? "px-0.5 py-px" : "px-1.5 py-0.5";
-  // Compact panel: keep it readable in ~240px — 1M, 1MvB only
-  const cols = compact
-    ? SORT_COLS.filter((c) => c.key === "m1" || c.key === "m1_vs_bench")
-    : SORT_COLS;
+  const cols = SORT_COLS;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -195,7 +192,7 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
                     className={`${fs} ${cellPad} font-mono whitespace-nowrap`}
                     style={{ color: colors.text }}
                   >
-                    {compact ? r.name.slice(0, 16) : r.name}
+                    {compact ? r.name.replace(/\s*\(X[A-Z]+\)$/, "").slice(0, 10) : r.name}
                     <span
                       className="ml-1 px-0.5 font-bold"
                       style={{ color: qc, background: `${qc}18`, border: `1px solid ${qc}33` }}
@@ -210,7 +207,7 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
                       className={`${fs} ${cellPad} font-mono text-right`}
                       style={{ background: cellBg(r[c.key]), color: cellFg(r[c.key]) }}
                     >
-                      {fmt(r[c.key])}
+                      {fmt(r[c.key], compact)}
                     </td>
                   ))}
                 </tr>
