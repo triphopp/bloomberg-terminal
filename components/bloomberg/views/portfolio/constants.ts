@@ -42,11 +42,16 @@ export const portfolioColsAtom = atomWithStorage<ColName[]>(
 // ── Group colors (for OpenPositionsTab) ─────────────────────────────────────
 
 export const GROUP_COLORS: Record<string, string> = {
-  "Finansia (0153717)": "#3b82f6",
-  "Finansia (6065157)": "#f59e0b",
-  "Finansia (6065151)": "#22c55e",
+  Finansia: "#3b82f6",
   Dime: "#a855f7",
   InnovestX: "#ef4444",
+};
+
+// Distinct accent per Finansia sub-port badge
+export const SUBPORT_COLORS: Record<string, string> = {
+  "0153717": "#3b82f6",
+  "6065157": "#f59e0b",
+  "6065151": "#22c55e",
 };
 
 // ── Sector lists ─────────────────────────────────────────────────────────────
@@ -188,8 +193,22 @@ export const BLANK_FORM = {
 };
 
 // ── Sub-accounts ──────────────────────────────────────────────────────────────
+// Sub-ports work for any account, not just Finansia. Persisted per account_id —
+// "+ Add new sub-port" in the UI appends here, no code edit needed.
 
-export const FINANSIA_SUBS = ["Finansia (0153717)", "Finansia (6065157)", "Finansia (6065151)"];
+export const ACCOUNT_NAMES: Record<string, string> = {
+  finansia: "Finansia",
+  dime: "Dime",
+  innovestx: "InnovestX",
+};
+
+const SUB_PORTS_DEFAULT: Record<string, string[]> = {
+  finansia: ["Finansia (0153717)", "Finansia (6065157)", "Finansia (6065151)"],
+};
+export const subPortsAtom = atomWithStorage<Record<string, string[]>>(
+  "bloomberg_sub_ports",
+  SUB_PORTS_DEFAULT
+);
 
 // ── Chart colors ──────────────────────────────────────────────────────────────
 

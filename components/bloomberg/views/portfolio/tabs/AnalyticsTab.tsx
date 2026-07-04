@@ -39,6 +39,8 @@ export function AnalyticsTab({
     top_symbols: any[];
     // biome-ignore lint/suspicious/noExplicitAny: untyped API response
     open_by_sector: any[];
+    // biome-ignore lint/suspicious/noExplicitAny: untyped API response
+    by_subport: any[];
   } | null>(null);
   const [dividends, setDividends] = useState<Dividend[]>([]);
   const [openPos, setOpenPos] = useState<Trade[]>([]);
@@ -687,7 +689,7 @@ export function AnalyticsTab({
           })()}
       </div>
 
-      <div className="grid gap-2 p-2" style={{ gridTemplateColumns: "1fr 1fr" }}>
+      <div className="grid gap-2 p-2" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
         {(analytics?.by_sector ?? []).length > 0 && (
           <div className="border p-2" style={{ borderColor: colors.border }}>
             <div
@@ -761,6 +763,49 @@ export function AnalyticsTab({
                     </td>
                     <td className="text-right py-0.5" style={{ color: colors.textSecondary }}>
                       {s.cnt}
+                    </td>
+                    <td className="text-right py-0.5 font-bold" style={{ color: pnlColor(s.pnl) }}>
+                      {fmtK(Math.abs(s.pnl))} {s.pnl >= 0 ? "▲" : "▼"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {(analytics?.by_subport ?? []).length > 0 && (
+          <div className="border p-2" style={{ borderColor: colors.border }}>
+            <div
+              className="text-[9px] font-bold tracking-widest mb-1"
+              style={{ color: colors.accent }}
+            >
+              BY SUB-PORT
+            </div>
+            <table className="w-full text-[9px] font-mono">
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  <th className="text-left py-0.5" style={{ color: colors.textSecondary }}>
+                    SUB-PORT
+                  </th>
+                  <th className="text-right py-0.5" style={{ color: colors.textSecondary }}>
+                    W%
+                  </th>
+                  <th className="text-right py-0.5" style={{ color: colors.textSecondary }}>
+                    P&L
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {analytics?.by_subport.slice(0, 10).map((s) => (
+                  <tr key={s.subport} style={{ borderBottom: "1px solid #1a1a1a" }}>
+                    <td className="py-0.5" style={{ color: colors.text }}>
+                      {s.subport}
+                    </td>
+                    <td
+                      className="text-right py-0.5"
+                      style={{ color: s.win_rate >= 50 ? "#4ade80" : "#f87171" }}
+                    >
+                      {s.win_rate.toFixed(0)}%
                     </td>
                     <td className="text-right py-0.5 font-bold" style={{ color: pnlColor(s.pnl) }}>
                       {fmtK(Math.abs(s.pnl))} {s.pnl >= 0 ? "▲" : "▼"}

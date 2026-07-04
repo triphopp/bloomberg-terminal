@@ -4,6 +4,8 @@ Supports TH equity, US equity, and crypto accounts.
 """
 import io
 import json
+import logging
+import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -24,6 +26,8 @@ _price_cache: TTLCache = TTLCache(ttl=60,  maxsize=300)
 _rate_cache:  TTLCache = TTLCache(ttl=120, maxsize=5)
 
 router = APIRouter(prefix="/api/v2/portfolio")
+
+logger = logging.getLogger("api.portfolio_v2")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -88,6 +92,19 @@ def _get_yf_symbol(symbol: str, account_id: str) -> Optional[str]:
             return f"{base}-THB"
         return None
     return sym  # Dime: US symbols as-is
+
+
+def _trade_yf_symbol(row: dict) -> Optional[str]:
+    """Provider symbol for a trade row.
+
+    Prefer the resolved_symbol persisted at entry time (symbol resolver,
+    plans/port-redesign.md); fall back to the legacy account-id heuristic
+    for rows created before the resolver existed (F06 transition path).
+    """
+    rs = row.get("resolved_symbol")
+    if rs:
+        return str(rs).strip().upper()
+    return _get_yf_symbol(row.get("symbol") or "", row.get("account_id") or "")
 
 
 def _get_live_price(symbol: str, account_id: str) -> Optional[float]:
@@ -236,6 +253,8 @@ class AccountPatch(BaseModel):
 class TradeIn(BaseModel):
     account_id: str
     symbol: str
+    resolved_symbol: Optional[str] = None
+    market: Optional[str] = None
     sector: str = ""
     date_entry: str
     date_exit: Optional[str] = None
@@ -305,6 +324,145 @@ class DividendIn(BaseModel):
     reinvest_asset: str = ""
     reinvest_price: float = 0
     reinvest_units: float = 0
+
+
+# ── Symbol Resolver (plans/port-redesign.md Step 1) ──────────────────────────
+# Resolve once at write time: user types a bare ticker, we search only the
+# markets the account trades and return canonical provider symbols.  The
+# chosen resolved_symbol is persisted on the trade so no read path ever has
+# to guess exchange suffixes again (root cause of F06).
+
+_MARKET_SUFFIX = {"TH": ".BK", "US": ""}
+_MARKET_CURRENCY = {"TH": "THB", "US": "USD"}
+_resolve_cache: TTLCache = TTLCache(ttl=3600, maxsize=500)
+
+
+def _classify_market(sym: str, quote_type: str = "") -> Optional[str]:
+    s = sym.upper()
+    qt = (quote_type or "").upper()
+    if s.endswith(".BK"):
+        return "TH"
+    if "CRYPTO" in qt or ("-" in s and s.rsplit("-", 1)[-1] in ("USD", "THB", "USDT")):
+        return "CRYPTO"
+    if "." not in s:
+        return "US"
+    return None  # other exchange suffixes — unsupported for now
+
+
+def _account_markets(acc: dict) -> list[str]:
+    raw = acc.get("markets")
+    if raw:
+        try:
+            parsed = [str(m).upper() for m in json.loads(raw)]
+            if parsed:
+                return parsed
+        except Exception:
+            pass
+    return ["CRYPTO"] if acc.get("account_type") == "crypto" else ["US", "TH"]
+
+
+@router.get("/resolve-symbol")
+def resolve_symbol(q: str = Query(..., min_length=1), account_id: str = Query(...)):
+    query = q.strip().upper()
+    if not query:
+        raise HTTPException(status_code=400, detail="Empty query")
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM portfolio_accounts WHERE id = ?",
+                           (account_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Unknown account")
+    acc = dict(row)
+    markets = _account_markets(acc)
+
+    cache_key = f"{query}|{','.join(markets)}"
+    cached = _resolve_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    matches: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(sym: str, market: str, name: str, exchange: str) -> None:
+        if sym in seen or market not in markets:
+            return
+        seen.add(sym)
+        matches.append({
+            "resolved_symbol": sym,
+            "market": market,
+            "currency": _MARKET_CURRENCY.get(market)
+                        or (sym.rsplit("-", 1)[-1] if "-" in sym else None),
+            "name": name,
+            "exchange": exchange,
+        })
+
+    def _add_from_result(r, market_hint: Optional[str] = None) -> None:
+        sym = str(getattr(r, "symbol", "") or "").upper()
+        if not sym:
+            return
+        market = market_hint or _classify_market(sym, str(getattr(r, "quote_type", "") or ""))
+        if not market:
+            return
+        name = str(getattr(r, "long_name", "") or getattr(r, "short_name", "") or "")
+        _add(sym, market, name, str(getattr(r, "exchange", "") or ""))
+
+    # 1) free-text search (catches cross-market listings).  Keep only results
+    # whose ticker starts with the query — this is a ticker field, and Yahoo's
+    # name-relevance matches (e.g. "TU" → APPS "Digital Turbine") are noise.
+    try:
+        for r in market_data.search(query, max_results=10):
+            sym = str(getattr(r, "symbol", "") or "").upper()
+            if sym.split(".")[0].split("-")[0].startswith(query):
+                _add_from_result(r)
+    except Exception:
+        logger.warning("resolve-symbol search failed for %r", query, exc_info=True)
+
+    # 2) direct suffix probes — exact tickers the free-text search often misses
+    probes: list[tuple[str, str]] = []  # (candidate, market)
+    for m in markets:
+        if m == "CRYPTO":
+            if "-" in query:
+                probes.append((query, m))
+            elif query.endswith(("THB", "USD")) and len(query) > 3:
+                base = query[:-3]
+                # THB pairs are mostly delisted on Yahoo — offer USD too
+                probes.append((f"{base}-{query[-3:]}", m))
+                probes.append((f"{base}-USD", m))
+            else:
+                probes.append((f"{query}-USD", m))
+        else:
+            suffix = _MARKET_SUFFIX.get(m)
+            if suffix is not None:
+                probes.append((f"{query}{suffix}", m))
+    for cand, m in probes:
+        if cand in seen:
+            continue
+        found = False
+        try:
+            for r in market_data.search(cand, max_results=3):
+                if str(getattr(r, "symbol", "") or "").upper() == cand:
+                    _add_from_result(r, market_hint=m)
+                    found = True
+                    break
+        except Exception:
+            pass
+        if not found:
+            # Yahoo Search doesn't index some symbols (e.g. BTC-THB) that the
+            # quote API prices fine — validate via a live quote instead.
+            try:
+                snap = market_data.get_fast_info(cand)
+                if snap is not None and snap.last_price is not None:
+                    _add(cand, m, "", "")
+            except Exception:
+                continue
+
+    # rank: account home country first, then declared markets order
+    home = str(acc.get("country") or "").upper()
+    order = {mk: i for i, mk in enumerate(markets)}
+    matches.sort(key=lambda x: (x["market"] != home, order.get(x["market"], 99)))
+    result = {"query": query, "markets": markets, "matches": matches}
+    if matches:  # don't cache misses — provider hiccup would stick for an hour
+        _resolve_cache.set(cache_key, result)
+    return result
 
 
 # ── Accounts ─────────────────────────────────────────────────────────────────
@@ -400,14 +558,17 @@ def create_trade(body: TradeIn):
                            (body.account_id,)).fetchone()
         currency = acc["currency"] if acc else "THB"
         conn.execute("""
-            INSERT INTO trades (id, account_id, symbol, sector, date_entry, date_exit,
+            INSERT INTO trades (id, account_id, symbol, resolved_symbol, market,
+                sector, date_entry, date_exit,
                 price_entry, price_exit, price_stoploss, price_target, volume, amount,
                 pnl_amount, win_loss, pnl_percent, currency, exchange_rate,
                 strategy_name, entry_trigger, exit_trigger, market_trend,
                 news_sentiment, expectation_based, factor_based,
                 fear_greed_index, vix_index, note)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """, (trade_id, body.account_id, body.symbol.upper(), body.sector,
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (trade_id, body.account_id, body.symbol.upper(),
+              (body.resolved_symbol or "").upper() or None,
+              (body.market or "").upper() or None, body.sector,
               body.date_entry, body.date_exit,
               body.price_entry, body.price_exit, body.price_stoploss, body.price_target,
               body.volume, body.amount, body.pnl_amount, body.win_loss.upper(),
@@ -679,10 +840,12 @@ def sell_position(body: SellIn):
             import uuid as _uuid
             sold_id = str(_uuid.uuid4())
             conn.execute(
-                """INSERT INTO trades (id, account_id, symbol, sector, date_entry, date_exit,
+                """INSERT INTO trades (id, account_id, symbol, resolved_symbol, market,
+                   sector, date_entry, date_exit,
                    price_entry, price_exit, volume, pnl_amount, win_loss, pnl_percent,
                    currency, exchange_rate, strategy_name, note)
-                   SELECT ?, account_id, symbol, sector, date_entry, ?,
+                   SELECT ?, account_id, symbol, resolved_symbol, market,
+                   sector, date_entry, ?,
                    ?, ?, ?, ?, ?, ?,
                    currency, exchange_rate, strategy_name, ?
                    FROM trades WHERE id = ?""",
@@ -882,10 +1045,11 @@ def delete_dividend(div_id: str):
 
 @router.get("/dividend-suggestions")
 def get_dividend_suggestions(account_id: Optional[str] = Query(None)):
-    """Fetch recent dividend data from yfinance for open positions.
+    """Fetch dividend data from yfinance for open positions, from the date each
+    position was entered onward — never dividends predating the purchase.
 
     Returns one suggestion per symbol with: asset, amount_per_unit, ex_date, pay_date.
-    Only includes symbols where yfinance actually returned dividend data.
+    Skips ex-dates already recorded in the dividends table (no duplicate suggestions).
     """
     where = ["win_loss = 'P'"]
     params = []
@@ -895,10 +1059,16 @@ def get_dividend_suggestions(account_id: Optional[str] = Query(None)):
 
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT t.symbol, t.account_id FROM trades t "
-            f"WHERE {' AND '.join(where)} ORDER BY t.symbol",
+            "SELECT symbol, account_id, MIN(date_entry) date_entry, "
+            "MAX(resolved_symbol) resolved_symbol FROM trades t "
+            f"WHERE {' AND '.join(where)} GROUP BY symbol, account_id ORDER BY symbol",
             params,
         ).fetchall()
+
+        existing = {
+            (r["asset"], r["account_id"], r["ex_date"])
+            for r in conn.execute("SELECT asset, account_id, ex_date FROM dividends").fetchall()
+        }
 
     if not rows:
         return {"suggestions": []}
@@ -907,28 +1077,28 @@ def get_dividend_suggestions(account_id: Optional[str] = Query(None)):
     for r in rows:
         symbol = r["symbol"]
         acct = r["account_id"]
+        held_since = r["date_entry"]
         try:
-            yf_sym = _get_yf_symbol(symbol, acct)
+            yf_sym = _trade_yf_symbol(dict(r))
             if not yf_sym:
                 continue
             # Typed dividend access via market_data contract
             div_records = market_data.get_dividends(yf_sym)
-            if div_records:
-                # Filter to last 6 months + get most recent
-                cutoff = pd.Timestamp.now() - pd.DateOffset(months=6)
-                recent = [d for d in div_records
-                         if pd.Timestamp(d.ex_date) >= cutoff]
-                if not recent:
-                    recent = div_records  # fall back to all
-                best = max(recent, key=lambda d: d.ex_date)
-
-                if best.amount > 0:
+            if not div_records:
+                continue
+            # Only dividends paid while the position was actually held
+            eligible = [d for d in div_records if d.ex_date >= held_since]
+            eligible = [d for d in eligible if (symbol, acct, d.ex_date) not in existing]
+            if not eligible:
+                continue
+            for d in sorted(eligible, key=lambda d: d.ex_date):
+                if d.amount > 0:
                     suggestions.append({
                         "asset": symbol,
                         "account_id": acct,
-                        "amount_per_unit": round(best.amount, 6),
-                        "ex_date": best.ex_date,
-                        "pay_date": best.ex_date,  # ex-date used for pay_date
+                        "amount_per_unit": round(d.amount, 6),
+                        "ex_date": d.ex_date,
+                        "pay_date": d.ex_date,  # ex-date used for pay_date
                         "source": "yfinance",
                     })
         except Exception:
@@ -969,7 +1139,7 @@ def get_open_positions(
     pos_yf_map: dict[int, str] = {}   # position index → yf_symbol
 
     for i, pos in enumerate(positions):
-        yf_sym = _get_yf_symbol(pos["symbol"], pos["account_id"])
+        yf_sym = _trade_yf_symbol(pos)
         if yf_sym:
             yf_sym_map[yf_sym] = yf_sym
             pos_yf_map[i] = yf_sym
@@ -1158,7 +1328,7 @@ def _maybe_capture_nav() -> None:
             open_rows = [
                 dict(r)
                 for r in conn.execute(
-                    "SELECT account_id, symbol, price_entry, volume, amount "
+                    "SELECT account_id, symbol, resolved_symbol, price_entry, volume, amount "
                     "FROM trades WHERE win_loss = 'P'"
                 ).fetchall()
             ]
@@ -1169,7 +1339,7 @@ def _maybe_capture_nav() -> None:
         yf_map: dict[int, Optional[str]] = {}
         wanted: set[str] = set()
         for i, p in enumerate(open_rows):
-            ys = _get_yf_symbol(p["symbol"], p["account_id"])
+            ys = _trade_yf_symbol(p)
             yf_map[i] = ys
             if ys:
                 wanted.add(ys)
@@ -1187,7 +1357,8 @@ def _maybe_capture_nav() -> None:
             entry = _to_float_or_zero(p["price_entry"])
             cost_native = _to_float_or_zero(p["amount"]) or entry * vol
             cost[p["account_id"]] += cost_native * fx
-            price = price_lookup.get(yf_map.get(i)) if yf_map.get(i) else None
+            quote = price_lookup.get(yf_map.get(i)) if yf_map.get(i) else None
+            price = quote.get("price") if quote else None
             if price and entry > 0:
                 unreal[p["account_id"]] += (price - entry) * vol * fx
 
@@ -1225,7 +1396,7 @@ def _maybe_capture_nav() -> None:
                     dividends        = excluded.dividends
             """, rows)
     except Exception:
-        pass
+        logger.exception("NAV snapshot capture failed")
 
 
 @router.get("/nav-history")
@@ -1293,13 +1464,14 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
         """, params).fetchall()
 
         by_month = conn.execute(f"""
-            SELECT substr(t.date_entry,1,7) month,
+            SELECT substr(COALESCE(t.date_exit, t.date_entry),1,7) month,
                    COUNT(*) cnt,
                    SUM(CASE WHEN t.win_loss='W' THEN 1 ELSE 0 END) wins,
                    SUM({pnl_expr}) pnl
             FROM trades t LEFT JOIN portfolio_accounts a ON t.account_id = a.id
             WHERE {cond}
-            GROUP BY substr(t.date_entry,1,7) ORDER BY substr(t.date_entry,1,7)
+            GROUP BY substr(COALESCE(t.date_exit, t.date_entry),1,7)
+            ORDER BY substr(COALESCE(t.date_exit, t.date_entry),1,7)
         """, params).fetchall()
 
         top_symbols = conn.execute(f"""
@@ -1309,6 +1481,13 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
             FROM trades t LEFT JOIN portfolio_accounts a ON t.account_id = a.id
             WHERE {cond}
             GROUP BY t.symbol ORDER BY pnl DESC LIMIT 15
+        """, params).fetchall()
+
+        subport_rows = conn.execute(f"""
+            SELECT t.note note, t.win_loss win_loss, COALESCE(a.name, t.account_id) acc_name,
+                   {pnl_expr} pnl
+            FROM trades t LEFT JOIN portfolio_accounts a ON t.account_id = a.id
+            WHERE {cond}
         """, params).fetchall()
 
         open_by_sector = conn.execute(f"""
@@ -1344,6 +1523,32 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
             "value":  cost,
         })
 
+    # Sub-port breakdown. New trades store "AccName (subport-id) | freeform | VAT: x"
+    # (see helpers.ts splitNote). Sold trades additionally get "\n[SOLD ...]"
+    # appended directly (see /sell, /sell-all-lots) — so the sub-port tag is only
+    # ever guaranteed to be the leading segment of the note. Match from the start.
+    def _extract_subport(note: Optional[str]) -> Optional[str]:
+        if not note:
+            return None
+        m = re.match(r"^[^(\n|]*\(([^)]+)\)", note.strip())
+        return m.group(1) if m else None
+
+    subport_agg: dict = _dd(lambda: {"cnt": 0, "wins": 0, "pnl": 0.0})
+    for r in subport_rows:
+        sub = _extract_subport(r["note"])
+        label = f"{r['acc_name']} ({sub})" if sub else r["acc_name"]
+        agg = subport_agg[label]
+        agg["cnt"] += 1
+        agg["wins"] += 1 if r["win_loss"] == "W" else 0
+        agg["pnl"] += r["pnl"] or 0
+    by_subport = sorted(
+        (
+            {"subport": k, "cnt": v["cnt"], "wins": v["wins"], "pnl": round(v["pnl"], 2)}
+            for k, v in subport_agg.items()
+        ),
+        key=lambda d: -d["pnl"],
+    )
+
     def _fmt(rows) -> list[dict]:
         result = []
         for r in rows:
@@ -1358,6 +1563,7 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
         "by_strategy":   _fmt(by_strategy),
         "by_month":      _fmt(by_month),
         "top_symbols":   _fmt(top_symbols),
+        "by_subport":    _fmt(by_subport),
         "open_by_sector": [
             {
                 "sector":  r["sector"],

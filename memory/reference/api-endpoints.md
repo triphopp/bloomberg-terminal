@@ -76,12 +76,13 @@
 - `POST /api/portfolio/db/import` — bulk import CSV
 
 ## Portfolio v2 (`routers/portfolio_v2.py`)
+- `GET /api/v2/portfolio/resolve-symbol?q=X&account_id=Y` — resolve bare ticker → canonical provider symbols, filtered to account's markets (`markets` JSON col; default US+TH, crypto→CRYPTO); returns `{query, markets, matches:[{resolved_symbol, market, currency, name, exchange}]}`; TTLCache 1h, home-country ranked first (`plans/port-redesign.md` Step 1)
 - `GET /api/v2/portfolio/accounts` — list accounts (no default seed; users create their own)
 - `POST /api/v2/portfolio/accounts` — create account (id, name, country, currency, account_type)
 - `PATCH /api/v2/portfolio/accounts/{id}` — update name/broker/is_active
 - `DELETE /api/v2/portfolio/accounts/{id}` — delete account (409 if it has trades; also clears its cash/dividends)
 - `GET /api/v2/portfolio/trades` — trade log (filter by account/symbol)
-- `POST /api/v2/portfolio/trades` — add trade (17 fields incl. is_option, vat_amount)
+- `POST /api/v2/portfolio/trades` — add trade (17 fields incl. is_option, vat_amount; + optional `resolved_symbol`/`market` from resolver)
 - `PATCH /api/v2/portfolio/trades/{id}` — edit trade (optional `adjustment_reason` field → audit log only, not stored in trades table)
 - `DELETE /api/v2/portfolio/trades/{id}` — delete trade (auto-logs to audit before delete)
 - `GET /api/v2/portfolio/trades/{id}/audit-log` — immutable change history for one trade
@@ -234,6 +235,10 @@ Auth: static token in `Authorization` header (no "Bearer" prefix — IBM API Con
   - Used by: MKT view Regime Detection panel (CORR mode = correlation, GEOM mode = geometric)
   - Calibration math: `backend/analytics/regime_calibration.py`
 - `GET /api/regime/calibrated?period=3m|6m|1y|1m` — CORR + GEOM both, with conflict detection
+
+## Theme/Sector Rotation (`routers/rotation.py`)
+- `GET /api/rotation/table?bench=SPY` — momentum table: 24 theme ETF proxies (ARKG, IBB, CIBR, SMH, MAGS…) + 11 SPDR sectors; per row: d1/w1/m1/m3 %, m1_vs_bench, RRG quadrant (Leading/Improving/Weakening/Lagging from weekly RS-Ratio/RS-Momentum vs bench) + mom_dir up|down; 15min cache, one batch yf.download 9mo
+  - Used by: MKT view REGIME panel → ROT mode (`rotation-table.tsx`), compact panel + expanded modal
 
 ## Stop Loss Engine (`routers/stoploss.py`)
 - `GET /api/stoploss/regime` — exceedance correlation regime (CRISIS/RISK-OFF/TRENDING/DIVERGENT), 5min cache

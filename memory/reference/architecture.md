@@ -70,6 +70,7 @@ BOT data path:
 | country_rotation.py | /api/country-rotation/* (scores, history, universe) | yfinance + World Bank |
 | sector.py | /api/sector/* (sector selection signal, factors, history) | FRED + yfinance |
 | regime.py | /api/regime/correlation | yfinance (5min cache) |
+| rotation.py | /api/rotation/table (theme/sector momentum + RRG quadrant) | yfinance batch (15min cache) |
 | paper_trading.py | /api/paper/* (accounts, orders, positions, fills, equity-curve) | yfinance + SQLite |
 
 ## 9 Frontend Views (post-RMI removal 2026-05-24)

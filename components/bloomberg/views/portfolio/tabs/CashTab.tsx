@@ -1,9 +1,11 @@
 "use client";
 import { Loader2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { BLANK_CASH, BLANK_DIV, FINANSIA_SUBS } from "../constants";
+import { BLANK_CASH, BLANK_DIV } from "../constants";
 import { type Colors, fmtK, pnlColor } from "../helpers";
+import { ConfirmDeleteModal } from "../modals/ConfirmDeleteModal";
 import type { CashEntry, Dividend } from "../types";
+import { SubPortSelect } from "../ui/SubPortSelect";
 
 export function CashTab({ accountId, colors }: { accountId: string; colors: Colors }) {
   const [cash, setCash] = useState<CashEntry[]>([]);
@@ -15,6 +17,8 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
   const [cashForm, setCashForm] = useState<Omit<CashEntry, "id">>(BLANK_CASH);
   const [divForm, setDivForm] = useState<Omit<Dividend, "id">>(BLANK_DIV);
   const [saving, setSaving] = useState(false);
+  const [deleteCashTarget, setDeleteCashTarget] = useState<CashEntry | null>(null);
+  const [deleteDivTarget, setDeleteDivTarget] = useState<Dividend | null>(null);
   const [suggestions, setSuggestions] = useState<
     {
       asset: string;
@@ -77,6 +81,12 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
     [accountId]
   );
 
+  useEffect(() => {
+    const ac = new AbortController();
+    fetchSuggestions(ac.signal);
+    return () => ac.abort();
+  }, [fetchSuggestions]);
+
   const applySuggestion = useCallback((s: (typeof suggestions)[0]) => {
     setSubTab("dividends");
     setShowForm(true);
@@ -124,6 +134,7 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
 
   const deleteCash = async (id: string) => {
     await fetch(`/api/v2/portfolio/cash/${id}`, { method: "DELETE" });
+    setDeleteCashTarget(null);
     load();
   };
 
@@ -165,6 +176,7 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
 
   const deleteDiv = async (id: string) => {
     await fetch(`/api/v2/portfolio/dividends/${id}`, { method: "DELETE" });
+    setDeleteDivTarget(null);
     load();
   };
 
@@ -235,19 +247,6 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
         >
           + ADD
         </button>
-        <button
-          type="button"
-          onClick={() => fetchSuggestions()}
-          disabled={suggestLoading}
-          className="text-[8px] px-2 py-0.5 border font-bold"
-          style={{
-            borderColor: "#60a5fa66",
-            color: suggestLoading ? "#555" : "#60a5fa",
-            background: "#60a5fa10",
-          }}
-        >
-          {suggestLoading ? "..." : "DIV SUGGEST"}
-        </button>
         <div className="ml-auto flex gap-3 text-[9px] font-mono flex-wrap">
           <span style={{ color: colors.textSecondary }}>
             IN: <span style={{ color: "#4ade80" }}>฿{fmtK(totalIn)}</span>
@@ -289,7 +288,7 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
           </span>
           {suggestions.map((s) => (
             <button
-              key={`${s.asset}-${s.account_id}`}
+              key={`${s.asset}-${s.account_id}-${s.ex_date}`}
               type="button"
               onClick={() => applySuggestion(s)}
               className="text-[8px] px-2 py-0.5 border font-mono hover:opacity-80"
@@ -299,6 +298,18 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
               <span style={{ color: "#555" }}>{s.ex_date}</span>
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => fetchSuggestions()}
+            disabled={suggestLoading}
+            className="ml-auto p-0.5 hover:opacity-70"
+            title="Refresh dividend suggestions"
+          >
+            <RefreshCw
+              className={`h-2.5 w-2.5 ${suggestLoading ? "animate-spin" : ""}`}
+              style={{ color: "#60a5fa" }}
+            />
+          </button>
         </div>
       )}
 
@@ -391,19 +402,13 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
               >
                 SUB-ACCOUNT
               </label>
-              <select
-                id="cash-note"
-                style={inputStyle}
+              <SubPortSelect
+                accountId={cashForm.account_id}
                 value={cashForm.note}
-                onChange={(e) => setCashForm((f) => ({ ...f, note: e.target.value }))}
-              >
-                <option value="">—</option>
-                {FINANSIA_SUBS.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
+                onChange={(v) => setCashForm((f) => ({ ...f, note: v }))}
+                colors={colors}
+                inputStyle={inputStyle}
+              />
             </div>
             <div className="flex items-end gap-1">
               <button
@@ -727,7 +732,7 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
                       </button>
                       <button
                         type="button"
-                        onClick={() => deleteCash(c.id)}
+                        onClick={() => setDeleteCashTarget(c)}
                         className="text-[8px] hover:underline"
                         style={{ color: "#f87171" }}
                       >
@@ -802,7 +807,7 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
                     </button>
                     <button
                       type="button"
-                      onClick={() => deleteDiv(d.id)}
+                      onClick={() => setDeleteDivTarget(d)}
                       className="text-[8px] hover:underline"
                       style={{ color: "#f87171" }}
                     >
@@ -896,7 +901,7 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
                       </button>
                       <button
                         type="button"
-                        onClick={() => deleteDiv(d.id)}
+                        onClick={() => setDeleteDivTarget(d)}
                         className="text-[8px] hover:underline"
                         style={{ color: "#f87171" }}
                       >
@@ -908,6 +913,26 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
             </tbody>
           </table>
         </div>
+      )}
+
+      {deleteCashTarget && (
+        <ConfirmDeleteModal
+          title="DELETE CASH FLOW"
+          message={`Delete ${deleteCashTarget.date} entry (${deleteCashTarget.account_id})? This cannot be undone.`}
+          colors={colors}
+          onCancel={() => setDeleteCashTarget(null)}
+          onConfirm={() => deleteCash(deleteCashTarget.id)}
+        />
+      )}
+
+      {deleteDivTarget && (
+        <ConfirmDeleteModal
+          title="DELETE DIVIDEND"
+          message={`Delete ${deleteDivTarget.asset} dividend (${deleteDivTarget.ex_date || deleteDivTarget.pay_date})? This cannot be undone.`}
+          colors={colors}
+          onCancel={() => setDeleteDivTarget(null)}
+          onConfirm={() => deleteDiv(deleteDivTarget.id)}
+        />
       )}
     </div>
   );

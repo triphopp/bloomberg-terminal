@@ -129,6 +129,7 @@ OPENAI_API_KEY      — optional
 | `country_rotation.py` | `/api/country-rotation/*` (scores, history, universe) | yfinance + World Bank |
 | `sector.py` (sector selection) | `/api/sector/*` (signal, factors, history) | FRED + yfinance |
 | `regime.py` | `/api/regime/correlation` | yfinance (5min cache) |
+| `rotation.py` | `/api/rotation/table` (theme/sector momentum + RRG quadrant vs SPY) | yfinance batch (15min cache) |
 | `stoploss.py` | `/api/stoploss/{regime,atr,compute}` | yfinance (5min cache) |
 | `fear_greed.py` | `/api/fear-greed`, `/api/fear-greed/history` | yfinance ^VIX/SPY/TLT/HYG/LQD/RSP (5min/60min cache) |
 | `alerts.py` | `/api/alerts` | stoploss + regime + SQLite (60s cache) |
@@ -143,6 +144,8 @@ OPENAI_API_KEY      — optional
 ### SQLite Database Schema (`portfolio.db`)
 ```sql
 transactions        (id, symbol, type buy/sell, shares, price, date, commission, notes, created_at)
+-- 2026-07-04 (port-redesign Step 1): trades += resolved_symbol TEXT, market TEXT (canonical provider ticker,
+--   set at write time by /resolve-symbol); portfolio_accounts += markets TEXT (JSON e.g. ["US","TH"])
 pin_groups          (id, name, color, sort_order, created_at)
 pinned_assets       (id, symbol, group_id, comment, buy_target, sell_target, price_at_pin, priority 1-3, added_at, updated_at)
 pin_tags            (id, name, color)
@@ -215,7 +218,9 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24). Stock analysis (9 tabs)
 - [ ] Seed sector data: POST /api/sectors/fetch for TH/KR/HK/EU/US
 
 ### Features
+- [ ] **System Audit 2026-07 — Bug Fixes & Refactor** — 9 fix items + 6 refactor items; F01 done 2026-07-03, F06 done 2026-07-04 (via port-redesign resolver); เหลือ F02 AVCO drift 🔴, F03 async blocking 🔴, F04/F05/F07/F08/F09 + R01–R06 (`plans/system-audit-2026-07/README.md`)
 - [x] **Portfolio Cloud Sync** — PC↔Mac sync via Google Drive JSON snapshots, startup pull, row-LWW merge + tombstones, no login done 2026-06-26 (`plans/completed/portfolio-cloud-sync.md`)
+- [ ] **Port Redesign** — symbol resolver (resolve-at-write), sub_portfolios table จริง, currency module, ลบ `_get_yf_symbol`/ปิด F06 (`plans/port-redesign.md`)
 - [ ] Polymarket: dashboard view in frontend
 - [ ] BOT: frontend view for Bond Auction + yield trend chart
 - [ ] BOT: activate Stat-ExchangeRate → add THB FX view
