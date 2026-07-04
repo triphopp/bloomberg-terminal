@@ -11,24 +11,24 @@
  * - All indicators are dynamically added/removed via the plugin system
  */
 
-import { useEffect, useRef, useCallback, useMemo } from "react";
 import {
-  createChart,
-  createSeriesMarkers,
   CandlestickSeries,
-  LineSeries,
   HistogramSeries,
   type IChartApi,
   type ISeriesApi,
+  LineSeries,
   type SeriesType,
+  createChart,
+  createSeriesMarkers,
 } from "lightweight-charts";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type {
-  OhlcvBar,
-  ChartColors,
-  ChartIndicator,
-  ChartEventMarker,
   CanvasOverlay,
+  ChartColors,
+  ChartEventMarker,
+  ChartIndicator,
   IndicatorSeriesOutput,
+  OhlcvBar,
 } from "./types";
 
 // ── Props ────────────────────────────────────────────────────────────────────
@@ -57,14 +57,17 @@ const SUB_PANE_HEIGHT = 80; // px per sub-pane indicator
 
 // ── Marker styling ──────────────────────────────────────────────────────────
 
-const EVENT_MARKER_STYLES: Record<ChartEventMarker["type"], {
-  shape: "circle" | "square" | "arrowUp" | "arrowDown";
-  colorDark: string;
-  colorLight: string;
-}> = {
+const EVENT_MARKER_STYLES: Record<
+  ChartEventMarker["type"],
+  {
+    shape: "circle" | "square" | "arrowUp" | "arrowDown";
+    colorDark: string;
+    colorLight: string;
+  }
+> = {
   dividend: { shape: "circle", colorDark: "#4fc3f7", colorLight: "#0288d1" },
   earnings: { shape: "square", colorDark: "#ffb74d", colorLight: "#e65100" },
-  split:    { shape: "arrowDown", colorDark: "#ce93d8", colorLight: "#7b1fa2" },
+  split: { shape: "arrowDown", colorDark: "#ce93d8", colorLight: "#7b1fa2" },
 };
 
 export function ModularChart({
@@ -77,16 +80,17 @@ export function ModularChart({
   eventMarkers = [],
 }: ModularChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);   // right-side strip
-  const fullCanvasRef = useRef<HTMLCanvasElement>(null);      // full-chart session VP
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null); // right-side strip
+  const fullCanvasRef = useRef<HTMLCanvasElement>(null); // full-chart session VP
   const chartRef = useRef<IChartApi | null>(null);
   const mainSeriesRef = useRef<ISeriesApi<SeriesType> | null>(null);
 
   // Count pane indicators to compute total chart height
-  const paneIndicators = indicators.filter(i => i.type === "pane");
-  const overlayIndicators = indicators.filter(i => i.type === "overlay");
+  const paneIndicators = indicators.filter((i) => i.type === "pane");
+  const overlayIndicators = indicators.filter((i) => i.type === "overlay");
   const totalHeight = height + paneIndicators.length * SUB_PANE_HEIGHT;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: chart is fully rebuilt from these inputs; colors object identity is intentionally excluded
   useEffect(() => {
     const container = containerRef.current;
     if (!container || data.length === 0) return;
@@ -139,7 +143,7 @@ export function ModularChart({
       wickUpColor: colors.positive,
       wickDownColor: colors.negative,
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
     candleSeries.setData(data as any[]);
     mainSeriesRef.current = candleSeries;
 
@@ -157,7 +161,7 @@ export function ModularChart({
             lastValueVisible: false,
             crosshairMarkerVisible: false,
           });
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
           series.setData(output.data as any[]);
         }
       }
@@ -182,7 +186,7 @@ export function ModularChart({
             priceLineVisible: false,
             lastValueVisible: false,
           });
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
           series.setData(output.data as any[]);
         } else if (output.type === "line") {
           const series = subPane.addSeries(LineSeries, {
@@ -192,7 +196,7 @@ export function ModularChart({
             lastValueVisible: false,
             crosshairMarkerVisible: false,
           });
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
           series.setData(output.data as any[]);
         }
       }
@@ -203,15 +207,16 @@ export function ModularChart({
     // ── Event markers (dividends, earnings, splits) ──
     let markersPlugin: ReturnType<typeof createSeriesMarkers> | null = null;
     if (eventMarkers.length > 0) {
-      const dataTimeSet = new Set(
-        data.map(d => typeof d.time === "number" ? d.time : d.time)
-      );
+      const dataTimeSet = new Set(data.map((d) => (typeof d.time === "number" ? d.time : d.time)));
       const isIntradayData = data.length > 0 && typeof data[0].time === "number";
 
       const lwMarkers = eventMarkers
-        .filter(em => {
+        .filter((em) => {
           if (isIntradayData) {
-            const ts = typeof em.time === "number" ? em.time : Math.floor(new Date(em.time + "T00:00:00").getTime() / 1000);
+            const ts =
+              typeof em.time === "number"
+                ? em.time
+                : Math.floor(new Date(`${em.time}T00:00:00`).getTime() / 1000);
             for (const dt of dataTimeSet) {
               if (typeof dt === "number" && Math.abs(dt - ts) < 86400) return true;
             }
@@ -220,19 +225,23 @@ export function ModularChart({
           const dateStr = typeof em.time === "string" ? em.time.slice(0, 10) : "";
           return dataTimeSet.has(dateStr);
         })
-        .map(em => {
+        .map((em) => {
           const style = EVENT_MARKER_STYLES[em.type];
+          // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts Time union
           let markerTime: any;
           if (isIntradayData) {
             if (typeof em.time === "number") {
               markerTime = em.time;
             } else {
-              const dayTs = Math.floor(new Date(em.time + "T00:00:00").getTime() / 1000);
+              const dayTs = Math.floor(new Date(`${em.time}T00:00:00`).getTime() / 1000);
               let closest = data[0].time as number;
               let minDiff = Math.abs(closest - dayTs);
               for (const d of data) {
                 const diff = Math.abs((d.time as number) - dayTs);
-                if (diff < minDiff) { minDiff = diff; closest = d.time as number; }
+                if (diff < minDiff) {
+                  minDiff = diff;
+                  closest = d.time as number;
+                }
               }
               markerTime = closest;
             }
@@ -261,8 +270,8 @@ export function ModularChart({
 
     // ── Canvas overlays (Volume Profile, etc.) ──
     // Split overlays into right-strip and full-chart modes
-    const rightOverlays = overlays.filter(o => (o.mode ?? "right") === "right");
-    const fullOverlays = overlays.filter(o => o.mode === "full");
+    const rightOverlays = overlays.filter((o) => (o.mode ?? "right") === "right");
+    const fullOverlays = overlays.filter((o) => o.mode === "full");
     let overlayUnsubscribe: (() => void) | null = null;
 
     if (rightOverlays.length > 0 || fullOverlays.length > 0) {
@@ -277,7 +286,7 @@ export function ModularChart({
           const canvas = overlayCanvasRef.current;
           if (canvas) {
             const logH = canvas.offsetHeight;
-            const maxW = Math.max(...rightOverlays.map(o => o.width));
+            const maxW = Math.max(...rightOverlays.map((o) => o.width));
             if (logH) {
               const needW = maxW * dpr;
               const needH = logH * dpr;
@@ -338,9 +347,19 @@ export function ModularChart({
 
       scheduleOverlayDraw();
       chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleOverlayDraw);
+      // Y-axis rescaling (dragging the price scale, wheel-zoom, double-click
+      // reset) fires no lightweight-charts event, so priceToCoordinate output
+      // changes without a redraw and VP bars drift off the candles. Redraw on
+      // the raw pointer interactions instead — rAF-coalesced so it's cheap.
+      container.addEventListener("pointermove", scheduleOverlayDraw);
+      container.addEventListener("wheel", scheduleOverlayDraw, { passive: true });
+      container.addEventListener("dblclick", scheduleOverlayDraw);
 
       overlayUnsubscribe = () => {
         chart.timeScale().unsubscribeVisibleLogicalRangeChange(scheduleOverlayDraw);
+        container.removeEventListener("pointermove", scheduleOverlayDraw);
+        container.removeEventListener("wheel", scheduleOverlayDraw);
+        container.removeEventListener("dblclick", scheduleOverlayDraw);
         if (rafId) cancelAnimationFrame(rafId);
       };
     }
@@ -361,7 +380,7 @@ export function ModularChart({
       chartRef.current = null;
       mainSeriesRef.current = null;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, isDark, totalHeight, indicators, overlays, eventMarkers]);
 
   // ── Empty state ──
@@ -376,9 +395,10 @@ export function ModularChart({
     );
   }
 
-  const rightOverlaysRender = overlays.filter(o => (o.mode ?? "right") === "right");
-  const fullOverlaysRender = overlays.filter(o => o.mode === "full");
-  const overlayWidth = rightOverlaysRender.length > 0 ? Math.max(...rightOverlaysRender.map(o => o.width)) : 0;
+  const rightOverlaysRender = overlays.filter((o) => (o.mode ?? "right") === "right");
+  const fullOverlaysRender = overlays.filter((o) => o.mode === "full");
+  const overlayWidth =
+    rightOverlaysRender.length > 0 ? Math.max(...rightOverlaysRender.map((o) => o.width)) : 0;
 
   return (
     <div style={{ position: "relative", width: "100%", height: totalHeight }}>
