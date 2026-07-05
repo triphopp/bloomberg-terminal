@@ -58,6 +58,7 @@ import { useMarketDataQuery } from "../hooks/useMarketDataQuery";
 import { useStockHistory, useStockQuote, useStockSearch } from "../hooks/useStockData";
 import { calcHurst } from "../lib/market-utils";
 import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
+import { displayName, displaySymbol } from "../lib/symbol-display";
 import { bloombergColors } from "../lib/theme-config";
 import type { MarketItem } from "../types";
 import { PinnedAssets } from "./pinned-assets";
@@ -875,8 +876,12 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   const handleSelectSuggestion = useCallback(
     (symbol: string, name?: string) => {
       setSelectedSymbol(symbol);
-      setSelectedLabel(name ? `${symbol} – ${name}` : symbol);
-      addToRecent(symbol, name ?? symbol);
+      // Display normalisation is centralised in lib/symbol-display —
+      // the real provider symbol stays in selectedSymbol for data fetches
+      const dispSym = displaySymbol({ symbol });
+      const dispName = name ? displayName({ symbol, shortname: name }) : "";
+      setSelectedLabel(dispName ? `${dispSym} – ${dispName}` : dispSym);
+      addToRecent(symbol, dispName || dispSym);
       setSearchInput("");
       setSearchQuery("");
       setShowDropdown(false);
@@ -1274,8 +1279,9 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                         <span
                           className="font-bold font-mono w-16 shrink-0"
                           style={{ color: colors.accent }}
+                          title={r.symbol}
                         >
-                          {r.symbol}
+                          {displaySymbol({ symbol: r.symbol })}
                         </span>
                         <span
                           className="truncate flex-1 text-[9px]"
@@ -1338,17 +1344,16 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                             background: dropdownIdx === idx ? "#0a1628" : "transparent",
                           }}
                           onMouseEnter={() => setDropdownIdx(idx)}
-                          onMouseDown={() =>
-                            handleSelectSuggestion(item.symbol, item.shortname ?? item.longname)
-                          }
+                          onMouseDown={() => handleSelectSuggestion(item.symbol, displayName(item))}
                         >
                           <span
                             className="font-bold font-mono w-16 shrink-0"
                             style={{ color: colors.accent }}
+                            title={item.symbol}
                           >
-                            {item.symbol}
+                            {displaySymbol(item)}
                           </span>
-                          <span className="truncate flex-1">{item.shortname ?? item.longname}</span>
+                          <span className="truncate flex-1">{displayName(item)}</span>
                           <span
                             className="ml-auto shrink-0 text-[9px]"
                             style={{ color: colors.textSecondary }}

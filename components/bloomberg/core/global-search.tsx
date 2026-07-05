@@ -32,6 +32,7 @@ import {
   stockSearchSymbolAtom,
   tickerEnabledAtom,
 } from "../atoms";
+import { displayName, displaySymbol } from "../lib/symbol-display";
 import { bloombergColors } from "../lib/theme-config";
 import {
   ALL_COMMANDS,
@@ -335,8 +336,8 @@ function ResultRow({
   rowRef?: (el: HTMLDivElement | null) => void;
 }) {
   const tColor = typeColor(result.typeDisp);
-  const name = result.display_name || result.shortname || result.longname || "";
-  const symbol = result.display_symbol || result.symbol;
+  const name = displayName(result);
+  const symbol = displaySymbol(result);
   return (
     <div
       ref={rowRef ?? null}
