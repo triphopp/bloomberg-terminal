@@ -191,6 +191,7 @@ interface MergedPosition extends Trade {
   lots: Trade[];
   total_volume: number;
   avg_entry: number;
+  rowKey: string; // stable per rendered row — same symbol across sub-ports must differ
 }
 
 function mergePositions(positions: Trade[]): MergedPosition[] {
@@ -204,13 +205,14 @@ function mergePositions(positions: Trade[]): MergedPosition[] {
     map.get(key)?.push(p);
   }
   const result: MergedPosition[] = [];
-  for (const lots of map.values()) {
+  for (const [rowKey, lots] of map.entries()) {
     if (lots.length === 1) {
       result.push({
         ...lots[0],
         lots,
         total_volume: lots[0].volume,
         avg_entry: lots[0].price_entry,
+        rowKey,
       });
       continue;
     }
@@ -235,6 +237,7 @@ function mergePositions(positions: Trade[]): MergedPosition[] {
       day_pnl: dayPnl || null,
       day_pnl_thb: dayPnlThb || null,
       day_pct: base.day_pct ?? null,
+      rowKey,
     } as MergedPosition);
   }
   return result;
@@ -687,7 +690,7 @@ export function OpenPositionsTab({
                       const slNative =
                         p.price_stoploss != null ? toBase(p.price_stoploss, acc) : null;
                       const hasMultiLots = p.lots.length > 1;
-                      const lotKey = `${p.account_id}::${p.symbol}::${p.note ?? ""}`;
+                      const lotKey = p.rowKey;
                       const lotsExpanded = !!expandedLots[lotKey];
 
                       const cellMap: Record<ColName, React.ReactNode> = {
@@ -875,7 +878,7 @@ export function OpenPositionsTab({
                       };
 
                       return (
-                        <React.Fragment key={`${p.account_id}::${p.symbol}`}>
+                        <React.Fragment key={p.rowKey}>
                           <tr
                             className="hover:bg-[#111]"
                             style={{ borderBottom: "1px solid #141414", height: rowH }}
