@@ -5,40 +5,40 @@ import type { FilterState, MarketData } from "../types";
 
 // ── Pin Asset Types ───────────────────────────────────────────────────────────
 export interface PinGroup {
-  id:    string;   // unique id
-  name:  string;   // display name e.g. "Tech", "Macro"
-  color: string;   // hex color e.g. "#f59e0b"
+  id: string; // unique id
+  name: string; // display name e.g. "Tech", "Macro"
+  color: string; // hex color e.g. "#f59e0b"
 }
 
 export interface PinTag {
-  id:    string;   // unique id
-  name:  string;   // display name e.g. "High Conviction"
-  color: string;   // hex color e.g. "#94a3b8"
+  id: string; // unique id
+  name: string; // display name e.g. "High Conviction"
+  color: string; // hex color e.g. "#94a3b8"
 }
 
 export interface PinnedAsset {
-  id:           string;   // unique id
-  symbol:       string;   // ticker e.g. "PLTR"
-  groupId:      string;   // references PinGroup.id
-  comment:      string;   // free-text note
-  addedAt:      string;   // YYYY-MM-DD
-  buyTarget?:   number;   // alert when price <= this
-  sellTarget?:  number;   // alert when price >= this
-  priority?:    number;   // 1–3 stars
-  priceAtPin?:  number;   // price when first pinned
-  tags?:        string[]; // array of PinTag IDs
+  id: string; // unique id
+  symbol: string; // ticker e.g. "PLTR"
+  groupId: string; // references PinGroup.id
+  comment: string; // free-text note
+  addedAt: string; // YYYY-MM-DD
+  buyTarget?: number; // alert when price <= this
+  sellTarget?: number; // alert when price >= this
+  priority?: number; // 1–3 stars
+  priceAtPin?: number; // price when first pinned
+  tags?: string[]; // array of PinTag IDs
 }
 
-export const pinGroupsAtom    = atom<PinGroup[]>([]);
+export const pinGroupsAtom = atom<PinGroup[]>([]);
 export const pinnedAssetsAtom = atom<PinnedAsset[]>([]);
-export const pinTagsAtom      = atom<PinTag[]>([]);
+export const pinTagsAtom = atom<PinTag[]>([]);
 
 // ── Portfolio Types ───────────────────────────────────────────────────────────
 export interface Holding {
-  id: string;          // unique ID (timestamp-based)
-  symbol: string;      // "PLTR"
-  shares: number;      // 50
-  avgCost: number;     // 95.00 USD per share
+  id: string; // unique ID (timestamp-based)
+  symbol: string; // "PLTR"
+  shares: number; // 50
+  avgCost: number; // 95.00 USD per share
   purchaseDate: string; // "2025-12-01" YYYY-MM-DD
   notes?: string;
 }
@@ -53,14 +53,26 @@ const GlobalState = {
 };
 
 // UI state atoms
-export const isDarkModeAtom           = atom(false);
-export const errorAtom                = atom<string | null>(null);
-export const isShortcutsHelpOpenAtom  = atom(false);
-export const isGlobalSearchOpenAtom   = atom(false);
-export const tickerEnabledAtom        = atom(true);   // Bloomberg crawl strip
+export const isDarkModeAtom = atom(false);
+export const errorAtom = atom<string | null>(null);
+export const isShortcutsHelpOpenAtom = atom(false);
+export const isGlobalSearchOpenAtom = atom(false);
+export const tickerEnabledAtom = atom(true); // Bloomberg crawl strip
 
 // View state atoms
-export const currentViewAtom = atom<"market" | "news" | "movers" | "stock" | "clippings" | "macro" | "credit" | "portfolio" | "crypto" | "fx" | "tail">("market");
+export const currentViewAtom = atom<
+  | "market"
+  | "news"
+  | "movers"
+  | "stock"
+  | "clippings"
+  | "macro"
+  | "credit"
+  | "portfolio"
+  | "crypto"
+  | "fx"
+  | "tail"
+>("market");
 
 // Portfolio atoms
 export const portfolioHoldingsAtom = atom<Holding[]>([]);
@@ -109,10 +121,27 @@ export const updatedCellsAtom = atom<Record<string, boolean>>({});
 export const updatedSparklinesAtom = atom<Record<string, boolean>>({});
 
 // Chart indicator persistence atoms — saved to localStorage
-export const chartIndicatorIdsAtom      = atomWithStorage<string[]>("chart:indicator-ids",   ["ema-20", "ema-50", "volume"]);
-export const chartShowVolumeProfileAtom = atomWithStorage<boolean> ("chart:volume-profile",  false);
-export const chartShowFootprintAtom     = atomWithStorage<boolean> ("chart:footprint",        false);
-export const chartShowEventsAtom        = atomWithStorage<boolean> ("chart:show-events",      true);
+export const chartIndicatorIdsAtom = atomWithStorage<string[]>("chart:indicator-ids", [
+  "ema-20",
+  "ema-50",
+  "volume",
+]);
+export const chartShowVolumeProfileAtom = atomWithStorage<boolean>("chart:volume-profile", false);
+export const chartShowFootprintAtom = atomWithStorage<boolean>("chart:footprint", false);
+export const chartShowEventsAtom = atomWithStorage<boolean>("chart:show-events", true);
+export const chartShowPEAtom = atomWithStorage<boolean>("chart:show-pe", false);
+
+// Volume Profile display options (see chart/indicators/volume-profile.ts)
+export interface VPConfig {
+  deltaMode: boolean; // split each bucket into buy (up-bar) vs sell (down-bar) volume
+  showNakedPoc: boolean; // extend prior-session POCs that price hasn't revisited
+  showHvnLvn: boolean; // mark high/low volume nodes on the composite strip
+}
+export const chartVPConfigAtom = atomWithStorage<VPConfig>("chart:vp-config", {
+  deltaMode: false,
+  showNakedPoc: true,
+  showHvnLvn: false,
+});
 
 // Global chart type (shared across all chart views) — saved to localStorage
 export const chartTypeAtom = atomWithStorage<"area" | "candle">("chart:type", "candle");

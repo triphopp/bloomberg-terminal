@@ -253,7 +253,7 @@ export function ModularChart({
             time: markerTime,
             position: "belowBar" as const,
             shape: style.shape,
-            color: isDark ? style.colorDark : style.colorLight,
+            color: em.color ?? (isDark ? style.colorDark : style.colorLight),
             text: em.label,
             id: `${em.type}-${em.time}`,
           };

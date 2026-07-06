@@ -66,6 +66,7 @@
 | `useEffect([dense])` to sync columns from dense toggle | Effect fires on mount → overwrites localStorage-loaded cols | Call `setShowCols()` directly in click handler |
 | Using `language=1` or `language=2` for SEC One Report | API silently returns empty / wrong data | Use `language=T` (Thai) or `language=E` (English) |
 | Using Buddhist Era year for SEC One Report (`report_year=2566`) | API returns no data | Use Gregorian year (`report_year=2023`) |
+| Grouping intraday bars into sessions by browser-local date (`new Date(t*1000)` → `getFullYear()-...`) | US session (21:30–04:00 ICT) splits across two Thai dates → wrong per-session aggregates (VP POC/VA) | ✅ FIXED 2026-07-05 — `volume-profile.ts` `groupBySession()` ใช้ time-gap (`SESSION_GAP_SEC = 4h`) แทน date-key; crypto 24/7 ใช้ `MAX_SESSION_SPAN_SEC` guard. ดู `plans/vp-indicator-upgrade.md` |
 
 ---
 

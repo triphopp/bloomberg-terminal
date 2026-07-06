@@ -30,27 +30,27 @@ export type BarInterval = "1m" | "5m" | "15m" | "30m" | "1h" | "2h" | "4h" | "1d
 
 /** Which period ranges are valid for each interval */
 export const INTERVAL_VALID_RANGES: Record<BarInterval, TimePeriod[]> = {
-  "1m":  ["1d"],
-  "5m":  ["1d"],
+  "1m": ["1d"],
+  "5m": ["1d"],
   "15m": ["1d", "5d"],
   "30m": ["1d", "5d", "1m"],
-  "1h":  ["1d", "5d", "1m", "3m"],
-  "2h":  ["5d", "1m", "3m", "1y"],
-  "4h":  ["5d", "1m", "3m", "1y"],
-  "1d":  ["1m", "3m", "ytd", "1y", "5y", "max"],
+  "1h": ["1d", "5d", "1m", "3m"],
+  "2h": ["5d", "1m", "3m", "1y"],
+  "4h": ["5d", "1m", "3m", "1y"],
+  "1d": ["1m", "3m", "ytd", "1y", "5y", "max"],
   "1wk": ["1y", "5y", "max"],
 };
 
 /** Sensible default range when user picks a new interval */
 export const INTERVAL_DEFAULT_RANGE: Record<BarInterval, TimePeriod> = {
-  "1m":  "1d",
-  "5m":  "1d",
+  "1m": "1d",
+  "5m": "1d",
   "15m": "5d",
   "30m": "1m",
-  "1h":  "1m",
-  "2h":  "3m",
-  "4h":  "3m",
-  "1d":  "1y",
+  "1h": "1m",
+  "2h": "3m",
+  "4h": "3m",
+  "1d": "1y",
   "1wk": "max",
 };
 
@@ -102,7 +102,7 @@ export interface IndicatorSeriesOutput {
   data: SeriesDataPoint[] | HistogramDataPoint[];
   color?: string;
   lineWidth?: number;
-  priceScaleId?: string;       // separate scale for pane indicators
+  priceScaleId?: string; // separate scale for pane indicators
   opacity?: number;
 }
 
@@ -128,14 +128,14 @@ export interface ChartIndicator {
   params: IndicatorParam[];
 
   /** Current param values (key→value map). May contain complex objects for data-driven indicators (e.g. preloadedData). */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // biome-ignore lint/suspicious/noExplicitAny: config values are indicator-specific, intentionally untyped
   config: Record<string, any>;
 
   /**
    * Pure compute function: given OHLCV bars + config, return one or more series.
    * Must be stateless and deterministic.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // biome-ignore lint/suspicious/noExplicitAny: config values are indicator-specific, intentionally untyped
   compute(data: OhlcvBar[], config: Record<string, any>): IndicatorSeriesOutput[];
 
   /** Minimum bars required before this indicator can produce output */
@@ -145,7 +145,9 @@ export interface ChartIndicator {
 // ── Indicator Factory ────────────────────────────────────────────────────────
 
 /** A factory creates indicator instances with given config overrides */
-export type IndicatorFactory = (configOverrides?: Record<string, number | boolean | string>) => ChartIndicator;
+export type IndicatorFactory = (
+  configOverrides?: Record<string, number | boolean | string>
+) => ChartIndicator;
 
 // ── Registry ─────────────────────────────────────────────────────────────────
 
@@ -183,6 +185,8 @@ export interface ChartEventMarker {
   value?: number;
   /** Extra detail shown in tooltip */
   detail?: string;
+  /** Optional per-marker color override (e.g. earnings beat=green / miss=red) */
+  color?: string;
 }
 
 // ── Canvas Overlay (for Volume Profile etc.) ─────────────────────────────────
@@ -193,7 +197,13 @@ export interface CanvasOverlay {
   /** "right" = fixed-width strip beside price scale (default); "full" = spans entire chart area */
   mode?: "right" | "full";
   /** Called each frame / range-change to draw on the overlay canvas */
-  draw(ctx: CanvasRenderingContext2D, chart: IChartApi, mainSeries: ISeriesApi<SeriesType>, data: OhlcvBar[], isDark: boolean): void;
+  draw(
+    ctx: CanvasRenderingContext2D,
+    chart: IChartApi,
+    mainSeries: ISeriesApi<SeriesType>,
+    data: OhlcvBar[],
+    isDark: boolean
+  ): void;
   /** Width in pixels the overlay occupies (only for mode="right") */
   width: number;
 }
