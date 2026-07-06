@@ -2,6 +2,7 @@
 Stock-related endpoints — search, quote, history, financials, analyst, etc.
 Extracted from main.py as part of the FastAPI router refactoring.
 """
+import re
 from datetime import datetime
 from typing import Any
 
@@ -130,6 +131,19 @@ def stock_search(q: str = Query(..., min_length=1)):
     Fix: convert every item to a plain str-keyed dict *before* returning.
     """
 
+    def _with_display(entry: dict) -> dict:
+        """Central display normalisation: hide exchange suffixes and strip the
+        duplicated ticker prefix Yahoo puts on Thai names
+        ("BH.BK – BH_BUMRUNGRAD HOSPITAL" → "BH – BUMRUNGRAD HOSPITAL")."""
+        sym = entry["symbol"]
+        base = sym.split(".")[0]
+        name = entry.get("shortname") or entry.get("longname") or ""
+        if name.upper().startswith(f"{base.upper()}_"):
+            name = name[len(base) + 1:]
+        entry["display_symbol"] = base if sym.upper().endswith(".BK") else sym
+        entry["display_name"] = name.strip()
+        return entry
+
     def _normalise(items: list) -> list[dict]:
         out = []
         for item in items:
@@ -150,21 +164,45 @@ def stock_search(q: str = Query(..., min_length=1)):
                 sym = str(d.get("symbol") or d.get("Symbol") or "").strip()
                 if not sym:
                     continue
-                out.append({
+                out.append(_with_display({
                     "symbol":    sym,
                     "shortname": str(d.get("shortname") or d.get("shortName") or ""),
                     "longname":  str(d.get("longname")  or d.get("longName")  or ""),
                     "exchDisp":  str(d.get("exchDisp")  or d.get("exchange")  or ""),
                     "typeDisp":  str(d.get("typeDisp")  or d.get("quoteType") or ""),
-                })
+                }))
             except Exception:
                 pass
         return out
 
+    def _add_suffix_probes(results: list[dict]) -> list[dict]:
+        """Bare-ticker queries never surface Thai listings from Yahoo's search
+        relevance — probe {q}.BK explicitly and append the exact match so the
+        user can type BH instead of BH.BK."""
+        if not re.fullmatch(r"[A-Za-z0-9]{1,8}", q):
+            return results
+        cand = f"{q.upper()}.BK"
+        if any(r["symbol"].upper() == cand for r in results):
+            return results
+        try:
+            probe = _normalise(market_data.search(cand, max_results=3))
+            exact = next((r for r in probe if r["symbol"].upper() == cand), None)
+            if exact:
+                # Thai match goes right after the first exact bare-symbol hit
+                # (if any) so it's visible without scrolling
+                pos = next(
+                    (i + 1 for i, r in enumerate(results) if r["symbol"].upper() == q.upper()),
+                    0,
+                )
+                results.insert(pos, exact)
+        except Exception:
+            pass
+        return results
+
     # ── Primary: yfinance.Search ──────────────────────────────────────────────
     try:
         raw_quotes = market_data.search(q, max_results=10)  # returns list[dict]
-        result     = _normalise(raw_quotes)
+        result     = _add_suffix_probes(_normalise(raw_quotes))
         if result:
             return result
     except Exception as exc:
@@ -190,7 +228,7 @@ def stock_search(q: str = Query(..., min_length=1)):
             data   = res.json()
             result_block = ((data.get("finance", {}).get("result") or [{}])[0])
             quotes = result_block.get("quotes", [])
-            result = _normalise(quotes)
+            result = _add_suffix_probes(_normalise(quotes))
             if result:
                 return result
         except Exception as exc:

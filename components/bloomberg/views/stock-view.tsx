@@ -58,6 +58,7 @@ import {
 } from "../hooks/useStockData";
 import { calcHurst } from "../lib/market-utils";
 import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
+import { displayName, displaySymbol } from "../lib/symbol-display";
 import { bloombergColors } from "../lib/theme-config";
 import { OptionsTab } from "./options-tab";
 
@@ -4618,11 +4619,15 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                 style={{ borderColor: colors.border, color: colors.text }}
                 onMouseDown={() => handleSelectSuggestion(item.symbol)}
               >
-                <span className="font-bold w-16 shrink-0" style={{ color: colors.accent }}>
-                  {item.symbol}
+                <span
+                  className="font-bold w-16 shrink-0"
+                  style={{ color: colors.accent }}
+                  title={item.symbol}
+                >
+                  {displaySymbol(item)}
                 </span>
                 <span className="truncate flex-1" style={secText}>
-                  {item.shortname ?? item.longname}
+                  {displayName(item)}
                 </span>
                 <span className="ml-auto shrink-0" style={secText}>
                   {item.exchDisp}
