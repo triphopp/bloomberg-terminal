@@ -47,6 +47,8 @@ backend/**/*.joblib
 data/**/*.pkl
 data/**/*.pickle
 data/**/*.joblib
+# regime v2 meta — regenerated on startup alongside its (ignored) .pkl
+data/models/regime_v2.json
 
 # personal memory — session logs, analysis reports, active plans (AI agent audit trail)
 memory/sessions/
