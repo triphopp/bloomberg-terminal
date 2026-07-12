@@ -247,7 +247,7 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     const result: CanvasOverlay[] = [];
     if (showVolumeProfile) {
       result.push(createSessionVPOverlay(intradayData, vpConfig));
-      result.push(createCompositeVPOverlay(vpConfig));
+      result.push(createCompositeVPOverlay(vpConfig, intradayData));
     }
     if (showFootprint && footprintQuery.data) {
       result.push(createFootprintOverlay(footprintQuery.data));

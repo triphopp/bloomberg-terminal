@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "dev:all": "concurrently --names \"BACKEND,FRONTEND,OLLAMA\" --prefix-colors \"cyan,green,magenta\" \"cd backend && python -m uvicorn main:app --port 8000 --reload\" \"next dev\" \"ollama serve\"",
-    "dev:no-ollama": "concurrently --names \"BACKEND,FRONTEND\" --prefix-colors \"cyan,green\" \"cd backend && python -m uvicorn main:app --port 8000 --reload\" \"next dev\"",
+    "dev:all": "concurrently --names \"BACKEND,FRONTEND,OLLAMA\" --prefix-colors \"cyan,green,magenta\" \"cd backend && $(command -v python3 || command -v python) -m uvicorn main:app --port 8000 --reload\" \"next dev\" \"ollama serve\"",
+    "dev:no-ollama": "concurrently --names \"BACKEND,FRONTEND\" --prefix-colors \"cyan,green\" \"cd backend && $(command -v python3 || command -v python) -m uvicorn main:app --port 8000 --reload\" \"next dev\"",
     "build": "next build",
     "start": "next start",
     "lint": "biome lint .",
