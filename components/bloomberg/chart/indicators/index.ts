@@ -17,23 +17,33 @@ export { createBollingerBands } from "./bollinger";
 export { createBollingerB } from "./bollinger-b";
 export { createVWAP } from "./vwap";
 export { createVolume } from "./volume";
+export { createRVOL } from "./rvol";
+export { createFlowToxicity } from "./flow-toxicity";
+export { createAbsorption } from "./absorption";
 export { createStochastic } from "./stochastic";
 export { createFearGreed, fearGreedZoneColor, fearGreedZoneName } from "./fear-greed";
-export { createVolumeProfileOverlay, createSessionVPOverlay, createCompositeVPOverlay } from "./volume-profile";
+export {
+  createVolumeProfileOverlay,
+  createSessionVPOverlay,
+  createCompositeVPOverlay,
+} from "./volume-profile";
 export { createFootprintOverlay } from "./order-footprint";
 export type { FootprintData, FootprintCandle, FootprintLevel } from "./order-footprint";
 
 import type { IndicatorRegistryEntry } from "../types";
-import { createEMA } from "./ema";
-import { createSMA } from "./sma";
-import { createMACD } from "./macd";
-import { createRSI } from "./rsi";
+import { createAbsorption } from "./absorption";
 import { createBollingerBands } from "./bollinger";
 import { createBollingerB } from "./bollinger-b";
-import { createVWAP } from "./vwap";
-import { createVolume } from "./volume";
-import { createStochastic } from "./stochastic";
+import { createEMA } from "./ema";
 import { createFearGreed } from "./fear-greed";
+import { createFlowToxicity } from "./flow-toxicity";
+import { createMACD } from "./macd";
+import { createRSI } from "./rsi";
+import { createRVOL } from "./rvol";
+import { createSMA } from "./sma";
+import { createStochastic } from "./stochastic";
+import { createVolume } from "./volume";
+import { createVWAP } from "./vwap";
 
 // ── Global Indicator Registry ────────────────────────────────────────────────
 
@@ -141,9 +151,50 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     name: "VWAP",
     category: "volume",
     type: "overlay",
-    description: "Volume Weighted Average Price",
-    defaultParams: [],
+    description: "Session VWAP with ±1σ/±2σ volume-weighted bands",
+    defaultParams: [{ key: "bands", label: "SD Bands", type: "boolean", default: true }],
     factory: createVWAP,
+  },
+  {
+    id: "rvol",
+    name: "RVOL",
+    category: "volume",
+    type: "pane",
+    description: "Relative Volume vs same time-of-day baseline (≥2 = abnormal)",
+    defaultParams: [
+      { key: "lookback", label: "Lookback", type: "number", default: 20, min: 5, max: 60, step: 1 },
+    ],
+    factory: createRVOL,
+  },
+  {
+    id: "flow-toxicity",
+    name: "Flow Toxicity",
+    category: "volume",
+    type: "pane",
+    description: "VPIN-style rolling order-flow imbalance estimate (0-1)",
+    defaultParams: [
+      { key: "window", label: "Window", type: "number", default: 50, min: 10, max: 200, step: 5 },
+    ],
+    factory: createFlowToxicity,
+  },
+  {
+    id: "absorption",
+    name: "Absorption",
+    category: "volume",
+    type: "pane",
+    description: "Effort-vs-result churn: high volume + no progress = absorption",
+    defaultParams: [
+      {
+        key: "window",
+        label: "Baseline window",
+        type: "number",
+        default: 20,
+        min: 10,
+        max: 100,
+        step: 5,
+      },
+    ],
+    factory: createAbsorption,
   },
 
   // ─── Custom / Sentiment ───
@@ -160,5 +211,5 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
 
 /** Lookup helper */
 export function getIndicatorEntry(id: string): IndicatorRegistryEntry | undefined {
-  return INDICATOR_REGISTRY.find(e => e.id === id);
+  return INDICATOR_REGISTRY.find((e) => e.id === id);
 }

@@ -526,3 +526,48 @@ def trigger_validation():
         "status":  "started",
         "message": "Validation started in background. Poll /api/regime/validation for results.",
     }
+
+
+# ── Regime v2: multivariate HMM risk dial ─────────────────────────────────────
+# 6 features (corr, rvol, VIX, credit, breadth, trend), causal Viterbi +
+# hysteresis. Walk-forward validated in research/regime_v2 as a RISK DIAL only.
+
+from analytics.regime_v2 import (  # noqa: E402
+    get_regime_v2, model_age_days_v2,
+    _training_state as _v2_training_state,
+    _train_in_background_v2,
+)
+
+
+@router.get("/v2")
+def get_regime_v2_endpoint():
+    """
+    Current v2 regime label with causal labeling (no lookahead).
+
+    Returns label (DIVERGENT/TRENDING/RISK-OFF/CRISIS), risk_on flag,
+    days_in_state, latest feature values, and 90-day label history.
+    Present strictly as a risk dial — NOT a volatility forecast
+    (validation: T1 p=0.148, see research/regime_v2/RESULTS.md).
+    """
+    try:
+        return get_regime_v2()
+    except Exception as e:
+        return {"ready": False, "error": str(e)}
+
+
+@router.get("/v2/status")
+def get_v2_status():
+    """v2 model freshness and background-training state."""
+    return {
+        "model_age_days": model_age_days_v2(),
+        "training": _v2_training_state,
+    }
+
+
+@router.post("/v2/retrain")
+def trigger_v2_retrain():
+    """Retrain the v2 multivariate HMM in background (~1-2 min)."""
+    if _v2_training_state["running"]:
+        return {"status": "already_running"}
+    _train_in_background_v2(triggered_by="manual-api")
+    return {"status": "started", "message": "Poll /api/regime/v2/status for progress."}

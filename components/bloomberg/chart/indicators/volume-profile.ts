@@ -34,12 +34,17 @@ function adaptiveBuckets(canvasPx: number, pxPerBucket: number, min: number, max
   return Math.max(min, Math.min(max, Math.floor(canvasPx / pxPerBucket)));
 }
 
+/** Normalize a lightweight-charts time (UNIX seconds or "YYYY-MM-DD") to UNIX seconds. */
+function timeToSec(t: OhlcvBar["time"]): number {
+  return typeof t === "number" ? t : Math.floor(Date.parse(`${t}T00:00:00Z`) / 1000);
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface VPBucket {
   volume: number;
-  buyVolume: number; // volume from up-bars (close ≥ open)
-  sellVolume: number; // volume from down-bars (close < open)
+  buyVolume: number; // estimated buyer-initiated share (close-position weighted)
+  sellVolume: number; // estimated seller-initiated share
   priceLow: number;
   priceHigh: number;
 }
@@ -130,18 +135,33 @@ function distributeToBuckets(
   }));
 
   let totalVolume = 0;
+  let prevClose: number | null = null;
 
   for (const bar of bars) {
     const vol = bar.volume ?? 0;
+    const barRange = bar.high - bar.low;
+
+    // Buy/sell split by close position in the bar's range (Chaikin A/D-style):
+    // closing on the high ⇒ all volume counted as buying, on the low ⇒ all selling,
+    // mid-range ⇒ proportional. Far less coarse than all-or-nothing candle color.
+    // Zero-range bars fall back to the tick rule vs the previous close.
+    let buyFrac: number;
+    if (barRange > 0) {
+      buyFrac = (bar.close - bar.low) / barRange;
+    } else if (prevClose !== null && bar.close !== prevClose) {
+      buyFrac = bar.close > prevClose ? 1 : 0;
+    } else {
+      buyFrac = 0.5;
+    }
+    prevClose = bar.close;
+
     if (vol <= 0) continue;
     totalVolume += vol;
-    const barRange = bar.high - bar.low;
-    const isUp = bar.close >= bar.open;
 
     const add = (b: number, share: number) => {
       buckets[b].volume += share;
-      if (isUp) buckets[b].buyVolume += share;
-      else buckets[b].sellVolume += share;
+      buckets[b].buyVolume += share * buyFrac;
+      buckets[b].sellVolume += share * (1 - buyFrac);
     };
 
     if (barRange > 0) {
@@ -481,7 +501,10 @@ export function createSessionVPOverlay(
 
 // ── Composite VP Overlay (right-side strip, keeps existing behavior) ─────────
 
-export function createCompositeVPOverlay(options: VPOptions = DEFAULT_OPTIONS): CanvasOverlay {
+export function createCompositeVPOverlay(
+  options: VPOptions = DEFAULT_OPTIONS,
+  intradayData?: OhlcvBar[]
+): CanvasOverlay {
   // Cache the distribution so we don't rebuild 40 buckets on every pointermove redraw.
   let cache: {
     key: string;
@@ -511,6 +534,28 @@ export function createCompositeVPOverlay(options: VPOptions = DEFAULT_OPTIONS): 
         from = Math.max(0, Math.floor(range.from));
         to = Math.min(data.length - 1, Math.ceil(range.to));
         if (to > from) vpBars = data.slice(from, to + 1);
+      }
+
+      // Prefer intraday bars when they cover the visible window: finer price
+      // resolution, and the close-position buy/sell split is far more accurate
+      // on 5m bars than on a whole daily bar. Falls back to chart bars when
+      // intraday history is too short (only covers the tail of the window),
+      // since a partial profile would silently misrepresent the distribution.
+      if (intradayData && intradayData.length > 0 && vpBars.length > 0) {
+        const firstT = vpBars[0].time;
+        const lastT = vpBars[vpBars.length - 1].time;
+        const winStart = timeToSec(firstT);
+        // Daily bars are stamped at midnight; extend the window to the end of
+        // the last visible day so its intraday bars are included.
+        const winEnd = timeToSec(lastT) + (typeof lastT === "string" ? 86_400 : 0);
+        const intradayStart = timeToSec(intradayData[0].time);
+        if (intradayStart <= winStart + 86_400) {
+          const filtered = intradayData.filter((b) => {
+            const s = timeToSec(b.time);
+            return s >= winStart && s <= winEnd;
+          });
+          if (filtered.length > 0) vpBars = filtered;
+        }
       }
 
       // Resolution scales with the strip's pixel height.
