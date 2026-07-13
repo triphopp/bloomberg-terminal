@@ -130,7 +130,7 @@ async def get_x():
 | `4` | CLIP  | clippings-view | Obsidian markdown notes · Ollama AI |
 | `5` | MACRO | macro-view     | 7 tabs: dashboard, yield, indicators, fed, country, compare, signals |
 | `6` | CRDT  | credit-view    | 4 tabs: overview, spreads, stress, consumer |
-| `P` | PORT  | portfolio-view | 5 top-level: PORTFOLIO (sub: POSITIONS·OPTIONS·TRADES·CASH) · ANALYTICS (sub: P&L·BACKTEST) · RISK · TOOLS (sub: THESES·IMPORT) · PAPER (sub: DASHBOARD·TRADE·POSITIONS·OPTIONS·HISTORY) |
+| `P` | PORT  | portfolio-view | 5 top-level: PORTFOLIO (sub: POSITIONS·OPTIONS·TRADES·CASH·ENTRY) · ANALYTICS (sub: P&L·BACKTEST) · RISK · TOOLS (sub: THESES·IMPORT) · PAPER (sub: DASHBOARD·TRADE·POSITIONS·OPTIONS·HISTORY) |
 | `C` | CRYP  | crypto-view    | 20 crypto coins · Chart |
 | `E` | FX    | fx-view        | 20 FX pairs · Chart |
 

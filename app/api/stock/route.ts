@@ -6,7 +6,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const type = searchParams.get("type");
   const symbol = searchParams.get("symbol") ?? "";
-  const period   = searchParams.get("period")   ?? "1y";
+  const period = searchParams.get("period") ?? "1y";
   const interval = searchParams.get("interval") ?? "";
 
   let pythonUrl: string;
@@ -50,6 +50,10 @@ export async function GET(request: Request) {
     case "earnings-calendar":
       if (!symbol) return NextResponse.json({ error: "Missing symbol" }, { status: 400 });
       pythonUrl = `${PYTHON_API}/api/stock/earnings-calendar/${encodeURIComponent(symbol)}`;
+      break;
+    case "pe-history":
+      if (!symbol) return NextResponse.json({ error: "Missing symbol" }, { status: 400 });
+      pythonUrl = `${PYTHON_API}/api/stock/pe-history/${encodeURIComponent(symbol)}`;
       break;
     case "sec-filings":
       if (!symbol) return NextResponse.json({ error: "Missing symbol" }, { status: 400 });

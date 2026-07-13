@@ -186,7 +186,7 @@ Holdings computed via **average-cost method** in `db.compute_holdings()`.
 | `4` | CLIP | Clippings + AI | `clippings-view.tsx` |
 | `5` | MACRO | Macro Economics | `macro-view.tsx` — 7 tabs: dashboard, yield, indicators, fed, country, compare, **signals** |
 | `6` | CRDT | Credit / Stress | `credit-view.tsx` — 4 tabs: overview, spreads, stress, consumer |
-| `P` | PORT | Portfolio | `portfolio-view.tsx` (barrel → `portfolio/`) — 5 top-level tabs: PORTFOLIO (sub: POSITIONS\|OPTIONS\|TRADES\|CASH) · ANALYTICS (sub: P&L\|BACKTEST) · RISK (standalone) · TOOLS (sub: THESES\|IMPORT) · PAPER (sub: DASHBOARD\|TRADE\|POSITIONS\|OPTIONS\|HISTORY) |
+| `P` | PORT | Portfolio | `portfolio-view.tsx` (barrel → `portfolio/`) — 5 top-level tabs: PORTFOLIO (sub: POSITIONS\|OPTIONS\|TRADES\|CASH\|ENTRY=manual trade form) · ANALYTICS (sub: P&L incl. Total Return per port + CAPM β/α table\|BACKTEST) · RISK (standalone) · TOOLS (sub: THESES\|IMPORT) · PAPER (sub: DASHBOARD\|TRADE\|POSITIONS\|OPTIONS\|HISTORY) |
 | `C` | CRYP | Crypto | `crypto-view.tsx` |
 | `E` | FX | FX / Forex | `fx-view.tsx` |
 
@@ -221,6 +221,8 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24). Stock analysis (9 tabs)
 - [ ] **System Audit 2026-07 — Bug Fixes & Refactor** — 9 fix items + 6 refactor items; F01 done 2026-07-03, F06 done 2026-07-04 (via port-redesign resolver); เหลือ F02 AVCO drift 🔴, F03 async blocking 🔴, F04/F05/F07/F08/F09 + R01–R06 (`plans/system-audit-2026-07/README.md`)
 - [x] **Portfolio Cloud Sync** — PC↔Mac sync via Google Drive JSON snapshots, startup pull, row-LWW merge + tombstones, no login done 2026-06-26 (`plans/completed/portfolio-cloud-sync.md`)
 - [ ] **Port Redesign** — symbol resolver (resolve-at-write), sub_portfolios table จริง, currency module, ลบ `_get_yf_symbol`/ปิด F06 (`plans/port-redesign.md`)
+- [ ] **VP Indicator Upgrade** — แก้ session timezone bug (B1 🔴) + visible-range VP + delta profile + naked POC + HVN/LVN + config UI; audit: `reports/vp-indicator-risk-report.md` (`plans/vp-indicator-upgrade.md`)
+- [ ] **P/E History Pane + EPS Surprise Labels** — endpoint `/api/stock/pe-history` (TTM EPS × weekly close, 13–20yr), `PEPane.tsx` recharts sub-pane + valuation percentile bands, earnings marker สี beat/miss; code-complete, backend HTTP verified, frontend visual pending (`plans/pe-earnings-visualization.md`)
 - [ ] Polymarket: dashboard view in frontend
 - [ ] BOT: frontend view for Bond Auction + yield trend chart
 - [ ] BOT: activate Stat-ExchangeRate → add THB FX view

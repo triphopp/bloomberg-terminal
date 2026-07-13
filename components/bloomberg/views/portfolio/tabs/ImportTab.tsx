@@ -48,8 +48,11 @@ type ResolveState =
   | { status: "multi"; matches: ResolveMatch[] }
   | { status: "none"; override: boolean };
 
-export function ImportTab({ colors }: { colors: Colors }) {
-  const [mode, setMode] = useState<"excel" | "manual">("excel");
+export function ImportTab({
+  colors,
+  variant = "full",
+}: { colors: Colors; variant?: "full" | "manual" | "excel" }) {
+  const [mode, setMode] = useState<"excel" | "manual">(variant === "manual" ? "manual" : "excel");
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [accounts, setAccounts] = useState<Account[]>(FALLBACK_ACCOUNTS);
 
@@ -295,25 +298,27 @@ export function ImportTab({ colors }: { colors: Colors }) {
 
   return (
     <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 200px)" }}>
-      <div
-        className="flex items-center gap-px px-3 pt-2 pb-0 border-b"
-        style={{ borderColor: colors.border }}
-      >
-        {(["excel", "manual"] as const).map((m) => (
-          <button
-            type="button"
-            key={m}
-            onClick={() => setMode(m)}
-            className="text-[9px] px-3 py-1 font-bold uppercase tracking-widest"
-            style={{
-              color: mode === m ? colors.accent : colors.textSecondary,
-              borderBottom: mode === m ? `2px solid ${colors.accent}` : "2px solid transparent",
-            }}
-          >
-            {m === "excel" ? "📥 EXCEL" : "✏️ MANUAL"}
-          </button>
-        ))}
-      </div>
+      {variant === "full" && (
+        <div
+          className="flex items-center gap-px px-3 pt-2 pb-0 border-b"
+          style={{ borderColor: colors.border }}
+        >
+          {(["excel", "manual"] as const).map((m) => (
+            <button
+              type="button"
+              key={m}
+              onClick={() => setMode(m)}
+              className="text-[9px] px-3 py-1 font-bold uppercase tracking-widest"
+              style={{
+                color: mode === m ? colors.accent : colors.textSecondary,
+                borderBottom: mode === m ? `2px solid ${colors.accent}` : "2px solid transparent",
+              }}
+            >
+              {m === "excel" ? "📥 EXCEL" : "✏️ MANUAL"}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ── EXCEL MODE ── */}
       {mode === "excel" && (

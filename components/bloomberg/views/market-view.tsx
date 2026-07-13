@@ -53,6 +53,7 @@ import {
 } from "../chart";
 import type { BarInterval, IndicatorRegistryEntry, OhlcvBar, TimePeriod } from "../chart";
 import { FearGreedPane } from "../chart/FearGreedPane";
+import { PEPane } from "../chart/PEPane";
 import { ExtendedHoursPrice, MarketSessionBadge } from "../core/market-session";
 import { useMarketDataQuery } from "../hooks/useMarketDataQuery";
 import { useStockHistory, useStockQuote, useStockSearch } from "../hooks/useStockData";
@@ -708,6 +709,13 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     addIndicator: addHeatmapIndicator,
     removeIndicator: removeHeatmapIndicator,
     toggleVolumeProfile: toggleHeatmapVP,
+    showEvents: heatmapShowEvents,
+    toggleEvents: toggleHeatmapEvents,
+    supportsEvents: heatmapSupportsEvents,
+    showPE: heatmapShowPE,
+    togglePE: toggleHeatmapPE,
+    peData: heatmapPeData,
+    peLoading: heatmapPeLoading,
     showFootprint,
     toggleFootprint,
     isCryptoSymbol,
@@ -1548,6 +1556,34 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
               VP
             </button>
           )}
+          {heatmapSupportsEvents && (
+            <button
+              className="text-[8px] px-1 py-0 font-bold border"
+              style={{
+                borderColor: heatmapShowEvents ? "#4fc3f7" : colors.border,
+                color: heatmapShowEvents ? "#4fc3f7" : colors.textSecondary,
+                background: heatmapShowEvents ? "#4fc3f715" : "transparent",
+              }}
+              onClick={toggleHeatmapEvents}
+              title="Toggle Events (Dividends, Earnings, Splits)"
+            >
+              EVT
+            </button>
+          )}
+          {heatmapSupportsEvents && (
+            <button
+              className="text-[8px] px-1 py-0 font-bold border"
+              style={{
+                borderColor: heatmapShowPE ? "#ba68c8" : colors.border,
+                color: heatmapShowPE ? "#ba68c8" : colors.textSecondary,
+                background: heatmapShowPE ? "#ba68c815" : "transparent",
+              }}
+              onClick={toggleHeatmapPE}
+              title="Toggle Trailing P/E history pane"
+            >
+              P/E{heatmapShowPE && heatmapPeLoading ? "…" : ""}
+            </button>
+          )}
           {isCryptoSymbol && (
             <button
               className="text-[8px] px-1 py-0 font-bold border"
@@ -1637,6 +1673,16 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
             {fearGreedActiveInMkt && fearGreedMktQuery.data?.history && (
               <div className="shrink-0">
                 <FearGreedPane data={fearGreedMktQuery.data.history} colors={colors} height={100} />
+              </div>
+            )}
+            {heatmapShowPE && heatmapPeData?.history && heatmapPeData.history.length > 0 && (
+              <div className="shrink-0">
+                <PEPane
+                  data={heatmapPeData.history}
+                  stats={heatmapPeData.stats}
+                  colors={colors}
+                  height={100}
+                />
               </div>
             )}
             {/* Chart footer stats */}

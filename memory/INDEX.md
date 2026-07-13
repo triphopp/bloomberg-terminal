@@ -122,6 +122,8 @@ memory/
 | **Alt+N Tab Shortcuts + Per-View Header Removal** — `useTabShortcuts` hook, ← ESC clickable, centerSlot subtitle (ทำเสร็จแล้ว) | `plans/completed/tab-shortcuts-header-slim.md` |
 | **MACRO SIGNALS Tab Consolidation** — 9→6 tabs, split-panel (Risk+Allocation cards + Sector/Rotation toggle + CB/IPO drawers) (ทำเสร็จแล้ว) | `plans/completed/macro-tab-consolidation.md` |
 | **Stock Analysis Nested Tab Shortcuts** (Alt+N outer, Alt+Shift+N inner) | ❌ not started — `plans/stock-analysis-tab-shortcuts.md` |
+| **VP Indicator Upgrade** (session timezone fix B1 🔴, visible-range VP, delta profile, naked POC, HVN/LVN, config UI) | 🔄 code-complete, browser verify pending — `plans/vp-indicator-upgrade.md`; audit: `reports/vp-indicator-risk-report.md` |
+| **P/E History Pane + EPS Surprise Labels** (`/api/stock/pe-history`, PEPane recharts sub-pane + valuation bands, earnings beat/miss color) | 🔄 code-complete, backend HTTP verified, frontend visual pending — `plans/pe-earnings-visualization.md` |
 | Data catalog — ข้อมูลทั้งหมดที่ดึงได้ 17 หมวด | `reference/data-catalog.md` |
 | **SEC Thailand API** — endpoints, key config, migration status, One Report structure | `project_summary.md` → "SEC Thailand Open API" |
 | International sectors (TH/CN/KR/EU) + sector constituents (ทำเสร็จแล้ว) | `plans/completed/international-sectors.md` |

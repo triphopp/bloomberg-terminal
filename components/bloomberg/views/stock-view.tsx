@@ -47,6 +47,7 @@ import {
 } from "../chart";
 import type { IndicatorRegistryEntry, OhlcvBar } from "../chart";
 import { FearGreedPane } from "../chart/FearGreedPane";
+import { PEPane } from "../chart/PEPane";
 import { BloombergButton } from "../core/bloomberg-button";
 import { ExtendedHoursPrice, MarketSessionBadge } from "../core/market-session";
 import { useStockQuality } from "../hooks/useMarketQuality";
@@ -4333,6 +4334,12 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
     addIndicator: addChartIndicator,
     removeIndicator: removeChartIndicator,
     toggleVolumeProfile,
+    vpConfig,
+    setVPConfig,
+    showPE,
+    togglePE,
+    peData,
+    peLoading,
     setIntradayData,
     needsIntradayData,
     showFootprint,
@@ -4447,12 +4454,14 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
   const quantHistQuery = useStockHistory(activeSymbol, "1y", "1d");
 
   // ── Intraday data for session-based Volume Profile ──
-  // When VP is active and chart is on daily+ bars, fetch 15m data for session VP
+  // When VP is active and chart is on daily+ bars, fetch 5m data for session VP.
+  // 5m over 1 month gives a finer session shape than 15m and stays within Yahoo's
+  // ~60-day cap on 5m bars (a longer window would need a new backend "2m" period token).
   const vpNeedsIntraday = needsIntradayData && ["1d", "1wk"].includes(barInterval);
   const vpIntradayQuery = useStockHistory(
     vpNeedsIntraday ? activeSymbol : null,
     "1m", // 1 month of data
-    "15m" // 15-minute bars
+    "5m" // 5-minute bars
   );
 
   const handleSubmit = () => {
@@ -4929,6 +4938,34 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                         VP
                       </button>
                     )}
+                    {/* VP display-option chips — only when VP is active */}
+                    {showVolumeProfile &&
+                      ohlcvData.some((d) => (d.volume ?? 0) > 0) &&
+                      (
+                        [
+                          ["deltaMode", "Δ", "Buy/sell split per level"],
+                          ["showNakedPoc", "nPOC", "Extend untested prior-session POCs"],
+                          ["showHvnLvn", "HVN", "Mark high/low volume nodes"],
+                        ] as const
+                      ).map(([field, label, tip]) => {
+                        const on = vpConfig[field];
+                        return (
+                          <button
+                            key={field}
+                            type="button"
+                            onClick={() => setVPConfig({ ...vpConfig, [field]: !on })}
+                            title={tip}
+                            className="px-1 py-0.5 border font-mono text-[9px] transition-colors"
+                            style={{
+                              borderColor: on ? colors.accent : colors.border,
+                              backgroundColor: on ? `${colors.accent}22` : "transparent",
+                              color: on ? colors.accent : colors.textSecondary,
+                            }}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
                     {/* Events toggle (dividends, earnings, splits) — equities only */}
                     {supportsEvents && (
                       <button
@@ -4943,6 +4980,22 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                         }}
                       >
                         EVENTS
+                      </button>
+                    )}
+                    {/* Trailing P/E pane toggle — equities only */}
+                    {supportsEvents && (
+                      <button
+                        type="button"
+                        onClick={togglePE}
+                        title="Toggle Trailing P/E history pane"
+                        className="px-1.5 py-0.5 border font-mono text-[9px] transition-colors"
+                        style={{
+                          borderColor: showPE ? "#ba68c8" : colors.border,
+                          backgroundColor: showPE ? "#ba68c822" : "transparent",
+                          color: showPE ? "#ba68c8" : colors.textSecondary,
+                        }}
+                      >
+                        P/E{showPE && peLoading ? "…" : ""}
                       </button>
                     )}
                     {/* Order Footprint toggle (crypto only) */}
@@ -5015,6 +5068,9 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                 />
                 {fearGreedActive && fearGreedQuery.data?.history && (
                   <FearGreedPane data={fearGreedQuery.data.history} colors={colors} height={100} />
+                )}
+                {showPE && peData?.history && peData.history.length > 0 && (
+                  <PEPane data={peData.history} stats={peData.stats} colors={colors} height={110} />
                 )}
               </>
             ) : (

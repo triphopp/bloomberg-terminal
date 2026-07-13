@@ -1037,6 +1037,116 @@ def stock_earnings_calendar(symbol: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+# ── Trailing P/E History ─────────────────────────────────────────────────────
+
+@router.get("/api/stock/pe-history/{symbol}")
+def stock_pe_history(symbol: str):
+    """Weekly trailing P/E series built from TTM (rolling 4-quarter) Reported EPS.
+
+    Yahoo's Reported EPS is street/adjusted (not GAAP), so the absolute P/E runs
+    lower than GAAP-based sources — the shape/trend is what matters. Quarters with
+    negative TTM EPS yield an undefined P/E and are left as gaps.
+    """
+    cache_key = f"pehist:{symbol.upper()}"
+    cached = _stock_cache.get(cache_key, ttl=_DETAIL_TTL)
+    if cached is not None:
+        return cached
+
+    def _to_date(ts: Any):
+        try:
+            return pd.Timestamp(ts).tz_localize(None).date()
+        except (TypeError, ValueError):
+            return pd.Timestamp(ts).date()
+
+    try:
+        ticker = market_data.get_ticker(symbol)
+
+        def _load(tk):
+            eps_df = tk.get_earnings_dates(limit=60)
+            px = tk.history(period="max", interval="1wk")
+            return eps_df, px
+
+        eps_df, px = _load(ticker)
+
+        # .BK retry for bare Thai tickers
+        if (px is None or px.empty) and re.fullmatch(r"[A-Z]{2,6}", symbol.upper()):
+            ticker = market_data.get_ticker(f"{symbol.upper()}.BK")
+            eps_df, px = _load(ticker)
+
+        if px is None or px.empty or eps_df is None or eps_df.empty:
+            data = {"history": [], "stats": None, "earnings": []}
+            _stock_cache.set(cache_key, data)
+            return data
+
+        # Quarterly reported EPS, oldest → newest
+        quarters = []
+        earnings_out = []
+        for idx, row in eps_df.iterrows():
+            rep = _safe_float(row.get("Reported EPS"))
+            d = _to_date(idx)
+            if rep is not None:
+                quarters.append((d, rep))
+            earnings_out.append({
+                "date":        d.strftime("%Y-%m-%d"),
+                "reportedEPS": rep,
+                "epsEstimate": _safe_float(row.get("EPS Estimate")),
+                "surprise":    _safe_float(row.get("Surprise(%)")),
+            })
+        quarters.sort(key=lambda x: x[0])
+        earnings_out.sort(key=lambda e: e["date"])
+
+        if len(quarters) < 4:
+            data = {"history": [], "stats": None, "earnings": earnings_out}
+            _stock_cache.set(cache_key, data)
+            return data
+
+        q_dates = [q[0] for q in quarters]
+        q_eps = [q[1] for q in quarters]
+
+        import bisect
+        history = []
+        for ts, prow in px.iterrows():
+            close = _safe_float(prow.get("Close"))
+            if close is None:
+                continue
+            bar_date = _to_date(ts)
+            # index of last quarter reported on/before this bar
+            j = bisect.bisect_right(q_dates, bar_date) - 1
+            if j < 3:
+                continue  # need 4 trailing quarters
+            ttm_eps = q_eps[j] + q_eps[j - 1] + q_eps[j - 2] + q_eps[j - 3]
+            pe = round(close / ttm_eps, 2) if ttm_eps > 0 else None
+            history.append({
+                "time":  bar_date.strftime("%Y-%m-%d"),
+                "pe":    pe,
+                "eps":   round(ttm_eps, 4),
+                "close": round(close, 2),
+            })
+
+        pe_vals = [h["pe"] for h in history if h["pe"] is not None]
+        stats = None
+        if pe_vals:
+            s = pd.Series(pe_vals)
+            stats = {
+                "current": pe_vals[-1],
+                "min":     round(float(s.min()), 2),
+                "max":     round(float(s.max()), 2),
+                "median":  round(float(s.median()), 2),
+                "p10":     round(float(s.quantile(0.10)), 2),
+                "p90":     round(float(s.quantile(0.90)), 2),
+                # percentile rank of the latest P/E within its own history (0–100)
+                "currentPct": round(float((s <= pe_vals[-1]).mean() * 100), 1),
+            }
+
+        data = {"history": history, "stats": stats, "earnings": earnings_out}
+        _stock_cache.set(cache_key, data)
+        return data
+
+    except Exception as exc:
+        print(f"[pe-history] {symbol}: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 # ── SEC Filings ──────────────────────────────────────────────────────────────
 
 @router.get("/api/stock/sec-filings/{symbol}")

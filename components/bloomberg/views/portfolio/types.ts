@@ -77,6 +77,9 @@ export interface AccountStat {
   win_rate: number;
   pnl_native: number;
   pnl_base: number;
+  ytd_realized_native?: number;
+  ytd_realized_base?: number;
+  ytd_closed?: number;
   total_income: number;
   total_invested: number;
   total_dividends: number;
@@ -85,6 +88,8 @@ export interface AccountStat {
 export interface Summary {
   accounts: AccountStat[];
   total_pnl_base: number;
+  total_ytd_realized_base?: number;
+  ytd_year?: number;
   global_win_rate: number;
   base_currency: string;
   thb_per_usd: number;

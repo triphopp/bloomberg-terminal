@@ -1197,16 +1197,21 @@ def get_summary(base_currency: str = Query("THB")):
             "SELECT * FROM portfolio_accounts WHERE is_active = 1"
         ).fetchall()]
 
+        year_start = f"{datetime.now().year}-01-01"
         trade_stats = conn.execute("""
             SELECT account_id,
                    COUNT(*) total_trades,
                    SUM(CASE WHEN win_loss = 'W' THEN 1 ELSE 0 END) wins,
                    SUM(CASE WHEN win_loss = 'L' THEN 1 ELSE 0 END) losses,
                    SUM(CASE WHEN win_loss = 'P' THEN 1 ELSE 0 END) open_count,
-                   SUM(COALESCE(pnl_amount, 0)) total_pnl_native
+                   SUM(COALESCE(pnl_amount, 0)) total_pnl_native,
+                   SUM(CASE WHEN win_loss != 'P' AND date_exit >= ?
+                            THEN COALESCE(pnl_amount, 0) ELSE 0 END) ytd_realized_native,
+                   SUM(CASE WHEN win_loss != 'P' AND date_exit >= ?
+                            THEN 1 ELSE 0 END) ytd_closed
             FROM trades
             GROUP BY account_id
-        """).fetchall()
+        """, (year_start, year_start)).fetchall()
 
         cash_stats = conn.execute("""
             SELECT account_id,
@@ -1228,6 +1233,7 @@ def get_summary(base_currency: str = Query("THB")):
 
     result = []
     total_pnl_base = 0.0
+    total_ytd_realized_base = 0.0
     total_wins = total_closed = 0
 
     for acc in accounts:
@@ -1244,14 +1250,20 @@ def get_summary(base_currency: str = Query("THB")):
         win_rate = round(wins / closed * 100, 1) if closed > 0 else 0.0
 
         pnl_native = float(s.get("total_pnl_native") or 0)
-        if acc["currency"] == "USD" and base_currency == "THB":
-            pnl_base = pnl_native * thb_per_usd
-        elif acc["currency"] == "THB" and base_currency == "USD":
-            pnl_base = pnl_native / thb_per_usd
-        else:
-            pnl_base = pnl_native
+        ytd_realized_native = float(s.get("ytd_realized_native") or 0)
+
+        def _to_base(v: float) -> float:
+            if acc["currency"] == "USD" and base_currency == "THB":
+                return v * thb_per_usd
+            if acc["currency"] == "THB" and base_currency == "USD":
+                return v / thb_per_usd
+            return v
+
+        pnl_base = _to_base(pnl_native)
+        ytd_realized_base = _to_base(ytd_realized_native)
 
         total_pnl_base += pnl_base
+        total_ytd_realized_base += ytd_realized_base
         total_wins  += wins
         total_closed += closed
 
@@ -1264,6 +1276,9 @@ def get_summary(base_currency: str = Query("THB")):
             "win_rate":       win_rate,
             "pnl_native":     round(pnl_native, 2),
             "pnl_base":       round(pnl_base, 2),
+            "ytd_realized_native": round(ytd_realized_native, 2),
+            "ytd_realized_base":   round(ytd_realized_base, 2),
+            "ytd_closed":     int(s.get("ytd_closed", 0) or 0),
             "total_income":   float(c.get("total_income") or 0),
             "total_invested": float(c.get("total_invested") or 0),
             "total_dividends": float(d.get("total_dividends") or 0),
@@ -1272,9 +1287,237 @@ def get_summary(base_currency: str = Query("THB")):
     return {
         "accounts":       result,
         "total_pnl_base": round(total_pnl_base, 2),
+        "total_ytd_realized_base": round(total_ytd_realized_base, 2),
+        "ytd_year":       datetime.now().year,
         "global_win_rate": round(total_wins / total_closed * 100, 1) if total_closed > 0 else 0,
         "base_currency":  base_currency,
         "thb_per_usd":    thb_per_usd,
+    }
+
+
+# ── Money-weighted returns (CAGR + XIRR, cost-based) ────────────────────────────
+
+def _parse_date(s) -> Optional[datetime]:
+    try:
+        return datetime.strptime(str(s)[:10], "%Y-%m-%d")
+    except Exception:
+        return None
+
+
+def _xirr(cashflows: list[tuple[datetime, float]]) -> Optional[float]:
+    """Annualized money-weighted IRR from dated (date, amount) flows.
+    Sign convention: outflows (buys) negative, inflows (sells/divs/mark-to-market)
+    positive. Newton–Raphson with a bisection fallback. Returns None if no sign
+    change (can't solve) or non-convergent.
+    """
+    if len(cashflows) < 2:
+        return None
+    amts = [cf[1] for cf in cashflows]
+    if not (any(a > 0 for a in amts) and any(a < 0 for a in amts)):
+        return None
+    t0 = min(cf[0] for cf in cashflows)
+    ys = [(cf[0] - t0).days / 365.0 for cf in cashflows]
+
+    def npv(r: float) -> float:
+        return sum(a / ((1.0 + r) ** y) for a, y in zip(amts, ys))
+
+    def dnpv(r: float) -> float:
+        return sum(-y * a / ((1.0 + r) ** (y + 1.0)) for a, y in zip(amts, ys))
+
+    # Newton
+    r = 0.1
+    ok = False
+    for _ in range(100):
+        d = dnpv(r)
+        if abs(d) < 1e-12:
+            break
+        rn = r - npv(r) / d
+        if rn <= -0.9999:
+            rn = -0.9999
+        if abs(rn - r) < 1e-8:
+            r, ok = rn, True
+            break
+        r = rn
+    if ok and abs(npv(r)) < 1.0:
+        return r
+
+    # Bisection fallback on [-0.9999, 10]
+    lo, hi = -0.9999, 10.0
+    flo, fhi = npv(lo), npv(hi)
+    if flo * fhi > 0:
+        return None
+    for _ in range(200):
+        mid = (lo + hi) / 2.0
+        fm = npv(mid)
+        if abs(fm) < 1e-7:
+            return mid
+        if flo * fm < 0:
+            hi = mid
+        else:
+            lo, flo = mid, fm
+    return (lo + hi) / 2.0
+
+
+@router.get("/returns")
+def get_portfolio_returns(
+    account_id: Optional[str] = Query(None),
+    base_currency: str = Query("THB"),
+):
+    """Cost-based annualized returns: CAGR (time-weighted growth of deployed cost)
+    and XIRR (money-weighted, from actual dated cashflows). Per-account + total.
+    All flows normalized to `base_currency`.
+    """
+    where, params = [], []
+    if account_id and account_id != "all":
+        where.append("t.account_id = ?")
+        params.append(account_id)
+    wsql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    with get_db() as conn:
+        trades = [dict(r) for r in conn.execute(
+            "SELECT t.*, a.currency acc_currency, a.name acc_name "
+            "FROM trades t JOIN portfolio_accounts a ON t.account_id = a.id "
+            f"{wsql} ORDER BY t.date_entry ASC",
+            params,
+        ).fetchall()]
+
+        dwhere, dparams = [], []
+        if account_id and account_id != "all":
+            dwhere.append("d.account_id = ?")
+            dparams.append(account_id)
+        dsql = ("WHERE " + " AND ".join(dwhere)) if dwhere else ""
+        divs = [dict(r) for r in conn.execute(
+            "SELECT d.account_id, d.pay_date, d.total_received, a.currency acc_currency "
+            "FROM dividends d JOIN portfolio_accounts a ON d.account_id = a.id "
+            f"{dsql}",
+            dparams,
+        ).fetchall()]
+
+    thb_per_usd = _get_thb_per_usd()
+    now = datetime.now()
+
+    def to_base(v: float, ccy: str) -> float:
+        if ccy == "USD" and base_currency == "THB":
+            return v * thb_per_usd
+        if ccy == "THB" and base_currency == "USD":
+            return v / thb_per_usd
+        return v
+
+    # Batch-fetch current prices for open positions
+    open_trades = [t for t in trades if (t.get("win_loss") or "P") == "P"]
+    idx_yf: dict[int, str] = {}
+    for i, t in enumerate(open_trades):
+        s = _trade_yf_symbol(t)
+        if s:
+            idx_yf[i] = s
+    price_lookup = _batch_fetch_prices(list({s for s in idx_yf.values()}))
+    open_price: dict[int, Optional[float]] = {}
+    for i, t in enumerate(open_trades):
+        yf_sym = idx_yf.get(i)
+        q = price_lookup.get(yf_sym) if yf_sym else None
+        open_price[id(t)] = (q.get("price") if q else None)
+
+    # Per-account accumulators
+    class _Acc:
+        __slots__ = ("cf", "invested", "realized", "unrealized", "div",
+                     "first", "name")
+
+        def __init__(self):
+            self.cf: list[tuple[datetime, float]] = []
+            self.invested = 0.0
+            self.realized = 0.0
+            self.unrealized = 0.0
+            self.div = 0.0
+            self.first: Optional[datetime] = None
+            self.name = ""
+
+    accs: dict[str, _Acc] = {}
+
+    def _acc(aid: str, name: str) -> _Acc:
+        a = accs.get(aid)
+        if a is None:
+            a = _Acc()
+            a.name = name
+            accs[aid] = a
+        return a
+
+    for t in trades:
+        aid = t["account_id"]
+        a = _acc(aid, t.get("acc_name") or aid)
+        ccy = t.get("acc_currency") or base_currency
+        vol = _to_float_or_zero(t.get("volume"))
+        entry = _to_float_or_zero(t.get("price_entry"))
+        cost_native = _to_float_or_zero(t.get("amount")) or (entry * vol)
+        cost = to_base(cost_native, ccy)
+        d_entry = _parse_date(t.get("date_entry"))
+        if cost <= 0 or d_entry is None:
+            continue
+        a.invested += cost
+        a.first = d_entry if a.first is None else min(a.first, d_entry)
+        a.cf.append((d_entry, -cost))
+
+        if (t.get("win_loss") or "P") != "P":   # closed
+            pnl = to_base(_to_float_or_zero(t.get("pnl_amount")), ccy)
+            a.realized += pnl
+            d_exit = _parse_date(t.get("date_exit")) or d_entry
+            a.cf.append((d_exit, cost + pnl))
+        else:                                    # open → mark to market at now
+            px = open_price.get(id(t))
+            mv_native = (px * vol) if (px and vol) else cost_native
+            mv = to_base(mv_native, ccy)
+            if px and vol:
+                a.unrealized += to_base((px - entry) * vol, ccy)
+            a.cf.append((now, mv))
+
+    for d in divs:
+        aid = d["account_id"]
+        if aid not in accs:
+            continue
+        a = accs[aid]
+        amt = to_base(_to_float_or_zero(d.get("total_received")), d.get("acc_currency") or base_currency)
+        if amt == 0:
+            continue
+        a.div += amt
+        pd = _parse_date(d.get("pay_date")) or now
+        a.cf.append((pd, amt))
+
+    def _metrics(a: _Acc) -> dict:
+        invested = a.invested
+        end_value = invested + a.realized + a.unrealized + a.div
+        span_days = (now - a.first).days if a.first else 0
+        cagr = None
+        if invested > 0 and end_value > 0 and span_days >= 1:
+            cagr = (end_value / invested) ** (365.0 / span_days) - 1.0
+        xirr = _xirr(a.cf)
+        return {
+            "cagr_pct": round(cagr * 100, 2) if cagr is not None else None,
+            "xirr_pct": round(xirr * 100, 2) if xirr is not None else None,
+            "simple_pct": round((end_value - invested) / invested * 100, 2) if invested > 0 else None,
+            "invested": round(invested, 2),
+            "end_value": round(end_value, 2),
+            "realized": round(a.realized, 2),
+            "unrealized": round(a.unrealized, 2),
+            "dividends": round(a.div, 2),
+            "holding_days": span_days,
+            "first_date": a.first.strftime("%Y-%m-%d") if a.first else None,
+        }
+
+    # Total = merge all accounts' cashflows + aggregates
+    total = _Acc()
+    for a in accs.values():
+        total.cf.extend(a.cf)
+        total.invested += a.invested
+        total.realized += a.realized
+        total.unrealized += a.unrealized
+        total.div += a.div
+        if a.first and (total.first is None or a.first < total.first):
+            total.first = a.first
+
+    return {
+        "base_currency": base_currency,
+        "thb_per_usd": thb_per_usd,
+        "total": _metrics(total),
+        "accounts": {aid: {**_metrics(a), "name": a.name} for aid, a in accs.items()},
     }
 
 

@@ -59,9 +59,13 @@ components/bloomberg/
 │           └── ImportTab.tsx         ← Excel drag-drop + manual form (IS OPTION checkbox, VAT field)
 │
 ├── chart/
-│   ├── ModularChart.tsx         ← reusable chart container
+│   ├── ModularChart.tsx         ← reusable chart container (candle + overlay/pane indicators + event markers w/ per-marker color)
 │   ├── ChartTimeframeBar.tsx    ← period selector (1D/1W/1M/3M/YTD/1Y/5Y/MAX)
-│   └── IndicatorPicker.tsx      ← technical indicator selector
+│   ├── IndicatorPicker.tsx      ← technical indicator selector
+│   ├── FearGreedPane.tsx        ← recharts sub-pane (F&G 0–100 + zone bands)
+│   ├── PEPane.tsx               ← recharts sub-pane: trailing P/E line + p10/p90 valuation bands + percentile label (consumes /api/stock/pe-history)
+│   ├── useChartIndicators.ts    ← indicator/overlay state; exposes vpConfig, showPE via atoms
+│   └── indicators/volume-profile.ts ← session+composite VP (gap-based sessions, delta, naked POC, HVN/LVN, VRVP)
 │
 ├── ui/
 │   ├── CandlestickChart.tsx     ← custom OHLC candlestick chart

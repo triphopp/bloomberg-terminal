@@ -19,6 +19,7 @@ logger = logging.getLogger("api")
 from config import CORS_ORIGINS
 from db import init_db, init_portfolio_v2, init_sync_layer, seed_symbol_lists
 from analytics.regime_calibration import ensure_model_fresh
+from analytics.regime_v2 import ensure_v2_fresh
 from analytics.bc_calibration import ensure_calibrated
 from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router
 import sync
@@ -44,6 +45,7 @@ sync.start_background_push()
 
 # ── Regime model (trains in background if missing/stale) ──────────────────────
 ensure_model_fresh(triggered_by="startup")
+ensure_v2_fresh(triggered_by="startup")
 
 # ── BC calibration (runs in background if missing or >90 days old) ────────────
 ensure_calibrated(triggered_by="startup")

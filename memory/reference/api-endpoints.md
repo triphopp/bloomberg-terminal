@@ -15,6 +15,8 @@
 - `GET /api/stock/history/{symbol}` — OHLCV history (1d/1w/1m/3m/ytd/1y/5y/max)
 - `GET /api/stock/financials/{symbol}` — income statement + cash flow
 - `GET /api/stock/analyst/{symbol}` — analyst ratings
+- `GET /api/stock/earnings-calendar/{symbol}` — earnings dates + EPS estimate/reported/surprise%
+- `GET /api/stock/pe-history/{symbol}` — trailing (TTM) P/E weekly series (adj-EPS) + percentile stats + earnings list; cache 1h. Next.js proxy: `type=pe-history`
 
 ## Options (`routers/options.py`)
 - `GET /api/options` — options chain (calls + puts)
@@ -94,9 +96,11 @@
 - `POST /api/v2/portfolio/dividends` — add dividend
 - `DELETE /api/v2/portfolio/dividends/{id}` — delete dividend
 - `POST /api/v2/portfolio/import` — bulk import Excel
+- `GET /api/v2/portfolio/returns` — cost-based annualized returns: CAGR (time-weighted growth of deployed cost) + XIRR (money-weighted IRR from dated cashflows: buys−/sells+/divs+/mark-to-market+). Per-account + total. Params: `account_id`, `base_currency`. NOT the same as CAPM RET ANN (which is market-price, cost-agnostic).
 
 ## Portfolio Risk (`routers/risk.py`)
 - `GET /api/v2/portfolio/risk/metrics` — VaR/CVaR 1D–6M with √T scaling (Basel)
+- `GET /api/v2/portfolio/risk/capm` — CAPM β + Jensen's α (annualized) vs benchmark (default SPY); holdings-based, per-account breakdown when account_id omitted. `RET ANN` = geometric annualized market return (`expm1(mean_log*252)`), NOT cost-based. `lookback` accepts 21/63/126/252 (1M/3M/6M/1Y); frontend has window buttons. Regression guard = n<20. Params: `benchmark`, `lookback`, `rf_annual`, `account_id`
 - `GET /api/v2/portfolio/risk/correlation` — correlation matrix (Ledoit-Wolf shrinkage)
 - `GET /api/v2/portfolio/risk/stress` — stress test scenarios
 - `GET /api/v2/portfolio/risk/position-size` — Kelly criterion position sizing

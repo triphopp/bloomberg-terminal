@@ -98,7 +98,9 @@ def _fetch_returns(symbols: list[str], days: int = 252) -> dict[str, np.ndarray]
         return cached
 
     end = datetime.utcnow()
-    start = end - timedelta(days=int(days * 1.5))
+    # 1.5x for weekends/holidays + fixed cushion so short windows (e.g. 21d ≈ 1M)
+    # still clear the >=20-observation gate below.
+    start = end - timedelta(days=int(days * 1.5) + 14)
 
     try:
         df = yf.download(
@@ -1192,7 +1194,9 @@ def get_risk_metrics(
         prices = _batch_fetch_prices(list(set(yf_syms)))
         for i, pos in enumerate(positions):
             if i in pos_yf:
-                pos["current_price"] = prices.get(pos_yf[i])
+                # _batch_fetch_prices returns {"price": ..., "prev_close": ...}
+                snap = prices.get(pos_yf[i])
+                pos["current_price"] = snap.get("price") if isinstance(snap, dict) else snap
     except Exception:
         pass
 
@@ -1240,6 +1244,114 @@ def get_risk_metrics(
         metrics["account_breakdown"] = account_breakdown
 
     return metrics
+
+
+# ── CAPM / Jensen's alpha ────────────────────────────────────────────────────
+
+def _regress_capm(port_returns, bench_returns, rf_annual: float) -> dict:
+    """Regress current-holdings portfolio returns on a benchmark.
+    Returns CAPM beta, annualized Jensen's alpha, R², and annualized returns.
+    port_returns / bench_returns are daily log-return arrays.
+    """
+    empty = {
+        "beta": None, "alpha_annual_pct": None, "r_squared": None, "n_days": 0,
+        "port_return_annual_pct": None, "bench_return_annual_pct": None,
+    }
+    if port_returns is None or bench_returns is None:
+        return empty
+    n = min(len(port_returns), len(bench_returns))
+    if n < 20:  # 20 ≈ 1 trading month; below this beta is too noisy to report
+        return {**empty, "n_days": int(n)}
+    y = np.asarray(port_returns[-n:], dtype=float)
+    x = np.asarray(bench_returns[-n:], dtype=float)
+    rf_daily = rf_annual / 252.0
+    ye, xe = y - rf_daily, x - rf_daily      # excess returns
+    var_x = float(xe.var())
+    if var_x <= 0:
+        return {**empty, "n_days": int(n)}
+    beta = float(np.cov(ye, xe, bias=True)[0, 1] / var_x)
+    alpha_daily = float(ye.mean() - beta * xe.mean())
+    corr = float(np.corrcoef(y, x)[0, 1])
+    return {
+        "beta": round(beta, 3),
+        "alpha_annual_pct": round(alpha_daily * 252 * 100, 2),
+        "r_squared": round(corr * corr, 3),
+        "n_days": int(n),
+        # Geometric (compounded) annualization from daily log-returns → simple % that
+        # matches realized reality: exp(mean_log * 252) - 1. Arithmetic mean*252 understated it.
+        "port_return_annual_pct": round(float(np.expm1(y.mean() * 252)) * 100, 2),
+        "bench_return_annual_pct": round(float(np.expm1(x.mean() * 252)) * 100, 2),
+    }
+
+
+@router.get("/capm")
+def get_capm(
+    account_id: Optional[str] = Query(None),
+    lookback: int = Query(252),
+    benchmark: str = Query("SPY"),
+    rf_annual: float = Query(0.02),
+):
+    """CAPM beta + Jensen's alpha for the open portfolio, regressed on `benchmark`.
+    Beta is computed on the current book held constant over the lookback window
+    (holdings-based). Per-account breakdown returned when account_id is omitted/all.
+    """
+    where = ["win_loss = 'P'"]
+    params: list = []
+    if account_id and account_id != "all":
+        where.append("account_id = ?")
+        params.append(account_id)
+
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT t.*, a.currency acc_currency, a.name acc_name "
+            "FROM trades t JOIN portfolio_accounts a ON t.account_id = a.id "
+            f"WHERE {' AND '.join(where)} ORDER BY t.date_entry DESC",
+            params,
+        ).fetchall()
+    positions = [dict(r) for r in rows]
+
+    # Enrich with live prices (same shape handling as /metrics)
+    try:
+        from routers.portfolio_v2 import _batch_fetch_prices, _get_yf_symbol as pv2_yf
+        yf_syms, pos_yf = [], {}
+        for i, pos in enumerate(positions):
+            yf_sym = pv2_yf(pos["symbol"], pos["account_id"])
+            if yf_sym:
+                yf_syms.append(yf_sym)
+                pos_yf[i] = yf_sym
+        prices = _batch_fetch_prices(list(set(yf_syms)))
+        for i, pos in enumerate(positions):
+            if i in pos_yf:
+                snap = prices.get(pos_yf[i])
+                pos["current_price"] = snap.get("price") if isinstance(snap, dict) else snap
+    except Exception:
+        pass
+
+    bench_map = _fetch_returns([benchmark], lookback)
+    bench = bench_map.get(benchmark)
+
+    def _capm_for(pos_list: list[dict]) -> dict:
+        m = _compute_portfolio_risk(pos_list, lookback, 0.95)
+        return _regress_capm(m.get("_port_returns"), bench, rf_annual)
+
+    result: dict = {
+        "benchmark": benchmark,
+        "lookback": lookback,
+        "rf_annual": rf_annual,
+        "benchmark_available": bench is not None,
+        "portfolio": _capm_for(positions),
+    }
+
+    if not account_id or account_id == "all":
+        groups: dict[str, list[dict]] = {}
+        for pos in positions:
+            groups.setdefault(pos["account_id"], []).append(pos)
+        result["accounts"] = {
+            aid: {**_capm_for(g), "name": g[0].get("acc_name") or aid}
+            for aid, g in groups.items()
+        }
+
+    return result
 
 
 @router.get("/history")

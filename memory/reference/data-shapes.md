@@ -34,6 +34,20 @@
 }
 ```
 
+## Stock P/E History (`GET /api/stock/pe-history/{symbol}`)
+```json
+{
+  "history": [{ "time": "2026-06-29", "pe": 28.97, "eps": 3.67, "close": 106.32 }],
+  "stats": { "current": 28.97, "min": 23.65, "max": 788.9, "median": 96.52,
+             "p10": 58.27, "p90": 133.76, "currentPct": 2.3 },
+  "earnings": [{ "date": "2026-04-22", "reportedEPS": 0.97, "epsEstimate": 0.97, "surprise": 0.39 }]
+}
+```
+- `pe` = weekly close ÷ TTM (rolling 4Q) Reported EPS; `null` เมื่อ TTM EPS ≤ 0 (gap ในเส้น)
+- `stats.currentPct` = percentile rank ของ P/E ล่าสุดในประวัติตัวเอง (0–100) → ใช้ label CHEAP/FAIR/EXPENSIVE
+- EPS = adjusted/street (Yahoo) ไม่ใช่ GAAP → absolute P/E ต่ำกว่า TrendSpider, trend เหมือน
+- `PEPane.tsx` consume shape นี้; frontend clip Y domain กัน early-stage spike (max 788x)
+
 ## Options Chain (`GET /api/options?symbol=AAPL&expiry=2026-07-18`)
 ```json
 {
