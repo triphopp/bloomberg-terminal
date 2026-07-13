@@ -42,7 +42,7 @@ import type { Account, Summary } from "./types";
 import { SummaryBar } from "./ui/SummaryBar";
 
 type TopTab = "portfolio" | "analytics" | "risk" | "tools" | "paper";
-type PortfolioSub = "positions" | "options" | "trades" | "cash";
+type PortfolioSub = "positions" | "options" | "trades" | "cash" | "entry";
 type AnalyticsSub = "analytics" | "backtest";
 type ToolsSub = "theses" | "import";
 type PaperSub = "dashboard" | "trade" | "positions" | "options" | "history";
@@ -60,6 +60,7 @@ const PORTFOLIO_SUBS: { id: PortfolioSub; label: string; icon: React.ReactNode }
   { id: "options", label: "OPTIONS", icon: <Layers className="h-2 w-2" /> },
   { id: "trades", label: "TRADES", icon: <History className="h-2 w-2" /> },
   { id: "cash", label: "CASH", icon: <Database className="h-2 w-2" /> },
+  { id: "entry", label: "✏️ ENTRY", icon: <Upload className="h-2 w-2" /> },
 ];
 
 const ANALYTICS_SUBS: { id: AnalyticsSub; label: string; icon: React.ReactNode }[] = [
@@ -476,6 +477,9 @@ export function PortfolioView() {
         {topTab === "portfolio" && portfolioSub === "cash" && (
           <CashTab accountId={activeAccount} colors={colors} />
         )}
+        {topTab === "portfolio" && portfolioSub === "entry" && (
+          <ImportTab colors={colors} variant="manual" />
+        )}
 
         {topTab === "analytics" && analyticsSub === "analytics" && (
           <AnalyticsTab
@@ -494,7 +498,9 @@ export function PortfolioView() {
         )}
 
         {topTab === "tools" && toolsSub === "theses" && <ThesesTab colors={colors} />}
-        {topTab === "tools" && toolsSub === "import" && <ImportTab colors={colors} />}
+        {topTab === "tools" && toolsSub === "import" && (
+          <ImportTab colors={colors} variant="excel" />
+        )}
 
         {topTab === "paper" && paperSub === "dashboard" && <PaperDashboardTab colors={colors} />}
         {topTab === "paper" && paperSub === "trade" && <PaperTradeTab colors={colors} />}

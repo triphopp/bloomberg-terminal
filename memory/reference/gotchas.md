@@ -124,3 +124,16 @@
 **Never put `portfolio.db` (or any SQLite file) directly inside a Google Drive / Dropbox / OneDrive folder.** Cloud clients sync raw bytes and do not understand SQLite's WAL (`-wal`/`-shm`) sidecar files or file locks. Two machines touching the same synced `.db` → corruption.
 
 **Correct pattern (see `backend/sync/`):** keep the `.db` local (working copy); exchange only validated **JSON snapshots** through the cloud folder. Snapshot writes are atomic (temp + `os.replace`) and hash-validated on read so a half-synced Drive file is skipped, not loaded. Merge is row-level last-write-wins on `updated_at`; deletes use `sync_tombstones` (trigger-recorded) so a deleted row does not resurrect on the next merge.
+
+## Bug: RISK tab blank — `float() argument must be ... not 'dict'` (fixed 2026-07-12)
+
+**Symptom:** PORT → RISK shows nothing (blank). `GET /api/v2/portfolio/risk/metrics` returns HTTP 500 `{"detail":"Internal server error"}`. RiskTab silently swallowed the error → blank.
+
+**Root cause:** `risk.py get_risk_metrics` set `pos["current_price"] = prices.get(pos_yf[i])`, but `_batch_fetch_prices` (portfolio_v2.py) returns `{sym: {"price":..., "prev_close":...}}` — a **dict**, not a number. `_compute_portfolio_risk` line ~315 then did `float(price) * vol` → `TypeError: float() argument must be a string or a real number, not 'dict'`.
+
+**Fix:** extract `.get("price")` from the snapshot dict:
+```python
+snap = prices.get(pos_yf[i])
+pos["current_price"] = snap.get("price") if isinstance(snap, dict) else snap
+```
+Same pattern used in the new `/risk/capm` endpoint. Also added an error state + RETRY button to `RiskTab.tsx` so a future backend 500 shows a message instead of a blank pane.

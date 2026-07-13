@@ -217,12 +217,14 @@ export function RiskTab({
   const [subTab, setSubTab] = useState<SubTab>("overview");
   const [metrics, setMetrics] = useState<RiskMetrics | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [optionsRisk, setOptionsRisk] = useState<OptionsRiskData | null>(null);
   const [loadingOpts, setLoadingOpts] = useState(false);
 
   const loadMetrics = useCallback(
     async (signal?: AbortSignal) => {
       setLoading(true);
+      setError(null);
       try {
         const qs = accountId !== "all" ? `&account_id=${accountId}` : "";
         const r = await fetch(`/api/v2/portfolio/risk/metrics?confidence=0.95&lookback=252${qs}`, {
@@ -232,6 +234,7 @@ export function RiskTab({
         setMetrics(await r.json());
       } catch (e) {
         if ((e as Error)?.name === "AbortError") return;
+        setError((e as Error)?.message || "Failed to load risk metrics");
       } finally {
         setLoading(false);
       }
@@ -314,6 +317,27 @@ export function RiskTab({
       {!metrics && loading && (
         <div className="flex items-center justify-center py-10">
           <Loader2 className="h-5 w-5 animate-spin" style={{ color: colors.accent }} />
+        </div>
+      )}
+
+      {!metrics && !loading && error && (
+        <div
+          className="flex flex-col items-center gap-2 py-10 px-4 text-center"
+          style={{ color: colors.textSecondary }}
+        >
+          <AlertTriangle className="h-5 w-5" style={{ color: "#FF4444" }} />
+          <div className="text-[10px] font-bold" style={{ color: "#FF4444" }}>
+            Failed to load risk metrics ({error})
+          </div>
+          <div className="text-[8px]">Check that the Python backend is running, then retry.</div>
+          <button
+            type="button"
+            onClick={() => loadMetrics()}
+            className="mt-1 text-[9px] px-3 py-1 border font-bold"
+            style={{ borderColor: colors.accent, color: colors.accent }}
+          >
+            RETRY
+          </button>
         </div>
       )}
 

@@ -22,6 +22,37 @@ import { type Colors, fmtK, pnlColor } from "../helpers";
 import type { Dividend, Summary, Trade } from "../types";
 import { AccBadge } from "../ui/AccBadge";
 
+interface CapmRow {
+  beta: number | null;
+  alpha_annual_pct: number | null;
+  r_squared: number | null;
+  n_days: number;
+  port_return_annual_pct: number | null;
+  bench_return_annual_pct: number | null;
+  name?: string;
+}
+interface CapmResponse {
+  benchmark: string;
+  benchmark_available: boolean;
+  portfolio: CapmRow;
+  accounts?: Record<string, CapmRow>;
+}
+interface ReturnsRow {
+  cagr_pct: number | null;
+  xirr_pct: number | null;
+  simple_pct: number | null;
+  invested: number;
+  end_value: number;
+  holding_days: number;
+  first_date: string | null;
+  name?: string;
+}
+interface ReturnsResponse {
+  base_currency: string;
+  total: ReturnsRow;
+  accounts?: Record<string, ReturnsRow>;
+}
+
 export function AnalyticsTab({
   accountId,
   currency,
@@ -47,6 +78,10 @@ export function AnalyticsTab({
   // biome-ignore lint/suspicious/noExplicitAny: untyped API response
   const [navHistory, setNavHistory] = useState<any[]>([]);
   const [divPeriod, setDivPeriod] = useState<"M" | "Q" | "Y">("M");
+  const [capm, setCapm] = useState<CapmResponse | null>(null);
+  const [rets, setRets] = useState<ReturnsResponse | null>(null);
+  const [benchmark, setBenchmark] = useState<"SPY" | "QQQ" | "ACWI">("SPY");
+  const [lookback, setLookback] = useState<number>(252);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(
@@ -55,7 +90,9 @@ export function AnalyticsTab({
       try {
         const qs = new URLSearchParams({ base_currency: currency });
         if (accountId !== "all") qs.set("account_id", accountId);
-        const [ar, dr, op, nv] = await Promise.all([
+        const capmQs = new URLSearchParams({ benchmark, lookback: String(lookback) });
+        if (accountId !== "all") capmQs.set("account_id", accountId);
+        const [ar, dr, op, nv, cp, rt] = await Promise.all([
           fetch(`/api/v2/portfolio/analytics?${qs}`, { signal }).then((r) => {
             if (!r.ok) throw new Error();
             return r.json();
@@ -72,18 +109,26 @@ export function AnalyticsTab({
             if (!r.ok) throw new Error();
             return r.json();
           }),
+          fetch(`/api/v2/portfolio/risk/capm?${capmQs}`, { signal })
+            .then((r) => (r.ok ? r.json() : null))
+            .catch(() => null),
+          fetch(`/api/v2/portfolio/returns?${qs}`, { signal })
+            .then((r) => (r.ok ? r.json() : null))
+            .catch(() => null),
         ]);
         setAnalytics(ar);
         setDividends(Array.isArray(dr) ? dr : []);
         setOpenPos(Array.isArray(op?.positions) ? op.positions : []);
         setNavHistory(Array.isArray(nv) ? nv : []);
+        setCapm(cp && !cp.error ? cp : null);
+        setRets(rt && !rt.error ? rt : null);
       } catch (e) {
         if ((e as Error)?.name === "AbortError") return;
       } finally {
         setLoading(false);
       }
     },
-    [accountId, currency]
+    [accountId, currency, benchmark, lookback]
   );
 
   useEffect(() => {
@@ -175,6 +220,35 @@ export function AnalyticsTab({
     };
   }, [filteredStats, openPos, thb_per_usd]);
 
+  // Per-account unrealized P&L + open cost basis (THB base), keyed by account id.
+  const perAcctOpen = useMemo(() => {
+    const map: Record<string, { unreal: number; openCost: number }> = {};
+    for (const p of openPos) {
+      const aid = p.account_id;
+      if (!map[aid]) map[aid] = { unreal: 0, openCost: 0 };
+      map[aid].unreal += p.unrealized_pnl_thb ?? 0;
+      const costNative = p.amount ?? p.price_entry * p.volume;
+      map[aid].openCost += p.acc_currency === "USD" ? costNative * thb_per_usd : costNative;
+    }
+    return map;
+  }, [openPos, thb_per_usd]);
+
+  // Total-return % per account: (realized + unrealized + dividends) / capital base.
+  // Base = net deposits when available, else deployed cost basis. THB throughout.
+  const acctReturn = (s: (typeof filteredStats)[number]) => {
+    const realized = s.pnl_base ?? 0;
+    const dividends = s.total_dividends ?? 0;
+    const open = perAcctOpen[s.account.id] ?? { unreal: 0, openCost: 0 };
+    const totalPnl = realized + open.unreal + dividends;
+    const invested = s.total_invested ?? 0;
+    const base = invested > 0 ? invested : open.openCost;
+    return {
+      totalPnl,
+      pct: base > 0 ? (totalPnl / base) * 100 : null,
+      base,
+    };
+  };
+
   // THB base → active display currency
   const toDisp = (thb: number) => (currency === "USD" ? thb / thb_per_usd : thb);
 
@@ -217,6 +291,89 @@ export function AnalyticsTab({
               </span>
               <span style={{ color: colors.textSecondary }}>Dividends</span>
               <span style={{ color: "#4ade80" }}>฿{fmtK(s.total_dividends)}</span>
+              {(() => {
+                const r = acctReturn(s);
+                const realized = s.pnl_base ?? 0;
+                const realizedPct = r.base > 0 ? (realized / r.base) * 100 : null;
+                return (
+                  <>
+                    <span style={{ color: colors.textSecondary }}>Total Return</span>
+                    <span className="font-bold" style={{ color: pnlColor(r.totalPnl) }}>
+                      {r.pct == null
+                        ? "—"
+                        : `${r.pct >= 0 ? "+" : ""}${r.pct.toFixed(1)}% ${r.pct >= 0 ? "▲" : "▼"}`}
+                    </span>
+                    <span
+                      style={{ color: colors.textSecondary }}
+                      title="Realized P&L ÷ invested — closed-trade skill only, excludes unrealized paper P&L"
+                    >
+                      Realized Ret
+                    </span>
+                    <span
+                      className="font-bold"
+                      style={{ color: realizedPct == null ? "#555" : pnlColor(realized) }}
+                    >
+                      {realizedPct == null
+                        ? "—"
+                        : `${realizedPct >= 0 ? "+" : ""}${realizedPct.toFixed(1)}%`}
+                    </span>
+                    {s.ytd_realized_native != null && (
+                      <>
+                        <span
+                          style={{ color: colors.textSecondary }}
+                          title={`Realized trading P&L closed in ${summary?.ytd_year ?? "this year"} (${s.ytd_closed ?? 0} trades)`}
+                        >
+                          YTD Realized
+                        </span>
+                        <span
+                          className="font-bold"
+                          style={{ color: pnlColor(s.ytd_realized_native) }}
+                        >
+                          {s.account.currency === "USD" ? "$" : "฿"}
+                          {fmtK(Math.abs(s.ytd_realized_native))}{" "}
+                          {s.ytd_realized_native >= 0 ? "▲" : "▼"}
+                        </span>
+                      </>
+                    )}
+                  </>
+                );
+              })()}
+              {(() => {
+                const rr = rets?.accounts?.[s.account.id];
+                if (!rr) return null;
+                return (
+                  <>
+                    <span
+                      style={{ color: colors.textSecondary }}
+                      title="Time-weighted growth of deployed cost, annualized"
+                    >
+                      CAGR ann
+                    </span>
+                    <span
+                      className="font-bold"
+                      style={{ color: rr.cagr_pct == null ? "#555" : pnlColor(rr.cagr_pct) }}
+                    >
+                      {rr.cagr_pct == null
+                        ? "—"
+                        : `${rr.cagr_pct >= 0 ? "+" : ""}${rr.cagr_pct.toFixed(1)}%`}
+                    </span>
+                    <span
+                      style={{ color: colors.textSecondary }}
+                      title="Money-weighted IRR from actual dated cashflows (buys/sells/dividends), annualized"
+                    >
+                      XIRR ann
+                    </span>
+                    <span
+                      className="font-bold"
+                      style={{ color: rr.xirr_pct == null ? "#555" : pnlColor(rr.xirr_pct) }}
+                    >
+                      {rr.xirr_pct == null
+                        ? "—"
+                        : `${rr.xirr_pct >= 0 ? "+" : ""}${rr.xirr_pct.toFixed(1)}%`}
+                    </span>
+                  </>
+                );
+              })()}
             </div>
           </div>
         ))}
@@ -281,6 +438,285 @@ export function AnalyticsTab({
                 </div>
               );
             })}
+          </div>
+          {(() => {
+            const base = capital.invested > 0 ? capital.invested : capital.openCost;
+            const totalPnl = capital.totalPnl + capital.dividends;
+            const pct = base > 0 ? (totalPnl / base) * 100 : null;
+            return (
+              <div
+                className="flex items-center justify-between mt-2 pt-2 border-t"
+                style={{ borderColor: colors.border }}
+              >
+                <span
+                  className="text-[8px] font-bold tracking-widest"
+                  style={{ color: colors.textSecondary }}
+                >
+                  TOTAL RETURN
+                  <span className="ml-1 text-[7px]" style={{ color: "#555" }}>
+                    (realized + unrealized + div) /{" "}
+                    {capital.invested > 0 ? "invested" : "cost basis"}
+                  </span>
+                </span>
+                <span
+                  className="text-[13px] font-mono font-bold"
+                  style={{ color: pnlColor(totalPnl) }}
+                >
+                  {pct == null
+                    ? "—"
+                    : `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% ${pct >= 0 ? "▲" : "▼"}`}
+                  <span className="ml-2 text-[9px]" style={{ color: colors.textSecondary }}>
+                    {sym}
+                    {fmtK(Math.abs(toDisp(totalPnl)))}
+                  </span>
+                </span>
+              </div>
+            );
+          })()}
+          {(() => {
+            const base = capital.invested > 0 ? capital.invested : capital.openCost;
+            const realizedPct = base > 0 ? (capital.realized / base) * 100 : null;
+            return (
+              <div className="flex items-center justify-between mt-1.5">
+                <span
+                  className="text-[8px] font-bold tracking-widest"
+                  style={{ color: colors.textSecondary }}
+                  title="Realized P&L ÷ invested — closed-trade skill only, excludes unrealized"
+                >
+                  REALIZED RETURN
+                  <span className="ml-1 text-[7px]" style={{ color: "#555" }}>
+                    realized / {capital.invested > 0 ? "invested" : "cost basis"} · trading skill
+                  </span>
+                </span>
+                <span
+                  className="text-[11px] font-mono font-bold"
+                  style={{ color: pnlColor(capital.realized) }}
+                >
+                  {realizedPct == null
+                    ? "—"
+                    : `${realizedPct >= 0 ? "+" : ""}${realizedPct.toFixed(2)}%`}
+                  <span className="ml-2 text-[9px]" style={{ color: colors.textSecondary }}>
+                    {sym}
+                    {fmtK(Math.abs(toDisp(capital.realized)))}
+                  </span>
+                </span>
+              </div>
+            );
+          })()}
+          {summary?.total_ytd_realized_base != null && accountId === "all" && (
+            <div className="flex items-center justify-between mt-1.5">
+              <span
+                className="text-[8px] font-bold tracking-widest"
+                style={{ color: colors.textSecondary }}
+                title="Realized trading P&L booked this year (closed trades)"
+              >
+                YTD REALIZED P&L
+                <span className="ml-1 text-[7px]" style={{ color: "#555" }}>
+                  closed in {summary.ytd_year ?? "this year"}
+                </span>
+              </span>
+              <span
+                className="text-[11px] font-mono font-bold"
+                style={{ color: pnlColor(summary.total_ytd_realized_base) }}
+              >
+                {summary.total_ytd_realized_base >= 0 ? "+" : ""}
+                {sym}
+                {fmtK(Math.abs(toDisp(summary.total_ytd_realized_base)))}
+                {summary.total_ytd_realized_base >= 0 ? " ▲" : " ▼"}
+              </span>
+            </div>
+          )}
+          {rets?.total && (
+            <div
+              className="flex items-center justify-between mt-1.5 pt-1.5 border-t"
+              style={{ borderColor: colors.border }}
+            >
+              <span
+                className="text-[8px] font-bold tracking-widest"
+                style={{ color: colors.textSecondary }}
+              >
+                ANNUALIZED (cost-based)
+                <span className="ml-1 text-[7px]" style={{ color: "#555" }}>
+                  {rets.total.holding_days}d since {rets.total.first_date ?? "—"}
+                </span>
+              </span>
+              <span className="font-mono flex items-center gap-3">
+                <span
+                  className="text-[11px] font-bold"
+                  style={{
+                    color: rets.total.cagr_pct == null ? "#555" : pnlColor(rets.total.cagr_pct),
+                  }}
+                  title="Time-weighted growth of deployed cost, annualized"
+                >
+                  CAGR{" "}
+                  {rets.total.cagr_pct == null
+                    ? "—"
+                    : `${rets.total.cagr_pct >= 0 ? "+" : ""}${rets.total.cagr_pct.toFixed(2)}%`}
+                </span>
+                <span
+                  className="text-[11px] font-bold"
+                  style={{
+                    color: rets.total.xirr_pct == null ? "#555" : pnlColor(rets.total.xirr_pct),
+                  }}
+                  title="Money-weighted IRR from actual dated cashflows, annualized"
+                >
+                  XIRR{" "}
+                  {rets.total.xirr_pct == null
+                    ? "—"
+                    : `${rets.total.xirr_pct >= 0 ? "+" : ""}${rets.total.xirr_pct.toFixed(2)}%`}
+                </span>
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Risk-adjusted performance — CAPM beta + Jensen's alpha vs benchmark */}
+      {capm && (
+        <div className="mx-2 mb-2 border p-2" style={{ borderColor: colors.border }}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[9px] font-bold tracking-widest" style={{ color: colors.accent }}>
+              RISK-ADJUSTED (CAPM)
+              <span className="ml-1 text-[7px]" style={{ color: "#555" }}>
+                current-holdings β · Jensen α ann · vs {capm.benchmark}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex gap-1">
+                {(
+                  [
+                    ["1M", 21],
+                    ["3M", 63],
+                    ["6M", 126],
+                    ["1Y", 252],
+                  ] as const
+                ).map(([lbl, d]) => (
+                  <button
+                    type="button"
+                    key={lbl}
+                    onClick={() => setLookback(d)}
+                    className="text-[7px] px-1.5 py-0.5 border font-bold"
+                    style={{
+                      borderColor: lookback === d ? colors.accent : colors.border,
+                      color: lookback === d ? colors.accent : colors.textSecondary,
+                      background: lookback === d ? "#ff990015" : "transparent",
+                    }}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-1">
+                {(["SPY", "QQQ", "ACWI"] as const).map((b) => (
+                  <button
+                    type="button"
+                    key={b}
+                    onClick={() => setBenchmark(b)}
+                    className="text-[7px] px-1.5 py-0.5 border font-bold"
+                    style={{
+                      borderColor: benchmark === b ? colors.accent : colors.border,
+                      color: benchmark === b ? colors.accent : colors.textSecondary,
+                      background: benchmark === b ? "#ff990015" : "transparent",
+                    }}
+                  >
+                    {b}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          {!capm.benchmark_available ? (
+            <div className="text-[8px] py-2 text-center" style={{ color: colors.textSecondary }}>
+              Benchmark data unavailable
+            </div>
+          ) : (
+            <table className="w-full text-[9px] font-mono">
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  {["PORT", "β", "α ANN", "R²", "RET ANN", "N"].map((h, i) => (
+                    <th
+                      key={h}
+                      className={`py-0.5 ${i === 0 ? "text-left" : "text-right"}`}
+                      style={{ color: colors.textSecondary }}
+                      title={
+                        h === "β"
+                          ? "CAPM beta vs benchmark"
+                          : h === "α ANN"
+                            ? "Jensen's alpha, annualized (excess vs CAPM-expected)"
+                            : h === "R²"
+                              ? "Fit quality of the regression"
+                              : undefined
+                      }
+                    >
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ...Object.entries(capm.accounts ?? {}).map(([id, row]) => ({
+                    id,
+                    label: row.name ?? id,
+                    row,
+                    bold: false,
+                  })),
+                  { id: "__total__", label: "TOTAL", row: capm.portfolio, bold: true },
+                ].map(({ id, label, row, bold }) => (
+                  <tr key={id} style={{ borderBottom: "1px solid #1a1a1a" }}>
+                    <td
+                      className="py-0.5"
+                      style={{
+                        color: bold ? colors.accent : colors.text,
+                        fontWeight: bold ? 700 : 400,
+                      }}
+                    >
+                      {label}
+                    </td>
+                    <td className="text-right py-0.5" style={{ color: colors.text }}>
+                      {row.beta == null ? "—" : row.beta.toFixed(2)}
+                    </td>
+                    <td
+                      className="text-right py-0.5 font-bold"
+                      style={{
+                        color:
+                          row.alpha_annual_pct == null ? "#555" : pnlColor(row.alpha_annual_pct),
+                      }}
+                    >
+                      {row.alpha_annual_pct == null
+                        ? "—"
+                        : `${row.alpha_annual_pct >= 0 ? "+" : ""}${row.alpha_annual_pct.toFixed(1)}%`}
+                    </td>
+                    <td className="text-right py-0.5" style={{ color: colors.textSecondary }}>
+                      {row.r_squared == null ? "—" : row.r_squared.toFixed(2)}
+                    </td>
+                    <td
+                      className="text-right py-0.5"
+                      style={{
+                        color:
+                          row.port_return_annual_pct == null
+                            ? "#555"
+                            : pnlColor(row.port_return_annual_pct),
+                      }}
+                    >
+                      {row.port_return_annual_pct == null
+                        ? "—"
+                        : `${row.port_return_annual_pct >= 0 ? "+" : ""}${row.port_return_annual_pct.toFixed(1)}%`}
+                    </td>
+                    <td className="text-right py-0.5" style={{ color: "#555" }}>
+                      {row.n_days || "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div className="text-[7px] mt-1" style={{ color: "#444" }}>
+            β/α from current book held constant over{" "}
+            {lookback === 21 ? "1M" : lookback === 63 ? "3M" : lookback === 126 ? "6M" : "1Y"}{" "}
+            window (holdings-based). RET ANN = geometric annualized (compounded). α &gt; 0 =
+            outperformed CAPM expectation. Low R² = returns weakly explained by {capm.benchmark}.
+            Short windows = noisier β.
           </div>
         </div>
       )}
