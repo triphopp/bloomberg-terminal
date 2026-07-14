@@ -10,8 +10,11 @@ export function SummaryBar({
   if (!summary) return null;
 
   const totalPnl = summary.total_pnl_base;
+  const economicPnl = summary.total_economic_pnl_base;
   const sym = currency === "THB" ? "฿" : "$";
   const openCount = summary.accounts.reduce((a, s) => a + s.open_count, 0);
+  const economicPnlTitle =
+    "Economic realized P&L = (entry cost + native P&L) × exit FX − entry cost × entry FX. Uses stored trade FX when available, otherwise dated market FX estimate. Includes principal FX attribution; broker-style realized P&L excludes it.";
 
   return (
     <div
@@ -24,6 +27,17 @@ export function SummaryBar({
           {sym}
           {fmtK(Math.abs(totalPnl))} {totalPnl >= 0 ? "▲" : "▼"}
         </span>
+        {economicPnl != null && (
+          <div className="text-[7px] leading-none" style={{ color: colors.textSecondary }}>
+            <span title={economicPnlTitle}>
+              ECON{" "}
+              <span style={{ color: pnlColor(economicPnl) }}>
+                {sym}
+                {fmtK(Math.abs(economicPnl))} {economicPnl >= 0 ? "▲" : "▼"}
+              </span>
+            </span>
+          </div>
+        )}
       </div>
       <div>
         <span style={{ color: colors.textSecondary }}>WIN RATE </span>

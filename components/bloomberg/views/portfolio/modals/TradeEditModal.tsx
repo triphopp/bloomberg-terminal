@@ -85,7 +85,8 @@ export function TradeEditModal({
       .then((d) => d?.audit_log && setAuditLog(d.audit_log))
       .catch(() => {});
   }, [trade.id]);
-  const isUSD = (trade.acc_currency || trade.currency || "").toUpperCase() === "USD";
+  const isUSD =
+    (trade.currency || trade.pos_currency || trade.acc_currency || "").toUpperCase() !== "THB";
 
   const set =
     (k: keyof TradeEditState) =>

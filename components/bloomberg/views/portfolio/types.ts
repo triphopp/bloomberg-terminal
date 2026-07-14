@@ -22,11 +22,16 @@ export interface Trade {
   price_target?: number;
   volume: number;
   amount?: number;
+  amount_base?: number;
   pnl_amount?: number;
+  pnl_base?: number;
   win_loss: "W" | "L" | "P";
   pnl_percent?: number;
   currency: string;
   exchange_rate: number;
+  exit_exchange_rate?: number;
+  price_entry_base?: number;
+  price_exit_base?: number;
   strategy_name?: string;
   entry_trigger?: string;
   exit_trigger?: string;
@@ -36,11 +41,16 @@ export interface Trade {
   unrealized_pnl?: number;
   unrealized_pct?: number;
   unrealized_pnl_thb?: number;
+  unrealized_pnl_base?: number;
+  cost_basis_base?: number;
+  market_value_base?: number;
   acc_currency?: string;
+  pos_currency?: string; // instrument's native ccy (per market), may differ from acc_currency
   acc_name?: string;
   prev_close?: number;
   day_pnl?: number;
   day_pnl_thb?: number;
+  day_pnl_base?: number;
   day_pct?: number;
 }
 
@@ -52,6 +62,8 @@ export interface CashEntry {
   investment: number;
   exchange_rate: number;
   note: string;
+  entry_type?: string;
+  linked_id?: string;
 }
 
 export interface Dividend {
@@ -61,11 +73,15 @@ export interface Dividend {
   ex_date: string;
   pay_date: string;
   amount_per_unit: number;
+  amount_per_unit_base?: number;
   total_received: number;
+  total_received_base?: number;
   reinvested_amount: number;
+  reinvested_amount_base?: number;
   reinvest_asset: string;
   reinvest_price: number;
   reinvest_units: number;
+  currency: string;
 }
 
 export interface AccountStat {
@@ -77,18 +93,27 @@ export interface AccountStat {
   win_rate: number;
   pnl_native: number;
   pnl_base: number;
+  pnl_economic_native?: number;
+  pnl_economic_base?: number;
   ytd_realized_native?: number;
   ytd_realized_base?: number;
+  ytd_economic_realized_native?: number;
+  ytd_economic_realized_base?: number;
   ytd_closed?: number;
   total_income: number;
+  total_income_base?: number;
   total_invested: number;
+  total_invested_base?: number;
   total_dividends: number;
+  total_dividends_base?: number;
 }
 
 export interface Summary {
   accounts: AccountStat[];
   total_pnl_base: number;
+  total_economic_pnl_base?: number;
   total_ytd_realized_base?: number;
+  total_ytd_economic_realized_base?: number;
   ytd_year?: number;
   global_win_rate: number;
   base_currency: string;

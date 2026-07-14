@@ -8,16 +8,18 @@ Endpoints:
 import bisect
 import math
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Optional
 
 import yfinance as yf  # yf.download with start/end dates — migrate when download() supports date range
 
-from sources import market_data
 from fastapi import APIRouter, Query
 
 from db import get_db
+from portfolio_currency import (
+    realized_pnl_in_report,
+    trade_value_in_report,
+)
 
 router = APIRouter(prefix="/api/v2/portfolio/backtest")
 
@@ -29,35 +31,6 @@ def _fl(v) -> float:
         return float(v or 0)
     except (TypeError, ValueError):
         return 0.0
-
-
-def _get_thb_per_usd() -> float:
-    try:
-        snap = market_data.get_fast_info("THBUSD=X")
-        p = snap.get("last_price") or snap.get("regularMarketPrice")
-        if p and float(p) > 0:
-            return round(1 / float(p), 4)
-    except Exception:
-        pass
-    return 33.5
-
-
-def _to_thb(amount: float, currency: str, exchange_rate: float, thb_per_usd: float) -> float:
-    """Convert amount to THB."""
-    if currency == "THB":
-        return amount
-    # USD → THB
-    rate = exchange_rate if exchange_rate and exchange_rate > 1 else thb_per_usd
-    return amount * rate
-
-
-def _to_base(amount: float, currency: str, exchange_rate: float, thb_per_usd: float, base: str) -> float:
-    """Convert to base currency."""
-    thb = _to_thb(amount, currency, exchange_rate, thb_per_usd)
-    if base == "THB":
-        return thb
-    # THB → USD
-    return thb / thb_per_usd
 
 
 def _fetch_benchmark(symbol: str, start: str, end: str) -> dict[str, float]:
@@ -99,8 +72,10 @@ def get_equity_curve(
 
     with get_db() as conn:
         rows = conn.execute(
-            f"""SELECT t.date_exit, t.pnl_amount, t.pnl_percent, t.price_entry, t.price_exit,
-                       t.volume, t.currency, t.exchange_rate, t.win_loss,
+            f"""SELECT t.date_entry, t.date_exit, t.pnl_amount, t.pnl_percent,
+                       t.price_entry, t.price_exit, t.volume, t.amount,
+                       t.currency, t.exchange_rate, t.exit_exchange_rate, t.win_loss,
+                       t.market, t.resolved_symbol, t.symbol,
                        a.currency AS acc_currency
                 FROM trades t
                 JOIN portfolio_accounts a ON t.account_id = a.id
@@ -112,7 +87,6 @@ def get_equity_curve(
     if not rows:
         return {"daily": [], "metrics": None, "message": "No closed trades found"}
 
-    thb_per_usd = _get_thb_per_usd()
     base = base_currency.upper()
 
     # Build daily P&L series
@@ -122,22 +96,22 @@ def get_equity_curve(
     total_invested = 0.0
 
     for r in rows:
+        row = dict(r)
         date_str = str(r["date_exit"])[:10]
         pnl_raw = _fl(r["pnl_amount"])
-        acc_cur = r["acc_currency"] or r["currency"] or "THB"
-        ex_rate = _fl(r["exchange_rate"])
 
         # If pnl_amount is missing, compute from entry/exit
         if pnl_raw == 0 and r["price_exit"] and r["price_entry"]:
             pnl_raw = (_fl(r["price_exit"]) - _fl(r["price_entry"])) * _fl(r["volume"])
 
-        pnl_base = _to_base(pnl_raw, acc_cur, ex_rate, thb_per_usd, base)
+        row["pnl_amount"] = pnl_raw
+        pnl_base = realized_pnl_in_report(row, base)
         daily_pnl[date_str] += pnl_base
         daily_trades[date_str] += 1
 
         # Track invested capital
         entry_val = _fl(r["price_entry"]) * _fl(r["volume"])
-        total_invested += _to_base(entry_val, acc_cur, ex_rate, thb_per_usd, base)
+        total_invested += trade_value_in_report(row, entry_val, base, when="entry")
 
         if r["win_loss"] == "W":
             wins.append(pnl_base)
@@ -147,16 +121,16 @@ def get_equity_curve(
     # Also include open positions in total_invested for capital base
     with get_db() as conn:
         open_rows = conn.execute(
-            "SELECT t.price_entry, t.volume, t.currency, t.exchange_rate, a.currency AS acc_currency "
+            "SELECT t.*, a.currency AS acc_currency "
             "FROM trades t JOIN portfolio_accounts a ON t.account_id = a.id "
             "WHERE t.win_loss = 'P'" +
             (" AND t.account_id = ?" if account_id != "all" else ""),
             [account_id] if account_id != "all" else [],
         ).fetchall()
     for r in open_rows:
+        row = dict(r)
         entry_val = _fl(r["price_entry"]) * _fl(r["volume"])
-        acc_cur = r["acc_currency"] or r["currency"] or "THB"
-        total_invested += _to_base(entry_val, acc_cur, _fl(r["exchange_rate"]), thb_per_usd, base)
+        total_invested += trade_value_in_report(row, entry_val, base, when="entry")
 
     # Build cumulative curve
     sorted_dates = sorted(daily_pnl.keys())
@@ -318,7 +292,6 @@ def get_holdings_timeline(
     if not rows:
         return {"timeline": [], "all_keys": []}
 
-    thb_per_usd = _get_thb_per_usd()
     base = base_currency.upper()
 
     # Find date range
@@ -373,10 +346,8 @@ def get_holdings_timeline(
 
         holdings: dict[str, dict] = defaultdict(lambda: {"cost_value": 0.0, "symbols": set(), "count": 0})
         for r in active_trades:
-            acc_cur = r["acc_currency"] or r["currency"] or "THB"
-            ex_rate = _fl(r["exchange_rate"])
             cost = _fl(r["price_entry"]) * _fl(r["volume"])
-            cost_base = _to_base(cost, acc_cur, ex_rate, thb_per_usd, base)
+            cost_base = trade_value_in_report(r, cost, base, when="entry")
 
             if group_by == "account":
                 key = r["note"] or r["acc_name"] or r["account_id"]
@@ -463,9 +434,7 @@ def get_distribution(
 
     with get_db() as conn:
         rows = conn.execute(
-            f"""SELECT t.symbol, t.pnl_amount, t.pnl_percent, t.price_entry, t.price_exit,
-                       t.volume, t.date_entry, t.date_exit, t.currency, t.exchange_rate,
-                       t.win_loss, t.sector, a.currency AS acc_currency
+            f"""SELECT t.*, a.currency AS acc_currency
                 FROM trades t
                 JOIN portfolio_accounts a ON t.account_id = a.id
                 WHERE {' AND '.join(where)}
@@ -476,20 +445,19 @@ def get_distribution(
     if not rows:
         return {"buckets": [], "trades": []}
 
-    thb_per_usd = _get_thb_per_usd()
     base = base_currency.upper()
 
     # Collect values
     trades = []
     for r in rows:
+        row = dict(r)
         pnl_raw = _fl(r["pnl_amount"])
-        acc_cur = r["acc_currency"] or r["currency"] or "THB"
-        ex_rate = _fl(r["exchange_rate"])
 
         if pnl_raw == 0 and r["price_exit"] and r["price_entry"]:
             pnl_raw = (_fl(r["price_exit"]) - _fl(r["price_entry"])) * _fl(r["volume"])
 
-        pnl_base = _to_base(pnl_raw, acc_cur, ex_rate, thb_per_usd, base)
+        row["pnl_amount"] = pnl_raw
+        pnl_base = realized_pnl_in_report(row, base)
         pnl_pct = _fl(r["pnl_percent"])
         if pnl_pct == 0 and r["price_entry"] and r["price_exit"] and _fl(r["price_entry"]) > 0:
             pnl_pct = (_fl(r["price_exit"]) - _fl(r["price_entry"])) / _fl(r["price_entry"]) * 100

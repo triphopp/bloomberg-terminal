@@ -166,6 +166,7 @@ export const BLANK_DIV: Omit<Dividend, "id"> = {
   reinvest_asset: "",
   reinvest_price: 0,
   reinvest_units: 0,
+  currency: "THB",
 };
 
 export const BLANK_FORM = {

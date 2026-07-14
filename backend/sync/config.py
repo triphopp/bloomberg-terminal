@@ -14,7 +14,7 @@ from pathlib import Path
 
 # Snapshot schema version. Bump when the snapshot JSON shape changes in a way
 # that older clients cannot merge. Merge across mismatched versions is refused.
-SCHEMA_VER = 1
+SCHEMA_VER = 2  # trades.exit_exchange_rate + dividends.currency
 
 # Tables included in cloud snapshots, with their NATURAL merge key.
 # Only tables with stable, cross-device keys are listed — TEXT uuid PKs, or a

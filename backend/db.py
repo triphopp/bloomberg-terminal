@@ -8,6 +8,16 @@ from contextlib import contextmanager
 from config import DB_PATH
 
 
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    """Idempotent ADD COLUMN without using exception handling as control flow."""
+    if column not in _table_columns(conn, table):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+
 @contextmanager
 def get_db():
     conn = sqlite3.connect(str(DB_PATH))
@@ -172,6 +182,7 @@ def init_portfolio_v2() -> None:
                 pnl_percent       REAL,
                 currency          TEXT NOT NULL DEFAULT 'THB',
                 exchange_rate     REAL DEFAULT 1,
+                exit_exchange_rate REAL,
                 strategy_name     TEXT DEFAULT '',
                 entry_trigger     TEXT DEFAULT '',
                 exit_trigger      TEXT DEFAULT '',
@@ -191,15 +202,10 @@ def init_portfolio_v2() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_wl      ON trades(win_loss)")
         # Migration: symbol resolver (plans/port-redesign.md Step 1)
         # resolved_symbol = provider-canonical ticker (e.g. TU.BK), market = US/TH/CRYPTO
-        for ddl in (
-            "ALTER TABLE trades ADD COLUMN resolved_symbol TEXT",
-            "ALTER TABLE trades ADD COLUMN market TEXT",
-            "ALTER TABLE portfolio_accounts ADD COLUMN markets TEXT",
-        ):
-            try:
-                conn.execute(ddl)
-            except Exception:
-                pass  # column already exists
+        _ensure_column(conn, "trades", "resolved_symbol", "resolved_symbol TEXT")
+        _ensure_column(conn, "trades", "market", "market TEXT")
+        _ensure_column(conn, "trades", "exit_exchange_rate", "exit_exchange_rate REAL")
+        _ensure_column(conn, "portfolio_accounts", "markets", "markets TEXT")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS cash_ledger (
                 id            TEXT PRIMARY KEY,
@@ -213,6 +219,9 @@ def init_portfolio_v2() -> None:
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_cash_account ON cash_ledger(account_id)")
+        # Migration: linked-pair TRANSFER entries (plans/cash-transfer-feature.md)
+        _ensure_column(conn, "cash_ledger", "entry_type", "entry_type TEXT DEFAULT 'CASH'")
+        _ensure_column(conn, "cash_ledger", "linked_id", "linked_id TEXT")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS dividends (
                 id                TEXT PRIMARY KEY,
@@ -226,10 +235,35 @@ def init_portfolio_v2() -> None:
                 reinvest_asset    TEXT DEFAULT '',
                 reinvest_price    REAL DEFAULT 0,
                 reinvest_units    REAL DEFAULT 0,
+                currency          TEXT,
                 created_at        TEXT DEFAULT (datetime('now'))
             )
         """)
+        _ensure_column(conn, "dividends", "currency", "currency TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_div_account ON dividends(account_id)")
+
+        # Daily FX history is deterministic market data, so it stays local and is
+        # intentionally excluded from cloud-sync snapshots.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS fx_rates (
+                date       TEXT NOT NULL,
+                base       TEXT NOT NULL,
+                quote      TEXT NOT NULL,
+                rate       REAL NOT NULL CHECK(rate > 0),
+                source     TEXT DEFAULT '',
+                updated_at TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY(date, base, quote)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fx_pair_date "
+            "ON fx_rates(base, quote, date DESC)"
+        )
+
+        # One-time/idempotent correction for pre-first-class currency rows.
+        # Import locally to keep db.py's module dependency graph acyclic.
+        from portfolio_currency import backfill_currency_columns
+        backfill_currency_columns(conn)
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS option_positions (

@@ -253,6 +253,7 @@ export function ImportTab({
         symbol: form.symbol.toUpperCase(),
         resolved_symbol: picked?.resolved_symbol ?? null,
         market: picked?.market ?? null,
+        currency: picked?.currency ?? null,
         sector: form.sector,
         date_entry: form.date_entry,
         date_exit: form.date_exit || null,
