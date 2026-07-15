@@ -22,6 +22,7 @@ export function TradeLogTab({
       setLoading(true);
       try {
         const qs = new URLSearchParams({ limit: "1000" });
+        qs.set("base_currency", currency);
         if (accountId !== "all") qs.set("account_id", accountId);
         const r = await fetch(`/api/v2/portfolio/trades?${qs}`, { signal });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -36,7 +37,7 @@ export function TradeLogTab({
         setLoading(false);
       }
     },
-    [accountId]
+    [accountId, currency]
   );
 
   useEffect(() => {
@@ -149,8 +150,10 @@ export function TradeLogTab({
           </thead>
           <tbody>
             {filtered.map((t) => {
-              const pnlVal = t.pnl_amount != null ? toBase(t.pnl_amount, t.currency) : null;
-              const amountVal = t.amount != null ? toBase(Math.abs(t.amount), t.currency) : null;
+              const pnlVal =
+                t.pnl_base ?? (t.pnl_amount != null ? toBase(t.pnl_amount, t.currency) : null);
+              const amountVal =
+                t.amount_base ?? (t.amount != null ? toBase(Math.abs(t.amount), t.currency) : null);
               return (
                 <tr
                   key={t.id}
@@ -177,10 +180,14 @@ export function TradeLogTab({
                     {t.sector || "—"}
                   </td>
                   <td className="px-2 py-0.5">
-                    {t.price_entry ? `${csym}${fmt(toBase(t.price_entry, t.currency))}` : "—"}
+                    {t.price_entry
+                      ? `${csym}${fmt(t.price_entry_base ?? toBase(t.price_entry, t.currency))}`
+                      : "—"}
                   </td>
                   <td className="px-2 py-0.5">
-                    {t.price_exit ? `${csym}${fmt(toBase(t.price_exit, t.currency))}` : "—"}
+                    {t.price_exit
+                      ? `${csym}${fmt(t.price_exit_base ?? toBase(t.price_exit, t.currency))}`
+                      : "—"}
                   </td>
                   <td className="px-2 py-0.5">{t.volume}</td>
                   <td className="px-2 py-0.5">

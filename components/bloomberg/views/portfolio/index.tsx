@@ -81,6 +81,81 @@ const PAPER_SUBS: { id: PaperSub; label: string; icon: React.ReactNode }[] = [
   { id: "history", label: "HISTORY", icon: <List className="h-2 w-2" /> },
 ];
 
+// Module-level tab bars: defining these inside PortfolioView creates a new
+// component type on every render, forcing React to unmount/remount the subtree.
+type ThemeColors = typeof bloombergColors.dark;
+
+function TopTabBar({
+  topTab,
+  setTopTab,
+  colors,
+}: { topTab: TopTab; setTopTab: (t: TopTab) => void; colors: ThemeColors }) {
+  return (
+    <div
+      className="flex items-center gap-px px-2 py-1 border-b overflow-x-auto"
+      style={{ borderColor: colors.border }}
+    >
+      {TOP_TABS.map((t, i) => (
+        <button
+          type="button"
+          key={t.id}
+          className="flex items-center gap-1 text-[9px] px-2.5 py-0.5 font-bold hover:opacity-80 whitespace-nowrap"
+          style={{
+            color: topTab === t.id ? colors.accent : colors.textSecondary,
+            borderBottom: topTab === t.id ? `2px solid ${colors.accent}` : "2px solid transparent",
+          }}
+          onClick={() => setTopTab(t.id)}
+          title={`Alt+${i + 1}`}
+        >
+          <span
+            className="text-[7px] opacity-35 hidden sm:inline mr-0.5"
+            style={{ color: topTab === t.id ? colors.accent : colors.textSecondary }}
+          >
+            ⌥{i + 1}
+          </span>
+          {t.icon}
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SubTabBar<T extends string>({
+  tabs,
+  active,
+  setActive,
+  colors,
+}: {
+  tabs: { id: T; label: string; icon: React.ReactNode }[];
+  active: T;
+  setActive: (id: T) => void;
+  colors: ThemeColors;
+}) {
+  return (
+    <div
+      className="flex items-center gap-px px-3 py-0.5 border-b"
+      style={{ borderColor: colors.border, background: "#050505" }}
+    >
+      {tabs.map((t) => (
+        <button
+          type="button"
+          key={t.id}
+          className="flex items-center gap-1 text-[8px] px-2 py-0.5 font-bold hover:opacity-80 whitespace-nowrap"
+          style={{
+            color: active === t.id ? colors.accent : colors.textSecondary,
+            borderBottom: active === t.id ? `1px solid ${colors.accent}` : "1px solid transparent",
+          }}
+          onClick={() => setActive(t.id)}
+        >
+          {t.icon}
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function PortfolioView() {
   const [isDarkMode] = useAtom(isDarkModeAtom);
   const colors = isDarkMode ? bloombergColors.dark : bloombergColors.light;
@@ -237,70 +312,6 @@ export function PortfolioView() {
 
   const acctBtnCls = "flex items-center gap-1 text-[9px] px-2 py-1 font-bold border transition-all";
 
-  const TopTabBar = () => (
-    <div
-      className="flex items-center gap-px px-2 py-1 border-b overflow-x-auto"
-      style={{ borderColor: colors.border }}
-    >
-      {TOP_TABS.map((t, i) => (
-        <button
-          type="button"
-          key={t.id}
-          className="flex items-center gap-1 text-[9px] px-2.5 py-0.5 font-bold hover:opacity-80 whitespace-nowrap"
-          style={{
-            color: topTab === t.id ? colors.accent : colors.textSecondary,
-            borderBottom: topTab === t.id ? `2px solid ${colors.accent}` : "2px solid transparent",
-          }}
-          onClick={() => setTopTab(t.id)}
-          title={`Alt+${i + 1}`}
-        >
-          <span
-            className="text-[7px] opacity-35 hidden sm:inline mr-0.5"
-            style={{ color: topTab === t.id ? colors.accent : colors.textSecondary }}
-          >
-            ⌥{i + 1}
-          </span>
-          {t.icon}
-          {t.label}
-        </button>
-      ))}
-    </div>
-  );
-
-  function SubTabBar<T extends string>({
-    tabs,
-    active,
-    setActive,
-  }: {
-    tabs: { id: T; label: string; icon: React.ReactNode }[];
-    active: T;
-    setActive: (id: T) => void;
-  }) {
-    return (
-      <div
-        className="flex items-center gap-px px-3 py-0.5 border-b"
-        style={{ borderColor: colors.border, background: "#050505" }}
-      >
-        {tabs.map((t) => (
-          <button
-            type="button"
-            key={t.id}
-            className="flex items-center gap-1 text-[8px] px-2 py-0.5 font-bold hover:opacity-80 whitespace-nowrap"
-            style={{
-              color: active === t.id ? colors.accent : colors.textSecondary,
-              borderBottom:
-                active === t.id ? `1px solid ${colors.accent}` : "1px solid transparent",
-            }}
-            onClick={() => setActive(t.id)}
-          >
-            {t.icon}
-            {t.label}
-          </button>
-        ))}
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col h-full" style={{ background: "#000", color: colors.text }}>
       {/* Account row */}
@@ -447,20 +458,30 @@ export function PortfolioView() {
       <SummaryBar summary={summary} currency={currency} colors={colors} />
 
       {/* Top tab bar */}
-      <TopTabBar />
+      <TopTabBar topTab={topTab} setTopTab={setTopTab} colors={colors} />
 
       {/* Sub-tab bar (context-sensitive) */}
       {topTab === "portfolio" && (
-        <SubTabBar tabs={PORTFOLIO_SUBS} active={portfolioSub} setActive={setPortfolioSub} />
+        <SubTabBar
+          tabs={PORTFOLIO_SUBS}
+          active={portfolioSub}
+          setActive={setPortfolioSub}
+          colors={colors}
+        />
       )}
       {topTab === "analytics" && (
-        <SubTabBar tabs={ANALYTICS_SUBS} active={analyticsSub} setActive={setAnalyticsSub} />
+        <SubTabBar
+          tabs={ANALYTICS_SUBS}
+          active={analyticsSub}
+          setActive={setAnalyticsSub}
+          colors={colors}
+        />
       )}
       {topTab === "tools" && (
-        <SubTabBar tabs={TOOLS_SUBS} active={toolsSub} setActive={setToolsSub} />
+        <SubTabBar tabs={TOOLS_SUBS} active={toolsSub} setActive={setToolsSub} colors={colors} />
       )}
       {topTab === "paper" && (
-        <SubTabBar tabs={PAPER_SUBS} active={paperSub} setActive={setPaperSub} />
+        <SubTabBar tabs={PAPER_SUBS} active={paperSub} setActive={setPaperSub} colors={colors} />
       )}
 
       {/* Content */}

@@ -144,7 +144,9 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
           <div className="flex justify-between">
             <span style={{ color: colors.textSecondary }}>Avg Entry</span>
             <span style={{ color: colors.text }}>
-              {target.acc_currency === "USD" ? "$" : "฿"}
+              {(target.currency || target.pos_currency || target.acc_currency) === "THB"
+                ? "฿"
+                : "$"}
               {fmt(effectiveAvgEntry, 4)}
             </span>
           </div>
@@ -159,7 +161,7 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
               }}
             >
               {target.current_price != null
-                ? `${target.acc_currency === "USD" ? "$" : "฿"}${fmt(target.current_price, 4)}`
+                ? `${(target.currency || target.pos_currency || target.acc_currency) === "THB" ? "฿" : "$"}${fmt(target.current_price, 4)}`
                 : "—"}
             </span>
           </div>
@@ -262,7 +264,8 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
                 return (
                   <span className="font-bold" style={{ color: pnl >= 0 ? "#4ade80" : "#f87171" }}>
                     {pnl >= 0 ? "+" : ""}
-                    {fmt(pnl, 2)} {target.acc_currency === "USD" ? "USD" : "THB"}
+                    {fmt(pnl, 2)}{" "}
+                    {target.currency || target.pos_currency || target.acc_currency || "THB"}
                   </span>
                 );
               })()}

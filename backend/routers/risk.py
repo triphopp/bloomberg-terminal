@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from cache import TTLCache
 from db import get_db
+from portfolio_currency import convert_amount, report_currency, trade_currency
 
 router = APIRouter(prefix="/api/v2/portfolio/risk")
 
@@ -88,6 +89,13 @@ def _get_yf_symbol(symbol: str, account_id: str) -> Optional[str]:
             return f"{sym[:-3]}-THB"
         return None
     return sym
+
+
+def _position_yf_symbol(row: dict) -> Optional[str]:
+    resolved = str(row.get("resolved_symbol") or "").strip().upper()
+    if resolved:
+        return resolved
+    return _get_yf_symbol(str(row.get("symbol") or ""), str(row.get("account_id") or ""))
 
 
 def _fetch_returns(symbols: list[str], days: int = 252) -> dict[str, np.ndarray]:
@@ -290,7 +298,9 @@ def _kupiec_pvalue(n_exceptions: int, n_obs: int, confidence: float) -> float:
 
 # ── Core Risk Computations ───────────────────────────────────────────────────
 
-def _compute_portfolio_risk(positions: list[dict], lookback: int, confidence: float):
+def _compute_portfolio_risk(
+    positions: list[dict], lookback: int, confidence: float, base_currency: str = "THB"
+):
     """
     Compute full risk metrics for a set of positions.
     Returns dict with all metrics.
@@ -309,12 +319,13 @@ def _compute_portfolio_risk(positions: list[dict], lookback: int, confidence: fl
     sym_to_yf: dict[str, str] = {}             # yf_sym → display name
 
     for pos in positions:
-        yf_sym = _get_yf_symbol(pos["symbol"], pos["account_id"])
+        yf_sym = _position_yf_symbol(pos)
         if not yf_sym:
             continue
         price = pos.get("current_price") or pos.get("price_entry", 0)
         vol = float(pos.get("volume", 0))
-        val = float(price or 0) * vol
+        native_val = float(price or 0) * vol
+        val = convert_amount(native_val, trade_currency(pos), report_currency(base_currency))
         if val > 0:
             sym_value_map[yf_sym] = sym_value_map.get(yf_sym, 0.0) + val
             if price:
@@ -476,6 +487,7 @@ def _compute_portfolio_risk(positions: list[dict], lookback: int, confidence: fl
 
     return {
         "portfolio_value": round(total_value, 2),
+        "base_currency": report_currency(base_currency),
         "n_positions": len(valid_syms),
         "lookback_days": min_len,
         "confidence": confidence,
@@ -583,13 +595,13 @@ def _compute_trim_signals(
         total_vol = _vol.get(sym, 0.0)
         entry_total = _entry_val.get(sym, 0.0)
         avg_entry_price = entry_total / total_vol if total_vol > 0 else 0.0
-        current_shares = round(current_value / current_price, 4) if current_price > 0 else None
+        current_shares = round(total_vol, 4) if total_vol > 0 else None
 
         if excess > 0.05:  # TRIM: >5pp above ERC target
             trim_fraction = min(excess / rc_i, 0.5)
             trim_pct = trim_fraction * 100
             trim_value = current_value * trim_fraction
-            shares_to_trim = round(trim_value / current_price, 4) if current_price > 0 else None
+            shares_to_trim = round(total_vol * trim_fraction, 4) if total_vol > 0 else None
 
             # P&L if sold at current price vs avg cost
             trim_pnl: float | None = None
@@ -621,7 +633,7 @@ def _compute_trim_signals(
             # Fraction of current position value to add to reach target
             buy_fraction = min(deficit / target_rc, 1.0)
             buy_value = current_value * buy_fraction
-            shares_to_buy = round(buy_value / current_price, 4) if current_price > 0 else None
+            shares_to_buy = round(total_vol * buy_fraction, 4) if total_vol > 0 else None
 
             signals.append({
                 "symbol": sym_map.get(sym, sym),
@@ -1164,6 +1176,7 @@ def get_risk_metrics(
     base_currency: str = Query("THB"),
 ):
     """Full risk analysis for portfolio. Supports per-account or all."""
+    base_currency = report_currency(base_currency)
     where = ["win_loss = 'P'"]
     params = []
     if account_id and account_id != "all":
@@ -1182,11 +1195,11 @@ def get_risk_metrics(
 
     # Enrich with current prices (reuse batch fetch from portfolio_v2)
     try:
-        from routers.portfolio_v2 import _batch_fetch_prices, _get_yf_symbol as pv2_yf
+        from routers.portfolio_v2 import _batch_fetch_prices
         yf_syms = []
         pos_yf = {}
         for i, pos in enumerate(positions):
-            yf_sym = pv2_yf(pos["symbol"], pos["account_id"])
+            yf_sym = _position_yf_symbol(pos)
             if yf_sym:
                 yf_syms.append(yf_sym)
                 pos_yf[i] = yf_sym
@@ -1200,7 +1213,7 @@ def get_risk_metrics(
     except Exception:
         pass
 
-    metrics = _compute_portfolio_risk(positions, lookback, confidence)
+    metrics = _compute_portfolio_risk(positions, lookback, confidence, base_currency)
 
     # Pop internal numpy array before JSON serialization
     port_returns_arr = metrics.pop("_port_returns", None)
@@ -1209,7 +1222,17 @@ def get_risk_metrics(
     regime = _get_market_regime()
 
     # Auto-save daily snapshot for EWS history (fire-and-forget, errors suppressed)
-    _save_risk_snapshot(metrics, account_id or "all", regime=regime)
+    # Snapshot values have historically been THB. Keep that invariant even
+    # when the caller asks the UI response to be reported in USD.
+    snapshot_metrics = metrics
+    if base_currency != "THB":
+        snapshot_metrics = {
+            **metrics,
+            "portfolio_value": convert_amount(
+                metrics.get("portfolio_value", 0), base_currency, "THB"
+            ),
+        }
+    _save_risk_snapshot(snapshot_metrics, account_id or "all", regime=regime)
 
     # One-time backfill of historical EWS from existing return series (background thread)
     if port_returns_arr is not None and len(port_returns_arr) > 42:
@@ -1230,7 +1253,9 @@ def get_risk_metrics(
             acct_groups[aid].append(pos)
 
         for aid, group in acct_groups.items():
-            acct_metrics = _compute_portfolio_risk(group, lookback, confidence)
+            acct_metrics = _compute_portfolio_risk(
+                group, lookback, confidence, base_currency
+            )
             account_breakdown[aid] = {
                 "portfolio_value": acct_metrics["portfolio_value"],
                 "var_parametric_pct": acct_metrics["var_parametric_pct"],
@@ -1312,10 +1337,10 @@ def get_capm(
 
     # Enrich with live prices (same shape handling as /metrics)
     try:
-        from routers.portfolio_v2 import _batch_fetch_prices, _get_yf_symbol as pv2_yf
+        from routers.portfolio_v2 import _batch_fetch_prices
         yf_syms, pos_yf = [], {}
         for i, pos in enumerate(positions):
-            yf_sym = pv2_yf(pos["symbol"], pos["account_id"])
+            yf_sym = _position_yf_symbol(pos)
             if yf_sym:
                 yf_syms.append(yf_sym)
                 pos_yf[i] = yf_sym
@@ -1436,9 +1461,19 @@ def get_position_size(
         # Auto-compute from open positions
         with get_db() as conn:
             rows = conn.execute(
-                "SELECT price_entry, volume FROM trades WHERE win_loss = 'P'"
+                """SELECT t.*, a.currency acc_currency FROM trades t
+                   JOIN portfolio_accounts a ON a.id = t.account_id
+                   WHERE t.win_loss = 'P' AND t.account_id = ?""",
+                (account_id,),
             ).fetchall()
-        portfolio_value = sum(float(r["price_entry"]) * float(r["volume"]) for r in rows)
+        portfolio_value = sum(
+            convert_amount(
+                float(r["price_entry"]) * float(r["volume"]),
+                trade_currency(dict(r)),
+                "THB",
+            )
+            for r in rows
+        )
 
     return _kelly_size(symbol, account_id, portfolio_value, max_risk_pct, kelly_fraction)
 
@@ -1457,7 +1492,8 @@ def get_risk_parity_allocation(
 
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT t.symbol, t.account_id, t.price_entry, t.volume, a.currency acc_currency "
+            "SELECT t.symbol, t.resolved_symbol, t.market, t.currency, t.account_id, "
+            "t.price_entry, t.volume, a.currency acc_currency "
             "FROM trades t JOIN portfolio_accounts a ON t.account_id = a.id "
             f"WHERE {' AND '.join(where)}",
             params,
@@ -1470,13 +1506,16 @@ def get_risk_parity_allocation(
     # Aggregate values by yf_symbol — fixes bug where duplicate positions were ignored
     sym_value_map: dict[str, float] = {}
     sym_name_map: dict[str, str] = {}
+    sym_currency_map: dict[str, str] = {}
     for pos in positions:
-        yf_sym = _get_yf_symbol(pos["symbol"], pos["account_id"])
+        yf_sym = _position_yf_symbol(pos)
         if yf_sym:
-            val = float(pos["price_entry"]) * float(pos["volume"])
+            native_val = float(pos["price_entry"]) * float(pos["volume"])
+            val = convert_amount(native_val, trade_currency(pos), "THB")
             if val > 0:
                 sym_value_map[yf_sym] = sym_value_map.get(yf_sym, 0.0) + val
                 sym_name_map[yf_sym] = pos["symbol"]
+                sym_currency_map[yf_sym] = trade_currency(pos)
 
     symbols = list(sym_value_map.keys())
     values = [sym_value_map[s] for s in symbols]
@@ -1519,8 +1558,12 @@ def get_risk_parity_allocation(
             action = "BUY" if drift > 0 else "TRIM"
             trade_val = drift * total
             yf_sym = valid_syms[i]
-            cur_price = price_map.get(yf_sym)
-            shares_change = round(trade_val / cur_price, 2) if cur_price and cur_price > 0 else None
+            snap = price_map.get(yf_sym)
+            cur_price = snap.get("price") if isinstance(snap, dict) else snap
+            price_base = convert_amount(
+                float(cur_price or 0), sym_currency_map.get(yf_sym, "THB"), "THB"
+            )
+            shares_change = round(trade_val / price_base, 2) if price_base > 0 else None
             actions.append({
                 "symbol": sym_names[idx],
                 "action": action,
@@ -1573,7 +1616,8 @@ def stress_test(
 
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT t.symbol, t.account_id, t.price_entry, t.volume, "
+            "SELECT t.symbol, t.resolved_symbol, t.market, t.currency, "
+            "t.account_id, t.price_entry, t.volume, "
             "a.currency acc_currency "
             "FROM trades t JOIN portfolio_accounts a ON t.account_id = a.id "
             f"WHERE {' AND '.join(where)}",
@@ -1586,9 +1630,14 @@ def stress_test(
 
     thb_per_usd = _get_thb_per_usd()
 
-    # Compute total portfolio value once (use price_entry as cost basis)
+    # Common THB denominator is mandatory for mixed-market portfolios.
     total_value = sum(
-        float(pos["price_entry"] or 0) * float(pos["volume"])
+        convert_amount(
+            float(pos["price_entry"] or 0) * float(pos["volume"]),
+            trade_currency(pos),
+            "THB",
+            stored_thb_rate=thb_per_usd,
+        )
         for pos in positions
     )
     if total_value <= 0:
@@ -1601,16 +1650,16 @@ def stress_test(
             price = float(pos["price_entry"] or 0)
             vol = float(pos["volume"])
             val = price * vol
+            pos_ccy = trade_currency(pos)
+            val_thb = convert_amount(val, pos_ccy, "THB", stored_thb_rate=thb_per_usd)
 
-            aid = pos["account_id"]
-            shock = sc["crypto"] if aid == "innovestx" else sc["equity"]
+            is_crypto = str(pos.get("market") or "").upper() == "CRYPTO" or "-" in str(pos.get("resolved_symbol") or "")
+            shock = sc["crypto"] if is_crypto else sc["equity"]
 
-            loss = val * shock
-            if pos["acc_currency"] == "USD":
-                # USD loss converted to THB + FX impact (THB weakens vs USD)
-                loss_thb = (loss * thb_per_usd) + (val * sc["fx_thb"])
-            else:
-                loss_thb = loss
+            loss_thb = val_thb * shock
+            if pos_ccy in ("USD", "USDT"):
+                # Positive fx_thb means THB weakens, partly cushioning USD losses.
+                loss_thb += val_thb * sc["fx_thb"]
 
             total_loss += loss_thb
 
