@@ -13,8 +13,16 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
   const [loading, setLoading] = useState(false);
   const [subTab, setSubTab] = useState<"cash" | "dividends" | "reinvest">("cash");
   const [showForm, setShowForm] = useState(false);
+  const [showTransferForm, setShowTransferForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [cashForm, setCashForm] = useState<Omit<CashEntry, "id">>(BLANK_CASH);
+  const [transferForm, setTransferForm] = useState({
+    from_account_id: "finansia",
+    to_account_id: "dime",
+    date: new Date().toISOString().slice(0, 10),
+    amount: 0,
+    note: "",
+  });
   const [divForm, setDivForm] = useState<Omit<Dividend, "id">>(BLANK_DIV);
   const [saving, setSaving] = useState(false);
   const [deleteCashTarget, setDeleteCashTarget] = useState<CashEntry | null>(null);
@@ -26,6 +34,7 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
       amount_per_unit: number;
       ex_date: string;
       pay_date: string;
+      currency: string;
     }[]
   >([]);
   const [suggestLoading, setSuggestLoading] = useState(false);
@@ -102,13 +111,26 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
       reinvest_asset: "",
       reinvest_price: 0,
       reinvest_units: 0,
+      currency: s.currency || "THB",
     });
   }, []);
 
   const totalIn = cash.reduce((a, c) => a + c.income, 0);
   const totalInv = cash.reduce((a, c) => a + c.investment, 0);
-  const totalDiv = dividends.reduce((a, d) => a + d.total_received, 0);
-  const totalReinvest = dividends.reduce((a, d) => a + (d.reinvested_amount || 0), 0);
+  const totalDiv = dividends.reduce<Record<string, number>>((a, d) => {
+    a[d.currency || "THB"] = (a[d.currency || "THB"] || 0) + d.total_received;
+    return a;
+  }, {});
+  const totalReinvest = dividends.reduce<Record<string, number>>((a, d) => {
+    a[d.currency || "THB"] = (a[d.currency || "THB"] || 0) + (d.reinvested_amount || 0);
+    return a;
+  }, {});
+  const money = (amount: number, ccy: string) => `${ccy === "THB" ? "฿" : "$"}${fmtK(amount)}`;
+  const mixedMoney = (values: Record<string, number>) =>
+    Object.entries(values)
+      .filter(([, value]) => value !== 0)
+      .map(([ccy, value]) => money(value, ccy))
+      .join(" / ") || "—";
 
   const saveCash = async () => {
     if (!cashForm.date) return;
@@ -136,6 +158,26 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
     await fetch(`/api/v2/portfolio/cash/${id}`, { method: "DELETE" });
     setDeleteCashTarget(null);
     load();
+  };
+
+  const saveTransfer = async () => {
+    if (!transferForm.date || transferForm.amount <= 0) return;
+    if (transferForm.from_account_id === transferForm.to_account_id) return;
+    setSaving(true);
+    try {
+      await fetch("/api/v2/portfolio/cash/transfer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(transferForm),
+      });
+      setShowTransferForm(false);
+      setTransferForm((f) => ({ ...f, amount: 0, note: "" }));
+      load();
+    } catch {
+      /* ignore */
+    } finally {
+      setSaving(false);
+    }
   };
 
   const editCash = (c: CashEntry) => {
@@ -192,6 +234,7 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
       reinvest_asset: d.reinvest_asset || "",
       reinvest_price: d.reinvest_price || 0,
       reinvest_units: d.reinvest_units || 0,
+      currency: d.currency || "THB",
     });
     setEditId(d.id);
     setShowForm(true);
@@ -238,6 +281,7 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
           type="button"
           onClick={() => {
             setShowForm(!showForm);
+            setShowTransferForm(false);
             setEditId(null);
             setCashForm(BLANK_CASH);
             setDivForm(BLANK_DIV);
@@ -247,6 +291,24 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
         >
           + ADD
         </button>
+        {subTab === "cash" && (
+          <button
+            type="button"
+            onClick={() => {
+              setShowTransferForm(!showTransferForm);
+              setShowForm(false);
+              setEditId(null);
+            }}
+            className="text-[9px] px-2 py-0.5 border font-bold"
+            style={{
+              borderColor: "#60a5fa",
+              color: showTransferForm ? "#000" : "#60a5fa",
+              background: showTransferForm ? "#60a5fa" : "transparent",
+            }}
+          >
+            ⇄ TRANSFER
+          </button>
+        )}
         <div className="ml-auto flex gap-3 text-[9px] font-mono flex-wrap">
           <span style={{ color: colors.textSecondary }}>
             IN: <span style={{ color: "#4ade80" }}>฿{fmtK(totalIn)}</span>
@@ -255,11 +317,11 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
             INV: <span style={{ color: "#f87171" }}>฿{fmtK(totalInv)}</span>
           </span>
           <span style={{ color: colors.textSecondary }}>
-            DIV: <span style={{ color: "#60a5fa" }}>฿{fmtK(totalDiv)}</span>
+            DIV: <span style={{ color: "#60a5fa" }}>{mixedMoney(totalDiv)}</span>
           </span>
-          {totalReinvest > 0 && (
+          {Object.values(totalReinvest).some((value) => value > 0) && (
             <span style={{ color: colors.textSecondary }}>
-              REINV: <span style={{ color: "#c084fc" }}>฿{fmtK(totalReinvest)}</span>
+              REINV: <span style={{ color: "#c084fc" }}>{mixedMoney(totalReinvest)}</span>
             </span>
           )}
         </div>
@@ -294,8 +356,8 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
               className="text-[8px] px-2 py-0.5 border font-mono hover:opacity-80"
               style={{ borderColor: "#60a5fa33", color: "#60a5fa", background: "#60a5fa08" }}
             >
-              {s.asset} ฿{s.amount_per_unit.toFixed(4)}{" "}
-              <span style={{ color: "#555" }}>{s.ex_date}</span>
+              {s.asset} {s.currency === "THB" ? "฿" : "$"}
+              {s.amount_per_unit.toFixed(4)} <span style={{ color: "#555" }}>{s.ex_date}</span>
             </button>
           ))}
           <button
@@ -436,6 +498,135 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
         </div>
       )}
 
+      {/* TRANSFER FORM */}
+      {showTransferForm && subTab === "cash" && (
+        <div
+          className="px-3 py-2 border-b"
+          style={{ borderColor: colors.border, background: "#080808" }}
+        >
+          <div className="text-[9px] font-bold mb-1.5" style={{ color: "#60a5fa" }}>
+            TRANSFER BETWEEN ACCOUNTS
+          </div>
+          <div className="grid grid-cols-6 gap-2">
+            <div>
+              <label
+                htmlFor="tr-from"
+                className="text-[8px]"
+                style={{ color: colors.textSecondary }}
+              >
+                FROM
+              </label>
+              <select
+                id="tr-from"
+                style={inputStyle}
+                value={transferForm.from_account_id}
+                onChange={(e) =>
+                  setTransferForm((f) => ({ ...f, from_account_id: e.target.value }))
+                }
+              >
+                <option value="finansia">Finansia</option>
+                <option value="dime">Dime</option>
+                <option value="innovestx">InnovestX</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="tr-to" className="text-[8px]" style={{ color: colors.textSecondary }}>
+                TO
+              </label>
+              <select
+                id="tr-to"
+                style={inputStyle}
+                value={transferForm.to_account_id}
+                onChange={(e) => setTransferForm((f) => ({ ...f, to_account_id: e.target.value }))}
+              >
+                <option value="finansia">Finansia</option>
+                <option value="dime">Dime</option>
+                <option value="innovestx">InnovestX</option>
+              </select>
+            </div>
+            <div>
+              <label
+                htmlFor="tr-date"
+                className="text-[8px]"
+                style={{ color: colors.textSecondary }}
+              >
+                DATE
+              </label>
+              <input
+                id="tr-date"
+                type="date"
+                style={inputStyle}
+                value={transferForm.date}
+                onChange={(e) => setTransferForm((f) => ({ ...f, date: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="tr-amount"
+                className="text-[8px]"
+                style={{ color: colors.textSecondary }}
+              >
+                AMOUNT
+              </label>
+              <input
+                id="tr-amount"
+                type="number"
+                style={inputStyle}
+                value={transferForm.amount || ""}
+                onChange={(e) =>
+                  setTransferForm((f) => ({ ...f, amount: Number.parseFloat(e.target.value) || 0 }))
+                }
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="tr-note"
+                className="text-[8px]"
+                style={{ color: colors.textSecondary }}
+              >
+                NOTE
+              </label>
+              <input
+                id="tr-note"
+                style={inputStyle}
+                value={transferForm.note}
+                onChange={(e) => setTransferForm((f) => ({ ...f, note: e.target.value }))}
+                placeholder="optional"
+              />
+            </div>
+            <div className="flex items-end gap-1">
+              <button
+                type="button"
+                onClick={saveTransfer}
+                disabled={
+                  saving ||
+                  !transferForm.date ||
+                  transferForm.amount <= 0 ||
+                  transferForm.from_account_id === transferForm.to_account_id
+                }
+                className="text-[9px] px-3 py-1 font-bold"
+                style={{ background: "#60a5fa", color: "#000" }}
+              >
+                {saving ? "..." : "TRANSFER"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowTransferForm(false)}
+                className="text-[9px] px-2 py-1 font-bold"
+                style={{ color: colors.textSecondary, border: `1px solid ${colors.border}` }}
+              >
+                CANCEL
+              </button>
+            </div>
+          </div>
+          {transferForm.from_account_id === transferForm.to_account_id && (
+            <div className="text-[8px] mt-1" style={{ color: "#f87171" }}>
+              FROM and TO must differ
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ADD / EDIT FORM — Dividends */}
       {showForm && (subTab === "dividends" || subTab === "reinvest") && (
         <div
@@ -445,7 +636,7 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
           <div className="text-[9px] font-bold mb-1.5" style={{ color: colors.accent }}>
             {editId ? "EDIT DIVIDEND" : "ADD DIVIDEND"}
           </div>
-          <div className="grid grid-cols-5 gap-2 mb-1.5">
+          <div className="grid grid-cols-6 gap-2 mb-1.5">
             <div>
               <label
                 htmlFor="div-account"
@@ -480,6 +671,25 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
                 onChange={(e) => setDivForm((f) => ({ ...f, asset: e.target.value.toUpperCase() }))}
                 placeholder="SCB"
               />
+            </div>
+            <div>
+              <label
+                htmlFor="div-currency"
+                className="text-[8px]"
+                style={{ color: colors.textSecondary }}
+              >
+                CURRENCY
+              </label>
+              <select
+                id="div-currency"
+                style={inputStyle}
+                value={divForm.currency}
+                onChange={(e) => setDivForm((f) => ({ ...f, currency: e.target.value }))}
+              >
+                <option value="THB">THB ฿</option>
+                <option value="USD">USD $</option>
+                <option value="USDT">USDT $</option>
+              </select>
             </div>
             <div>
               <label
@@ -706,8 +916,11 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
                       {c.date}
                     </td>
                     <td className="px-2 py-1">{c.account_id}</td>
-                    <td className="px-2 py-1 text-[8px]" style={{ color: "#555" }}>
-                      {c.note || "—"}
+                    <td
+                      className="px-2 py-1 text-[8px]"
+                      style={{ color: c.entry_type === "TRANSFER" ? "#60a5fa" : "#555" }}
+                    >
+                      {c.entry_type === "TRANSFER" ? `⇄ ${c.note || "TRANSFER"}` : c.note || "—"}
                     </td>
                     <td className="px-2 py-1" style={{ color: "#4ade80" }}>
                       {c.income > 0 ? `฿${fmtK(c.income)}` : "—"}
@@ -792,9 +1005,12 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
                   <td className="px-2 py-1" style={{ color: colors.textSecondary }}>
                     {d.pay_date || "—"}
                   </td>
-                  <td className="px-2 py-1">฿{d.amount_per_unit.toFixed(4)}</td>
+                  <td className="px-2 py-1">
+                    {d.currency === "THB" ? "฿" : "$"}
+                    {d.amount_per_unit.toFixed(4)}
+                  </td>
                   <td className="px-2 py-1 font-bold" style={{ color: "#4ade80" }}>
-                    ฿{fmtK(d.total_received)}
+                    {money(d.total_received, d.currency)}
                   </td>
                   <td className="px-2 py-1 whitespace-nowrap opacity-60 group-hover:opacity-100">
                     <button
@@ -876,16 +1092,16 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
                       {d.pay_date || "—"}
                     </td>
                     <td className="px-2 py-1" style={{ color: "#4ade80" }}>
-                      ฿{fmtK(d.total_received)}
+                      {money(d.total_received, d.currency)}
                     </td>
                     <td className="px-2 py-1 font-bold" style={{ color: "#c084fc" }}>
-                      ฿{fmtK(d.reinvested_amount)}
+                      {money(d.reinvested_amount, d.currency)}
                     </td>
                     <td className="px-2 py-1 font-bold" style={{ color: colors.accent }}>
                       {d.reinvest_asset || "—"}
                     </td>
                     <td className="px-2 py-1">
-                      ฿{d.reinvest_price > 0 ? d.reinvest_price.toFixed(2) : "—"}
+                      {d.reinvest_price > 0 ? money(d.reinvest_price, d.currency) : "—"}
                     </td>
                     <td className="px-2 py-1">
                       {d.reinvest_units > 0 ? d.reinvest_units.toFixed(4) : "—"}
@@ -918,7 +1134,11 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
       {deleteCashTarget && (
         <ConfirmDeleteModal
           title="DELETE CASH FLOW"
-          message={`Delete ${deleteCashTarget.date} entry (${deleteCashTarget.account_id})? This cannot be undone.`}
+          message={
+            deleteCashTarget.entry_type === "TRANSFER"
+              ? `Delete ${deleteCashTarget.date} transfer (${deleteCashTarget.account_id})? This deletes BOTH linked rows. Cannot be undone.`
+              : `Delete ${deleteCashTarget.date} entry (${deleteCashTarget.account_id})? This cannot be undone.`
+          }
           colors={colors}
           onCancel={() => setDeleteCashTarget(null)}
           onConfirm={() => deleteCash(deleteCashTarget.id)}
