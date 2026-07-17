@@ -90,9 +90,7 @@ export function AnalyticsTab({
       try {
         const qs = new URLSearchParams({ base_currency: currency });
         if (accountId !== "all") qs.set("account_id", accountId);
-        const capmQs = new URLSearchParams({ benchmark, lookback: String(lookback) });
-        if (accountId !== "all") capmQs.set("account_id", accountId);
-        const [ar, dr, op, nv, cp, rt] = await Promise.all([
+        const [ar, dr, op, nv, rt] = await Promise.all([
           fetch(`/api/v2/portfolio/analytics?${qs}`, { signal }).then((r) => {
             if (!r.ok) throw new Error();
             return r.json();
@@ -109,9 +107,6 @@ export function AnalyticsTab({
             if (!r.ok) throw new Error();
             return r.json();
           }),
-          fetch(`/api/v2/portfolio/risk/capm?${capmQs}`, { signal })
-            .then((r) => (r.ok ? r.json() : null))
-            .catch(() => null),
           fetch(`/api/v2/portfolio/returns?${qs}`, { signal })
             .then((r) => (r.ok ? r.json() : null))
             .catch(() => null),
@@ -120,7 +115,6 @@ export function AnalyticsTab({
         setDividends(Array.isArray(dr) ? dr : []);
         setOpenPos(Array.isArray(op?.positions) ? op.positions : []);
         setNavHistory(Array.isArray(nv) ? nv : []);
-        setCapm(cp && !cp.error ? cp : null);
         setRets(rt && !rt.error ? rt : null);
       } catch (e) {
         if ((e as Error)?.name === "AbortError") return;
@@ -128,7 +122,7 @@ export function AnalyticsTab({
         setLoading(false);
       }
     },
-    [accountId, currency, benchmark, lookback]
+    [accountId, currency]
   );
 
   useEffect(() => {
@@ -136,6 +130,19 @@ export function AnalyticsTab({
     load(ac.signal);
     return () => ac.abort();
   }, [load]);
+
+  // CAPM fetched separately — benchmark/lookback toggles must not refetch the
+  // other five endpoints above.
+  useEffect(() => {
+    const ac = new AbortController();
+    const capmQs = new URLSearchParams({ benchmark, lookback: String(lookback) });
+    if (accountId !== "all") capmQs.set("account_id", accountId);
+    fetch(`/api/v2/portfolio/risk/capm?${capmQs}`, { signal: ac.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((cp) => setCapm(cp && !cp.error ? cp : null))
+      .catch(() => {});
+    return () => ac.abort();
+  }, [accountId, benchmark, lookback]);
 
   const thb_per_usd = summary?.thb_per_usd ?? 33.5;
   const sym = currency === "THB" ? "฿" : "$";
@@ -149,22 +156,28 @@ export function AnalyticsTab({
   };
   const tooltipLabelStyle = { color: "#e5e5e5" };
   const tooltipItemStyle = { color: "#e5e5e5" };
+  const economicPnlTitle =
+    "Economic realized P&L = (entry cost + native P&L) × exit FX − entry cost × entry FX. Uses stored trade FX when available, otherwise dated market FX estimate. Includes principal FX attribution; broker-style realized P&L excludes it.";
 
   const monthData = (analytics?.by_month ?? []).map((m) => ({
     month: m.month,
     pnl: m.pnl,
+    economic_pnl: m.economic_pnl ?? m.pnl,
     win_rate: m.win_rate,
   }));
 
   const cumulativeData = useMemo(() => {
     let cum = 0;
+    let economicCum = 0;
     return monthData.map((m) => {
       cum += m.pnl;
-      return { month: m.month, cumPnl: cum };
+      economicCum += m.economic_pnl;
+      return { month: m.month, cumPnl: cum, economicCumPnl: economicCum };
     });
   }, [monthData]);
 
   const totalPnl = cumulativeData.at(-1)?.cumPnl ?? 0;
+  const totalEconomicPnl = cumulativeData.at(-1)?.economicCumPnl ?? totalPnl;
 
   const divByMonth = useMemo(() => {
     const map: Record<string, number> = {};
@@ -183,7 +196,7 @@ export function AnalyticsTab({
       } else {
         key = raw.slice(0, 7);
       }
-      map[key] = (map[key] || 0) + d.total_received;
+      map[key] = (map[key] || 0) + (d.total_received_base ?? d.total_received);
     });
     return Object.entries(map)
       .sort()
@@ -197,28 +210,42 @@ export function AnalyticsTab({
   const filteredStats =
     accountId === "all" ? accStats : accStats.filter((a) => a.account.id === accountId);
 
-  // Capital snapshot — everything normalised to THB base, then shown in the active currency.
+  // Capital snapshot — backend has already normalized every component to the active report currency.
   const capital = useMemo(() => {
     const realized = filteredStats.reduce((s, a) => s + (a.pnl_base ?? 0), 0);
-    const invested = filteredStats.reduce((s, a) => s + (a.total_invested ?? 0), 0);
-    const dividends = filteredStats.reduce((s, a) => s + (a.total_dividends ?? 0), 0);
+    const economicRealized = filteredStats.reduce(
+      (s, a) => s + (a.pnl_economic_base ?? a.pnl_base ?? 0),
+      0
+    );
+    const invested = filteredStats.reduce(
+      (s, a) => s + (a.total_invested_base ?? a.total_invested ?? 0),
+      0
+    );
+    const dividends = filteredStats.reduce(
+      (s, a) => s + (a.total_dividends_base ?? a.total_dividends ?? 0),
+      0
+    );
     let unrealized = 0;
     let openCost = 0;
     for (const p of openPos) {
-      unrealized += p.unrealized_pnl_thb ?? 0;
-      const costNative = p.amount ?? p.price_entry * p.volume;
-      openCost += p.acc_currency === "USD" ? costNative * thb_per_usd : costNative;
+      unrealized += p.unrealized_pnl_base ?? p.unrealized_pnl_thb ?? 0;
+      openCost += p.cost_basis_base ?? p.amount ?? p.price_entry * p.volume;
     }
+    const cash = invested + realized + dividends - openCost;
     return {
       realized,
+      economicRealized,
       unrealized,
       totalPnl: realized + unrealized,
+      economicTotalPnl: economicRealized + unrealized,
       openCost,
       marketValue: openCost + unrealized,
+      marketValueWithCash: openCost + unrealized + cash,
       invested,
       dividends,
+      cash,
     };
-  }, [filteredStats, openPos, thb_per_usd]);
+  }, [filteredStats, openPos]);
 
   // Per-account unrealized P&L + open cost basis (THB base), keyed by account id.
   const perAcctOpen = useMemo(() => {
@@ -226,21 +253,20 @@ export function AnalyticsTab({
     for (const p of openPos) {
       const aid = p.account_id;
       if (!map[aid]) map[aid] = { unreal: 0, openCost: 0 };
-      map[aid].unreal += p.unrealized_pnl_thb ?? 0;
-      const costNative = p.amount ?? p.price_entry * p.volume;
-      map[aid].openCost += p.acc_currency === "USD" ? costNative * thb_per_usd : costNative;
+      map[aid].unreal += p.unrealized_pnl_base ?? p.unrealized_pnl_thb ?? 0;
+      map[aid].openCost += p.cost_basis_base ?? p.amount ?? p.price_entry * p.volume;
     }
     return map;
-  }, [openPos, thb_per_usd]);
+  }, [openPos]);
 
   // Total-return % per account: (realized + unrealized + dividends) / capital base.
   // Base = net deposits when available, else deployed cost basis. THB throughout.
   const acctReturn = (s: (typeof filteredStats)[number]) => {
     const realized = s.pnl_base ?? 0;
-    const dividends = s.total_dividends ?? 0;
+    const dividends = s.total_dividends_base ?? s.total_dividends ?? 0;
     const open = perAcctOpen[s.account.id] ?? { unreal: 0, openCost: 0 };
     const totalPnl = realized + open.unreal + dividends;
-    const invested = s.total_invested ?? 0;
+    const invested = s.total_invested_base ?? s.total_invested ?? 0;
     const base = invested > 0 ? invested : open.openCost;
     return {
       totalPnl,
@@ -257,6 +283,69 @@ export function AnalyticsTab({
     value: toDisp(r.total_value ?? 0),
     cost: toDisp(r.open_cost_basis ?? 0),
   }));
+
+  const capitalTiles: Array<{
+    label: string;
+    value: number;
+    tone: "pnl" | "pos" | "neutral";
+    hint: string;
+    title?: string;
+    secondaryLabel?: string;
+    secondaryValue?: number;
+    secondaryTitle?: string;
+  }> = [
+    {
+      label: "REALIZED P&L",
+      value: capital.realized,
+      tone: "pnl",
+      hint: "closed · broker-style",
+      title:
+        "Realized trading P&L = native closed-trade P&L × exit-date FX. Excludes principal FX attribution.",
+      secondaryLabel: "ECON",
+      secondaryValue: capital.economicRealized,
+      secondaryTitle: economicPnlTitle,
+    },
+    { label: "UNREALIZED P&L", value: capital.unrealized, tone: "pnl", hint: "open" },
+    {
+      label: "TOTAL P&L",
+      value: capital.totalPnl,
+      tone: "pnl",
+      hint: "realized + unrealized",
+      secondaryLabel: "ECON TOTAL",
+      secondaryValue: capital.economicTotalPnl,
+      secondaryTitle: `${economicPnlTitle} Total economic P&L adds current unrealized P&L.`,
+    },
+    { label: "DIVIDENDS", value: capital.dividends, tone: "pos", hint: "received" },
+    {
+      label: "OPEN COST BASIS",
+      value: capital.openCost,
+      tone: "neutral",
+      hint: "capital deployed",
+    },
+    {
+      label: "MARKET VALUE",
+      value: capital.marketValue,
+      tone: "neutral",
+      hint: "cost + unrealized",
+      secondaryLabel: "+ CASH",
+      secondaryValue: capital.marketValueWithCash,
+      secondaryTitle: "Market value including estimated idle cash (see CASH tile).",
+    },
+    {
+      label: "CASH",
+      value: capital.cash,
+      tone: "pnl",
+      hint: "calculated · not tracked directly",
+      title:
+        "Approximate idle cash = invested capital + realized P&L + dividends − open cost basis. Does not account for untracked commissions/fees, so treat as an estimate.",
+    },
+    {
+      label: "INVESTED CAPITAL",
+      value: capital.invested,
+      tone: "neutral",
+      hint: "deposits",
+    },
+  ];
 
   return (
     <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 220px)" }}>
@@ -290,7 +379,10 @@ export function AnalyticsTab({
                 {fmtK(Math.abs(s.pnl_native))} {s.pnl_native >= 0 ? "▲" : "▼"}
               </span>
               <span style={{ color: colors.textSecondary }}>Dividends</span>
-              <span style={{ color: "#4ade80" }}>฿{fmtK(s.total_dividends)}</span>
+              <span style={{ color: "#4ade80" }}>
+                {s.account.currency === "THB" ? "฿" : "$"}
+                {fmtK(s.total_dividends)}
+              </span>
               {(() => {
                 const r = acctReturn(s);
                 const realized = s.pnl_base ?? 0;
@@ -389,52 +481,41 @@ export function AnalyticsTab({
             CAPITAL BREAKDOWN
           </div>
           <div className="grid gap-px" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-            {(
-              [
-                { label: "REALIZED P&L", value: capital.realized, tone: "pnl", hint: "closed" },
-                { label: "UNREALIZED P&L", value: capital.unrealized, tone: "pnl", hint: "open" },
-                {
-                  label: "TOTAL P&L",
-                  value: capital.totalPnl,
-                  tone: "pnl",
-                  hint: "realized + unrealized",
-                },
-                { label: "DIVIDENDS", value: capital.dividends, tone: "pos", hint: "received" },
-                {
-                  label: "OPEN COST BASIS",
-                  value: capital.openCost,
-                  tone: "neutral",
-                  hint: "capital deployed",
-                },
-                {
-                  label: "MARKET VALUE",
-                  value: capital.marketValue,
-                  tone: "neutral",
-                  hint: "cost + unrealized",
-                },
-                {
-                  label: "INVESTED CAPITAL",
-                  value: capital.invested,
-                  tone: "neutral",
-                  hint: "deposits",
-                },
-              ] as const
-            ).map((t) => {
+            {capitalTiles.map((t) => {
               const color =
                 t.tone === "pnl" ? pnlColor(t.value) : t.tone === "pos" ? "#4ade80" : "#e5e5e5";
               return (
-                <div key={t.label} className="p-2" style={{ background: "#080808" }}>
+                <div
+                  key={t.label}
+                  className="p-2"
+                  style={{ background: "#080808" }}
+                  title={t.title}
+                >
                   <div className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
                     {t.label}
                   </div>
                   <div className="text-[11px] font-mono font-bold mt-0.5" style={{ color }}>
                     {sym}
-                    {fmtK(Math.abs(toDisp(t.value)))}
+                    {fmtK(Math.abs(t.value))}
                     {t.tone === "pnl" ? (t.value >= 0 ? " ▲" : " ▼") : ""}
                   </div>
                   <div className="text-[7px] font-mono mt-0.5" style={{ color: "#555" }}>
                     {t.hint}
                   </div>
+                  {t.secondaryValue != null && (
+                    <div
+                      className="text-[7px] font-mono mt-1"
+                      style={{ color: colors.textSecondary }}
+                      title={t.secondaryTitle}
+                    >
+                      {t.secondaryLabel}{" "}
+                      <span style={{ color: pnlColor(t.secondaryValue) }}>
+                        {sym}
+                        {fmtK(Math.abs(t.secondaryValue))}
+                        {t.secondaryValue >= 0 ? " ▲" : " ▼"}
+                      </span>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -467,7 +548,7 @@ export function AnalyticsTab({
                     : `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% ${pct >= 0 ? "▲" : "▼"}`}
                   <span className="ml-2 text-[9px]" style={{ color: colors.textSecondary }}>
                     {sym}
-                    {fmtK(Math.abs(toDisp(totalPnl)))}
+                    {fmtK(Math.abs(totalPnl))}
                   </span>
                 </span>
               </div>
@@ -497,7 +578,7 @@ export function AnalyticsTab({
                     : `${realizedPct >= 0 ? "+" : ""}${realizedPct.toFixed(2)}%`}
                   <span className="ml-2 text-[9px]" style={{ color: colors.textSecondary }}>
                     {sym}
-                    {fmtK(Math.abs(toDisp(capital.realized)))}
+                    {fmtK(Math.abs(capital.realized))}
                   </span>
                 </span>
               </div>
@@ -516,13 +597,26 @@ export function AnalyticsTab({
                 </span>
               </span>
               <span
-                className="text-[11px] font-mono font-bold"
+                className="text-right font-mono"
                 style={{ color: pnlColor(summary.total_ytd_realized_base) }}
               >
-                {summary.total_ytd_realized_base >= 0 ? "+" : ""}
-                {sym}
-                {fmtK(Math.abs(toDisp(summary.total_ytd_realized_base)))}
-                {summary.total_ytd_realized_base >= 0 ? " ▲" : " ▼"}
+                <span className="text-[11px] font-bold">
+                  {summary.total_ytd_realized_base >= 0 ? "+" : ""}
+                  {sym}
+                  {fmtK(Math.abs(summary.total_ytd_realized_base))}
+                  {summary.total_ytd_realized_base >= 0 ? " ▲" : " ▼"}
+                </span>
+                {summary.total_ytd_economic_realized_base != null && (
+                  <span
+                    className="block text-[7px] font-normal"
+                    style={{ color: colors.textSecondary }}
+                    title={economicPnlTitle}
+                  >
+                    ECON {sym}
+                    {fmtK(Math.abs(summary.total_ytd_economic_realized_base))}
+                    {summary.total_ytd_economic_realized_base >= 0 ? " ▲" : " ▼"}
+                  </span>
+                )}
               </span>
             </div>
           )}
@@ -802,11 +896,30 @@ export function AnalyticsTab({
                   tickFormatter={(v) => fmtK(v)}
                 />
                 <Tooltip
-                  contentStyle={tooltipContentStyle}
-                  labelStyle={tooltipLabelStyle}
-                  itemStyle={tooltipItemStyle}
-                  // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
-                  formatter={(v: any) => [`${sym}${fmtK(v)}`, "P&L"]}
+                  content={({ active, payload, label }) => {
+                    const row = payload?.[0]?.payload as
+                      | { pnl?: number; economic_pnl?: number }
+                      | undefined;
+                    if (!active || !row) return null;
+                    const pnl = row.pnl ?? 0;
+                    const economicPnl = row.economic_pnl ?? pnl;
+                    return (
+                      <div style={tooltipContentStyle}>
+                        <div style={tooltipLabelStyle}>{label}</div>
+                        <div style={{ color: pnlColor(pnl) }}>
+                          P&L {sym}
+                          {fmtK(Math.abs(pnl))} {pnl >= 0 ? "▲" : "▼"}
+                        </div>
+                        <div style={{ color: pnlColor(economicPnl) }}>
+                          ECON {sym}
+                          {fmtK(Math.abs(economicPnl))} {economicPnl >= 0 ? "▲" : "▼"}
+                        </div>
+                        <div style={{ color: "#888", maxWidth: 260 }}>
+                          Formula: (entry cost + native P&L) × exit FX − entry cost × entry FX
+                        </div>
+                      </div>
+                    );
+                  }}
                 />
                 <ReferenceLine y={0} stroke="#444" />
                 <Bar dataKey="pnl" radius={[2, 2, 0, 0]}>
@@ -898,8 +1011,18 @@ export function AnalyticsTab({
                       {m.month}
                     </td>
                     <td className="text-right py-0.5 font-bold" style={{ color: pnlColor(m.pnl) }}>
-                      {sym}
-                      {fmtK(Math.abs(m.pnl))} {m.pnl >= 0 ? "▲" : "▼"}
+                      <div>
+                        {sym}
+                        {fmtK(Math.abs(m.pnl))} {m.pnl >= 0 ? "▲" : "▼"}
+                      </div>
+                      <div
+                        className="text-[7px] font-normal"
+                        style={{ color: pnlColor(m.economic_pnl) }}
+                        title={economicPnlTitle}
+                      >
+                        ECON {sym}
+                        {fmtK(Math.abs(m.economic_pnl))} {m.economic_pnl >= 0 ? "▲" : "▼"}
+                      </div>
                     </td>
                     <td
                       className="text-right py-0.5"
@@ -923,8 +1046,18 @@ export function AnalyticsTab({
                     TOTAL
                   </td>
                   <td className="text-right py-0.5 font-bold" style={{ color: pnlColor(totalPnl) }}>
-                    {sym}
-                    {fmtK(Math.abs(totalPnl))} {totalPnl >= 0 ? "▲" : "▼"}
+                    <div>
+                      {sym}
+                      {fmtK(Math.abs(totalPnl))} {totalPnl >= 0 ? "▲" : "▼"}
+                    </div>
+                    <div
+                      className="text-[7px] font-normal"
+                      style={{ color: pnlColor(totalEconomicPnl) }}
+                      title={economicPnlTitle}
+                    >
+                      ECON {sym}
+                      {fmtK(Math.abs(totalEconomicPnl))} {totalEconomicPnl >= 0 ? "▲" : "▼"}
+                    </div>
                   </td>
                   <td />
                   <td />

@@ -33,6 +33,23 @@ interface OptionQuote {
   freshness: { is_realtime: boolean; delay_minutes: number; warning: string; fetched_at: string };
 }
 
+// Columns actually rendered = user's showCols plus the auto PRE/POST column
+// injected while a live session is active. PRE/POST is intentionally NOT a
+// ColName so it can't be added/removed via the COLS picker.
+type DisplayCol = ColName | "PRE/POST";
+
+// Pre-/post-market session quote (from /api/v2/portfolio/premarket)
+interface SessionQuote {
+  market_state: string | null;
+  regular_price: number | null;
+  pre_price: number | null;
+  pre_change: number | null;
+  pre_change_pct: number | null;
+  post_price: number | null;
+  post_change: number | null;
+  post_change_pct: number | null;
+}
+
 function DerivativesSection({ accountId, colors }: { accountId: string; colors: Colors }) {
   const [positions, setPositions] = useState<OptionPos[]>([]);
   const [quotes, setQuotes] = useState<Record<string, OptionQuote>>({});
@@ -221,8 +238,12 @@ function mergePositions(positions: Trade[]): MergedPosition[] {
     const base = lots[0];
     const unrealPnl = lots.reduce((s, l) => s + (l.unrealized_pnl ?? 0), 0);
     const unrealThb = lots.reduce((s, l) => s + (l.unrealized_pnl_thb ?? 0), 0);
+    const unrealBase = lots.reduce((s, l) => s + (l.unrealized_pnl_base ?? 0), 0);
+    const costBase = lots.reduce((s, l) => s + (l.cost_basis_base ?? 0), 0);
+    const marketBase = lots.reduce((s, l) => s + (l.market_value_base ?? 0), 0);
     const dayPnl = lots.reduce((s, l) => s + (l.day_pnl ?? 0), 0);
     const dayPnlThb = lots.reduce((s, l) => s + (l.day_pnl_thb ?? 0), 0);
+    const dayPnlBase = lots.reduce((s, l) => s + (l.day_pnl_base ?? 0), 0);
     const curPrice = base.current_price ?? null;
     result.push({
       ...base,
@@ -233,9 +254,13 @@ function mergePositions(positions: Trade[]): MergedPosition[] {
       price_entry: avgEntry,
       unrealized_pnl: unrealPnl || null,
       unrealized_pnl_thb: unrealThb || null,
+      unrealized_pnl_base: unrealBase || null,
+      cost_basis_base: costBase || null,
+      market_value_base: marketBase || null,
       unrealized_pct: curPrice && avgEntry > 0 ? ((curPrice - avgEntry) / avgEntry) * 100 : null,
       day_pnl: dayPnl || null,
       day_pnl_thb: dayPnlThb || null,
+      day_pnl_base: dayPnlBase || null,
       day_pct: base.day_pct ?? null,
       rowKey,
     } as MergedPosition);
@@ -283,6 +308,8 @@ export function OpenPositionsTab({
     costOverride?: number;
   } | null>(null);
   const [costOverrides, setCostOverrides] = useState<Record<string, number>>({});
+
+  const [session, setSession] = useState<Record<string, SessionQuote>>({});
 
   const [stopData, setStopData] = useState<{
     regime_label: string;
@@ -336,6 +363,22 @@ export function OpenPositionsTab({
     return () => ac.abort();
   }, [data, accountId]);
 
+  // Fetch pre-/post-market session quotes in background (heavier .info fetch —
+  // kept off the positions load path so the table never blocks on it).
+  useEffect(() => {
+    const positions = data?.positions;
+    if (!positions?.length) return;
+    const ac = new AbortController();
+    const qs = accountId !== "all" ? `?account_id=${accountId}` : "";
+    fetch(`/api/v2/portfolio/premarket${qs}`, { signal: ac.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d?.quotes && setSession(d.quotes))
+      .catch((e) => {
+        if (e?.name === "AbortError") return;
+      });
+    return () => ac.abort();
+  }, [data, accountId]);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: setCostOverrides is stable setter
   useEffect(() => {
     // Fetch cost overrides
@@ -367,6 +410,31 @@ export function OpenPositionsTab({
   const thb_per_usd = data?.thb_per_usd ?? 33.5;
   const csym = currency === "THB" ? "฿" : "$";
 
+  // Auto PRE/POST column: appears only while ≥1 position is in a live pre- or
+  // post-market session, collapses on its own once the session ends. Not a
+  // user-toggled col — never enters showCols / the COLS picker.
+  const sessionActive = useMemo(
+    () =>
+      positions.some((p) => {
+        const s = session[p.symbol];
+        if (!s) return false;
+        const st = (s.market_state || "").toUpperCase();
+        return (
+          (st.startsWith("PRE") && s.pre_price != null) ||
+          ((st.startsWith("POST") || st === "CLOSED") && s.post_price != null)
+        );
+      }),
+    [positions, session]
+  );
+
+  const displayCols = useMemo<DisplayCol[]>(() => {
+    if (!sessionActive) return showCols;
+    const cols = [...showCols] as DisplayCol[];
+    const i = cols.indexOf("CURRENT");
+    cols.splice(i >= 0 ? i + 1 : cols.length, 0, "PRE/POST");
+    return cols;
+  }, [showCols, sessionActive]);
+
   const merged = useMemo(() => mergePositions(positions), [positions]);
 
   const filtered = useMemo(() => {
@@ -387,26 +455,35 @@ export function OpenPositionsTab({
     return Array.from(map.entries());
   }, [filtered]);
 
-  const toBase = (v: number, acc: "USD" | "THB") => {
-    if (acc === "USD" && currency === "THB") return v * thb_per_usd;
+  type NativeCurrency = "USD" | "USDT" | "THB";
+  const toBase = (v: number, acc: NativeCurrency) => {
+    if ((acc === "USD" || acc === "USDT") && currency === "THB") return v * thb_per_usd;
     if (acc === "THB" && currency === "USD") return v / thb_per_usd;
     return v;
   };
 
+  // Native currency is per-instrument (pos_currency), not per-account — a .BK
+  // position inside a USD account is THB. Fall back to acc_currency for rows
+  // served before the backend added pos_currency.
+  const posCcy = (p: Trade): NativeCurrency =>
+    (p.currency ?? p.pos_currency ?? p.acc_currency ?? "THB") as NativeCurrency;
+
   const totalUnreal = positions.reduce((a, p) => {
+    if (p.unrealized_pnl_base != null) return a + p.unrealized_pnl_base;
     if (currency === "THB") return a + (p.unrealized_pnl_thb ?? 0);
-    if (p.acc_currency === "USD") return a + (p.unrealized_pnl ?? 0);
+    if (posCcy(p) === "USD" || posCcy(p) === "USDT") return a + (p.unrealized_pnl ?? 0);
     return a + (p.unrealized_pnl ?? 0) / thb_per_usd;
   }, 0);
   const totalDayPnl = positions.reduce((a, p) => {
+    if (p.day_pnl_base != null) return a + p.day_pnl_base;
     if (currency === "THB") return a + (p.day_pnl_thb ?? 0);
-    if (p.acc_currency === "USD") return a + (p.day_pnl ?? 0);
+    if (posCcy(p) === "USD" || posCcy(p) === "USDT") return a + (p.day_pnl ?? 0);
     return a + (p.day_pnl ?? 0) / thb_per_usd;
   }, 0);
   const hasDayData = positions.some((p) => p.day_pnl != null);
   const totalCost = positions.reduce((a, p) => {
-    const cost = p.price_entry * p.volume;
-    return a + toBase(cost, p.acc_currency as "USD" | "THB");
+    if (p.cost_basis_base != null) return a + p.cost_basis_base;
+    return a + toBase(p.price_entry * p.volume, posCcy(p));
   }, 0);
 
   const py = dense ? "py-0.5" : "py-1";
@@ -573,14 +650,15 @@ export function OpenPositionsTab({
               const isCollapsed = !!collapsed[gk];
               const groupPnl = groupPositions.reduce(
                 (a: number, p: MergedPosition) =>
-                  a + (currency === "THB" ? (p.unrealized_pnl_thb ?? 0) : (p.unrealized_pnl ?? 0)),
+                  a +
+                  (p.unrealized_pnl_base ??
+                    (currency === "THB"
+                      ? (p.unrealized_pnl_thb ?? 0)
+                      : toBase(p.unrealized_pnl ?? 0, posCcy(p)))),
                 0
               );
               const groupCost = groupPositions.reduce((a: number, p: MergedPosition) => {
-                const cost = p.price_entry * p.volume;
-                return (
-                  a + (p.acc_currency === "USD" && currency === "THB" ? cost * thb_per_usd : cost)
-                );
+                return a + (p.cost_basis_base ?? toBase(p.price_entry * p.volume, posCcy(p)));
               }, 0);
 
               return (
@@ -600,7 +678,7 @@ export function OpenPositionsTab({
                     }
                   >
                     <td
-                      colSpan={showCols.length + 1}
+                      colSpan={displayCols.length + 1}
                       className="px-3 border-b border-t"
                       style={{
                         borderColor: `${groupColor}55`,
@@ -648,7 +726,7 @@ export function OpenPositionsTab({
                         zIndex: 9,
                       }}
                     >
-                      {showCols.map((h) => (
+                      {displayCols.map((h) => (
                         <th
                           key={h}
                           className="px-2 py-0.5 text-left whitespace-nowrap text-[7px] font-bold tracking-wider"
@@ -664,10 +742,11 @@ export function OpenPositionsTab({
                   {/* Position rows */}
                   {!isCollapsed &&
                     groupPositions.map((p: MergedPosition) => {
-                      const acc = p.acc_currency as "USD" | "THB";
+                      const acc = posCcy(p);
                       const backendPnl = (() => {
+                        if (p.unrealized_pnl_base != null) return p.unrealized_pnl_base;
                         if (currency === "THB") return p.unrealized_pnl_thb ?? null;
-                        if (acc === "USD") return p.unrealized_pnl ?? null;
+                        if (acc === "USD" || acc === "USDT") return p.unrealized_pnl ?? null;
                         return p.unrealized_pnl != null ? p.unrealized_pnl / thb_per_usd : null;
                       })();
                       const sym = csym;
@@ -684,7 +763,13 @@ export function OpenPositionsTab({
                         overrideNative != null && curNative != null && overrideNative > 0
                           ? ((curNative - overrideNative) / overrideNative) * 100
                           : p.unrealized_pct;
-                      const costVal = entryNative * p.volume;
+                      // Use backend's entry-date-FX cost basis (matches badge/ANALYTICS totals);
+                      // only fall back to live-FX entryNative when backend didn't supply one
+                      // (no live quote) or the user set a manual cost override.
+                      const costVal =
+                        overrideNative != null
+                          ? overrideNative * p.volume
+                          : (p.cost_basis_base ?? entryNative * p.volume);
                       const targetNative =
                         p.price_target != null ? toBase(p.price_target, acc) : null;
                       const slNative =
@@ -693,7 +778,7 @@ export function OpenPositionsTab({
                       const lotKey = p.rowKey;
                       const lotsExpanded = !!expandedLots[lotKey];
 
-                      const cellMap: Record<ColName, React.ReactNode> = {
+                      const cellMap: Record<DisplayCol, React.ReactNode> = {
                         SYMBOL: (
                           <div className="flex items-center gap-1">
                             {hasMultiLots && (
@@ -720,6 +805,16 @@ export function OpenPositionsTab({
                             )}
                             <span className="font-bold" style={{ color: groupColor }}>
                               {p.symbol}
+                            </span>
+                            <span
+                              className="text-[7px] px-1 border font-mono"
+                              style={{
+                                borderColor: acc === "THB" ? "#22c55e55" : "#38bdf855",
+                                color: acc === "THB" ? "#4ade80" : "#7dd3fc",
+                              }}
+                              title={`Instrument currency: ${acc}`}
+                            >
+                              {acc === "THB" ? "฿" : "$"} {acc}
                             </span>
                             {hasMultiLots && (
                               <span
@@ -774,6 +869,47 @@ export function OpenPositionsTab({
                           ) : (
                             <Loader2 className="h-2 w-2 animate-spin inline" />
                           ),
+                        "PRE/POST": (() => {
+                          const s = session[p.symbol];
+                          if (!s) return <span style={{ color: colors.textSecondary }}>—</span>;
+                          const st = (s.market_state || "").toUpperCase();
+                          const isPre = s.pre_price != null && st.startsWith("PRE");
+                          const isPost =
+                            !isPre &&
+                            s.post_price != null &&
+                            (st.startsWith("POST") || st === "CLOSED");
+                          const px = isPre ? s.pre_price : isPost ? s.post_price : null;
+                          const pct = isPre ? s.pre_change_pct : isPost ? s.post_change_pct : null;
+                          if (px == null)
+                            return <span style={{ color: colors.textSecondary }}>—</span>;
+                          const label = isPre ? "PRE" : "POST";
+                          const labelColor = isPre ? "#f59e0b" : "#38bdf8";
+                          const pxNative = toBase(px, acc);
+                          return (
+                            <span className="flex items-center gap-1">
+                              <span
+                                className="text-[7px] px-0.5 rounded font-bold"
+                                style={{ background: `${labelColor}22`, color: labelColor }}
+                                title={`marketState: ${s.market_state ?? "?"}`}
+                              >
+                                {label}
+                              </span>
+                              <span
+                                className="font-bold"
+                                style={{ color: pct != null ? pnlColor(pct) : colors.text }}
+                              >
+                                {sym}
+                                {fmt(pxNative)}
+                                {pct != null && (
+                                  <span className="text-[8px] ml-0.5 font-normal">
+                                    ({pct >= 0 ? "+" : ""}
+                                    {pct.toFixed(2)}%)
+                                  </span>
+                                )}
+                              </span>
+                            </span>
+                          );
+                        })(),
                         VOL: <>{p.volume.toLocaleString()}</>,
                         COST: (
                           <span style={{ color: colors.textSecondary }}>
@@ -783,13 +919,15 @@ export function OpenPositionsTab({
                         ),
                         "DAY P&L": (() => {
                           const dayPnl =
-                            currency === "THB"
-                              ? (p.day_pnl_thb ?? null)
-                              : acc === "USD"
-                                ? (p.day_pnl ?? null)
-                                : p.day_pnl != null
-                                  ? p.day_pnl / thb_per_usd
-                                  : null;
+                            p.day_pnl_base != null
+                              ? p.day_pnl_base
+                              : currency === "THB"
+                                ? (p.day_pnl_thb ?? null)
+                                : acc === "USD" || acc === "USDT"
+                                  ? (p.day_pnl ?? null)
+                                  : p.day_pnl != null
+                                    ? p.day_pnl / thb_per_usd
+                                    : null;
                           if (dayPnl == null)
                             return <span style={{ color: colors.textSecondary }}>—</span>;
                           return (
@@ -845,12 +983,7 @@ export function OpenPositionsTab({
                           const s = stopData?.stops?.[p.symbol];
                           if (!s || "error" in s)
                             return <span style={{ color: colors.textSecondary }}>—</span>;
-                          const stopNative =
-                            acc === "USD" && currency === "THB"
-                              ? s.stop_dynamic * thb_per_usd
-                              : acc === "THB" && currency === "USD"
-                                ? s.stop_dynamic / thb_per_usd
-                                : s.stop_dynamic;
+                          const stopNative = toBase(s.stop_dynamic, acc);
                           return (
                             <span style={{ color: "#fb923c" }}>
                               {sym}
@@ -883,7 +1016,7 @@ export function OpenPositionsTab({
                             className="hover:bg-[#111]"
                             style={{ borderBottom: "1px solid #141414", height: rowH }}
                           >
-                            {showCols.map((col) => (
+                            {displayCols.map((col) => (
                               <td key={col} className={`px-2 ${py} whitespace-nowrap`}>
                                 {cellMap[col]}
                               </td>
@@ -938,9 +1071,11 @@ export function OpenPositionsTab({
                             p.lots.map((lot, li) => {
                               const lotEntry = toBase(lot.price_entry, acc);
                               const lotPnl =
-                                currency === "THB"
-                                  ? (lot.unrealized_pnl_thb ?? null)
-                                  : (lot.unrealized_pnl ?? null);
+                                lot.unrealized_pnl_base != null
+                                  ? lot.unrealized_pnl_base
+                                  : currency === "THB"
+                                    ? (lot.unrealized_pnl_thb ?? null)
+                                    : toBase(lot.unrealized_pnl ?? 0, posCcy(lot));
                               return (
                                 <tr
                                   key={`${lot.id}_lot`}
@@ -949,7 +1084,7 @@ export function OpenPositionsTab({
                                     borderBottom: "1px solid #0f0f0f",
                                   }}
                                 >
-                                  <td colSpan={showCols.length + 1} className="px-4 py-0.5">
+                                  <td colSpan={displayCols.length + 1} className="px-4 py-0.5">
                                     <div className="flex items-center gap-4 text-[8px] font-mono">
                                       <span className="opacity-40">└ Lot {li + 1}</span>
                                       <span style={{ color: colors.textSecondary }}>
