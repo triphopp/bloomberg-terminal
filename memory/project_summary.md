@@ -1,7 +1,7 @@
 # Bloomberg Terminal — Project Summary
 
 **Working directory:** `D:\Agents\Claude\bloomberg-terminal-main`
-**Last updated:** 2026-06-08 (Paper Trading system, Strategy Builder)
+**Last updated:** 2026-07-14 (Multi-Currency Portfolio)
 
 > Slim core reference. Navigate via [memory/INDEX.md](INDEX.md).
 > - [reference/api-endpoints.md](reference/api-endpoints.md) — all endpoints, caching table, Next.js proxy routes
@@ -146,6 +146,14 @@ OPENAI_API_KEY      — optional
 transactions        (id, symbol, type buy/sell, shares, price, date, commission, notes, created_at)
 -- 2026-07-04 (port-redesign Step 1): trades += resolved_symbol TEXT, market TEXT (canonical provider ticker,
 --   set at write time by /resolve-symbol); portfolio_accounts += markets TEXT (JSON e.g. ["US","TH"])
+-- 2026-07-14 (multi-currency): trades.currency = authoritative instrument currency;
+--   trades.exchange_rate = entry THB/native FX; trades.exit_exchange_rate = exit THB/native FX
+cash_ledger         (id, account_id, date, income, investment, exchange_rate, note, entry_type CASH|TRANSFER, linked_id)
+-- 2026-07-14 (cash-transfer-feature): entry_type/linked_id additive; TRANSFER rows come in linked
+--   pairs (same linked_id, opposite investment sign) via POST /cash/transfer; DELETE cascades pair
+dividends           (..., currency)  -- record-level instrument currency; never assume account currency
+fx_rates            (date, base, quote, rate, source, updated_at) PK(date,base,quote)
+-- dated FX lookup uses same day or nearest prior trading day; open MTM uses live FX
 pin_groups          (id, name, color, sort_order, created_at)
 pinned_assets       (id, symbol, group_id, comment, buy_target, sell_target, price_at_pin, priority 1-3, added_at, updated_at)
 pin_tags            (id, name, color)
@@ -218,9 +226,12 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24). Stock analysis (9 tabs)
 - [ ] Seed sector data: POST /api/sectors/fetch for TH/KR/HK/EU/US
 
 ### Features
+- [x] **Analytics Cash Card** — CASH tile + MARKET VALUE split (excl./incl. idle cash) in ANALYTICS Capital Breakdown — done 2026-07-14 (`plans/completed/analytics-cash-card.md`)
+- [x] **Cash Transfer** — linked-pair TRANSFER entry_type in `cash_ledger` so inter-account cash moves (e.g. FINANSIA→DIME) fix per-account `invested_capital` bookkeeping with atomic insert + cascade delete — done 2026-07-14 (`plans/completed/cash-transfer-feature.md`)
 - [ ] **System Audit 2026-07 — Bug Fixes & Refactor** — 9 fix items + 6 refactor items; F01 done 2026-07-03, F06 done 2026-07-04 (via port-redesign resolver); เหลือ F02 AVCO drift 🔴, F03 async blocking 🔴, F04/F05/F07/F08/F09 + R01–R06 (`plans/system-audit-2026-07/README.md`)
 - [x] **Portfolio Cloud Sync** — PC↔Mac sync via Google Drive JSON snapshots, startup pull, row-LWW merge + tombstones, no login done 2026-06-26 (`plans/completed/portfolio-cloud-sync.md`)
 - [ ] **Port Redesign** — symbol resolver (resolve-at-write), sub_portfolios table จริง, currency module, ลบ `_get_yf_symbol`/ปิด F06 (`plans/port-redesign.md`)
+- [x] **Multi-Currency Sub-Portfolio** — done 2026-07-14: `trades.currency` เป็น instrument ccy authoritative, rollup ต่อ trade, mixed-ccy account, realized trading P&L ใช้ exit-date FX (ไม่รวม principal FX attribution), แสดง `ECON` FX-inclusive attribution แยก, live MTM และ daily `fx_rates` (`plans/completed/multi-currency-portfolio.md`)
 - [ ] **VP Indicator Upgrade** — แก้ session timezone bug (B1 🔴) + visible-range VP + delta profile + naked POC + HVN/LVN + config UI; audit: `reports/vp-indicator-risk-report.md` (`plans/vp-indicator-upgrade.md`)
 - [ ] **P/E History Pane + EPS Surprise Labels** — endpoint `/api/stock/pe-history` (TTM EPS × weekly close, 13–20yr), `PEPane.tsx` recharts sub-pane + valuation percentile bands, earnings marker สี beat/miss; code-complete, backend HTTP verified, frontend visual pending (`plans/pe-earnings-visualization.md`)
 - [ ] Polymarket: dashboard view in frontend

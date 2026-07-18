@@ -37,22 +37,22 @@ components/bloomberg/
 │   │
 │   └── portfolio/               ← PORT: barrel re-export from portfolio-view.tsx
 │       ├── index.tsx            ← PortfolioView shell: account tabs, summary bar, 4 top-level tabs (Alt+1-4) + context-sensitive sub-tab bar
-│       ├── types.ts             ← all interfaces (Account, Trade, CashEntry, Dividend, etc.)
+│       ├── types.ts             ← all interfaces; Trade/Dividend expose native currency + additive `*_base` report-currency fields
 │       ├── helpers.ts           ← fmt, fmtK, fmtPct, pnlColor, wlColor, groupKey, FLAG
 │       ├── constants.ts         ← ALL_COLS, DEFAULT_COLS, DENSE_COLS, TH_SECTORS (34), US_SECTORS (11),
 │       │                           GROUP_COLORS, FINANSIA_SUBS, ALLOC_COLORS, SECTOR_COLORS
 │       ├── ui/
 │       │   ├── AccBadge.tsx     ← AccBadge, WLBadge
-│       │   └── SummaryBar.tsx   ← total cost, unrealized P&L, day change
+│       │   └── SummaryBar.tsx   ← top summary; broker-style total P&L plus secondary ECON FX-inclusive attribution
 │       ├── modals/
 │       │   ├── SellModal.tsx    ← sell / partial-sell modal
 │       │   └── TradeEditModal.tsx ← trade edit modal (17 fields, bulk-patch-sector)
 │       └── tabs/
-│           ├── OpenPositionsTab.tsx  ← positions table: DENSE, COLS picker, SELL/EDIT, grouped lots
+│           ├── OpenPositionsTab.tsx  ← positions table: DENSE, COLS picker, SELL/EDIT, grouped lots, instrument-currency badge + backend-normalized report totals
 │           ├── OptionsTab.tsx        ← options positions + live Greeks (Black-Scholes + Gram-Charlier)
-│           ├── TradeLogTab.tsx       ← trade history with filter + WLBadge
-│           ├── CashTab.tsx           ← cash flow CRUD + dividends CRUD + Finansia subs
-│           ├── AnalyticsTab.tsx      ← P&L chart, allocation pie, dividend bar (M/Q/Y)
+│           ├── TradeLogTab.tsx       ← trade history with filter + WLBadge; dated `amount_base`/`pnl_base` display
+│           ├── CashTab.tsx           ← cash flow CRUD + currency-aware dividends CRUD + Finansia subs
+│           ├── AnalyticsTab.tsx      ← report-currency P&L/allocation/dividend charts (M/Q/Y); broker-style P&L plus ECON FX attribution tooltips
 │           ├── BacktestTab.tsx       ← backtest v2 (4 sub-tabs: equity/holdings/distribution/attribution)
 │           ├── RiskTab.tsx           ← 2 sub-tabs: OVERVIEW (dense col layout: header/9-stat/VaR+chart+EWS) | OPTIONS risk
 │           ├── ThesesTab.tsx         ← investment theses list + markdown render

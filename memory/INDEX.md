@@ -22,6 +22,8 @@ memory/
 │   └── terminal-commands.md        ← command mode reference: ALERT/VIEW/DISPLAY/INFO commands + ticker crawl
 │
 ├── plans/
+│   ├── completed/analytics-cash-card.md ← ✅ CASH tile + MARKET VALUE split (excl./incl. idle cash) in ANALYTICS Capital Breakdown (done 2026-07-14)
+│   ├── completed/cash-transfer-feature.md ← ✅ Linked-pair TRANSFER entry_type in cash_ledger, fixes per-account invested_capital on inter-account moves (done 2026-07-14)
 │   ├── system-audit-2026-07/        ← 🔍 Bug audit ทั้งระบบ: fixes/ (F01–F09) + refactor/ (R01–R06) + README tracker [ACTIVE 2026-07-02]
 │   ├── completed/analytics-charts-enhancement.md ← ✅ PORT Analytics: Dividend M/Q/Y + stacked bar + currency fix (done 2026-06-05)
 │   ├── completed/dcc-correlation-monitor.md ← ✅ EWMA-DCC correlation spike detection + EWS integration + backtest (done 2026-06-06)
@@ -107,6 +109,7 @@ memory/
 | **PORT Analytics: Dividend M/Q/Y, stacked allocation timeline, currency fix** | ✅ done 2026-06-05 — `plans/completed/analytics-charts-enhancement.md` |
 | **Trade Edit System + Sector Standardization** (ทำเสร็จแล้ว) | `plans/completed/trade-edit-and-sector-standard.md` |
 | **Port Redesign** (symbol resolver at-write, sub_portfolios table, currency module, ปิด F06) 🔄 | `plans/port-redesign.md` |
+| **Multi-Currency Sub-Portfolio** (instrument ccy authoritative, per-trade rollup, hybrid historical/live FX, ECON attribution) ✅ done 2026-07-14 | `plans/completed/multi-currency-portfolio.md` |
 | **Bloomberg CLI + MCP Server** (`bloomberg market/portfolio/mcp`, 13 MCP tools) | `plans/bloomberg-cli-mcp.md` |
 | **Portfolio Risk Management System** (VaR/CVaR/Greeks/Stress, RiskTab, Action Log) | `plans/portfolio-risk-system.md` |
 | **Data Source Contract** (canonical models + OHLCVFrame migration fix + Dividends fix + cache clear) | ✅ Phase A+B partial done — `plans/completed/data-source-contract.md`; Phase B remainder in `plans/data-source-contract.md` |
