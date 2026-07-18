@@ -4,12 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import { BLANK_CASH, BLANK_DIV } from "../constants";
 import { type Colors, fmtK, pnlColor } from "../helpers";
 import { ConfirmDeleteModal } from "../modals/ConfirmDeleteModal";
-import type { CashEntry, Dividend } from "../types";
+import type { CashEntry, Dividend, Trade } from "../types";
 import { SubPortSelect } from "../ui/SubPortSelect";
 
 export function CashTab({ accountId, colors }: { accountId: string; colors: Colors }) {
   const [cash, setCash] = useState<CashEntry[]>([]);
   const [dividends, setDivs] = useState<Dividend[]>([]);
+  const [reinvestTrades, setReinvestTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(false);
   const [subTab, setSubTab] = useState<"cash" | "dividends" | "reinvest">("cash");
   const [showForm, setShowForm] = useState(false);
@@ -44,7 +45,8 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
       setLoading(true);
       try {
         const qs = accountId !== "all" ? `?account_id=${accountId}` : "";
-        const [cr, dr] = await Promise.all([
+        const tradeQs = accountId !== "all" ? `?account_id=${accountId}&` : "?";
+        const [cr, dr, tr] = await Promise.all([
           fetch(`/api/v2/portfolio/cash${qs}`, { signal }).then((r) => {
             if (!r.ok) throw new Error();
             return r.json();
@@ -53,9 +55,14 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
             if (!r.ok) throw new Error();
             return r.json();
           }),
+          fetch(`/api/v2/portfolio/trades${tradeQs}is_reinvest=true`, { signal }).then((r) => {
+            if (!r.ok) throw new Error();
+            return r.json();
+          }),
         ]);
         setCash(Array.isArray(cr) ? cr : []);
         setDivs(Array.isArray(dr) ? dr : []);
+        setReinvestTrades(Array.isArray(tr?.trades) ? tr.trades : []);
       } catch (e) {
         if ((e as Error)?.name === "AbortError") return;
       } finally {
@@ -115,14 +122,72 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
     });
   }, []);
 
+  const untagTrade = useCallback(async (tradeId: string) => {
+    const r = await fetch(`/api/v2/portfolio/trades/${tradeId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_reinvest: false, adjustment_reason: "Untagged from REINVEST" }),
+    });
+    if (r.ok) setReinvestTrades((list) => list.filter((t) => t.id !== tradeId));
+  }, []);
+
   const totalIn = cash.reduce((a, c) => a + c.income, 0);
   const totalInv = cash.reduce((a, c) => a + c.investment, 0);
   const totalDiv = dividends.reduce<Record<string, number>>((a, d) => {
     a[d.currency || "THB"] = (a[d.currency || "THB"] || 0) + d.total_received;
     return a;
   }, {});
-  const totalReinvest = dividends.reduce<Record<string, number>>((a, d) => {
-    a[d.currency || "THB"] = (a[d.currency || "THB"] || 0) + (d.reinvested_amount || 0);
+  // REINVEST view merges two sources: dividend rows carrying reinvest fields,
+  // and trades ticked "REINVEST?" in ENTRY. Trade rows are a label only — they
+  // are already counted in positions/cost basis, so nothing else is adjusted.
+  type ReinvestRow = {
+    key: string;
+    source: string;
+    account_id: string;
+    date: string;
+    divAmount: number | null;
+    reinvestAmount: number;
+    asset: string;
+    price: number;
+    units: number;
+    currency: string;
+    dividend?: Dividend;
+    trade?: Trade;
+  };
+
+  const reinvestRows: ReinvestRow[] = [
+    ...dividends
+      .filter((d) => d.reinvested_amount > 0)
+      .map((d) => ({
+        key: `div-${d.id}`,
+        source: d.asset,
+        account_id: d.account_id,
+        date: d.pay_date || "",
+        divAmount: d.total_received,
+        reinvestAmount: d.reinvested_amount,
+        asset: d.reinvest_asset || "",
+        price: d.reinvest_price || 0,
+        units: d.reinvest_units || 0,
+        currency: d.currency || "THB",
+        dividend: d,
+      })),
+    ...reinvestTrades.map((t) => ({
+      key: `trade-${t.id}`,
+      source: "TRADE",
+      account_id: t.account_id,
+      date: t.date_entry || "",
+      divAmount: null,
+      reinvestAmount: Math.abs(t.amount ?? t.price_entry * t.volume),
+      asset: t.symbol,
+      price: t.price_entry,
+      units: t.volume,
+      currency: t.currency || "THB",
+      trade: t,
+    })),
+  ].sort((a, b) => b.date.localeCompare(a.date));
+
+  const totalReinvest = reinvestRows.reduce<Record<string, number>>((a, r) => {
+    a[r.currency] = (a[r.currency] || 0) + r.reinvestAmount;
     return a;
   }, {});
   const money = (amount: number, ccy: string) => `${ccy === "THB" ? "฿" : "$"}${fmtK(amount)}`;
@@ -1065,67 +1130,79 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
               </tr>
             </thead>
             <tbody>
-              {dividends.filter((d) => d.reinvested_amount > 0).length === 0 && !loading && (
+              {reinvestRows.length === 0 && !loading && (
                 <tr>
                   <td
                     colSpan={9}
                     className="px-3 py-4 text-center text-[9px]"
                     style={{ color: colors.textSecondary }}
                   >
-                    No reinvestments — add via DIVIDENDS tab (fill reinvest fields)
+                    No reinvestments — tick REINVEST? in ENTRY, or fill reinvest fields in DIVIDENDS
                   </td>
                 </tr>
               )}
-              {dividends
-                .filter((d) => d.reinvested_amount > 0)
-                .map((d) => (
-                  <tr
-                    key={d.id}
-                    className="hover:bg-[#111] group"
-                    style={{ borderBottom: "1px solid #1a1a1a" }}
+              {reinvestRows.map((r) => (
+                <tr
+                  key={r.key}
+                  className="hover:bg-[#111] group"
+                  style={{ borderBottom: "1px solid #1a1a1a" }}
+                >
+                  <td
+                    className="px-2 py-1 font-bold"
+                    style={{ color: r.trade ? "#c084fc" : colors.accent }}
                   >
-                    <td className="px-2 py-1 font-bold" style={{ color: colors.accent }}>
-                      {d.asset}
-                    </td>
-                    <td className="px-2 py-1">{d.account_id}</td>
-                    <td className="px-2 py-1" style={{ color: colors.textSecondary }}>
-                      {d.pay_date || "—"}
-                    </td>
-                    <td className="px-2 py-1" style={{ color: "#4ade80" }}>
-                      {money(d.total_received, d.currency)}
-                    </td>
-                    <td className="px-2 py-1 font-bold" style={{ color: "#c084fc" }}>
-                      {money(d.reinvested_amount, d.currency)}
-                    </td>
-                    <td className="px-2 py-1 font-bold" style={{ color: colors.accent }}>
-                      {d.reinvest_asset || "—"}
-                    </td>
-                    <td className="px-2 py-1">
-                      {d.reinvest_price > 0 ? money(d.reinvest_price, d.currency) : "—"}
-                    </td>
-                    <td className="px-2 py-1">
-                      {d.reinvest_units > 0 ? d.reinvest_units.toFixed(4) : "—"}
-                    </td>
-                    <td className="px-2 py-1 whitespace-nowrap opacity-60 group-hover:opacity-100">
+                    {r.source}
+                  </td>
+                  <td className="px-2 py-1">{r.account_id}</td>
+                  <td className="px-2 py-1" style={{ color: colors.textSecondary }}>
+                    {r.date || "—"}
+                  </td>
+                  <td className="px-2 py-1" style={{ color: "#4ade80" }}>
+                    {r.divAmount === null ? "—" : money(r.divAmount, r.currency)}
+                  </td>
+                  <td className="px-2 py-1 font-bold" style={{ color: "#c084fc" }}>
+                    {money(r.reinvestAmount, r.currency)}
+                  </td>
+                  <td className="px-2 py-1 font-bold" style={{ color: colors.accent }}>
+                    {r.asset || "—"}
+                  </td>
+                  <td className="px-2 py-1">{r.price > 0 ? money(r.price, r.currency) : "—"}</td>
+                  <td className="px-2 py-1">{r.units > 0 ? r.units.toFixed(4) : "—"}</td>
+                  <td className="px-2 py-1 whitespace-nowrap opacity-60 group-hover:opacity-100">
+                    {r.dividend && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => r.dividend && editDiv(r.dividend)}
+                          className="text-[8px] mr-1 hover:underline"
+                          style={{ color: colors.accent }}
+                        >
+                          EDIT
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteDivTarget(r.dividend ?? null)}
+                          className="text-[8px] hover:underline"
+                          style={{ color: "#f87171" }}
+                        >
+                          DEL
+                        </button>
+                      </>
+                    )}
+                    {r.trade && (
                       <button
                         type="button"
-                        onClick={() => editDiv(d)}
-                        className="text-[8px] mr-1 hover:underline"
-                        style={{ color: colors.accent }}
-                      >
-                        EDIT
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteDivTarget(d)}
+                        onClick={() => r.trade && untagTrade(r.trade.id)}
                         className="text-[8px] hover:underline"
                         style={{ color: "#f87171" }}
+                        title="Remove the reinvest tag — the trade itself is untouched"
                       >
-                        DEL
+                        UNTAG
                       </button>
-                    </td>
-                  </tr>
-                ))}
+                    )}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

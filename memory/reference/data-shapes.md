@@ -98,6 +98,11 @@
 - Summary also adds `total_economic_pnl_base`, `pnl_economic_base`, and YTD economic fields. These are FX-inclusive economic attribution: `(entry cost + native P&L) × exit FX − entry cost × entry FX`.
 - `GET /api/v2/portfolio/analytics?base_currency=THB|USD` monthly/sector/strategy/symbol rows add `economic_pnl` next to `pnl`.
 - Economic fields use stored trade FX when present; otherwise nearest-prior daily market FX. Treat them as an attribution estimate, not broker-exact realized P&L.
+- `analytics.trade_stats` (+ `trade_stats_by_account`, keyed by account id) — closed-trade skill metrics, values already in `base_currency`:
+  ```ts
+  interface TradeStats { closed: number; wins: number; losses: number; win_rate: number|null; wl_ratio: number|null; avg_win: number|null; avg_loss: number|null; payoff: number|null; expectancy: number|null; total_win: number; total_loss: number; }
+  ```
+  W/L classification follows the stored `win_loss` flag, not the sign of base P&L (a trade can win natively, lose in base after FX). `payoff` is `null` when there are no losses — never infinite. HIT RATE is **not** here: it mixes in live open positions, so `AnalyticsTab` computes it from `trade_stats.wins` + `/open-positions` rows with `unrealized_pnl_base > 0`.
 
 ## Risk Metrics (`GET /api/v2/portfolio/risk/metrics`)
 ```json
@@ -268,7 +273,7 @@ URL: `https://polymarket.com/event/{event_slug}` — use `event_slug` NOT `slug`
 
 ### `portfolio/types.ts`
 ```ts
-interface Trade { id: string; account_id: string; symbol: string; date_entry: string; price_entry: number; volume: number; currency: string; exchange_rate: number; exit_exchange_rate?: number; amount_base?: number; pnl_base?: number; pos_currency?: string; acc_currency?: string; unrealized_pnl_base?: number; cost_basis_base?: number; market_value_base?: number; day_pnl_base?: number; }
+interface Trade { id: string; account_id: string; symbol: string; date_entry: string; price_entry: number; volume: number; currency: string; is_reinvest?: number; // 0|1 — label only, ticked in ENTRY, listed in CASH→REINVEST; no effect on cash/positions exchange_rate: number; exit_exchange_rate?: number; amount_base?: number; pnl_base?: number; pos_currency?: string; acc_currency?: string; unrealized_pnl_base?: number; cost_basis_base?: number; market_value_base?: number; day_pnl_base?: number; }
 interface AccountStat { pnl_base: number; pnl_economic_base?: number; ytd_realized_base?: number; ytd_economic_realized_base?: number; }
 interface Summary { total_pnl_base: number; total_economic_pnl_base?: number; total_ytd_realized_base?: number; total_ytd_economic_realized_base?: number; }
 interface Account { id: string; name: string; broker: string; country: string; currency: string; account_type: string; }

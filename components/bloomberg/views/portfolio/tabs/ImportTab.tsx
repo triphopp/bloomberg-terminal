@@ -268,6 +268,7 @@ export function ImportTab({
         strategy_name: form.strategy_name,
         entry_trigger: form.entry_trigger,
         exit_trigger: form.exit_trigger,
+        is_reinvest: form.is_reinvest,
         note: [
           form.note,
           form.vat_amount ? `VAT: ${Number.parseFloat(form.vat_amount).toFixed(2)}` : "",
@@ -677,6 +678,20 @@ export function ImportTab({
                 onChange={(e) => toggleOption(e.target.checked)}
               />
               IS OPTION?
+            </label>
+
+            <label
+              className="flex items-center gap-1.5 cursor-pointer text-[9px] font-bold select-none"
+              style={{ color: form.is_reinvest ? "#c084fc" : colors.textSecondary }}
+              title="Mark this trade as a dividend reinvestment — shows in CASH → REINVEST"
+            >
+              <input
+                type="checkbox"
+                className="w-3 h-3 accent-purple-400"
+                checked={form.is_reinvest}
+                onChange={(e) => setForm((f) => ({ ...f, is_reinvest: e.target.checked }))}
+              />
+              REINVEST?
             </label>
 
             {form.is_option && (

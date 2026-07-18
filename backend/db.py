@@ -205,6 +205,7 @@ def init_portfolio_v2() -> None:
         _ensure_column(conn, "trades", "resolved_symbol", "resolved_symbol TEXT")
         _ensure_column(conn, "trades", "market", "market TEXT")
         _ensure_column(conn, "trades", "exit_exchange_rate", "exit_exchange_rate REAL")
+        _ensure_column(conn, "trades", "is_reinvest", "is_reinvest INTEGER NOT NULL DEFAULT 0")
         _ensure_column(conn, "portfolio_accounts", "markets", "markets TEXT")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS cash_ledger (

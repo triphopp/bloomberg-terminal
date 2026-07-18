@@ -188,6 +188,7 @@ export const BLANK_FORM = {
   exit_trigger: "",
   note: "",
   is_option: false,
+  is_reinvest: false,
   option_type: "Call",
   option_direction: "Long",
   vat_amount: "",

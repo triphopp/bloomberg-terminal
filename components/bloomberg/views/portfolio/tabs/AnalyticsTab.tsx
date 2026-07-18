@@ -53,6 +53,20 @@ interface ReturnsResponse {
   accounts?: Record<string, ReturnsRow>;
 }
 
+interface TradeStats {
+  closed: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  wl_ratio: number | null;
+  avg_win: number | null;
+  avg_loss: number | null;
+  payoff: number | null;
+  expectancy: number | null;
+  total_win: number;
+  total_loss: number;
+}
+
 export function AnalyticsTab({
   accountId,
   currency,
@@ -72,6 +86,8 @@ export function AnalyticsTab({
     open_by_sector: any[];
     // biome-ignore lint/suspicious/noExplicitAny: untyped API response
     by_subport: any[];
+    trade_stats?: TradeStats;
+    trade_stats_by_account?: Record<string, TradeStats>;
   } | null>(null);
   const [dividends, setDividends] = useState<Dividend[]>([]);
   const [openPos, setOpenPos] = useState<Trade[]>([]);
@@ -284,6 +300,22 @@ export function AnalyticsTab({
     cost: toDisp(r.open_cost_basis ?? 0),
   }));
 
+  // Backend trade_stats already arrives in the active display currency
+  // (analytics is refetched with base_currency), so no toDisp() here.
+  const ts = analytics?.trade_stats ?? null;
+
+  // HIT RATE widens win rate to every position taken: closed winners plus open
+  // positions currently in the money. Unlike WIN RATE it moves with live prices.
+  const hitRate = useMemo(() => {
+    if (!ts) return null;
+    const openWinners = openPos.filter(
+      (p) => (p.unrealized_pnl_base ?? p.unrealized_pnl_thb ?? 0) > 0
+    ).length;
+    const total = ts.closed + openPos.length;
+    if (total === 0) return null;
+    return { pct: ((ts.wins + openWinners) / total) * 100, hits: ts.wins + openWinners, total };
+  }, [ts, openPos]);
+
   const capitalTiles: Array<{
     label: string;
     value: number;
@@ -470,6 +502,111 @@ export function AnalyticsTab({
           </div>
         ))}
       </div>
+
+      {/* Trade stats — closed-trade skill: rate, ratio, average size, edge */}
+      {ts && ts.closed > 0 && (
+        <div className="mx-2 mb-2 border p-2" style={{ borderColor: colors.border }}>
+          <div
+            className="text-[9px] font-bold tracking-widest mb-2"
+            style={{ color: colors.accent }}
+          >
+            TRADE STATS
+            <span className="ml-1 text-[7px]" style={{ color: "#555" }}>
+              {ts.closed} closed trades{openPos.length > 0 ? ` · ${openPos.length} open` : ""}
+            </span>
+          </div>
+          <div className="grid gap-px" style={{ gridTemplateColumns: "repeat(6, 1fr)" }}>
+            {[
+              {
+                label: "WIN RATE",
+                value: ts.win_rate == null ? "—" : `${ts.win_rate.toFixed(1)}%`,
+                color: ts.win_rate == null ? "#555" : ts.win_rate >= 50 ? "#4ade80" : "#f87171",
+                hint: `${ts.wins}W / ${ts.losses}L · closed`,
+                title: "Winning closed trades ÷ closed trades. Excludes open positions.",
+              },
+              {
+                label: "HIT RATE",
+                value: hitRate == null ? "—" : `${hitRate.pct.toFixed(1)}%`,
+                color: hitRate == null ? "#555" : hitRate.pct >= 50 ? "#4ade80" : "#f87171",
+                hint: hitRate == null ? "—" : `${hitRate.hits} / ${hitRate.total} · incl. open`,
+                title:
+                  "Closed winners + open positions currently in profit, ÷ all positions taken. Moves with live prices.",
+              },
+              {
+                label: "W/L RATIO",
+                value: ts.wl_ratio == null ? "—" : `${ts.wl_ratio.toFixed(2)}×`,
+                color: ts.wl_ratio == null ? "#555" : ts.wl_ratio >= 1 ? "#4ade80" : "#f87171",
+                hint: "wins ÷ losses (count)",
+                title: "Number of winning trades ÷ number of losing trades. — when no losses yet.",
+              },
+              {
+                label: "AVG WIN",
+                value: ts.avg_win == null ? "—" : `${sym}${fmtK(Math.abs(ts.avg_win))}`,
+                color: ts.avg_win == null ? "#555" : "#4ade80",
+                hint: "per winning trade",
+                title: "Mean realized P&L across winning closed trades, in the display currency.",
+              },
+              {
+                label: "AVG LOSS",
+                value: ts.avg_loss == null ? "—" : `${sym}${fmtK(Math.abs(ts.avg_loss))}`,
+                color: ts.avg_loss == null ? "#555" : "#f87171",
+                hint: "per losing trade",
+                title: "Mean realized P&L across losing closed trades, in the display currency.",
+              },
+              {
+                label: "PAYOFF",
+                value: ts.payoff == null ? "—" : `${ts.payoff.toFixed(2)}×`,
+                color: ts.payoff == null ? "#555" : ts.payoff >= 1 ? "#4ade80" : "#f87171",
+                hint: "avg win ÷ avg loss",
+                title:
+                  "Average win ÷ |average loss|. Above 1 means winners are bigger than losers; combine with WIN RATE to read the edge.",
+              },
+            ].map((t) => (
+              <div key={t.label} className="p-2" style={{ background: "#080808" }} title={t.title}>
+                <div className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
+                  {t.label}
+                </div>
+                <div className="text-[11px] font-mono font-bold mt-0.5" style={{ color: t.color }}>
+                  {t.value}
+                </div>
+                <div className="text-[7px] font-mono mt-0.5" style={{ color: "#555" }}>
+                  {t.hint}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div
+            className="flex items-center justify-between mt-2 pt-2 border-t"
+            style={{ borderColor: colors.border }}
+          >
+            <span
+              className="text-[8px] font-bold tracking-widest"
+              style={{ color: colors.textSecondary }}
+              title="Expectancy = win rate × avg win + loss rate × avg loss. The average P&L a new trade is worth at this win rate and payoff."
+            >
+              EXPECTANCY / TRADE
+              <span className="ml-1 text-[7px]" style={{ color: "#555" }}>
+                (win% × avg win) + (loss% × avg loss)
+              </span>
+            </span>
+            <span
+              className="text-[13px] font-mono font-bold"
+              style={{ color: ts.expectancy == null ? "#555" : pnlColor(ts.expectancy) }}
+            >
+              {ts.expectancy == null
+                ? "—"
+                : `${ts.expectancy >= 0 ? "+" : "−"}${sym}${fmtK(Math.abs(ts.expectancy))} ${
+                    ts.expectancy >= 0 ? "▲" : "▼"
+                  }`}
+              <span className="ml-2 text-[9px]" style={{ color: colors.textSecondary }}>
+                {sym}
+                {fmtK(Math.abs(ts.total_win))} won / {sym}
+                {fmtK(Math.abs(ts.total_loss))} lost
+              </span>
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Capital snapshot — realized vs unrealized split, cost basis, invested capital */}
       {(openPos.length > 0 || filteredStats.length > 0) && (
