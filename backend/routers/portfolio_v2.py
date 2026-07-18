@@ -357,6 +357,7 @@ class TradeIn(BaseModel):
     fear_greed_index: str = ""
     vix_index: str = ""
     note: str = ""
+    is_reinvest: bool = False
 
 
 class TradePatch(BaseModel):
@@ -379,6 +380,7 @@ class TradePatch(BaseModel):
     win_loss:        Optional[str]   = None
     pnl_percent:     Optional[float] = None
     exit_trigger:    Optional[str]   = None
+    is_reinvest:     Optional[bool]  = None
     # Audit meta — NOT persisted to trades table, only to audit log
     adjustment_reason: Optional[str] = None
 
@@ -622,6 +624,7 @@ def list_trades(
     account_id: Optional[str] = Query(None),
     win_loss: Optional[str] = Query(None),
     symbol: Optional[str] = Query(None),
+    is_reinvest: Optional[bool] = Query(None),
     base_currency: Optional[str] = Query(None),
     limit: int = Query(500),
     offset: int = Query(0),
@@ -636,6 +639,9 @@ def list_trades(
     if symbol:
         where.append("symbol LIKE ?")
         params.append(f"%{symbol.upper()}%")
+    if is_reinvest is not None:
+        where.append("COALESCE(is_reinvest, 0) = ?")
+        params.append(1 if is_reinvest else 0)
     sql = "SELECT * FROM trades"
     if where:
         sql += " WHERE " + " AND ".join(where)
@@ -722,8 +728,8 @@ def create_trade(body: TradeIn):
                 pnl_amount, win_loss, pnl_percent, currency, exchange_rate, exit_exchange_rate,
                 strategy_name, entry_trigger, exit_trigger, market_trend,
                 news_sentiment, expectation_based, factor_based,
-                fear_greed_index, vix_index, note)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                fear_greed_index, vix_index, note, is_reinvest)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (trade_id, body.account_id, body.symbol.upper(),
               (body.resolved_symbol or "").upper() or None,
               (body.market or "").upper() or None, body.sector,
@@ -733,7 +739,8 @@ def create_trade(body: TradeIn):
               body.pnl_percent, currency, entry_fx, exit_fx,
               body.strategy_name, body.entry_trigger, body.exit_trigger,
               body.market_trend, body.news_sentiment, body.expectation_based,
-              body.factor_based, body.fear_greed_index, body.vix_index, body.note))
+              body.factor_based, body.fear_greed_index, body.vix_index, body.note,
+              1 if body.is_reinvest else 0))
     return {
         "ok": True,
         "id": trade_id,
@@ -2280,7 +2287,61 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
             result.append(d)
         return result
 
+    # Closed-trade skill metrics. W/L classification follows the stored win_loss
+    # flag (set at /sell time), not the sign of the reported base P&L — a trade
+    # can win natively and lose in base after FX, and the flag is what the rest
+    # of the app counts. Averages are per-trade realized P&L in base currency.
+    def _trade_stats(rows: list[dict]) -> dict:
+        win_pnls = [
+            realized_pnl_in_report(r, base_currency) for r in rows if r.get("win_loss") == "W"
+        ]
+        loss_pnls = [
+            realized_pnl_in_report(r, base_currency) for r in rows if r.get("win_loss") == "L"
+        ]
+        wins, losses = len(win_pnls), len(loss_pnls)
+        closed = wins + losses
+        avg_win = sum(win_pnls) / wins if wins else None
+        avg_loss = sum(loss_pnls) / losses if losses else None
+        win_rate = (wins / closed * 100) if closed else None
+        # Payoff = avg win ÷ |avg loss|. Undefined with no losses (or a
+        # non-negative avg loss) rather than infinite.
+        payoff = (
+            avg_win / abs(avg_loss)
+            if avg_win is not None and avg_loss is not None and avg_loss < 0
+            else None
+        )
+        expectancy = None
+        if closed and avg_win is not None and avg_loss is not None:
+            p = wins / closed
+            expectancy = p * avg_win + (1 - p) * avg_loss
+        elif closed and avg_win is not None:
+            expectancy = avg_win
+        elif closed and avg_loss is not None:
+            expectancy = avg_loss
+        return {
+            "closed":     closed,
+            "wins":       wins,
+            "losses":     losses,
+            "win_rate":   round(win_rate, 1) if win_rate is not None else None,
+            "wl_ratio":   round(wins / losses, 2) if losses else None,
+            "avg_win":    round(avg_win, 2) if avg_win is not None else None,
+            "avg_loss":   round(avg_loss, 2) if avg_loss is not None else None,
+            "payoff":     round(payoff, 2) if payoff is not None else None,
+            "expectancy": round(expectancy, 2) if expectancy is not None else None,
+            "total_win":  round(sum(win_pnls), 2),
+            "total_loss": round(sum(loss_pnls), 2),
+        }
+
+    trade_stats = _trade_stats(closed_rows)
+    trade_stats_by_account = {
+        acc_id: _trade_stats([r for r in closed_rows if r.get("account_id") == acc_id])
+        for acc_id in {str(r.get("account_id")) for r in closed_rows}
+    }
+
     return {
+        "base_currency": base_currency,
+        "trade_stats":   trade_stats,
+        "trade_stats_by_account": trade_stats_by_account,
         "by_sector":     _fmt(by_sector),
         "by_strategy":   _fmt(by_strategy),
         "by_month":      _fmt(by_month),

@@ -37,6 +37,7 @@ export interface Trade {
   exit_trigger?: string;
   market_trend?: string;
   note?: string;
+  is_reinvest?: number;
   current_price?: number;
   unrealized_pnl?: number;
   unrealized_pct?: number;

@@ -148,6 +148,8 @@ transactions        (id, symbol, type buy/sell, shares, price, date, commission,
 --   set at write time by /resolve-symbol); portfolio_accounts += markets TEXT (JSON e.g. ["US","TH"])
 -- 2026-07-14 (multi-currency): trades.currency = authoritative instrument currency;
 --   trades.exchange_rate = entry THB/native FX; trades.exit_exchange_rate = exit THB/native FX
+-- 2026-07-16 (reinvest tag): trades += is_reinvest INTEGER DEFAULT 0 — ticked via "REINVEST?" in ENTRY,
+--   listed in CASH → REINVEST alongside dividend-sourced rows. Label only: no cash/positions effect.
 cash_ledger         (id, account_id, date, income, investment, exchange_rate, note, entry_type CASH|TRANSFER, linked_id)
 -- 2026-07-14 (cash-transfer-feature): entry_type/linked_id additive; TRANSFER rows come in linked
 --   pairs (same linked_id, opposite investment sign) via POST /cash/transfer; DELETE cascades pair
