@@ -9,7 +9,7 @@ import {
   Shield,
   TrendingDown,
 } from "lucide-react";
-import React, { useState, useCallback, useEffect, useMemo } from "react";
+import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { type Colors, fmt, fmtK, pnlColor } from "../helpers";
 
@@ -1120,9 +1120,20 @@ function OverviewSection({
   const [parityLoading, setParityLoading] = useState(false);
   const scoreColor = riskColor(metrics.risk_score);
 
+  // Tracks which accountId we've already fetched parity for — a ref (not
+  // state) so it can never itself become an effect dependency and re-trigger
+  // this effect. Fetching was previously guarded by `parity`/`parityLoading`
+  // state, which are also *set inside* this same effect — any code path that
+  // left `parity` null after a fetch attempt (e.g. an error) caused the
+  // effect to refire indefinitely (infinite abort/retry loop on ERC PARITY).
+  const parityFetchedFor = useRef<string | null>(null);
+
   useEffect(() => {
-    if (chartView !== "parity" || parity || parityLoading) return;
+    if (chartView !== "parity") return;
+    if (parityFetchedFor.current === accountId) return;
+    parityFetchedFor.current = accountId;
     const ac = new AbortController();
+    setParity(null);
     setParityLoading(true);
     const qs = accountId !== "all" ? `&account_id=${accountId}` : "";
     fetch(`/api/v2/portfolio/risk/risk-parity?lookback=252${qs}`, { signal: ac.signal })
@@ -1133,10 +1144,11 @@ function OverviewSection({
       .then((d) => setParity(d))
       .catch((e) => {
         if (e?.name === "AbortError") return;
+        setParity({ current_weights: [], optimal_weights: [], rebalance_actions: [], method: "" });
       })
       .finally(() => setParityLoading(false));
     return () => ac.abort();
-  }, [chartView, parity, parityLoading, accountId]);
+  }, [chartView, accountId]);
   const scale = Math.sqrt(varHorizon.days);
   const breachCount = [metrics.breach_hist, metrics.breach_cf, metrics.breach_mc].filter(
     Boolean

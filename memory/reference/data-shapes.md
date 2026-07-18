@@ -71,16 +71,33 @@
 ## Portfolio Open Positions (`GET /api/v2/portfolio/open-positions`)
 ```json
 {
+  "thb_per_usd": 32.5,
   "positions": [{
-    "symbol": "AAPL", "account_id": "ibkr_usd", "shares": 10.0,
-    "avg_cost": 180.0, "current_price": 190.0,
-    "unrealized_pnl": 100.0, "unrealized_pnl_pct": 5.56,
-    "day_change": 1.5, "day_change_pct": 0.79,
-    "market_value": 1900.0, "cost_basis": 1800.0,
-    "sector": "Technology", "currency": "USD"
+    "symbol": "BH", "resolved_symbol": "BH.BK", "market": "TH",
+    "account_id": "dime", "acc_currency": "USD",
+    "currency": "THB", "pos_currency": "THB",
+    "price_entry": 183.0, "volume": 200.0, "current_price": 185.0,
+    "unrealized_pnl": 400.0, "unrealized_pct": 1.09,
+    "unrealized_pnl_thb": 400.0, "unrealized_pnl_base": 400.0,
+    "cost_basis_base": 36600.0, "market_value_base": 37000.0,
+    "day_pnl": 200.0, "day_pnl_base": 200.0
   }]
 }
 ```
+`currency`/`pos_currency` = native instrument currency (authoritative). `acc_currency` is only the account's default report currency. Every `*_base` field is already normalized to the requested `base_currency`; the frontend must not convert it again.
+
+## Portfolio Trades / Dividends — additive report fields
+
+- `GET /api/v2/portfolio/trades?base_currency=THB|USD` adds `amount_base`, `price_entry_base`, `price_exit_base`, `pnl_base`. Closed `pnl_base` = native `pnl_amount` converted at exit-date FX; principal FX gain/loss is intentionally excluded from REALIZED P&L.
+- `GET /api/v2/portfolio/dividends?base_currency=THB|USD` adds `amount_per_unit_base`, `total_received_base`, `reinvested_amount_base`, using pay-date (or ex-date) FX.
+- `trades.exchange_rate` / `exit_exchange_rate` mean **THB per one native-currency unit**. Existing values such as `32.65` are transaction evidence and must not be overwritten.
+
+## Portfolio Summary / Analytics — realized P&L semantics
+
+- `GET /api/v2/portfolio/summary?base_currency=THB|USD` keeps `total_pnl_base` / `pnl_base` as broker-style realized trading P&L: `native pnl_amount × exit-date FX`.
+- Summary also adds `total_economic_pnl_base`, `pnl_economic_base`, and YTD economic fields. These are FX-inclusive economic attribution: `(entry cost + native P&L) × exit FX − entry cost × entry FX`.
+- `GET /api/v2/portfolio/analytics?base_currency=THB|USD` monthly/sector/strategy/symbol rows add `economic_pnl` next to `pnl`.
+- Economic fields use stored trade FX when present; otherwise nearest-prior daily market FX. Treat them as an attribution estimate, not broker-exact realized P&L.
 
 ## Risk Metrics (`GET /api/v2/portfolio/risk/metrics`)
 ```json
@@ -251,10 +268,12 @@ URL: `https://polymarket.com/event/{event_slug}` — use `event_slug` NOT `slug`
 
 ### `portfolio/types.ts`
 ```ts
-interface Trade { id: number; symbol: string; account_id: string; type: "buy"|"sell"; shares: number; price: number; date: string; sector?: string; is_option?: boolean; option_type?: "call"|"put"; vat_amount?: number; notes?: string; }
-interface Account { id: string; name: string; currency: "THB"|"USD"; broker: string; }
-interface CashEntry { id: number; account_id: string; type: "deposit"|"withdrawal"|"fee"; amount: number; date: string; notes?: string; }
-interface Dividend { id: number; symbol: string; account_id: string; amount: number; date: string; notes?: string; }
+interface Trade { id: string; account_id: string; symbol: string; date_entry: string; price_entry: number; volume: number; currency: string; exchange_rate: number; exit_exchange_rate?: number; amount_base?: number; pnl_base?: number; pos_currency?: string; acc_currency?: string; unrealized_pnl_base?: number; cost_basis_base?: number; market_value_base?: number; day_pnl_base?: number; }
+interface AccountStat { pnl_base: number; pnl_economic_base?: number; ytd_realized_base?: number; ytd_economic_realized_base?: number; }
+interface Summary { total_pnl_base: number; total_economic_pnl_base?: number; total_ytd_realized_base?: number; total_ytd_economic_realized_base?: number; }
+interface Account { id: string; name: string; broker: string; country: string; currency: string; account_type: string; }
+interface CashEntry { id: string; account_id: string; date: string; income: number; investment: number; exchange_rate: number; note: string; entry_type?: "CASH" | "TRANSFER"; linked_id?: string; }  // TRANSFER rows come in linked pairs (same linked_id, opposite investment sign) — see plans/completed/cash-transfer-feature.md
+interface Dividend { id: string; account_id: string; asset: string; pay_date: string; amount_per_unit: number; total_received: number; currency: string; amount_per_unit_base?: number; total_received_base?: number; reinvested_amount_base?: number; }
 ```
 
 ### `PolySignal` (news-view.tsx)

@@ -12,10 +12,12 @@
 | Symptom | Root Cause | Fix |
 |---------|-----------|-----|
 | localStorage setting not saved after refresh | `useEffect([dep])` fires on mount → overwrites loaded value with DEFAULT | Read in `useState` initializer, write in `useEffect([val])`. See pattern in CLAUDE.md |
+| Portfolio COST column (per-row) doesn't sum to the COST badge/ANALYTICS total for accounts holding non-THB positions bought a while ago | `OpenPositionsTab.tsx` row-level `costVal` computed `entryNative × volume` using `toBase()` = **today's live FX**, while backend `cost_basis_base` (used by the badge + ANALYTICS OPEN COST BASIS) uses **entry-date FX** — the two diverge as USD/THB moves after purchase | **FIXED 2026-07-14** — row `costVal` now prefers `p.cost_basis_base` (entry-date FX), only falls back to live-FX `entryNative × volume` when backend didn't supply it or a manual cost override is set. See `sessions/2026-07-14-cash-transfer-followup.md` |
 | Polymarket URL → "Page not found" | Using market `slug` (has trailing `-789-924-249`) instead of `event_slug` | Use `events[0].slug` from Gamma API pool → stored as `event_slug` in signal |
 | Section content clipped, can't scroll | Root div missing `h-full` → `overflow-hidden` on parent clips content | Root: `flex flex-col h-full`, header: `shrink-0`, scroll zone: `flex-1 overflow-y-auto` |
 | Jotai `atomWithStorage` wrong default on load | Next.js SSR hydrates with server value (undefined window) before client localStorage read | Use `useState` initializer with `typeof window === "undefined"` guard instead |
 | React Query stale data after mutation | Missing `queryClient.invalidateQueries()` after POST/PATCH/DELETE | Call invalidate with matching queryKey after mutation |
+| Manual `useEffect` fetch guard causes infinite abort/retry loop (network tab floods with `net::ERR_ABORTED`) | Effect fetches data and is guarded by the *same state it sets* (e.g. `if (data || loading) return;` inside an effect with `[data, loading, ...]` deps) — any code path that leaves `data` null after a fetch attempt (error, or a valid-but-empty response not treated as "fetched") never satisfies the guard, so the effect refires forever | Don't gate a fetch effect on state it writes. Use a `useRef` to track "already fetched for key X" — refs never appear in dependency arrays so they structurally cannot retrigger the effect. Fixed 2026-07-15 in `RiskTab.tsx` ERC PARITY fetch (`parityFetchedFor` ref pattern) |
 | Chart labels truncated | Missing `interval={0}` on Recharts XAxis | Add `interval={0}` to all bar chart XAxis |
 
 ### Backend / FastAPI
@@ -40,12 +42,15 @@
 | Macro/Crisis view shows nothing | `FRED_API_KEY` not set | Set env var — without it FRED calls fail silently |
 | Backend startup error: missing module | numpy/scipy not installed (required for greeks.py) | `pip install numpy>=1.26 scipy>=1.12` |
 | NAV chart empty / `portfolio_nav_snapshots` 0 rows | `_batch_fetch_prices` return shape changed float→dict (aeb4ee4) but `_maybe_capture_nav` still does `(price - entry)` → TypeError swallowed by `except Exception: pass` | **FIXED 2026-07-03** — unpacked `quote.get("price")`, `except` now `logger.exception`. Pattern stays: never `except: pass` around DB writes. ⚠️ Synthetic backfill (`backend/scripts/backfill_nav.py`) was tried and **reverted same day** — `trades.date_exit`/`date_entry` contain placeholders (21 exits on Sat 2026-06-06, 22 entries 2025-01-01) so reconstruction inflates NAV with long-sold positions. NAV history accrues from live capture-on-view only, starting 2026-07-03. See `memory/reports/analytics-db-nav-risk-report.md` |
+| Dividend/trade total looks ~30x inflated in ANALYTICS (THB) but correct-looking in native-currency views | Row's `currency` column mislabeled (e.g. `USD` on a value the user actually entered in THB) — `total_*_base` multiplies by FX on top of an already-converted number | Sanity-check `amount_per_unit` against the ticker's real dividend/share (or price) history before trusting a currency tag; a value 30-35x too big for its labeled currency in THB/USD terms is the tell. Fixed 2026-07-14 for 7 Dime dividend rows (JEPQ/UNH/META/ABBV/VT/MSFT) — see `sessions/2026-07-14-cash-transfer-followup.md` |
+| Open-position `cost_basis_base` changes between two reads seconds apart with no new trade | Cloud Sync (`backend/sync/`) pulled a fresher `trades` row from another device mid-session, changing the weighted-avg `price_entry` — **not benign**, confirmed inflated vs real broker cost by ~12-15% on 3/7 Dime positions (GOOGL/NFLX/MSFT) | Do not treat as "just FX drift" — verify against broker statement before trusting `OPEN COST BASIS`/`MARKET VALUE`/CASH tile for accounts with sync active. See `reports/dime-sync-cost-basis-risk-report.md` (2026-07-14) |
 
 ### Next.js / Proxy
 
 | Symptom | Root Cause | Fix |
 |---------|-----------|-----|
 | Next.js proxy 502 | Python backend not running on port 8000 | Start backend: `python -m uvicorn main:app --port 8000 --reload` |
+| `POST /api/v2/portfolio/X/subpath` returns 405 | Parent `route.ts` (e.g. `cash/route.ts`) only forwards to a hardcoded backend path (`/cash`), no passthrough for sub-paths | Add a dedicated `X/subpath/route.ts` file (Next.js file-based routing, same pattern as `cash/[id]/route.ts`) — one file per distinct backend path, not just per resource. Hit 2026-07-14 adding `cash/transfer` |
 | SSE stream cuts off | Vercel Edge Runtime needed for streaming in production | Add `export const runtime = "edge"` to SSE proxy route |
 | `PYTHON_API` undefined | `.env.local` missing `PYTHON_API_URL` | Default is `http://localhost:8000` — set in `lib/constants.ts` |
 
@@ -63,6 +68,7 @@
 | Renaming Jotai atom string values | Every `useAtom` subscriber breaks + localStorage keys mismatch | Atom values are stable contracts — add new, never rename |
 | Renaming cache JSON files (`macro_series.json` etc.) | Backend disk cache read path hardcoded in each router | Keep filenames stable |
 | `ALTER TABLE ... DROP COLUMN` on portfolio.db | No migration system — existing data lost | Only `ADD COLUMN IF NOT EXISTS` with safe defaults |
+| Converting a trade/dividend with `portfolio_accounts.currency` | Mixed-market accounts (e.g. Dime holding `BH.BK` + US stocks) scale THB instruments as USD | Use stored `trades.currency` / `dividends.currency`; convert each row via `portfolio_currency.py`, then sum. Symbol inference is migration/NULL fallback only |
 | `useEffect([dense])` to sync columns from dense toggle | Effect fires on mount → overwrites localStorage-loaded cols | Call `setShowCols()` directly in click handler |
 | Using `language=1` or `language=2` for SEC One Report | API silently returns empty / wrong data | Use `language=T` (Thai) or `language=E` (English) |
 | Using Buddhist Era year for SEC One Report (`report_year=2566`) | API returns no data | Use Gregorian year (`report_year=2023`) |

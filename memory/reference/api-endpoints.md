@@ -83,20 +83,28 @@
 - `POST /api/v2/portfolio/accounts` — create account (id, name, country, currency, account_type)
 - `PATCH /api/v2/portfolio/accounts/{id}` — update name/broker/is_active
 - `DELETE /api/v2/portfolio/accounts/{id}` — delete account (409 if it has trades; also clears its cash/dividends)
-- `GET /api/v2/portfolio/trades` — trade log (filter by account/symbol)
-- `POST /api/v2/portfolio/trades` — add trade (17 fields incl. is_option, vat_amount; + optional `resolved_symbol`/`market` from resolver)
+- `GET /api/v2/portfolio/trades` — trade log (filter by account/symbol); optional `base_currency=THB|USD` adds historical `amount_base`, `price_entry_base`, `price_exit_base`, `pnl_base`
+- `POST /api/v2/portfolio/trades` — add trade; accepts resolver `resolved_symbol`/`market`/`currency`; persists authoritative instrument currency plus entry `exchange_rate` (THB per native unit)
 - `PATCH /api/v2/portfolio/trades/{id}` — edit trade (optional `adjustment_reason` field → audit log only, not stored in trades table)
 - `DELETE /api/v2/portfolio/trades/{id}` — delete trade (auto-logs to audit before delete)
 - `GET /api/v2/portfolio/trades/{id}/audit-log` — immutable change history for one trade
 - `GET /api/v2/portfolio/audit-log` — recent changes across all trades (filter: account_id)
 - `PATCH /api/v2/portfolio/trades/bulk-patch-sector` — bulk sector override
-- `GET /api/v2/portfolio/open-positions` — open positions with live prices
-- `POST /api/v2/portfolio/sell` — sell (partial or full)
-- `GET /api/v2/portfolio/dividends` — dividend history
-- `POST /api/v2/portfolio/dividends` — add dividend
+- `GET /api/v2/portfolio/premarket?account_id=X` — pre-/post-market session quotes for open positions, keyed by bare symbol. Uses `.info` (heavier than fast_info) so it's a SEPARATE background fetch, NOT part of open-positions. Returns `{quotes: {SYM: {market_state, regular_price, pre_price, pre_change, pre_change_pct, post_price, post_change, post_change_pct}}}`. `*_change_pct` derived from change/reference (scaling-agnostic). US concept — .BK rows return empty. 30s TTLCache. Frontend: OpenPositionsTab **auto** PRE/POST column — injected after CURRENT only while ≥1 position is in a live PRE/POST session, collapses on its own when session ends. NOT a user-toggled col (excluded from ALL_COLS/COLS picker; type `DisplayCol = ColName | "PRE/POST"`).
+- `GET /api/v2/portfolio/open-positions` — open positions with live prices; `base_currency` adds `cost_basis_base`, `market_value_base`, `unrealized_pnl_base`, `day_pnl_base`; `currency`/`pos_currency` are instrument currency
+- `GET /api/v2/portfolio/summary` — account/global summary; `total_pnl_base` remains broker-style realized trading P&L, while `total_economic_pnl_base` adds principal FX attribution as a separate FX-inclusive estimate
+- `GET /api/v2/portfolio/analytics` — P&L breakdowns; aggregate rows include `pnl` (broker-style realized) plus `economic_pnl` (entry/exit FX two-leg economic attribution)
+- `POST /api/v2/portfolio/sell` — sell (partial or full); captures `exit_exchange_rate` at exit date
+- `GET /api/v2/portfolio/dividends` — dividend history; optional `base_currency` adds dated `amount_per_unit_base`, `total_received_base`, `reinvested_amount_base`
+- `POST /api/v2/portfolio/dividends` — add dividend with record-level `currency`
 - `DELETE /api/v2/portfolio/dividends/{id}` — delete dividend
 - `POST /api/v2/portfolio/import` — bulk import Excel
 - `GET /api/v2/portfolio/returns` — cost-based annualized returns: CAGR (time-weighted growth of deployed cost) + XIRR (money-weighted IRR from dated cashflows: buys−/sells+/divs+/mark-to-market+). Per-account + total. Params: `account_id`, `base_currency`. NOT the same as CAPM RET ANN (which is market-price, cost-agnostic).
+- `GET /api/v2/portfolio/cash` — cash ledger entries (filter `account_id`); rows include `entry_type` (`CASH`|`TRANSFER`), `linked_id`
+- `POST /api/v2/portfolio/cash` — add manual cash entry (`entry_type` defaults `'CASH'`)
+- `PUT /api/v2/portfolio/cash/{id}` — edit cash entry
+- `DELETE /api/v2/portfolio/cash/{id}` — delete cash entry; if `entry_type='TRANSFER'`, cascades to delete the linked pair (matched by `linked_id`)
+- `POST /api/v2/portfolio/cash/transfer` — atomic linked-pair transfer between own accounts: inserts 2 `TRANSFER` rows (source `investment=-amount`, dest `investment=+amount`), nets to 0 on `account_id='all'`, fixes per-account `invested_capital` without touching NAV (`plans/completed/cash-transfer-feature.md`)
 
 ## Portfolio Risk (`routers/risk.py`)
 - `GET /api/v2/portfolio/risk/metrics` — VaR/CVaR 1D–6M with √T scaling (Basel)
