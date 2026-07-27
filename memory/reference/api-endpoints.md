@@ -308,6 +308,19 @@ Controls the live-quote registry (manual switch + auto-failover, capability-scop
 
 ---
 
+## Watchlist Signals (`routers/watchlist_signals.py`)
+
+| Endpoint | Params | Returns |
+|----------|--------|---------|
+| `GET /api/watchlist/signals` | `symbols` (comma-separated, max 60) | `{signals: {SYM: {...}}, errors: [], count}` |
+
+One yfinance batch download (`period=2y, interval=1d`) for the whole list, cached 900s.
+Per symbol: `trend` (EMA20/50/200 stack), `rsi` (Wilder 14), `rvol` (vs 20d avg),
+`macd` (12/26/9 histogram sign + barsSinceCross), `breakout` (20d Donchian),
+`range52w` (position 0..1), `atrPct`, `score` (composite ≈ -6..+6), `flags` (string list).
+`asOf` is the last bar's date — equal to today while the session is open, in which case
+`rvol` only counts partial volume.
+
 ## Caching Strategy
 
 | Data | Cache | Where |
@@ -392,5 +405,6 @@ app/api/
 ├── allocation/route.ts
 ├── country-rotation/route.ts
 ├── sector/route.ts
-└── ai/route.ts
+├── ai/route.ts
+└── watchlist/signals/route.ts
 ```
