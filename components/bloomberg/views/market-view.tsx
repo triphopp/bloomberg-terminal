@@ -1540,7 +1540,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
           <IndicatorPicker
             colors={colors}
             activeIndicators={heatmapIndicators}
-            onAdd={(entry) => addHeatmapIndicator(entry)}
+            onAdd={addHeatmapIndicator}
             onRemove={removeHeatmapIndicator}
           />
           {heatmapOhlcv.some((d) => (d.volume ?? 0) > 0) && (

@@ -21,7 +21,7 @@ import {
   createChart,
   createSeriesMarkers,
 } from "lightweight-charts";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   CanvasOverlay,
   ChartColors,
@@ -39,7 +39,11 @@ export interface ModularChartProps {
   /** Theme */
   isDark: boolean;
   colors: ChartColors;
-  /** Chart height (main pane, excluding sub-panes) */
+  /**
+   * Fallback height used only when the parent gives the chart no definite height
+   * (auto-height container). Inside a sized flex parent the chart fills it and
+   * this acts as the minimum.
+   */
   height?: number;
   /** Active indicator instances */
   indicators: ChartIndicator[];
@@ -49,9 +53,72 @@ export interface ModularChartProps {
   eventMarkers?: ChartEventMarker[];
 }
 
-// ── Sub-pane height ──────────────────────────────────────────────────────────
+// ── Pane sizing ──────────────────────────────────────────────────────────────
+//
+// Sub-panes used to be a flat 80px each and the chart simply grew taller with
+// every indicator added — past the parent's height it was clipped, which is what
+// made stacked indicators appear to bleed into the volume pane. Instead, fit the
+// panes to the height actually available and only overflow (with a scrollbar)
+// once even the minimums no longer fit.
 
-const SUB_PANE_HEIGHT = 80; // px per sub-pane indicator
+const SUB_PANE_MAX = 80;
+const SUB_PANE_MIN = 44; // below this a pane's price scale labels start to collide
+const MAIN_PANE_MIN = 140;
+/** Quantize measured height so a 1px reflow doesn't rebuild the whole chart. */
+const HEIGHT_STEP = 8;
+
+/**
+ * Stacking order for the canvas overlays (Volume Profile).
+ *
+ * lightweight-charts positions its own canvases at `z-index: 1` (series) and
+ * `z-index: 2` (crosshair/labels). A later sibling with `z-index: auto` still
+ * loses to those, so the candles painted over the VP bars and labels — the
+ * overlays must opt into a higher layer explicitly.
+ */
+const OVERLAY_Z = 3;
+
+interface PaneLayout {
+  /** Total height handed to lightweight-charts */
+  chartHeight: number;
+  /** Height of each sub-pane */
+  subPaneHeight: number;
+}
+
+function computePaneLayout(available: number, paneCount: number): PaneLayout {
+  if (paneCount === 0) {
+    return { chartHeight: available, subPaneHeight: 0 };
+  }
+  const subPaneHeight = Math.max(
+    SUB_PANE_MIN,
+    Math.min(SUB_PANE_MAX, Math.floor((available - MAIN_PANE_MIN) / paneCount))
+  );
+  // Below this the panes would have to shrink past SUB_PANE_MIN, so scroll instead.
+  const needed = MAIN_PANE_MIN + paneCount * subPaneHeight;
+  return { chartHeight: Math.max(available, needed), subPaneHeight };
+}
+
+/**
+ * Darkness of the surface the chart is actually painted on.
+ *
+ * Canvas overlays (Volume Profile) pick label/line colors from this, NOT from the
+ * theme flag: every chart panel hardcodes a near-black background regardless of
+ * theme, so in light mode `isDark === false` produced white label backgrounds on
+ * a black chart. Walks up until it finds a background that isn't transparent.
+ */
+function isDarkSurface(el: HTMLElement | null, fallback: boolean): boolean {
+  for (let node = el; node; node = node.parentElement) {
+    const match = getComputedStyle(node).backgroundColor.match(
+      /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/
+    );
+    if (!match) continue;
+    const alpha = match[4] === undefined ? 1 : Number(match[4]);
+    if (alpha < 0.2) continue; // effectively transparent — keep walking up
+    const luminance =
+      (0.2126 * Number(match[1]) + 0.7152 * Number(match[2]) + 0.0722 * Number(match[3])) / 255;
+    return luminance < 0.5;
+  }
+  return fallback;
+}
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -79,16 +146,37 @@ export function ModularChart({
   overlays = [],
   eventMarkers = [],
 }: ModularChartProps) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null); // right-side strip
   const fullCanvasRef = useRef<HTMLCanvasElement>(null); // full-chart session VP
   const chartRef = useRef<IChartApi | null>(null);
   const mainSeriesRef = useRef<ISeriesApi<SeriesType> | null>(null);
 
-  // Count pane indicators to compute total chart height
+  // Height the parent actually grants us (0 until first measurement).
+  const [availableHeight, setAvailableHeight] = useState(0);
+
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const measure = () => {
+      const h = wrapper.clientHeight;
+      // Floor, never round: rounding up would hand the chart more height than the
+      // parent has and clip the bottom pane by a few pixels.
+      if (h > 0) setAvailableHeight(Math.floor(h / HEIGHT_STEP) * HEIGHT_STEP);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrapper);
+    return () => ro.disconnect();
+  }, []);
+
   const paneIndicators = indicators.filter((i) => i.type === "pane");
   const overlayIndicators = indicators.filter((i) => i.type === "overlay");
-  const totalHeight = height + paneIndicators.length * SUB_PANE_HEIGHT;
+  const { chartHeight, subPaneHeight } = computePaneLayout(
+    availableHeight > 0 ? availableHeight : height,
+    paneIndicators.length
+  );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: chart is fully rebuilt from these inputs; colors object identity is intentionally excluded
   useEffect(() => {
@@ -100,7 +188,7 @@ export function ModularChart({
     // ── Create chart ──
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: totalHeight,
+      height: chartHeight,
       layout: {
         background: { color: "transparent" },
         textColor: colors.textSecondary,
@@ -173,7 +261,7 @@ export function ModularChart({
       const outputs = indicator.compute(data, indicator.config);
 
       const subPane = chart.addPane();
-      subPane.setHeight(SUB_PANE_HEIGHT);
+      subPane.setHeight(subPaneHeight);
 
       for (const output of outputs) {
         const isVolume = output.priceScaleId === "vol";
@@ -276,6 +364,9 @@ export function ModularChart({
 
     if (rightOverlays.length > 0 || fullOverlays.length > 0) {
       let rafId = 0;
+      // Measured once per chart build: overlay colors follow the painted surface,
+      // not the theme flag (chart panels are hardcoded near-black in both themes).
+      const surfaceDark = isDarkSurface(container, isDark);
 
       const drawOverlaysNow = () => {
         rafId = 0;
@@ -300,7 +391,7 @@ export function ModularChart({
                 ctx.save();
                 ctx.scale(dpr, dpr);
                 for (const overlay of rightOverlays) {
-                  overlay.draw(ctx, chart, candleSeries, data, isDark);
+                  overlay.draw(ctx, chart, candleSeries, data, surfaceDark);
                 }
                 ctx.restore();
               }
@@ -331,7 +422,7 @@ export function ModularChart({
                 ctx.save();
                 ctx.scale(dpr, dpr);
                 for (const overlay of fullOverlays) {
-                  overlay.draw(ctx, chart, candleSeries, data, isDark);
+                  overlay.draw(ctx, chart, candleSeries, data, surfaceDark);
                 }
                 ctx.restore();
               }
@@ -367,7 +458,7 @@ export function ModularChart({
     // ── Resize observer ──
     const ro = new ResizeObserver(() => {
       if (container) {
-        chart.resize(container.clientWidth, totalHeight);
+        chart.resize(container.clientWidth, chartHeight);
       }
     });
     ro.observe(container);
@@ -381,55 +472,71 @@ export function ModularChart({
       mainSeriesRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, isDark, totalHeight, indicators, overlays, eventMarkers]);
-
-  // ── Empty state ──
-  if (data.length === 0) {
-    return (
-      <div
-        className="flex items-center justify-center font-mono text-xs"
-        style={{ height, color: colors.textSecondary, borderColor: colors.border }}
-      >
-        No OHLC data for this period
-      </div>
-    );
-  }
+  }, [data, isDark, chartHeight, subPaneHeight, indicators, overlays, eventMarkers]);
 
   const rightOverlaysRender = overlays.filter((o) => (o.mode ?? "right") === "right");
   const fullOverlaysRender = overlays.filter((o) => o.mode === "full");
   const overlayWidth =
     rightOverlaysRender.length > 0 ? Math.max(...rightOverlaysRender.map((o) => o.width)) : 0;
 
+  // The wrapper is what gets measured, so it always renders — including in the
+  // empty state, otherwise the ResizeObserver would never attach and the chart
+  // would come back at its fallback height once data arrives.
   return (
-    <div style={{ position: "relative", width: "100%", height: totalHeight }}>
-      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+    <div
+      ref={wrapperRef}
+      style={{
+        position: "relative",
+        width: "100%",
+        height: "100%",
+        minHeight: height,
+        // auto (not conditional): when the panes fit, no scrollbar appears — and a
+        // stale height measurement can never silently clip the bottom pane.
+        overflowY: "auto",
+        overflowX: "hidden",
+      }}
+    >
+      {data.length === 0 ? (
+        <div
+          className="flex h-full items-center justify-center font-mono text-xs"
+          style={{ color: colors.textSecondary }}
+        >
+          No OHLC data for this period
+        </div>
+      ) : (
+        <>
+          <div ref={containerRef} style={{ width: "100%", height: chartHeight }} />
 
-      {/* Full-chart canvas overlay (session VP) */}
-      {fullOverlaysRender.length > 0 && (
-        <canvas
-          ref={fullCanvasRef}
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            pointerEvents: "none",
-          }}
-        />
-      )}
+          {/* Full-chart canvas overlay (session VP) */}
+          {fullOverlaysRender.length > 0 && (
+            <canvas
+              ref={fullCanvasRef}
+              style={{
+                position: "absolute",
+                left: 0,
+                top: 0,
+                pointerEvents: "none",
+                zIndex: OVERLAY_Z,
+              }}
+            />
+          )}
 
-      {/* Right-strip canvas overlay (composite VP) */}
-      {rightOverlaysRender.length > 0 && (
-        <canvas
-          ref={overlayCanvasRef}
-          style={{
-            position: "absolute",
-            right: 50,
-            top: 0,
-            width: overlayWidth,
-            height: "100%",
-            pointerEvents: "none",
-          }}
-        />
+          {/* Right-strip canvas overlay (composite VP) */}
+          {rightOverlaysRender.length > 0 && (
+            <canvas
+              ref={overlayCanvasRef}
+              style={{
+                position: "absolute",
+                right: 50,
+                top: 0,
+                width: overlayWidth,
+                height: chartHeight,
+                pointerEvents: "none",
+                zIndex: OVERLAY_Z,
+              }}
+            />
+          )}
+        </>
       )}
     </div>
   );

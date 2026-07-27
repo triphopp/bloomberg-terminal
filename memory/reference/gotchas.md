@@ -145,3 +145,55 @@ snap = prices.get(pos_yf[i])
 pos["current_price"] = snap.get("price") if isinstance(snap, dict) else snap
 ```
 Same pattern used in the new `/risk/capm` endpoint. Also added an error state + RETRY button to `RiskTab.tsx` so a future backend 500 shows a message instead of a blank pane.
+
+## Bug: chart indicators reset on every mount — `atomWithStorage` + `getOnInit` (fixed 2026-07-27)
+
+**Symptom:** picked indicators (and the VP toggle) came back as the defaults after switching views or reloading. Custom periods were also lost — `rsi-30` came back as `rsi-14`.
+
+**Root cause (two stacked bugs):**
+1. jotai's `atomWithStorage` defaults to `getOnInit: false`, so the atom's value on the *first* render is the DEFAULT; the stored value only arrives on a later subscription tick. `useChartIndicators` read the atom inside a `useState` initializer, capturing the defaults forever.
+2. Only instance ids (`"rsi-30"`) were persisted, and `buildIndicatorsFromIds` rebuilt everything except `volume`/`ema-N` via `entry.factory()` — i.e. with registry defaults, dropping the params the id encoded.
+
+**Fix:**
+- Every `chart:*` atom now passes `{ getOnInit: true }` (4th arg; pass `undefined` for the storage arg).
+- Persist `IndicatorSpec[]` (`{ id, params }`) in `chart:indicator-specs`, and derive `indicators` with `useMemo` instead of copying into `useState`. Transient config (fear-greed's `preloadedData`) lives in a separate non-persisted `runtimeConfig` map.
+
+**Rule:** any `atomWithStorage` whose value is read in a `useState`/`useMemo` initializer MUST set `getOnInit: true`, otherwise it silently serves defaults on mount.
+
+## Bug: stacked indicator panes overlap the volume pane (fixed 2026-07-27)
+
+**Symptom:** with several pane indicators active the sub-panes appeared to bleed into each other / into volume, and the chart didn't respond to the panel being resized.
+
+**Root cause:** `ModularChart` sized itself as `height + paneCount * 80` and never measured its parent. Inside `flex-1 min-h-0` (every chart view) that total height overflowed the parent's `overflow-hidden` and got clipped.
+
+**Fix:** `computePaneLayout()` fits panes to the measured parent height (`SUB_PANE_MIN 44` … `SUB_PANE_MAX 80`, `MAIN_PANE_MIN 140`), a `ResizeObserver` on the wrapper feeds it (floored to an 8px step so a 1px reflow doesn't rebuild the chart), and the wrapper is `overflowY: auto` so the minimums scroll instead of clipping.
+
+## Bug: Volume Profile labels get a white background in light theme (fixed 2026-07-27)
+
+**Symptom:** in light mode the V-POC / VA-H / VA-L labels drew a white box on the (black) chart. Switching the app to dark mode "fixed" it.
+
+**Root cause:** canvas overlays received the theme flag `isDark`, but every chart panel hardcodes `background: #050505` regardless of theme — so the surface is always dark while `isDark` said otherwise.
+
+**Fix:** `ModularChart` derives `surfaceDark` by walking up from the chart container to the first non-transparent background and comparing its luminance, and passes THAT to `overlay.draw(...)`. Canvas overlays must never take their colors from the theme flag.
+
+## Bug: Volume Profile drawn *under* the candles (fixed 2026-07-27)
+
+**Symptom:** after the label-background fix, the VP bars and the V-POC / VA-H / VA-L labels were still unreadable — the candlesticks painted over them.
+
+**Root cause:** lightweight-charts positions its own canvases at `z-index: 1` (series) and `z-index: 2` (crosshair + price labels). `ModularChart`'s overlay canvases are later siblings in the DOM but had `z-index: auto`, and a later sibling with `auto` still loses to any positioned sibling with an explicit z-index.
+
+**Fix:** both overlay canvases (full-chart session VP + right-side composite strip) now set `zIndex: OVERLAY_Z` (= 3) in `chart/ModularChart.tsx`. Any new canvas overlay must do the same — DOM order alone is not enough.
+
+## Bug: indicator params silently ignored — picker config dropped at the call site (fixed 2026-07-27)
+
+**Symptom:** editing a param in the indicator picker (SMA 20 → 50, RSI 14 → 30) did nothing. No new indicator, no change to the existing one, no error.
+
+**Root cause (two stacked bugs):**
+1. All four views wired the picker as `onAdd={(entry) => addChartIndicator(entry)}` — the arrow function **dropped the second argument**, the `config` object the picker had just collected. Every indicator was therefore built with registry defaults, which for an already-active indicator produced the same instance id and hit the duplicate guard → no-op.
+2. Even with the config forwarded, `addIndicator` treated "a pane of this type already exists" as a hard no-op, so a param change on RSI/MACD/Stochastic stayed invisible.
+
+**Fix:**
+- `onAdd={addChartIndicator}` (pass the handler itself) in market-view, stock-view, crypto-view, fx-view.
+- `addIndicator` now REPLACES the existing spec when a pane indicator is re-added with different params; overlays still stack (SMA 20 + SMA 50 is a legitimate setup).
+
+**Rule:** when a callback prop takes optional extra arguments, forward the handler directly instead of wrapping it in an arrow that names only the first parameter.
