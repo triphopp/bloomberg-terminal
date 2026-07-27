@@ -134,6 +134,7 @@ def fetch_one(cfg: dict) -> dict | None:
 
         return {
             "id": cfg["id"],
+            "symbol": cfg["symbol"],
             "num": cfg["num"],
             "rmi": "□",
             "value": round(price, 2),

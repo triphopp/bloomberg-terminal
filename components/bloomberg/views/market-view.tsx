@@ -830,40 +830,43 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     );
   }, [rawChartData, timePeriod, heatmapChartType, barInterval]);
 
+  // Fallback only — the API now returns each row's real ticker as `item.symbol`
+  // (see routers/market.py fetch_one). This map exists purely for the static
+  // dataset (lib/marketData.ts, shown before the first API response lands) and
+  // for any stale cached MarketItem from before that field existed. It MUST
+  // mirror the `id` labels in lib/marketData.ts / the `indices` symbol_lists
+  // rows exactly, or a click on that row silently resolves to the label text
+  // itself — an invalid ticker with no data. (That mismatch is what made
+  // several rows in TICK DATA look "broken": labels here had drifted from the
+  // DB's actual labels after a rename.)
   const indexToSymbol = useCallback((id: string): string => {
     const map: Record<string, string> = {
       "DOW JONES": "^DJI",
       "S&P 500": "^GSPC",
       NASDAQ: "^IXIC",
-      "RUSSELL 2K": "^RUT",
-      "S&P/TSX": "^GSPTSE",
-      BOVESPA: "^BVSP",
-      "IPC MEXICO": "^MXX",
+      "S&P/TSX Comp": "^GSPTSE",
+      "S&P/BMV IPC": "^MXX",
+      IBOVESPA: "^BVSP",
+      "Euro Stoxx 50": "^STOXX50E",
       "FTSE 100": "^FTSE",
-      DAX: "^GDAXI",
       "CAC 40": "^FCHI",
-      "EURO STOXX": "^STOXX50E",
-      SMI: "^SSMI",
+      DAX: "^GDAXI",
+      "IBEX 35": "^IBEX",
+      "FTSE MIB": "FTSEMIB.MI",
+      "OMX STKH30": "^OMX",
+      "SWISS MKT": "^SSMI",
       NIKKEI: "^N225",
       "HANG SENG": "^HSI",
-      SHANGHAI: "000001.SS",
-      KOSPI: "^KS11",
-      "ASX 200": "^AXJO",
-      SENSEX: "^BSESN",
-      SET: "^SET.BK",
-      GOLD: "GC=F",
-      WTI: "CL=F",
-      BITCOIN: "BTC-USD",
-      VIX: "^VIX",
-      DOLLAR: "DX=F",
-      "US 10Y": "^TNX",
+      "CSI 300": "000300.SS",
+      "S&P/ASX 200": "^AXJO",
+      "SET Index": "^SET.BK",
     };
     return map[id] ?? id;
   }, []);
 
   const handleTickSelect = useCallback(
     (item: MarketItem) => {
-      setSelectedSymbol(indexToSymbol(item.id));
+      setSelectedSymbol(item.symbol ?? indexToSymbol(item.id));
       setSelectedLabel(item.id);
     },
     [indexToSymbol]
@@ -925,7 +928,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
         setSelectedLabel(pins[0].symbol);
       } else if (marketData?.americas?.length > 0) {
         const first = marketData.americas[0];
-        setSelectedSymbol(indexToSymbol(first.id));
+        setSelectedSymbol(first.symbol ?? indexToSymbol(first.id));
         setSelectedLabel(first.id);
       }
     }

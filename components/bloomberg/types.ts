@@ -1,6 +1,8 @@
 // Define proper types for market data
 export type MarketItem = {
   id: string;
+  /** yfinance ticker for this row, e.g. "^GSPTSE" — absent on the static fallback dataset */
+  symbol?: string;
   num?: string;
   rmi?: string;
   value: number;
