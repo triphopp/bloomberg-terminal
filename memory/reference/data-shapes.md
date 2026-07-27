@@ -267,6 +267,31 @@ URL: `https://polymarket.com/event/{event_slug}` — use `event_slug` NOT `slug`
 }
 ```
 
+## Watchlist Signals (`GET /api/watchlist/signals?symbols=A,B`)
+```json
+{
+  "signals": {
+    "AAPL": {
+      "asOf": "2026-07-27",
+      "trend":    { "state": "UP|DOWN|FLAT", "ema20": 319.78, "ema50": 306.52, "ema200": 276.89 },
+      "rsi":      { "value": 68.37, "state": "OB|OS|NEUTRAL" },
+      "rvol":     0.27,
+      "macd":     { "state": "BULL|BEAR|NONE", "barsSinceCross": 16, "hist": 1.2516 },
+      "breakout": { "state": "UP|DOWN|NONE", "high": 334.98, "low": 274.21 },
+      "range52w": { "pct": 1.0, "high": 339.15, "low": 201.58 },
+      "atrPct":   2.4,
+      "score":    5,
+      "flags":    ["TREND_UP", "GOLDEN_CROSS", "BREAKOUT_UP", "VOL_QUIET", "NEAR_52W_HIGH"]
+    }
+  },
+  "errors": [],
+  "count": 1
+}
+```
+Flags: `TREND_UP`/`TREND_DOWN`, `GOLDEN_CROSS`/`DEATH_CROSS`, `RSI_OVERBOUGHT`/`RSI_OVERSOLD`,
+`MACD_CROSS_FRESH` (≤3 bars), `BREAKOUT_UP`/`BREAKDOWN`, `VOL_SPIKE`/`VOL_QUIET`,
+`NEAR_52W_HIGH`/`NEAR_52W_LOW`. Frontend type: `WatchlistSignal` in `hooks/useWatchlistSignals.ts`.
+
 ---
 
 ## TypeScript Interfaces (key frontend types)

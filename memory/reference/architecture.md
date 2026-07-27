@@ -40,7 +40,7 @@ BOT data path:
              → BOT API (gateway.api.bot.or.th) — each category has its own token
 ```
 
-## 26 Backend Routers (all in `backend/routers/`)
+## 27 Backend Routers (all in `backend/routers/`)
 
 | Router | Prefix | Source |
 |--------|--------|--------|
@@ -72,6 +72,7 @@ BOT data path:
 | regime.py | /api/regime/correlation | yfinance (5min cache) |
 | rotation.py | /api/rotation/table (theme/sector momentum + RRG quadrant) | yfinance batch (15min cache) |
 | paper_trading.py | /api/paper/* (accounts, orders, positions, fills, equity-curve) | yfinance + SQLite |
+| watchlist_signals.py | /api/watchlist/signals (batch daily technical scan) | yfinance batch (15min cache) |
 
 ## 9 Frontend Views (post-RMI removal 2026-05-24)
 

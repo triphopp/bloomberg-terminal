@@ -4919,7 +4919,7 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                     <IndicatorPicker
                       colors={colors}
                       activeIndicators={chartIndicators}
-                      onAdd={(entry) => addChartIndicator(entry)}
+                      onAdd={addChartIndicator}
                       onRemove={removeChartIndicator}
                     />
                     {/* Volume Profile toggle */}

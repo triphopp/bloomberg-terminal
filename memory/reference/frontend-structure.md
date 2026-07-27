@@ -98,6 +98,7 @@ components/bloomberg/
 │   ├── useMarketData.ts / useMarketDataQuery.ts
 │   ├── useStockData.ts
 │   ├── useSectorSelection.ts    ← sector selection signal hook
+│   ├── useWatchlistSignals.ts   ← batch daily technical scan for the watchlist
 │   ├── useAiMarketAnalysis.ts
 │   └── index.ts
 │
@@ -138,6 +139,7 @@ components/bloomberg/
 | `views/rotation-tab.tsx` | `RotationTab` (default) |
 | `views/sector-tab.tsx` | `SectorTab` (default) |
 | `hooks/useSectorSelection.ts` | `useSectorSelection()` → `{ signal, isLoading, error }` |
+| `hooks/useWatchlistSignals.ts` | `useWatchlistSignals(symbols)` → `{ signals, errors, isLoading, refetch }`; types `WatchlistSignal`, `TrendState`, `RsiState`, `MacdState`, `BreakoutState` |
 | `lib/constants.ts` | `PYTHON_API` (base URL) |
 | `lib/theme-config.ts` | `bloombergColors`, `darkTheme`, `lightTheme` |
 

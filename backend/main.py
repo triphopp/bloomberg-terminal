@@ -21,7 +21,7 @@ from db import init_db, init_portfolio_v2, init_sync_layer, seed_symbol_lists
 from analytics.regime_calibration import ensure_model_fresh
 from analytics.regime_v2 import ensure_v2_fresh
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router
+from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals
 import sync
 
 app = FastAPI(title="Market Data API")
@@ -94,6 +94,7 @@ app.include_router(tail_risk.router)
 app.include_router(paper_trading.router, tags=["Paper Trading"])
 app.include_router(providers.router, tags=["Providers"])
 app.include_router(sync_router.router, tags=["Sync"])
+app.include_router(watchlist_signals.router)
 
 
 @app.exception_handler(StarletteHTTPException)

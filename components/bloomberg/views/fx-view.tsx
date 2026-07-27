@@ -1,5 +1,6 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { useAtom, useAtomValue } from "jotai";
 import { BarChart2, LineChart, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -12,11 +13,17 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { useQuery } from "@tanstack/react-query";
 import { chartTypeAtom, currentViewAtom, isDarkModeAtom } from "../atoms";
+import {
+  ChartTimeframeBar,
+  IndicatorPicker,
+  ModularChart,
+  PERIOD_TO_YF,
+  useChartIndicators,
+  useChartTimeframe,
+} from "../chart";
+import type { IndicatorRegistryEntry, OhlcvBar } from "../chart";
 import { bloombergColors } from "../lib/theme-config";
-import { ModularChart, IndicatorPicker, useChartIndicators, useChartTimeframe, ChartTimeframeBar, PERIOD_TO_YF } from "../chart";
-import type { OhlcvBar, IndicatorRegistryEntry } from "../chart";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,9 +56,13 @@ async function fetchFxOverview(): Promise<FxOverview> {
   return res.json();
 }
 
-async function fetchFxHistory(symbol: string, period: string, interval: string): Promise<HistoryPoint[]> {
+async function fetchFxHistory(
+  symbol: string,
+  period: string,
+  interval: string
+): Promise<HistoryPoint[]> {
   const res = await fetch(
-    `/api/fx?type=history&pair=${encodeURIComponent(symbol)}&period=${period}&interval=${interval}`,
+    `/api/fx?type=history&pair=${encodeURIComponent(symbol)}&period=${period}&interval=${interval}`
   );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
@@ -164,9 +175,7 @@ export function FxView({ onBack }: { onBack: () => void }) {
     return chartData
       .filter((q) => q.open != null && q.high != null && q.low != null)
       .map((q) => ({
-        time: isIntraday
-          ? Math.floor(new Date(q.date).getTime() / 1000)
-          : q.date.slice(0, 10),
+        time: isIntraday ? Math.floor(new Date(q.date).getTime() / 1000) : q.date.slice(0, 10),
         open: q.open,
         high: q.high,
         low: q.low,
@@ -205,13 +214,22 @@ export function FxView({ onBack }: { onBack: () => void }) {
             <span className="text-[9px] font-mono" style={{ color: colors.textSecondary }}>
               PAIR
             </span>
-            <span className="text-[9px] font-mono text-right" style={{ color: colors.textSecondary }}>
+            <span
+              className="text-[9px] font-mono text-right"
+              style={{ color: colors.textSecondary }}
+            >
               RATE
             </span>
-            <span className="text-[9px] font-mono text-right" style={{ color: colors.textSecondary }}>
+            <span
+              className="text-[9px] font-mono text-right"
+              style={{ color: colors.textSecondary }}
+            >
               CHG
             </span>
-            <span className="text-[9px] font-mono text-right" style={{ color: colors.textSecondary }}>
+            <span
+              className="text-[9px] font-mono text-right"
+              style={{ color: colors.textSecondary }}
+            >
               %CHG
             </span>
           </div>
@@ -241,8 +259,8 @@ export function FxView({ onBack }: { onBack: () => void }) {
                     gridTemplateColumns: "80px 1fr 72px 64px",
                     backgroundColor: active
                       ? isDarkMode
-                        ? colors.accent + "18"
-                        : colors.accent + "22"
+                        ? `${colors.accent}18`
+                        : `${colors.accent}22`
                       : "transparent",
                     borderLeft: active ? `2px solid ${colors.accent}` : "2px solid transparent",
                   }}
@@ -284,7 +302,10 @@ export function FxView({ onBack }: { onBack: () => void }) {
         </div>
 
         {/* ── Right Panel: Detail + Chart ─────────────────────────────────── */}
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden" style={{ backgroundColor: "#000" }}>
+        <div
+          className="flex-1 flex flex-col min-h-0 overflow-hidden"
+          style={{ backgroundColor: "#000" }}
+        >
           {selected ? (
             <>
               {/* Pair header */}
@@ -335,14 +356,21 @@ export function FxView({ onBack }: { onBack: () => void }) {
                   onIntervalChange={handleIntervalChange}
                 />
                 {ohlcvData.length > 0 && (
-                  <span className="text-[8px] font-mono ml-auto" style={{ color: colors.textSecondary }}>
-                    {formatChartDate(ohlcvData[0].time)} – {formatChartDate(ohlcvData[ohlcvData.length - 1].time)}
+                  <span
+                    className="text-[8px] font-mono ml-auto"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    {formatChartDate(ohlcvData[0].time)} –{" "}
+                    {formatChartDate(ohlcvData[ohlcvData.length - 1].time)}
                     <span className="ml-1 opacity-50">({ohlcvData.length} bars)</span>
                   </span>
                 )}
                 {/* Chart type toggle */}
                 <div className="flex items-center gap-1">
-                  <div className="flex border overflow-hidden" style={{ borderColor: colors.border }}>
+                  <div
+                    className="flex border overflow-hidden"
+                    style={{ borderColor: colors.border }}
+                  >
                     <button
                       type="button"
                       onClick={() => setChartType("area")}
@@ -379,7 +407,7 @@ export function FxView({ onBack }: { onBack: () => void }) {
                   <IndicatorPicker
                     colors={colors}
                     activeIndicators={chartIndicators}
-                    onAdd={(entry) => addChartIndicator(entry)}
+                    onAdd={addChartIndicator}
                     onRemove={removeChartIndicator}
                   />
                 </div>
@@ -389,12 +417,15 @@ export function FxView({ onBack }: { onBack: () => void }) {
               <div className="flex-1 min-h-0 px-2 py-1">
                 {historyLoading ? (
                   <div className="h-full flex flex-col items-center justify-center gap-2">
-                    <span className="text-[10px] font-mono animate-pulse" style={{ color: colors.textSecondary }}>
+                    <span
+                      className="text-[10px] font-mono animate-pulse"
+                      style={{ color: colors.textSecondary }}
+                    >
                       {timePeriod === "max"
                         ? "Loading full history… this may take 10–30s"
                         : timePeriod === "5y"
-                        ? "Loading 5-year history…"
-                        : "Loading chart…"}
+                          ? "Loading 5-year history…"
+                          : "Loading chart…"}
                     </span>
                     {timePeriod === "max" && (
                       <span className="text-[8px] font-mono" style={{ color: "#424242" }}>

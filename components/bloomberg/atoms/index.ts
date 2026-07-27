@@ -120,16 +120,58 @@ export const lastSparklineUpdateAtom = atom<Date | null>(null);
 export const updatedCellsAtom = atom<Record<string, boolean>>({});
 export const updatedSparklinesAtom = atom<Record<string, boolean>>({});
 
-// Chart indicator persistence atoms — saved to localStorage
-export const chartIndicatorIdsAtom = atomWithStorage<string[]>("chart:indicator-ids", [
-  "ema-20",
-  "ema-50",
-  "volume",
-]);
-export const chartShowVolumeProfileAtom = atomWithStorage<boolean>("chart:volume-profile", false);
-export const chartShowFootprintAtom = atomWithStorage<boolean>("chart:footprint", false);
-export const chartShowEventsAtom = atomWithStorage<boolean>("chart:show-events", true);
-export const chartShowPEAtom = atomWithStorage<boolean>("chart:show-pe", false);
+// Chart indicator persistence atoms — saved to localStorage.
+//
+// ⚠️ All of these pass `getOnInit: true`. jotai's atomWithStorage defaults to
+// `false`, which means the atom's value on first render is the DEFAULT and the
+// stored value only arrives on a later subscription tick — anything that reads
+// the atom in a useState initializer (as useChartIndicators does) would capture
+// the defaults and silently drop the user's saved setup on every mount.
+
+/**
+ * One active indicator = a registry entry id plus the params it was created with.
+ * Storing params (not just the derived instance id like "rsi-30") is what lets a
+ * custom period survive a reload — rebuilding from the id alone re-applies the
+ * registry defaults.
+ */
+export interface IndicatorSpec {
+  /** INDICATOR_REGISTRY entry id, e.g. "ema", "rsi", "volume" */
+  id: string;
+  params?: Record<string, number | boolean | string>;
+}
+
+export const DEFAULT_INDICATOR_SPECS: IndicatorSpec[] = [
+  { id: "ema", params: { period: 20 } },
+  { id: "ema", params: { period: 50 } },
+  { id: "volume" },
+];
+
+export const chartIndicatorSpecsAtom = atomWithStorage<IndicatorSpec[]>(
+  "chart:indicator-specs",
+  DEFAULT_INDICATOR_SPECS,
+  undefined,
+  { getOnInit: true }
+);
+export const chartShowVolumeProfileAtom = atomWithStorage<boolean>(
+  "chart:volume-profile",
+  false,
+  undefined,
+  { getOnInit: true }
+);
+export const chartShowFootprintAtom = atomWithStorage<boolean>(
+  "chart:footprint",
+  false,
+  undefined,
+  {
+    getOnInit: true,
+  }
+);
+export const chartShowEventsAtom = atomWithStorage<boolean>("chart:show-events", true, undefined, {
+  getOnInit: true,
+});
+export const chartShowPEAtom = atomWithStorage<boolean>("chart:show-pe", false, undefined, {
+  getOnInit: true,
+});
 
 // Volume Profile display options (see chart/indicators/volume-profile.ts)
 export interface VPConfig {
@@ -137,14 +179,21 @@ export interface VPConfig {
   showNakedPoc: boolean; // extend prior-session POCs that price hasn't revisited
   showHvnLvn: boolean; // mark high/low volume nodes on the composite strip
 }
-export const chartVPConfigAtom = atomWithStorage<VPConfig>("chart:vp-config", {
-  deltaMode: false,
-  showNakedPoc: true,
-  showHvnLvn: false,
-});
+export const chartVPConfigAtom = atomWithStorage<VPConfig>(
+  "chart:vp-config",
+  {
+    deltaMode: false,
+    showNakedPoc: true,
+    showHvnLvn: false,
+  },
+  undefined,
+  { getOnInit: true }
+);
 
 // Global chart type (shared across all chart views) — saved to localStorage
-export const chartTypeAtom = atomWithStorage<"area" | "candle">("chart:type", "candle");
+export const chartTypeAtom = atomWithStorage<"area" | "candle">("chart:type", "candle", undefined, {
+  getOnInit: true,
+});
 
 // Focus signal for heatmap symbol search — increment to trigger focus
 export const focusHeatmapSearchAtom = atom(0);

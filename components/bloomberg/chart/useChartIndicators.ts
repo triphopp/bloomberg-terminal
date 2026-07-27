@@ -13,9 +13,11 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
-  chartIndicatorIdsAtom,
+  DEFAULT_INDICATOR_SPECS,
+  type IndicatorSpec,
+  chartIndicatorSpecsAtom,
   chartShowEventsAtom,
   chartShowFootprintAtom,
   chartShowPEAtom,
@@ -24,13 +26,7 @@ import {
 } from "../atoms";
 import { useFootprintData } from "../hooks/useFootprintData";
 import type { PeStats } from "./PEPane";
-import {
-  INDICATOR_REGISTRY,
-  createCompositeVPOverlay,
-  createEMA,
-  createSessionVPOverlay,
-  createVolume,
-} from "./indicators";
+import { INDICATOR_REGISTRY, createCompositeVPOverlay, createSessionVPOverlay } from "./indicators";
 import { createFootprintOverlay } from "./indicators/order-footprint";
 import type {
   CanvasOverlay,
@@ -46,35 +42,26 @@ export interface PeHistoryResponse {
 }
 import { useStockEvents } from "../hooks/useStockEvents";
 
-// ── Default preset ───────────────────────────────────────────────────────────
+// ── Spec → instance ──────────────────────────────────────────────────────────
 
-const DEFAULT_IDS = ["ema-20", "ema-50", "volume"];
-
-function buildIndicatorsFromIds(ids: string[]): ChartIndicator[] {
-  const result: ChartIndicator[] = [];
-  for (const id of ids) {
-    if (id === "volume") {
-      result.push(createVolume());
-      continue;
-    }
-    const emaMatch = id.match(/^ema-(\d+)$/);
-    if (emaMatch) {
-      const period = Number.parseInt(emaMatch[1], 10);
-      const colorMap: Record<number, string> = {
-        20: "#ffc107",
-        50: "#2196f3",
-        100: "#e91e63",
-        200: "#9c27b0",
-      };
-      result.push(createEMA({ period, color: colorMap[period] || "#ffc107" }));
-      continue;
-    }
-    // Fallback: look up in registry by id prefix (handles fear-greed, rsi, macd, etc.)
-    const entry = INDICATOR_REGISTRY.find((e) => id === e.id || id.startsWith(e.id));
-    if (entry) result.push(entry.factory());
+/** Instantiate one persisted spec. Returns null for specs whose entry is gone. */
+function instantiate(spec: IndicatorSpec): ChartIndicator | null {
+  const entry = INDICATOR_REGISTRY.find((e) => e.id === spec.id);
+  if (!entry) return null;
+  try {
+    return entry.factory(spec.params);
+  } catch {
+    return null;
   }
-  return result;
 }
+
+/** The derived instance id ("rsi-30") a spec would produce — used for dedupe/removal. */
+function specInstanceId(spec: IndicatorSpec): string | null {
+  return instantiate(spec)?.id ?? null;
+}
+
+/** Stable empty array so memo consumers don't see a new identity each render. */
+const EMPTY_MARKERS: ChartEventMarker[] = [];
 
 // ── Crypto detection ─────────────────────────────────────────────────────────
 
@@ -130,24 +117,32 @@ export interface ChartIndicatorOptions {
 export function useChartIndicators(options: ChartIndicatorOptions = {}) {
   const { symbol = null, barInterval = "1d", chartType = "candle" } = options;
 
-  const [persistedIds, setPersistedIds] = useAtom(chartIndicatorIdsAtom);
+  const [specs, setSpecs] = useAtom(chartIndicatorSpecsAtom);
   const [showVolumeProfile, setShowVolumeProfile] = useAtom(chartShowVolumeProfileAtom);
   const [showFootprint, setShowFootprint] = useAtom(chartShowFootprintAtom);
   const [showEvents, setShowEvents] = useAtom(chartShowEventsAtom);
   const [showPE, setShowPE] = useAtom(chartShowPEAtom);
   const [vpConfig, setVPConfig] = useAtom(chartVPConfigAtom);
-  const [indicators, setIndicators] = useState<ChartIndicator[]>(() =>
-    buildIndicatorsFromIds(persistedIds)
-  );
   const [intradayData, setIntradayData] = useState<OhlcvBar[] | undefined>(undefined);
 
-  const syncRef = useRef(false);
-  useEffect(() => {
-    if (syncRef.current) {
-      setPersistedIds(indicators.map((i) => i.id));
+  // Transient per-instance config injected at runtime (e.g. fear-greed's
+  // preloadedData). Deliberately NOT persisted — it holds fetched series, not
+  // user choices, and would bloat localStorage.
+  // biome-ignore lint/suspicious/noExplicitAny: config values are indicator-specific
+  const [runtimeConfig, setRuntimeConfig] = useState<Record<string, Record<string, any>>>({});
+
+  // Indicators are derived from the persisted specs, not a parallel useState.
+  // The old copy-into-state approach lost the stored setup on every mount.
+  const indicators: ChartIndicator[] = useMemo(() => {
+    const built: ChartIndicator[] = [];
+    for (const spec of specs) {
+      const ind = instantiate(spec);
+      if (!ind) continue;
+      const patch = runtimeConfig[ind.id];
+      built.push(patch ? ({ ...ind, config: { ...ind.config, ...patch } } as ChartIndicator) : ind);
     }
-    syncRef.current = true;
-  }, [indicators, setPersistedIds]);
+    return built;
+  }, [specs, runtimeConfig]);
 
   // ── Symbol type detection ──
   const isCryptoSymbol = useMemo(() => detectCrypto(symbol), [symbol]);
@@ -166,8 +161,13 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     true
   );
 
-  const eventMarkers: ChartEventMarker[] =
-    showEvents && supportsEvents && chartType === "candle" ? rawEventMarkers : [];
+  // Memoized: ModularChart rebuilds the whole chart when this array's identity
+  // changes, so a fresh `[]` on every render would tear it down continuously.
+  const eventMarkers: ChartEventMarker[] = useMemo(
+    () =>
+      showEvents && supportsEvents && chartType === "candle" ? rawEventMarkers : EMPTY_MARKERS,
+    [showEvents, supportsEvents, chartType, rawEventMarkers]
+  );
 
   // ── Trailing P/E history (equities only) ──
   const peEnabled = showPE && supportsEvents && chartType === "candle";
@@ -189,54 +189,78 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
       entry: IndicatorRegistryEntry,
       configOverrides?: Record<string, number | boolean | string>
     ) => {
-      const newIndicator = entry.factory(configOverrides);
-      setIndicators((prev) => {
+      const newSpec: IndicatorSpec = { id: entry.id, params: configOverrides };
+      const newId = specInstanceId(newSpec);
+      if (!newId) return;
+      setSpecs((prev) => {
+        // One instance per pane indicator (volume excepted) — panes are expensive
+        // and stacking two RSIs just eats vertical space. Re-adding one with
+        // different params REPLACES it, which is how the picker's param editor
+        // reads to a user ("RSI 14 → 30"); silently ignoring it looked broken.
         if (entry.type === "pane" && entry.id !== "volume") {
-          const existing = prev.find((i) => i.id.startsWith(entry.id));
-          if (existing) return prev;
+          const idx = prev.findIndex((s) => s.id === entry.id);
+          if (idx >= 0) {
+            if (specInstanceId(prev[idx]) === newId) return prev; // identical — nothing to do
+            const next = [...prev];
+            next[idx] = newSpec;
+            return next;
+          }
         }
-        const duplicate = prev.find((i) => i.id === newIndicator.id);
-        if (duplicate) return prev;
-        return [...prev, newIndicator];
+        // Overlays stack: SMA 20 + SMA 50 on one chart is a normal setup.
+        if (prev.some((s) => specInstanceId(s) === newId)) return prev;
+        return [...prev, newSpec];
       });
     },
-    []
+    [setSpecs]
   );
 
-  const removeIndicator = useCallback((indicatorId: string) => {
-    setIndicators((prev) => prev.filter((i) => i.id !== indicatorId));
-  }, []);
+  const removeIndicator = useCallback(
+    (indicatorId: string) => {
+      setSpecs((prev) => prev.filter((s) => specInstanceId(s) !== indicatorId));
+      setRuntimeConfig((prev) => {
+        if (!(indicatorId in prev)) return prev;
+        const next = { ...prev };
+        delete next[indicatorId];
+        return next;
+      });
+    },
+    [setSpecs]
+  );
 
   const toggleIndicator = useCallback(
     (
       entry: IndicatorRegistryEntry,
       configOverrides?: Record<string, number | boolean | string>
     ) => {
-      const testInstance = entry.factory(configOverrides);
-      setIndicators((prev) => {
-        const existing = prev.find((i) => i.id === testInstance.id);
-        if (existing) return prev.filter((i) => i.id !== testInstance.id);
-        return [...prev, testInstance];
-      });
+      const newSpec: IndicatorSpec = { id: entry.id, params: configOverrides };
+      const newId = specInstanceId(newSpec);
+      if (!newId) return;
+      setSpecs((prev) =>
+        prev.some((s) => specInstanceId(s) === newId)
+          ? prev.filter((s) => specInstanceId(s) !== newId)
+          : [...prev, newSpec]
+      );
     },
-    []
+    [setSpecs]
   );
 
   const resetIndicators = useCallback(() => {
-    setIndicators(buildIndicatorsFromIds(DEFAULT_IDS));
+    setSpecs(DEFAULT_INDICATOR_SPECS);
+    setRuntimeConfig({});
     setShowVolumeProfile(false);
     setShowFootprint(false);
-  }, [setShowVolumeProfile, setShowFootprint]);
+  }, [setSpecs, setShowVolumeProfile, setShowFootprint]);
 
   const updateIndicatorConfig = useCallback(
     // biome-ignore lint/suspicious/noExplicitAny: config values are indicator-specific, intentionally untyped
     (id: string, configPatch: Record<string, any>) => {
-      setIndicators(
-        (prev) =>
-          prev.map((ind) =>
-            ind.id === id ? { ...ind, config: { ...ind.config, ...configPatch } } : ind
-          ) as ChartIndicator[]
-      );
+      setRuntimeConfig((prev) => {
+        const current = prev[id];
+        // Bail when nothing actually changes — callers patch from effects keyed on
+        // fetched data, and a fresh object every time would re-render the chart.
+        if (current && Object.entries(configPatch).every(([k, v]) => current[k] === v)) return prev;
+        return { ...prev, [id]: { ...current, ...configPatch } };
+      });
     },
     []
   );
