@@ -171,9 +171,19 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     name: "Flow Toxicity",
     category: "volume",
     type: "pane",
-    description: "VPIN-style rolling order-flow imbalance estimate (0-1)",
+    description:
+      "Order-flow one-sidedness from bar shape: net flow (bars) vs total toxicity (line)",
     defaultParams: [
       { key: "window", label: "Window", type: "number", default: 50, min: 10, max: 200, step: 5 },
+      {
+        key: "hotThreshold",
+        label: "Hot threshold",
+        type: "number",
+        default: 0.15,
+        min: 0.05,
+        max: 0.6,
+        step: 0.05,
+      },
     ],
     factory: createFlowToxicity,
   },
