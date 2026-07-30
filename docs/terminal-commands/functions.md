@@ -503,11 +503,100 @@ rank(AAPL, MSFT, NVDA, DRAWDOWN)           → by lowest drawdown
 
 ---
 
+## stat — Full Statistical Profile
+
+**Syntax:**
+```
+stat(SYMBOL)
+stat(SYMBOL, period)
+stats(SYMBOL, period)     ← alias
+```
+
+Default period: `1y`
+
+รวมสถิติทั้งหมดของหุ้นตัวเดียวในคำสั่งเดียว แบ่งเป็น 3 กลุ่ม
+
+### กลุ่มที่ 1 — Descriptive (คำนวณบน log returns)
+
+| Metric | ความหมาย |
+|--------|---------|
+| Observations | จำนวน return ที่ใช้ (n) |
+| Mean daily / annual | ผลตอบแทนเฉลี่ย (annual = daily × 252) |
+| Std dev daily | ส่วนเบี่ยงเบนมาตรฐานรายวัน |
+| Volatility (ann) | daily σ × √252 |
+| Skewness | ความเบ้ — ติดลบ = หางซ้ายยาว (เสี่ยงร่วงแรง) |
+| Excess kurtosis | ความโด่งส่วนเกินเทียบ normal — > 1 = fat tails |
+| Min / Max | return วันที่แย่สุด / ดีสุด |
+| P25 / Median / P75 | ควอร์ไทล์ |
+
+### กลุ่มที่ 2 — Risk
+
+| Metric | สูตร / ความหมาย |
+|--------|----------------|
+| VaR 95% | percentile ที่ 5 ของ return (historical, ไม่ใช่ parametric) |
+| CVaR 95% | ค่าเฉลี่ยของ return ที่แย่กว่า VaR — Expected Shortfall |
+| Max drawdown | peak-to-trough สูงสุด พร้อมวันที่ trough |
+| Sharpe (ann) | `(annual_return − rf) / annual_vol`, rf = 4.3% |
+| Sortino (ann) | เหมือน Sharpe แต่หารด้วย downside deviation |
+| Downside dev | σ ของเฉพาะ return ที่ต่ำกว่า rf (annualised) |
+
+### กลุ่มที่ 3 — Diagnostic Tests
+
+ทดสอบสมมติฐานทางสถิติที่ metric อื่นๆ พึ่งพาอยู่ **รันบน return series ไม่ใช่ price levels**
+
+| Test | ทดสอบอะไร | อ่านผลยังไง |
+|------|-----------|------------|
+| **Jarque-Bera** | return แจกแจงแบบ normal ไหม | `NON-NORMAL` = ไม่ปกติ (พบเกือบทุกหุ้น) → VaR แบบ parametric จะประเมินความเสี่ยงต่ำเกินจริง |
+| **ADF** | series stationary ไหม | `STATIONARY` = ผ่าน ใช้ correlation/regression ได้ตามปกติ `NON-STATIONARY` = ระวัง spurious correlation |
+| **Ljung-Box** | มี autocorrelation ไหม (lag 1-10) | `AUTOCORRELATED` = return วันนี้ทำนายจากเมื่อวานได้บางส่วน → ขัดกับ random walk |
+| **ARCH-LM** | มี volatility clustering ไหม | `VOL CLUSTERING` = ความผันผวนเกาะกลุ่ม → correlation ที่วัดช่วงตลาดผันผวนจะสูงเกินจริง |
+
+**หมายเหตุ:** diagnostic tests จะถูกข้ามถ้า n < 30 (แสดง `n/a` พร้อมเหตุผล) เพราะผลจากตัวอย่างเล็กไม่มีความหมาย
+
+**Output:**
+```
+STAT  AAPL  [1y]   2025-07-29 → 2026-07-28   last=245.12  ret=+18.34%
+METRIC              VALUE           NOTE
+── DESCRIPTIVE (log returns) ──
+Observations        250
+Mean (daily)        +0.07%
+Volatility (ann)    +24.79%
+Skewness            0.012           symmetric
+Excess kurtosis     1.970           fat tails vs normal
+── RISK ──
+VaR 95% (daily)     -2.05%          worst 5% threshold
+CVaR 95% (daily)    -3.28%          mean loss beyond VaR
+Max drawdown        -13.80%         2026-04-07
+Sharpe (ann)        1.778
+── DIAGNOSTICS (on returns) ──
+Jarque-Bera         NON-NORMAL      JB=37.9 p=0.0000 — normality
+ADF                 STATIONARY (1%) t=-14.851 lag=0 crit5%=-2.873 — stationarity
+Ljung-Box           NO AUTOCORR     Q=6.8 p=0.7431 lags=10 — autocorrelation
+ARCH-LM             HOMOSKEDASTIC   LM=11.3 p=0.3320 lags=10 — vol clustering
+```
+
+**ตัวอย่าง:**
+```
+stat(AAPL)              → สถิติเต็ม 1 ปี (default)
+stat(^GSPC, 5y)         → S&P 500 5 ปี — จะเห็น VOL CLUSTERING ชัด
+stat(BTC-USD, 6m)       → Bitcoin — excess kurtosis สูงมาก
+stat(SCB.BK, 2y)        → หุ้นไทย
+```
+
+**การนำไปใช้กับ corr():**
+รัน `stat()` กับทั้งสอง symbol ก่อนเชื่อผลจาก `corr()` — ถ้าตัวใดตัวหนึ่งขึ้น `NON-STATIONARY` หรือ `VOL CLUSTERING` ค่า correlation ที่ได้อาจไม่เสถียรและสูงเกินจริง
+
+**หมายเหตุเชิงเทคนิค:** ADF / Ljung-Box / ARCH-LM เขียนเองด้วย numpy + scipy (backend ไม่มี `statsmodels` เป็น dependency) โดยผ่านการ validate เทียบกับ `statsmodels` แล้วว่าให้ผลตรงกันทุกตำแหน่งทศนิยมที่แสดง ทั้งบนข้อมูลสังเคราะห์และข้อมูลตลาดจริง
+
+---
+
 ## ข้อจำกัด
 
 | ประเด็น | รายละเอียด |
 |---------|-----------|
 | Data source | yfinance daily adjusted closes เท่านั้น |
+| ADF ใช้ constant ไม่มี trend | เหมาะกับ return; ถ้าเอาไปใช้กับ price levels ควรใช้ trend spec |
+| Diagnostic ต้องการ n ≥ 30 | period สั้น (`5d`, `1m`) จะไม่แสดงผลทดสอบ |
 | ไม่มี intraday | vol/RSI ใช้ end-of-day — ไม่ใช่ tick data |
 | Risk-free rate | hardcode 4.3% — ไม่ใช่ live T-bill rate |
 | Sharpe ลำเอียงกับ period สั้น | น้อยกว่า 60 วัน — ตีความระวัง |

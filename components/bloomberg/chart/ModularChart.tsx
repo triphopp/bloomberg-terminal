@@ -22,6 +22,7 @@ import {
   createSeriesMarkers,
 } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
+import { OverlayPrimitive } from "./overlay-primitive";
 import type {
   CanvasOverlay,
   ChartColors,
@@ -51,6 +52,14 @@ export interface ModularChartProps {
   overlays?: CanvasOverlay[];
   /** Event markers (dividends, earnings, splits) displayed on the chart */
   eventMarkers?: ChartEventMarker[];
+  /**
+   * Fired with the bar time when the user clicks inside the data area. Used by
+   * the Regression Channel to pick its two endpoints. Held in a ref internally,
+   * so passing a fresh closure each render does not rebuild the chart.
+   */
+  onBarClick?: (time: string | number) => void;
+  /** Show a crosshair cursor — signals that a click will be captured. */
+  crosshairCursor?: boolean;
 }
 
 // ── Pane sizing ──────────────────────────────────────────────────────────────
@@ -66,16 +75,6 @@ const SUB_PANE_MIN = 44; // below this a pane's price scale labels start to coll
 const MAIN_PANE_MIN = 140;
 /** Quantize measured height so a 1px reflow doesn't rebuild the whole chart. */
 const HEIGHT_STEP = 8;
-
-/**
- * Stacking order for the canvas overlays (Volume Profile).
- *
- * lightweight-charts positions its own canvases at `z-index: 1` (series) and
- * `z-index: 2` (crosshair/labels). A later sibling with `z-index: auto` still
- * loses to those, so the candles painted over the VP bars and labels — the
- * overlays must opt into a higher layer explicitly.
- */
-const OVERLAY_Z = 3;
 
 interface PaneLayout {
   /** Total height handed to lightweight-charts */
@@ -145,13 +144,17 @@ export function ModularChart({
   indicators,
   overlays = [],
   eventMarkers = [],
+  onBarClick,
+  crosshairCursor = false,
 }: ModularChartProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const overlayCanvasRef = useRef<HTMLCanvasElement>(null); // right-side strip
-  const fullCanvasRef = useRef<HTMLCanvasElement>(null); // full-chart session VP
   const chartRef = useRef<IChartApi | null>(null);
   const mainSeriesRef = useRef<ISeriesApi<SeriesType> | null>(null);
+  // Held in a ref so changing the handler never tears the chart down and
+  // rebuilds it — the effect below depends on data/indicators, not on this.
+  const barClickRef = useRef(onBarClick);
+  barClickRef.current = onBarClick;
 
   // Height the parent actually grants us (0 until first measurement).
   const [availableHeight, setAvailableHeight] = useState(0);
@@ -356,104 +359,38 @@ export function ModularChart({
       }
     }
 
-    // ── Canvas overlays (Volume Profile, etc.) ──
-    // Split overlays into right-strip and full-chart modes
-    const rightOverlays = overlays.filter((o) => (o.mode ?? "right") === "right");
-    const fullOverlays = overlays.filter((o) => o.mode === "full");
+    // ── Canvas overlays (Volume Profile, Footprint) ──
+    // Attached to the candle series as primitives: lightweight-charts renders
+    // them on pane 0's own canvas, so they are clipped to that pane (a naked
+    // POC priced off-screen can no longer paint over the indicator sub-panes)
+    // and are redrawn on every internal invalidation — including price-scale
+    // rescales, which emit no public event and previously had to be chased
+    // with pointermove/wheel/dblclick listeners.
     let overlayUnsubscribe: (() => void) | null = null;
 
-    if (rightOverlays.length > 0 || fullOverlays.length > 0) {
-      let rafId = 0;
+    if (overlays.length > 0) {
       // Measured once per chart build: overlay colors follow the painted surface,
       // not the theme flag (chart panels are hardcoded near-black in both themes).
       const surfaceDark = isDarkSurface(container, isDark);
 
-      const drawOverlaysNow = () => {
-        rafId = 0;
-        const dpr = window.devicePixelRatio || 1;
-
-        // ── Right-side strip overlays (composite VP) ──
-        if (rightOverlays.length > 0) {
-          const canvas = overlayCanvasRef.current;
-          if (canvas) {
-            const logH = canvas.offsetHeight;
-            const maxW = Math.max(...rightOverlays.map((o) => o.width));
-            if (logH) {
-              const needW = maxW * dpr;
-              const needH = logH * dpr;
-              if (canvas.width !== needW || canvas.height !== needH) {
-                canvas.width = needW;
-                canvas.height = needH;
-              }
-              const ctx = canvas.getContext("2d");
-              if (ctx) {
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                ctx.save();
-                ctx.scale(dpr, dpr);
-                for (const overlay of rightOverlays) {
-                  overlay.draw(ctx, chart, candleSeries, data, surfaceDark);
-                }
-                ctx.restore();
-              }
-            }
-          }
-        }
-
-        // ── Full-chart overlays (session VP) ──
-        if (fullOverlays.length > 0) {
-          const canvas = fullCanvasRef.current;
-          const cont = containerRef.current;
-          if (canvas && cont) {
-            const logW = cont.clientWidth - 50;
-            const logH = cont.clientHeight;
-            if (logW > 0 && logH > 0) {
-              const needW = logW * dpr;
-              const needH = logH * dpr;
-              if (canvas.width !== needW || canvas.height !== needH) {
-                canvas.width = needW;
-                canvas.height = needH;
-              }
-              canvas.style.width = `${logW}px`;
-              canvas.style.height = `${logH}px`;
-
-              const ctx = canvas.getContext("2d");
-              if (ctx) {
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                ctx.save();
-                ctx.scale(dpr, dpr);
-                for (const overlay of fullOverlays) {
-                  overlay.draw(ctx, chart, candleSeries, data, surfaceDark);
-                }
-                ctx.restore();
-              }
-            }
-          }
-        }
-      };
-
-      // Throttle: coalesce rapid range-change events into one rAF
-      const scheduleOverlayDraw = () => {
-        if (!rafId) rafId = requestAnimationFrame(drawOverlaysNow);
-      };
-
-      scheduleOverlayDraw();
-      chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleOverlayDraw);
-      // Y-axis rescaling (dragging the price scale, wheel-zoom, double-click
-      // reset) fires no lightweight-charts event, so priceToCoordinate output
-      // changes without a redraw and VP bars drift off the candles. Redraw on
-      // the raw pointer interactions instead — rAF-coalesced so it's cheap.
-      container.addEventListener("pointermove", scheduleOverlayDraw);
-      container.addEventListener("wheel", scheduleOverlayDraw, { passive: true });
-      container.addEventListener("dblclick", scheduleOverlayDraw);
+      const primitives = overlays.map((o) => new OverlayPrimitive(o, data, surfaceDark));
+      for (const p of primitives) {
+        candleSeries.attachPrimitive(p);
+      }
 
       overlayUnsubscribe = () => {
-        chart.timeScale().unsubscribeVisibleLogicalRangeChange(scheduleOverlayDraw);
-        container.removeEventListener("pointermove", scheduleOverlayDraw);
-        container.removeEventListener("wheel", scheduleOverlayDraw);
-        container.removeEventListener("dblclick", scheduleOverlayDraw);
-        if (rafId) cancelAnimationFrame(rafId);
+        for (const p of primitives) {
+          candleSeries.detachPrimitive(p);
+        }
       };
     }
+
+    // ── Bar clicks (Regression Channel range selection) ──
+    const clickHandler = (param: { time?: unknown }) => {
+      if (param.time === undefined) return; // click landed outside the data
+      barClickRef.current?.(param.time as string | number);
+    };
+    chart.subscribeClick(clickHandler);
 
     // ── Resize observer ──
     const ro = new ResizeObserver(() => {
@@ -466,6 +403,7 @@ export function ModularChart({
     return () => {
       markersPlugin?.detach();
       overlayUnsubscribe?.();
+      chart.unsubscribeClick(clickHandler);
       ro.disconnect();
       chart.remove();
       chartRef.current = null;
@@ -473,11 +411,6 @@ export function ModularChart({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, isDark, chartHeight, subPaneHeight, indicators, overlays, eventMarkers]);
-
-  const rightOverlaysRender = overlays.filter((o) => (o.mode ?? "right") === "right");
-  const fullOverlaysRender = overlays.filter((o) => o.mode === "full");
-  const overlayWidth =
-    rightOverlaysRender.length > 0 ? Math.max(...rightOverlaysRender.map((o) => o.width)) : 0;
 
   // The wrapper is what gets measured, so it always renders — including in the
   // empty state, otherwise the ResizeObserver would never attach and the chart
@@ -504,39 +437,16 @@ export function ModularChart({
           No OHLC data for this period
         </div>
       ) : (
-        <>
-          <div ref={containerRef} style={{ width: "100%", height: chartHeight }} />
-
-          {/* Full-chart canvas overlay (session VP) */}
-          {fullOverlaysRender.length > 0 && (
-            <canvas
-              ref={fullCanvasRef}
-              style={{
-                position: "absolute",
-                left: 0,
-                top: 0,
-                pointerEvents: "none",
-                zIndex: OVERLAY_Z,
-              }}
-            />
-          )}
-
-          {/* Right-strip canvas overlay (composite VP) */}
-          {rightOverlaysRender.length > 0 && (
-            <canvas
-              ref={overlayCanvasRef}
-              style={{
-                position: "absolute",
-                right: 50,
-                top: 0,
-                width: overlayWidth,
-                height: chartHeight,
-                pointerEvents: "none",
-                zIndex: OVERLAY_Z,
-              }}
-            />
-          )}
-        </>
+        // Overlays (Volume Profile, Footprint) render as series primitives on
+        // the chart's own canvas — no sibling <canvas> layers to position.
+        <div
+          ref={containerRef}
+          style={{
+            width: "100%",
+            height: chartHeight,
+            cursor: crosshairCursor ? "crosshair" : undefined,
+          }}
+        />
       )}
     </div>
   );

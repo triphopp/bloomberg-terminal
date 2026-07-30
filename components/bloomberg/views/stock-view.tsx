@@ -4333,6 +4333,15 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
     showVolumeProfile,
     addIndicator: addChartIndicator,
     removeIndicator: removeChartIndicator,
+    windowUnit: chartWindowUnit,
+    toggleWindowUnit: toggleChartWindowUnit,
+    regressionSel,
+    regressionArmed,
+    regressionPending,
+    regressionOpts,
+    toggleRegression,
+    setRegressionMode,
+    handleChartClick,
     toggleVolumeProfile,
     vpConfig,
     setVPConfig,
@@ -4921,6 +4930,8 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                       activeIndicators={chartIndicators}
                       onAdd={addChartIndicator}
                       onRemove={removeChartIndicator}
+                      windowUnit={chartWindowUnit}
+                      onToggleWindowUnit={toggleChartWindowUnit}
                     />
                     {/* Volume Profile toggle */}
                     {ohlcvData.some((d) => (d.volume ?? 0) > 0) && (
@@ -4966,6 +4977,52 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                           </button>
                         );
                       })}
+                    {/* Regression Channel — click two bars to set the range */}
+                    <button
+                      type="button"
+                      onClick={toggleRegression}
+                      title={
+                        regressionSel
+                          ? "Clear regression channel"
+                          : regressionArmed
+                            ? "Click two bars on the chart to set the range (click again to cancel)"
+                            : "Regression Channel: click two bars to fit a trend + channel"
+                      }
+                      className="px-1.5 py-0.5 border font-mono text-[9px] transition-colors"
+                      style={{
+                        borderColor: regressionArmed || regressionSel ? "#ffc107" : colors.border,
+                        backgroundColor:
+                          regressionArmed || regressionSel ? "#ffc10722" : "transparent",
+                        color: regressionArmed || regressionSel ? "#ffc107" : colors.textSecondary,
+                      }}
+                    >
+                      {regressionArmed ? (regressionPending ? "REG 2/2" : "REG 1/2") : "REG"}
+                    </button>
+                    {regressionSel && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRegressionMode(
+                            regressionOpts.mode === "stddev" ? "quantile" : "stddev"
+                          )
+                        }
+                        title={
+                          regressionOpts.mode === "stddev"
+                            ? "Rails at ±kσ of the residuals (symmetric). Click for quantile rails."
+                            : "Rails fitted as conditional quantiles (asymmetric). Click for ±kσ rails."
+                        }
+                        className="px-1 py-0.5 border font-mono text-[9px] transition-colors"
+                        style={{
+                          borderColor: "#ffc107",
+                          backgroundColor: "#ffc10711",
+                          color: "#ffc107",
+                        }}
+                      >
+                        {regressionOpts.mode === "stddev"
+                          ? `${regressionOpts.stdDevMult}σ`
+                          : `q${regressionOpts.tauPct}`}
+                      </button>
+                    )}
                     {/* Events toggle (dividends, earnings, splits) — equities only */}
                     {supportsEvents && (
                       <button
@@ -5065,6 +5122,8 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                   indicators={chartIndicators.filter((i) => i.id !== "fear-greed")}
                   overlays={chartOverlays}
                   eventMarkers={eventMarkers}
+                  onBarClick={handleChartClick}
+                  crosshairCursor={regressionArmed}
                 />
                 {fearGreedActive && fearGreedQuery.data?.history && (
                   <FearGreedPane data={fearGreedQuery.data.history} colors={colors} height={100} />

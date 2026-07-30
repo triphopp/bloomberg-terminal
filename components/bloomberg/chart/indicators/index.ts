@@ -15,6 +15,7 @@ export { createMACD } from "./macd";
 export { createRSI } from "./rsi";
 export { createBollingerBands } from "./bollinger";
 export { createBollingerB } from "./bollinger-b";
+export { createBollingerWidth } from "./bollinger-width";
 export { createVWAP } from "./vwap";
 export { createVolume } from "./volume";
 export { createRVOL } from "./rvol";
@@ -34,6 +35,7 @@ import type { IndicatorRegistryEntry } from "../types";
 import { createAbsorption } from "./absorption";
 import { createBollingerBands } from "./bollinger";
 import { createBollingerB } from "./bollinger-b";
+import { createBollingerWidth } from "./bollinger-width";
 import { createEMA } from "./ema";
 import { createFearGreed } from "./fear-greed";
 import { createFlowToxicity } from "./flow-toxicity";
@@ -58,6 +60,7 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     defaultParams: [
       { key: "period", label: "Period", type: "number", default: 20, min: 2, max: 500, step: 1 },
     ],
+    timeScalableParams: ["period"],
     factory: createEMA,
   },
   {
@@ -69,6 +72,7 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     defaultParams: [
       { key: "period", label: "Period", type: "number", default: 20, min: 2, max: 500, step: 1 },
     ],
+    timeScalableParams: ["period"],
     factory: createSMA,
   },
 
@@ -84,6 +88,7 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
       { key: "slow", label: "Slow", type: "number", default: 26, min: 2, max: 200, step: 1 },
       { key: "signal", label: "Signal", type: "number", default: 9, min: 2, max: 50, step: 1 },
     ],
+    timeScalableParams: ["fast", "slow", "signal"],
     factory: createMACD,
   },
   {
@@ -95,6 +100,7 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     defaultParams: [
       { key: "period", label: "Period", type: "number", default: 14, min: 2, max: 100, step: 1 },
     ],
+    timeScalableParams: ["period"],
     factory: createRSI,
   },
   {
@@ -107,6 +113,7 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
       { key: "kPeriod", label: "%K", type: "number", default: 14, min: 2, max: 100, step: 1 },
       { key: "dPeriod", label: "%D", type: "number", default: 3, min: 2, max: 50, step: 1 },
     ],
+    timeScalableParams: ["kPeriod", "dPeriod"],
     factory: createStochastic,
   },
 
@@ -121,6 +128,7 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
       { key: "period", label: "Period", type: "number", default: 20, min: 5, max: 200, step: 1 },
       { key: "stdDev", label: "Std Dev", type: "number", default: 2, min: 0.5, max: 4, step: 0.5 },
     ],
+    timeScalableParams: ["period"],
     factory: createBollingerBands,
   },
   {
@@ -133,7 +141,30 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
       { key: "period", label: "Period", type: "number", default: 20, min: 5, max: 200, step: 1 },
       { key: "stdDev", label: "Std Dev", type: "number", default: 2, min: 0.5, max: 4, step: 0.5 },
     ],
+    timeScalableParams: ["period"],
     factory: createBollingerB,
+  },
+  {
+    id: "bb-width",
+    name: "BB Width",
+    category: "volatility",
+    type: "pane",
+    description: "Bollinger BandWidth (Upper−Lower)/Middle — orange = squeeze at N-bar low",
+    defaultParams: [
+      { key: "period", label: "Period", type: "number", default: 20, min: 5, max: 200, step: 1 },
+      { key: "stdDev", label: "Std Dev", type: "number", default: 2, min: 0.5, max: 4, step: 0.5 },
+      {
+        key: "lookback",
+        label: "Squeeze lookback",
+        type: "number",
+        default: 125,
+        min: 20,
+        max: 250,
+        step: 5,
+      },
+    ],
+    timeScalableParams: ["period", "lookback"],
+    factory: createBollingerWidth,
   },
 
   // ─── Volume ───
@@ -164,6 +195,9 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     defaultParams: [
       { key: "lookback", label: "Lookback", type: "number", default: 20, min: 5, max: 60, step: 1 },
     ],
+    // No timeScalableParams: RVOL's lookback already counts SESSIONS, not bars
+    // (intraday it averages the same time-of-day across prior days), so it is
+    // interval-invariant as written and must not be rescaled.
     factory: createRVOL,
   },
   {
@@ -185,6 +219,7 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
         step: 0.05,
       },
     ],
+    timeScalableParams: ["window"],
     factory: createFlowToxicity,
   },
   {
@@ -204,6 +239,7 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
         step: 5,
       },
     ],
+    timeScalableParams: ["window"],
     factory: createAbsorption,
   },
 

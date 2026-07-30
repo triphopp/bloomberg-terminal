@@ -13,28 +13,34 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_INDICATOR_SPECS,
   type IndicatorSpec,
   chartIndicatorSpecsAtom,
+  chartRegressionAtom,
+  chartRegressionOptsAtom,
   chartShowEventsAtom,
   chartShowFootprintAtom,
   chartShowPEAtom,
   chartShowVolumeProfileAtom,
   chartVPConfigAtom,
+  chartWindowUnitAtom,
 } from "../atoms";
 import { useFootprintData } from "../hooks/useFootprintData";
 import type { PeStats } from "./PEPane";
 import { INDICATOR_REGISTRY, createCompositeVPOverlay, createSessionVPOverlay } from "./indicators";
 import { createFootprintOverlay } from "./indicators/order-footprint";
+import { createRegressionChannelOverlay } from "./indicators/regression-channel";
 import type {
+  BarInterval,
   CanvasOverlay,
   ChartEventMarker,
   ChartIndicator,
   IndicatorRegistryEntry,
 } from "./types";
 import type { OhlcvBar } from "./types";
+import { type WindowUnit, scaleParamsToBars } from "./windowUnits";
 
 export interface PeHistoryResponse {
   history: Array<{ time: string; pe: number | null; eps?: number; close?: number }>;
@@ -44,20 +50,46 @@ import { useStockEvents } from "../hooks/useStockEvents";
 
 // ── Spec → instance ──────────────────────────────────────────────────────────
 
-/** Instantiate one persisted spec. Returns null for specs whose entry is gone. */
-function instantiate(spec: IndicatorSpec): ChartIndicator | null {
+/** Everything needed to turn a stored window number into a bar count. */
+interface WindowCtx {
+  unit: WindowUnit;
+  interval: BarInterval;
+  isCrypto: boolean;
+}
+
+/**
+ * Instantiate one persisted spec. Returns null for specs whose entry is gone.
+ *
+ * In "days" mode the entry's declared duration params are converted to bar
+ * counts for the interval on screen, so one edit point covers every indicator
+ * — no factory needs to know about units.
+ */
+function instantiate(spec: IndicatorSpec, ctx: WindowCtx): ChartIndicator | null {
   const entry = INDICATOR_REGISTRY.find((e) => e.id === spec.id);
   if (!entry) return null;
   try {
-    return entry.factory(spec.params);
+    const params = scaleParamsToBars(
+      spec.params,
+      entry.timeScalableParams,
+      entry.defaultParams,
+      ctx.unit,
+      ctx.interval,
+      ctx.isCrypto
+    );
+    return entry.factory(params);
   } catch {
     return null;
   }
 }
 
-/** The derived instance id ("rsi-30") a spec would produce — used for dedupe/removal. */
-function specInstanceId(spec: IndicatorSpec): string | null {
-  return instantiate(spec)?.id ?? null;
+/**
+ * The derived instance id ("rsi-30") a spec would produce — used for dedupe and
+ * removal. Resolved through the same ctx as the live instances so both sides of
+ * a comparison agree; ids therefore change when the interval does, which is
+ * fine because every id in play is recomputed on the same render.
+ */
+function specInstanceId(spec: IndicatorSpec, ctx: WindowCtx): string | null {
+  return instantiate(spec, ctx)?.id ?? null;
 }
 
 /** Stable empty array so memo consumers don't see a new identity each render. */
@@ -124,6 +156,21 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
   const [showPE, setShowPE] = useAtom(chartShowPEAtom);
   const [vpConfig, setVPConfig] = useAtom(chartVPConfigAtom);
   const [intradayData, setIntradayData] = useState<OhlcvBar[] | undefined>(undefined);
+  const [regressionSel, setRegressionSel] = useAtom(chartRegressionAtom);
+  const [regressionOpts, setRegressionOpts] = useAtom(chartRegressionOptsAtom);
+  // Arming is deliberately NOT persisted: reloading into "waiting for your
+  // first click" with no visual cue would be baffling.
+  const [regressionArmed, setRegressionArmed] = useState(false);
+  // The anchor lives in a ref as well as state: the click handler reaches the
+  // chart through a ref, so two clicks landing before React re-renders would
+  // both read a stale `null` and the second would just re-anchor instead of
+  // closing the range. The state copy exists only to drive the button label.
+  const pendingRef = useRef<string | number | null>(null);
+  const [pendingAnchor, setPendingAnchor] = useState<string | number | null>(null);
+  const setAnchor = useCallback((t: string | number | null) => {
+    pendingRef.current = t;
+    setPendingAnchor(t);
+  }, []);
 
   // Transient per-instance config injected at runtime (e.g. fear-greed's
   // preloadedData). Deliberately NOT persisted — it holds fetched series, not
@@ -131,22 +178,35 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
   // biome-ignore lint/suspicious/noExplicitAny: config values are indicator-specific
   const [runtimeConfig, setRuntimeConfig] = useState<Record<string, Record<string, any>>>({});
 
+  // ── Symbol type detection ──
+  // Declared before the indicator memo: crypto trades 24h, which changes how
+  // many bars a "day" of window is worth.
+  const isCryptoSymbol = useMemo(() => detectCrypto(symbol), [symbol]);
+  const isFxSymbol = useMemo(() => detectFx(symbol), [symbol]);
+
+  // ── Window unit resolution ──
+  const [windowUnit, setWindowUnit] = useAtom(chartWindowUnitAtom);
+  const windowCtx: WindowCtx = useMemo(
+    () => ({
+      unit: windowUnit,
+      interval: barInterval as BarInterval,
+      isCrypto: isCryptoSymbol,
+    }),
+    [windowUnit, barInterval, isCryptoSymbol]
+  );
+
   // Indicators are derived from the persisted specs, not a parallel useState.
   // The old copy-into-state approach lost the stored setup on every mount.
   const indicators: ChartIndicator[] = useMemo(() => {
     const built: ChartIndicator[] = [];
     for (const spec of specs) {
-      const ind = instantiate(spec);
+      const ind = instantiate(spec, windowCtx);
       if (!ind) continue;
       const patch = runtimeConfig[ind.id];
       built.push(patch ? ({ ...ind, config: { ...ind.config, ...patch } } as ChartIndicator) : ind);
     }
     return built;
-  }, [specs, runtimeConfig]);
-
-  // ── Symbol type detection ──
-  const isCryptoSymbol = useMemo(() => detectCrypto(symbol), [symbol]);
-  const isFxSymbol = useMemo(() => detectFx(symbol), [symbol]);
+  }, [specs, runtimeConfig, windowCtx]);
 
   // Events are meaningful only for equities (not crypto/FX)
   const supportsEvents = !!symbol && !isCryptoSymbol && !isFxSymbol;
@@ -190,7 +250,7 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
       configOverrides?: Record<string, number | boolean | string>
     ) => {
       const newSpec: IndicatorSpec = { id: entry.id, params: configOverrides };
-      const newId = specInstanceId(newSpec);
+      const newId = specInstanceId(newSpec, windowCtx);
       if (!newId) return;
       setSpecs((prev) => {
         // One instance per pane indicator (volume excepted) — panes are expensive
@@ -200,23 +260,23 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
         if (entry.type === "pane" && entry.id !== "volume") {
           const idx = prev.findIndex((s) => s.id === entry.id);
           if (idx >= 0) {
-            if (specInstanceId(prev[idx]) === newId) return prev; // identical — nothing to do
+            if (specInstanceId(prev[idx], windowCtx) === newId) return prev; // identical — nothing to do
             const next = [...prev];
             next[idx] = newSpec;
             return next;
           }
         }
         // Overlays stack: SMA 20 + SMA 50 on one chart is a normal setup.
-        if (prev.some((s) => specInstanceId(s) === newId)) return prev;
+        if (prev.some((s) => specInstanceId(s, windowCtx) === newId)) return prev;
         return [...prev, newSpec];
       });
     },
-    [setSpecs]
+    [setSpecs, windowCtx]
   );
 
   const removeIndicator = useCallback(
     (indicatorId: string) => {
-      setSpecs((prev) => prev.filter((s) => specInstanceId(s) !== indicatorId));
+      setSpecs((prev) => prev.filter((s) => specInstanceId(s, windowCtx) !== indicatorId));
       setRuntimeConfig((prev) => {
         if (!(indicatorId in prev)) return prev;
         const next = { ...prev };
@@ -224,7 +284,7 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
         return next;
       });
     },
-    [setSpecs]
+    [setSpecs, windowCtx]
   );
 
   const toggleIndicator = useCallback(
@@ -233,15 +293,15 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
       configOverrides?: Record<string, number | boolean | string>
     ) => {
       const newSpec: IndicatorSpec = { id: entry.id, params: configOverrides };
-      const newId = specInstanceId(newSpec);
+      const newId = specInstanceId(newSpec, windowCtx);
       if (!newId) return;
       setSpecs((prev) =>
-        prev.some((s) => specInstanceId(s) === newId)
-          ? prev.filter((s) => specInstanceId(s) !== newId)
+        prev.some((s) => specInstanceId(s, windowCtx) === newId)
+          ? prev.filter((s) => specInstanceId(s, windowCtx) !== newId)
           : [...prev, newSpec]
       );
     },
-    [setSpecs]
+    [setSpecs, windowCtx]
   );
 
   const resetIndicators = useCallback(() => {
@@ -276,8 +336,19 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     if (showFootprint && footprintQuery.data) {
       result.push(createFootprintOverlay(footprintQuery.data));
     }
+    if (regressionSel) {
+      result.push(createRegressionChannelOverlay(regressionSel, regressionOpts));
+    }
     return result;
-  }, [showVolumeProfile, intradayData, vpConfig, showFootprint, footprintQuery.data]);
+  }, [
+    showVolumeProfile,
+    intradayData,
+    vpConfig,
+    showFootprint,
+    footprintQuery.data,
+    regressionSel,
+    regressionOpts,
+  ]);
 
   // ── Toggles ──────────────────────────────────────────────────────────────
 
@@ -287,10 +358,62 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
   );
   const toggleFootprint = useCallback(() => setShowFootprint((v) => !v), [setShowFootprint]);
   const toggleEvents = useCallback(() => setShowEvents((v) => !v), [setShowEvents]);
+  const toggleWindowUnit = useCallback(
+    () => setWindowUnit((u) => (u === "bars" ? "days" : "bars")),
+    [setWindowUnit]
+  );
+
+  /**
+   * Two clicks define the channel: the first drops an anchor, the second closes
+   * the range and disarms. Clicking the toolbar button again cancels.
+   */
+  const handleChartClick = useCallback(
+    (time: string | number) => {
+      if (!regressionArmed) return;
+      const anchor = pendingRef.current;
+      if (anchor == null) {
+        setAnchor(time);
+        return;
+      }
+      if (String(time) === String(anchor)) return; // same bar — ignore
+      setRegressionSel({ fromTime: anchor, toTime: time });
+      setAnchor(null);
+      setRegressionArmed(false);
+    },
+    [regressionArmed, setAnchor, setRegressionSel]
+  );
+
+  /** Arm selection; if a channel already exists, clear it instead. */
+  const toggleRegression = useCallback(() => {
+    if (regressionSel) {
+      setRegressionSel(null);
+      setAnchor(null);
+      setRegressionArmed(false);
+      return;
+    }
+    setAnchor(null);
+    setRegressionArmed((v) => !v);
+  }, [regressionSel, setAnchor, setRegressionSel]);
+
+  const setRegressionMode = useCallback(
+    (mode: "stddev" | "quantile") => setRegressionOpts((o) => ({ ...o, mode })),
+    [setRegressionOpts]
+  );
 
   return {
     indicators,
     overlays,
+    // ── Regression Channel (click two bars to define the range) ──
+    regressionSel,
+    regressionArmed,
+    regressionPending: pendingAnchor != null,
+    regressionOpts,
+    toggleRegression,
+    setRegressionMode,
+    handleChartClick,
+    // Lookback window unit: "bars" (raw candles) vs "days" (session time)
+    windowUnit,
+    toggleWindowUnit,
     // Event markers — pass directly to <ModularChart eventMarkers={...}>
     eventMarkers,
     showEvents,

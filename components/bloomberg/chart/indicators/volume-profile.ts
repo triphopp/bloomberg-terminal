@@ -314,7 +314,7 @@ export function createSessionVPOverlay(
     mode: "full",
     width: 0, // not used for full mode
 
-    draw(ctx, chart, mainSeries, data, isDark) {
+    draw(ctx, chart, mainSeries, data, isDark, rect) {
       // Use intraday data if provided, otherwise use chart data
       const vpData = intradayData && intradayData.length > 0 ? intradayData : data;
 
@@ -323,8 +323,8 @@ export function createSessionVPOverlay(
       if (!isIntraday) return;
       if (!vpData.some((d) => (d.volume ?? 0) > 0)) return;
 
-      // Resolution scales with chart height (taller chart → finer price buckets).
-      const sessionBuckets = adaptiveBuckets(ctx.canvas.offsetHeight, 14, 16, 48);
+      // Resolution scales with pane height (taller pane → finer price buckets).
+      const sessionBuckets = adaptiveBuckets(rect.height, 14, 16, 48);
 
       // Recompute profiles only when data (or bucket count) changes. Key on the last bar
       // too, so a live poll that mutates the final bar in place still invalidates.
@@ -402,7 +402,7 @@ export function createSessionVPOverlay(
         // never revisited it. Drawn before the per-session POC line so labels sit on top.
         if (options.showNakedPoc && profile.naked) {
           const nY = mainSeries.priceToCoordinate(profile.pocPrice);
-          const canvasW = ctx.canvas.offsetWidth;
+          const canvasW = rect.width;
           if (nY != null && xStart + sessionWidth < canvasW) {
             ctx.strokeStyle = nakedPocColor;
             ctx.lineWidth = 1;
@@ -521,7 +521,7 @@ export function createCompositeVPOverlay(
     mode: "right",
     width: COMPOSITE_WIDTH_PX,
 
-    draw(ctx, chart, mainSeries, data, isDark) {
+    draw(ctx, chart, mainSeries, data, isDark, rect) {
       if (!data.some((d) => (d.volume ?? 0) > 0)) return;
 
       // Visible-Range VP: build the profile only from bars currently in view, so
@@ -559,7 +559,7 @@ export function createCompositeVPOverlay(
       }
 
       // Resolution scales with the strip's pixel height.
-      const numBuckets = adaptiveBuckets(ctx.canvas.offsetHeight, 4, 20, 120);
+      const numBuckets = adaptiveBuckets(rect.height, 4, 20, 120);
 
       const last = vpBars[vpBars.length - 1];
       const key = `${vpBars.length}|${from}|${to}|${last?.time}|${last?.close}|${last?.volume ?? 0}|${numBuckets}`;

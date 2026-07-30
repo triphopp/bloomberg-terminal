@@ -152,6 +152,42 @@ export const chartIndicatorSpecsAtom = atomWithStorage<IndicatorSpec[]>(
   undefined,
   { getOnInit: true }
 );
+/**
+ * Unit for indicator lookback windows. "bars" is the classic behaviour (a
+ * period of 14 means 14 candles, so it means a different span on every
+ * timeframe); "days" reinterprets it as session time and converts to a bar
+ * count for the interval on screen, keeping readings comparable across
+ * timeframes. Defaults to "bars" so existing setups are untouched.
+ */
+export const chartWindowUnitAtom = atomWithStorage<"bars" | "days">(
+  "chart:window-unit",
+  "bars",
+  undefined,
+  { getOnInit: true }
+);
+/**
+ * Regression Channel selection, stored as the two clicked BAR TIMES rather than
+ * indices so a data refresh or timeframe switch cannot silently slide it onto
+ * different bars. Null when nothing is selected.
+ */
+export const chartRegressionAtom = atomWithStorage<{
+  fromTime: string | number;
+  toTime: string | number;
+} | null>("chart:regression", null, undefined, { getOnInit: true });
+
+/** Rail placement for the Regression Channel. */
+export const chartRegressionOptsAtom = atomWithStorage<{
+  mode: "stddev" | "quantile";
+  stdDevMult: number;
+  tauPct: number;
+  extend: boolean;
+}>(
+  "chart:regression-opts",
+  { mode: "stddev", stdDevMult: 2, tauPct: 10, extend: true },
+  undefined,
+  { getOnInit: true }
+);
+
 export const chartShowVolumeProfileAtom = atomWithStorage<boolean>(
   "chart:volume-profile",
   false,

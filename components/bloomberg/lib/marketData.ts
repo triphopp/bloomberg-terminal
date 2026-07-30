@@ -220,5 +220,17 @@ export const marketData = {
       ytd: -11.81,
       ytdCur: -6.8,
     },
+    {
+      id: "KOSPI",
+      num: "36)",
+      rmi: "□",
+      value: 5665.44,
+      change: -358.22,
+      pctChange: -5.95,
+      avat: 0,
+      time: "00:30",
+      ytd: 0,
+      ytdCur: 0,
+    },
   ],
 };

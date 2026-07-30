@@ -122,6 +122,8 @@ export function FxView({ onBack }: { onBack: () => void }) {
     showVolumeProfile,
     addIndicator: addChartIndicator,
     removeIndicator: removeChartIndicator,
+    windowUnit: chartWindowUnit,
+    toggleWindowUnit: toggleChartWindowUnit,
     toggleVolumeProfile,
   } = useChartIndicators({ symbol: selectedPair, barInterval, chartType });
 
@@ -409,6 +411,8 @@ export function FxView({ onBack }: { onBack: () => void }) {
                     activeIndicators={chartIndicators}
                     onAdd={addChartIndicator}
                     onRemove={removeChartIndicator}
+                    windowUnit={chartWindowUnit}
+                    onToggleWindowUnit={toggleChartWindowUnit}
                   />
                 </div>
               )}
