@@ -159,6 +159,12 @@ export interface IndicatorRegistryEntry {
   description: string;
   defaultParams: IndicatorParam[];
   factory: IndicatorFactory;
+  /**
+   * Param keys measured in bars, which the "days" window unit converts for the
+   * interval on screen (see chart/windowUnits.ts). Omit keys that are not
+   * durations — standard deviations, thresholds, ratios must never be scaled.
+   */
+  timeScalableParams?: string[];
 }
 
 // ── Chart State ──────────────────────────────────────────────────────────────
@@ -191,6 +197,20 @@ export interface ChartEventMarker {
 
 // ── Canvas Overlay (for Volume Profile etc.) ─────────────────────────────────
 
+/**
+ * Drawing area handed to an overlay, in CSS pixels.
+ *
+ * Overlays must size themselves from this rather than from `ctx.canvas`: when
+ * rendered as a lightweight-charts series primitive the context belongs to the
+ * whole pane, so `canvas.offsetWidth/Height` describe the pane, not the slot
+ * the overlay was given. The origin (0,0) is already translated to the
+ * overlay's top-left corner.
+ */
+export interface OverlayRect {
+  width: number;
+  height: number;
+}
+
 export interface CanvasOverlay {
   id: string;
   name: string;
@@ -202,7 +222,8 @@ export interface CanvasOverlay {
     chart: IChartApi,
     mainSeries: ISeriesApi<SeriesType>,
     data: OhlcvBar[],
-    isDark: boolean
+    isDark: boolean,
+    rect: OverlayRect
   ): void;
   /** Width in pixels the overlay occupies (only for mode="right") */
   width: number;

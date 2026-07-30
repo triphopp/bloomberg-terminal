@@ -31,6 +31,7 @@ INDICES = [
     {"region": "asiaPacific", "id": "CSI 300",       "symbol": "000300.SS", "num": "33)"},
     {"region": "asiaPacific", "id": "S&P/ASX 200",   "symbol": "^AXJO",     "num": "34)"},
     {"region": "asiaPacific", "id": "SET Index",     "symbol": "^SET.BK",   "num": "35)"},
+    {"region": "asiaPacific", "id": "KOSPI",         "symbol": "^KS11",     "num": "36)"},
 ]
 
 # ── Heatmap groups ────────────────────────────────────────��───────────────────
@@ -216,6 +217,7 @@ INDEX_ETF_MAP: dict[str, str] = {
     "000300.SS":  "FXI",
     "^AXJO":      "EWA",
     "^SET.BK":    "THD",
+    "^KS11":      "EWY",
 }
 
 # ── Cache TTLs ────────────────────────────────────────────────────────────────

@@ -144,6 +144,8 @@ export function CryptoView({ onBack }: { onBack: () => void }) {
     showVolumeProfile,
     addIndicator: addChartIndicator,
     removeIndicator: removeChartIndicator,
+    windowUnit: chartWindowUnit,
+    toggleWindowUnit: toggleChartWindowUnit,
     toggleVolumeProfile,
     showFootprint,
     toggleFootprint,
@@ -471,6 +473,8 @@ export function CryptoView({ onBack }: { onBack: () => void }) {
                     activeIndicators={chartIndicators}
                     onAdd={addChartIndicator}
                     onRemove={removeChartIndicator}
+                    windowUnit={chartWindowUnit}
+                    onToggleWindowUnit={toggleChartWindowUnit}
                   />
                   {ohlcvData.some((d) => (d.volume ?? 0) > 0) && (
                     <button

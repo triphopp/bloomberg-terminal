@@ -80,6 +80,7 @@ ALERT → Tab → ALERT CLEAR (first match)
 | `sharpe(A, period?)` | Sharpe ratio |
 | `zscore(A, period?)` | Z-score vs rolling mean |
 | `rsi(A, window?)` | RSI (Wilder) |
+| `stat(A, period?)` | Full stats: descriptive + risk + diagnostic tests |
 | `compare(A,B,C, period?)` | Side-by-side table |
 | `rank(A,B,C, METRIC, period?)` | Sorted ranking |
 

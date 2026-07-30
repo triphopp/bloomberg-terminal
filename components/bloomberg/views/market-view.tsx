@@ -708,6 +708,15 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     showVolumeProfile: heatmapShowVP,
     addIndicator: addHeatmapIndicator,
     removeIndicator: removeHeatmapIndicator,
+    windowUnit: heatmapWindowUnit,
+    toggleWindowUnit: toggleHeatmapWindowUnit,
+    regressionSel: mktRegressionSel,
+    regressionArmed: mktRegressionArmed,
+    regressionPending: mktRegressionPending,
+    regressionOpts: mktRegressionOpts,
+    toggleRegression: toggleMktRegression,
+    setRegressionMode: setMktRegressionMode,
+    handleChartClick: handleMktChartClick,
     toggleVolumeProfile: toggleHeatmapVP,
     showEvents: heatmapShowEvents,
     toggleEvents: toggleHeatmapEvents,
@@ -860,6 +869,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
       "CSI 300": "000300.SS",
       "S&P/ASX 200": "^AXJO",
       "SET Index": "^SET.BK",
+      KOSPI: "^KS11",
     };
     return map[id] ?? id;
   }, []);
@@ -1545,6 +1555,8 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
             activeIndicators={heatmapIndicators}
             onAdd={addHeatmapIndicator}
             onRemove={removeHeatmapIndicator}
+            windowUnit={heatmapWindowUnit}
+            onToggleWindowUnit={toggleHeatmapWindowUnit}
           />
           {heatmapOhlcv.some((d) => (d.volume ?? 0) > 0) && (
             <button
@@ -1557,6 +1569,42 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
               onClick={toggleHeatmapVP}
             >
               VP
+            </button>
+          )}
+          <button
+            className="text-[8px] px-1 py-0 font-bold border"
+            title={
+              mktRegressionSel
+                ? "Clear regression channel"
+                : mktRegressionArmed
+                  ? "Click two bars on the chart to set the range (click again to cancel)"
+                  : "Regression Channel: click two bars to fit a trend + channel"
+            }
+            style={{
+              borderColor: mktRegressionArmed || mktRegressionSel ? "#ffc107" : colors.border,
+              color: mktRegressionArmed || mktRegressionSel ? "#ffc107" : colors.textSecondary,
+              background: mktRegressionArmed || mktRegressionSel ? "#ffc10715" : "transparent",
+            }}
+            onClick={toggleMktRegression}
+          >
+            {mktRegressionArmed ? (mktRegressionPending ? "REG 2/2" : "REG 1/2") : "REG"}
+          </button>
+          {mktRegressionSel && (
+            <button
+              className="text-[8px] px-1 py-0 font-bold border"
+              title={
+                mktRegressionOpts.mode === "stddev"
+                  ? "Rails at \u00b1k\u03c3 of the residuals (symmetric). Click for quantile rails."
+                  : "Rails fitted as conditional quantiles (asymmetric). Click for \u00b1k\u03c3 rails."
+              }
+              style={{ borderColor: "#ffc107", color: "#ffc107", background: "#ffc10708" }}
+              onClick={() =>
+                setMktRegressionMode(mktRegressionOpts.mode === "stddev" ? "quantile" : "stddev")
+              }
+            >
+              {mktRegressionOpts.mode === "stddev"
+                ? `${mktRegressionOpts.stdDevMult}\u03c3`
+                : `q${mktRegressionOpts.tauPct}`}
             </button>
           )}
           {heatmapSupportsEvents && (
@@ -1671,6 +1719,8 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 indicators={heatmapIndicators.filter((i) => i.id !== "fear-greed")}
                 overlays={heatmapOverlays}
                 eventMarkers={heatmapEventMarkers}
+                onBarClick={handleMktChartClick}
+                crosshairCursor={mktRegressionArmed}
               />
             </div>
             {fearGreedActiveInMkt && fearGreedMktQuery.data?.history && (

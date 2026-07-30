@@ -280,6 +280,8 @@ AAPL → opens stock analysis view (9 tabs)
 | US index | ^SYMBOL | `^GSPC`, `^DJI`, `^VIX` |
 | Thai index | ^SET.BK | `^SET.BK` |
 | Japan index | ^N225 | `^N225` |
+| Korea index (KOSPI) | ^KS11 | `^KS11` |
+| Korea stock | TICKER.KS | `005930.KS` (Samsung) |
 | Crypto | COIN-USD | `BTC-USD`, `ETH-USD` |
 | Gold | GLD | ETF, หรือ `GC=F` futures |
 | Forex | BASE/QUOTE | `EURUSD=X`, `THBUSD=X` |

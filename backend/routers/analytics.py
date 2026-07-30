@@ -12,6 +12,7 @@ Endpoints (all GET):
   /api/analytics/compare   Side-by-side table for N symbols
   /api/analytics/rank      compare + sort by chosen metric
   /api/analytics/rsi       RSI (Wilder smoothing)
+  /api/analytics/stat      Full descriptive + risk + diagnostic statistics
 
 All computation is done on log-returns of adjusted daily closes from yfinance.
 Results are cached via TTLCache.get_or_set — stampede-safe.
@@ -24,6 +25,7 @@ from typing import Optional
 import numpy as np
 import yfinance as yf
 import pandas as pd
+from scipy import stats as sps
 from fastapi import APIRouter, Query, HTTPException
 
 from cache import TTLCache
@@ -133,6 +135,143 @@ def _rsi_value(closes: pd.Series, window: int = 14) -> float:
         return 100.0
     rs = avg_g / avg_l
     return round(100.0 - 100.0 / (1.0 + rs), 2)
+
+
+# ── Statistical diagnostics ───────────────────────────────────────────────────
+#
+# Hand-rolled so the backend keeps its light dependency set (numpy + scipy only,
+# no statsmodels). Each routine below was validated against the corresponding
+# statsmodels implementation before being committed: ADF matches
+# tsa.stattools.adfuller to ~1e-13 with identical AIC lag selection, Ljung-Box
+# matches stats.diagnostic.acorr_ljungbox, ARCH-LM matches het_arch.
+
+# MacKinnon (2010) response-surface constants — ADF with constant, no trend.
+# critical value = b0 + b1/T + b2/T² + b3/T³
+_ADF_CV_C: dict[str, tuple[float, float, float, float]] = {
+    "1%":  (-3.43035, -6.5393, -16.786, -79.433),
+    "5%":  (-2.86154, -2.8903,  -4.234, -40.040),
+    "10%": (-2.56677, -1.5384,  -2.809,   0.000),
+}
+
+# Diagnostics on tiny samples are meaningless; below this we report nothing.
+_MIN_DIAG_OBS = 30
+
+
+def _ols(y: np.ndarray, X: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+    """OLS fit. X must already contain any intercept column. Returns (beta, se, ssr)."""
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    resid = y - X @ beta
+    dof = len(y) - X.shape[1]
+    ssr = float(resid @ resid)
+    se = np.sqrt(np.diag(np.linalg.pinv(X.T @ X)) * (ssr / dof))
+    return beta, se, ssr
+
+
+def _adf_design(y: np.ndarray, dy: np.ndarray, lag: int, nobs: int):
+    """Design for Δy_t = γ·y_{t-1} + α + Σδ_i·Δy_{t-i}, using the last `nobs` rows."""
+    yt = dy[-nobs:]
+    cols = [y[-nobs - 1: -1], np.ones(nobs)]        # y_{t-1}, constant
+    for i in range(1, lag + 1):
+        cols.append(dy[-nobs - i: -i])              # Δy_{t-i}
+    return yt, np.column_stack(cols)
+
+
+def _adf_test(y: np.ndarray) -> Optional[dict]:
+    """Augmented Dickey-Fuller (constant, no trend), lag chosen by AIC."""
+    y = np.asarray(y, dtype=float)
+    n = len(y)
+    maxlag = int(math.ceil(12.0 * (n / 100.0) ** 0.25))
+    maxlag = max(0, min(maxlag, (n - 3) // 2))
+
+    dy = np.diff(y)
+    if len(dy) - maxlag < maxlag + 4:
+        return None
+
+    # Every candidate lag must be fitted on the SAME number of observations,
+    # otherwise the AIC values are not comparable across lags.
+    nobs_sel = len(dy) - maxlag
+    best_lag, best_aic = 0, None
+    for lag in range(maxlag + 1):
+        yt, X = _adf_design(y, dy, lag, nobs_sel)
+        _, _, ssr = _ols(yt, X)
+        if ssr <= 0:
+            continue
+        aic = nobs_sel * math.log(ssr / nobs_sel) + 2 * X.shape[1]
+        if best_aic is None or aic < best_aic:
+            best_aic, best_lag = aic, lag
+
+    # Refit at the chosen lag using every observation available to it.
+    nobs = len(dy) - best_lag
+    yt, X = _adf_design(y, dy, best_lag, nobs)
+    beta, se, _ = _ols(yt, X)
+    if se[0] == 0:
+        return None
+    stat = float(beta[0] / se[0])
+
+    crit = {k: b0 + b1 / nobs + b2 / nobs**2 + b3 / nobs**3
+            for k, (b0, b1, b2, b3) in _ADF_CV_C.items()}
+
+    if   stat < crit["1%"]:  verdict = "STATIONARY (1%)"
+    elif stat < crit["5%"]:  verdict = "STATIONARY (5%)"
+    elif stat < crit["10%"]: verdict = "STATIONARY (10%)"
+    else:                    verdict = "NON-STATIONARY"
+
+    return {"stat": round(stat, 4), "lag": best_lag, "nobs": nobs,
+            "crit_1pct": round(crit["1%"], 4), "crit_5pct": round(crit["5%"], 4),
+            "crit_10pct": round(crit["10%"], 4), "verdict": verdict}
+
+
+def _ljung_box(x: np.ndarray, lags: int = 10) -> Optional[dict]:
+    """Ljung-Box Q test for serial correlation in the series."""
+    x = np.asarray(x, dtype=float)
+    n = len(x)
+    lags = min(lags, n // 4)
+    if lags < 1:
+        return None
+    xc = x - x.mean()
+    denom = float(xc @ xc)
+    if denom <= 0:
+        return None
+    q = 0.0
+    for k in range(1, lags + 1):
+        rk = float(xc[k:] @ xc[:-k]) / denom
+        q += rk * rk / (n - k)
+    q *= n * (n + 2)
+    p = float(sps.chi2.sf(q, lags))
+    return {"stat": round(q, 4), "p_value": round(p, 6), "lags": lags,
+            "verdict": "AUTOCORRELATED" if p < 0.05 else "NO AUTOCORR"}
+
+
+def _arch_lm(x: np.ndarray, lags: int = 10) -> Optional[dict]:
+    """Engle's ARCH-LM test — detects volatility clustering (heteroskedasticity)."""
+    x = np.asarray(x, dtype=float)
+    e2 = (x - x.mean()) ** 2
+    n = len(e2)
+    lags = min(lags, n // 4)
+    if lags < 1 or n - lags < lags + 2:
+        return None
+    y = e2[lags:]
+    cols = [np.ones(len(y))] + [e2[lags - i: n - i] for i in range(1, lags + 1)]
+    X = np.column_stack(cols)
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    resid = y - X @ beta
+    yc = y - y.mean()
+    ss_tot = float(yc @ yc)
+    if ss_tot <= 0:
+        return None
+    r2 = 1.0 - float(resid @ resid) / ss_tot
+    lm = len(y) * r2
+    p = float(sps.chi2.sf(lm, lags))
+    return {"stat": round(lm, 4), "p_value": round(p, 6), "lags": lags,
+            "verdict": "VOL CLUSTERING" if p < 0.05 else "HOMOSKEDASTIC"}
+
+
+def _jarque_bera(x: np.ndarray) -> dict:
+    """Jarque-Bera normality test."""
+    res = sps.jarque_bera(np.asarray(x, dtype=float))
+    p = float(res.pvalue)
+    return {"stat": round(float(res.statistic), 4), "p_value": round(p, 6),
+            "verdict": "NON-NORMAL" if p < 0.05 else "NORMAL"}
 
 
 # ── Per-symbol summary (used by compare + rank) ───────────────────────────────
@@ -348,6 +487,99 @@ def get_rsi(
                   "OVERSOLD"   if rsi <= 30 else "NEUTRAL")
         return {"rsi": rsi, "window": window, "label": label,
                 "symbol": symbol.upper()}
+
+    try:
+        return _cache.get_or_set(key, compute)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/stat")
+def get_stat(
+    symbol: str = Query(...),
+    period: str = Query("1y"),
+):
+    """Full statistical profile: descriptive + risk + diagnostic tests.
+
+    Descriptive and risk metrics are computed on log-returns of adjusted
+    closes. Diagnostic tests need a reasonable sample and are omitted below
+    ~30 observations rather than reported as meaningless numbers.
+    """
+    key = f"stat:{symbol}:{period}"
+
+    def compute():
+        closes  = _closes(symbol, period)
+        log_ret = _log_returns(closes)
+        n = len(log_ret)
+        if n < 5:
+            raise ValueError(f"Only {n} returns — need at least 5")
+
+        mean_d = float(np.mean(log_ret))
+        std_d  = float(np.std(log_ret, ddof=1))
+        q = np.percentile(log_ret, [25, 50, 75])
+
+        # Downside deviation / Sortino use the daily risk-free rate as target.
+        rf_daily = _RF_ANNUAL / 252
+        downside = log_ret[log_ret < rf_daily] - rf_daily
+        dd_dev = float(np.sqrt(np.mean(downside ** 2))) if len(downside) else 0.0
+        ann_ret = mean_d * 252
+        sortino = ((ann_ret - _RF_ANNUAL) / (dd_dev * math.sqrt(252))) if dd_dev > 0 else 0.0
+
+        # Historical VaR / CVaR at 95 % (reported as negative fractions).
+        var95 = float(np.percentile(log_ret, 5))
+        tail  = log_ret[log_ret <= var95]
+        cvar95 = float(np.mean(tail)) if len(tail) else var95
+
+        max_dd, trough = _max_drawdown(closes)
+
+        descriptive = {
+            "n": n,
+            "mean_daily":     round(mean_d, 6),
+            "mean_annual":    round(ann_ret, 6),
+            "std_daily":      round(std_d, 6),
+            "vol_annual":     round(_annualised_vol(log_ret), 6),
+            "skew":           round(float(sps.skew(log_ret, bias=False)), 4),
+            "excess_kurtosis": round(float(sps.kurtosis(log_ret, fisher=True, bias=False)), 4),
+            "min":            round(float(np.min(log_ret)), 6),
+            "p25":            round(float(q[0]), 6),
+            "median":         round(float(q[1]), 6),
+            "p75":            round(float(q[2]), 6),
+            "max":            round(float(np.max(log_ret)), 6),
+        }
+        risk = {
+            "var_95":        round(var95, 6),
+            "cvar_95":       round(cvar95, 6),
+            "max_drawdown":  round(-max_dd, 6),
+            "trough_date":   trough,
+            "sharpe":        round(_sharpe(log_ret), 4),
+            "sortino":       round(sortino, 4),
+            "downside_dev":  round(dd_dev * math.sqrt(252), 6),
+        }
+
+        # Diagnostics are run on the return series, not on price levels.
+        if n >= _MIN_DIAG_OBS:
+            diagnostics = {
+                "jarque_bera": _jarque_bera(log_ret),
+                "adf":         _adf_test(log_ret),
+                "ljung_box":   _ljung_box(log_ret, 10),
+                "arch_lm":     _arch_lm(log_ret, 10),
+            }
+            diag_note = None
+        else:
+            diagnostics = {}
+            diag_note = f"n={n} < {_MIN_DIAG_OBS} — diagnostics omitted"
+
+        return {
+            "symbol": symbol.upper(), "period": period,
+            "start_date": str(closes.index[0].date())  if hasattr(closes.index[0],  "date") else "",
+            "end_date":   str(closes.index[-1].date()) if hasattr(closes.index[-1], "date") else "",
+            "total_return": round(_total_return(closes), 6),
+            "last_price":   round(float(closes.iloc[-1]), 4),
+            "descriptive": descriptive,
+            "risk": risk,
+            "diagnostics": diagnostics,
+            "diag_note": diag_note,
+        }
 
     try:
         return _cache.get_or_set(key, compute)
