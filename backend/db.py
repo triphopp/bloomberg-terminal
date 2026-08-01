@@ -22,8 +22,15 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) 
 def get_db():
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
+    # foreign_keys is genuinely per-connection (SQLite resets it on every
+    # new connection) so this has to run here. journal_mode is NOT — it's a
+    # persistent property stored in the DB file header, so re-issuing
+    # `PRAGMA journal_mode = WAL` on every request pays for a lock + recheck
+    # that always no-ops once the file is already WAL (~0.65ms measured,
+    # dwarfing every other query this function runs). Set it once, in
+    # _ensure_wal_mode() at startup, instead of on all 150+ get_db() call
+    # sites' every invocation.
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
     try:
         yield conn
         conn.commit()
@@ -34,7 +41,17 @@ def get_db():
         conn.close()
 
 
+def _ensure_wal_mode() -> None:
+    """Runs once at startup — see the comment in get_db() for why this isn't
+    inline there. Safe to call even if the file is already WAL (no-op) or
+    doesn't exist yet (creates it)."""
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.close()
+
+
 def init_db() -> None:
+    _ensure_wal_mode()
     with get_db() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
@@ -473,6 +490,13 @@ def init_portfolio_v2() -> None:
 
         # No default accounts — users create their own via the portfolio UI
         # (POST /api/v2/portfolio/accounts).
+
+
+def init_alerts_schema() -> None:
+    """Alert Rule Engine tables (memory/plans/alert-rule-engine.md §5)."""
+    from alerts.schema import create_alert_tables
+    with get_db() as conn:
+        create_alert_tables(conn)
 
 
 def init_sync_layer() -> None:

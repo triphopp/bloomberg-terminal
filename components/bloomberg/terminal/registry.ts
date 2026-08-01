@@ -250,24 +250,6 @@ const SETTINGS: CommandDef[] = [
     },
   },
   {
-    name: "DARK",
-    group: "setting",
-    description: "Switch to dark mode",
-    handler: (_, ctx) => {
-      ctx.setDarkMode(true);
-      return { kind: "action" };
-    },
-  },
-  {
-    name: "LIGHT",
-    group: "setting",
-    description: "Switch to light mode",
-    handler: (_, ctx) => {
-      ctx.setDarkMode(false);
-      return { kind: "action" };
-    },
-  },
-  {
     name: "YTD ON",
     group: "setting",
     description: "Show YTD % column",

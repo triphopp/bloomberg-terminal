@@ -22,6 +22,9 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertBellCell } from "../alerts/AlertBellCell";
+import { SymbolContextMenu } from "../alerts/SymbolContextMenu";
+import { WatchlistAlertsBadge } from "../alerts/WatchlistAlertsBadge";
 import {
   type PinGroup,
   type PinTag,
@@ -33,12 +36,15 @@ import {
   pinnedAssetsAtom,
   stockSearchSymbolAtom,
 } from "../atoms";
+import { SessionGlyph, extendedSessionMove } from "../core/market-session";
 import {
   type TrendState,
   type WatchlistSignal,
   useWatchlistSignals,
 } from "../hooks/useWatchlistSignals";
 import { bloombergColors } from "../lib/theme-config";
+
+type ThemeColors = typeof bloombergColors.dark;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -75,6 +81,14 @@ interface Quote {
   averageDailyVolume3Month?: number;
   regularMarketOpen?: number;
   regularMarketPreviousClose?: number;
+  // ── Market session (already returned by /api/stock?type=quote) ──
+  marketState?: string | null;
+  preMarketPrice?: number | null;
+  preMarketChange?: number | null;
+  preMarketChangePercent?: number | null;
+  postMarketPrice?: number | null;
+  postMarketChange?: number | null;
+  postMarketChangePercent?: number | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -95,6 +109,40 @@ function fmtVol(n: number | null | undefined): string {
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
   if (n >= 1e3) return `${(n / 1e3).toFixed(0)}K`;
   return n.toFixed(0);
+}
+
+/**
+ * Extended-hours line for a watchlist row.
+ *
+ * Renders only outside regular trading, because that is the only time the
+ * regular-session price above it has gone stale. During the session it returns
+ * null and the row keeps its normal single-line shape — nothing shifts.
+ *
+ * Venues without a pre/post concept (SET, crypto) simply never match.
+ */
+function SessionRow({ quote, colors }: { quote: Quote | undefined; colors: ThemeColors }) {
+  const move = extendedSessionMove(quote);
+  if (!move) return null;
+  const up = (move.pct ?? move.change ?? 0) >= 0;
+  return (
+    <div
+      className="font-mono whitespace-nowrap leading-tight text-[8px] flex items-center gap-0.5"
+      title={move.label}
+    >
+      {/* Text tag, not the emoji — the SessionGlyph on the price line above
+          already carries it, and two identical glyphs read as a rendering bug. */}
+      <span style={{ color: colors.textSecondary, opacity: 0.7 }}>{move.short}</span>
+      <span className="font-bold" style={{ color: colors.textSecondary }}>
+        ${fmtPrice(move.price)}
+      </span>
+      {move.pct != null && (
+        <span style={{ color: up ? "#00FF00" : "#FF4444" }}>
+          {up ? "▲" : "▼"}
+          {fmtPct(move.pct)}
+        </span>
+      )}
+    </div>
+  );
 }
 
 // ── Order persistence ────────────────────────────────────────────────────────
@@ -1097,6 +1145,13 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
 
   useEffect(() => {
     fetchQuotes();
+    // Quotes were fetched once and then left alone, which is survivable for a
+    // regular-session price but not for the pre/after-hours one — that number
+    // is the whole point of the session row and it would sit frozen at whatever
+    // it was when the panel mounted. The backend caches quotes for 60s, so
+    // polling at the same period costs nothing beyond the first caller.
+    const id = setInterval(fetchQuotes, 60_000);
+    return () => clearInterval(id);
   }, [fetchQuotes]);
 
   // ── Daily technical scan (one batch request for the whole watchlist) ──────
@@ -1439,11 +1494,14 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
           <span
             className="text-[9px] px-1.5 py-0 font-bold animate-pulse flex items-center gap-0.5"
             style={{ background: "#ef444420", color: "#ef4444", border: "1px solid #ef444440" }}
+            title={`${totalAlerts} price target${totalAlerts === 1 ? "" : "s"} hit`}
           >
             <AlertTriangle className="h-2.5 w-2.5" />
             {totalAlerts}
           </span>
         )}
+
+        <WatchlistAlertsBadge colors={colors} />
 
         {/* Signal summary — what the daily scan flagged across the whole list */}
         {pins.length > 0 && (
@@ -1691,132 +1749,155 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
                 if (editingId === pin.id) return null;
 
                 return (
-                  <div
+                  <SymbolContextMenu
                     key={pin.id}
-                    // biome-ignore lint/a11y/useSemanticElements: a real <button> cannot be the drag source for the reorder handlers this card carries
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        handleSymbolClick(pin.symbol);
-                      }
-                    }}
-                    draggable
-                    onDragStart={() => setDragIdx(visualIdx)}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setDragOverIdx(visualIdx);
-                    }}
-                    onDrop={() => {
-                      if (dragIdx !== null) handleReorder(dragIdx, visualIdx);
-                      setDragIdx(null);
-                      setDragOverIdx(null);
-                    }}
-                    onDragEnd={() => {
-                      setDragIdx(null);
-                      setDragOverIdx(null);
-                    }}
-                    className="group/card flex flex-col cursor-pointer transition-opacity p-1.5 min-h-[90px] hover:brightness-125"
-                    style={{
-                      background: hasAlert ? (sellAlert ? "#ef444408" : "#22c55e08") : "#000",
-                      borderTop: isDragOver ? "2px solid #00FFFF" : `2px solid ${dotColor}`,
-                      opacity: dragIdx === visualIdx ? 0.4 : 1,
-                    }}
-                    onClick={() => handleSymbolClick(pin.symbol)}
+                    symbol={pin.symbol}
+                    colors={colors}
+                    onOpen={handleSymbolClick}
+                    onRemove={() => handleDeletePin(pin.id)}
                   >
-                    {/* Top row: symbol + alert + action icons */}
-                    <div className="flex items-start justify-between gap-0.5 mb-0.5">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-0.5 flex-wrap">
-                          <span
-                            className="text-[10px] font-bold font-mono leading-tight"
-                            style={{ color: colors.accent }}
-                          >
-                            {pin.symbol}
-                          </span>
-                          {hasAlert && (
+                    <div
+                      // biome-ignore lint/a11y/useSemanticElements: a real <button> cannot be the drag source for the reorder handlers this card carries
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          handleSymbolClick(pin.symbol);
+                        }
+                      }}
+                      draggable
+                      onDragStart={() => setDragIdx(visualIdx)}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        setDragOverIdx(visualIdx);
+                      }}
+                      onDrop={() => {
+                        if (dragIdx !== null) handleReorder(dragIdx, visualIdx);
+                        setDragIdx(null);
+                        setDragOverIdx(null);
+                      }}
+                      onDragEnd={() => {
+                        setDragIdx(null);
+                        setDragOverIdx(null);
+                      }}
+                      className="group/card flex flex-col cursor-pointer transition-opacity p-1.5 min-h-[90px] hover:brightness-125"
+                      style={{
+                        background: hasAlert ? (sellAlert ? "#ef444408" : "#22c55e08") : "#000",
+                        borderTop: isDragOver ? "2px solid #00FFFF" : `2px solid ${dotColor}`,
+                        opacity: dragIdx === visualIdx ? 0.4 : 1,
+                      }}
+                      onClick={() => handleSymbolClick(pin.symbol)}
+                    >
+                      {/* Top row: symbol + alert + action icons */}
+                      <div className="flex items-start justify-between gap-0.5 mb-0.5">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-0.5 flex-wrap">
                             <span
-                              className="text-[7px] px-0.5 font-bold animate-pulse"
-                              style={{
-                                background: sellAlert ? "#ef444420" : "#22c55e20",
-                                color: sellAlert ? "#ef4444" : "#4ade80",
-                              }}
+                              className="text-[10px] font-bold font-mono leading-tight"
+                              style={{ color: colors.accent }}
                             >
-                              {sellAlert ? "SELL" : "BUY"}
+                              {pin.symbol}
                             </span>
+                            {hasAlert && (
+                              <span
+                                className="text-[7px] px-0.5 font-bold animate-pulse"
+                                style={{
+                                  background: sellAlert ? "#ef444420" : "#22c55e20",
+                                  color: sellAlert ? "#ef4444" : "#4ade80",
+                                }}
+                              >
+                                {sellAlert ? "SELL" : "BUY"}
+                              </span>
+                            )}
+                            {/* biome-ignore lint/a11y/useKeyWithClickEvents: the trigger button inside stops propagation and is itself keyboard-reachable */}
+                            <span onClick={(e) => e.stopPropagation()}>
+                              <AlertBellCell
+                                symbol={pin.symbol}
+                                colors={colors}
+                                hoverVisibilityClass="group-hover/card:opacity-40"
+                              />
+                            </span>
+                          </div>
+                          {q?.shortName && (
+                            <div
+                              className="text-[7px] truncate leading-tight"
+                              style={{ color: colors.textSecondary }}
+                            >
+                              {q.shortName}
+                            </div>
                           )}
                         </div>
-                        {q?.shortName && (
-                          <div
-                            className="text-[7px] truncate leading-tight"
-                            style={{ color: colors.textSecondary }}
+                        {/* Edit / delete — visible on hover */}
+                        {/* biome-ignore lint/a11y/useKeyWithClickEvents: not a control — the handler only stops the card's click from firing; the buttons inside are keyboard-reachable on their own */}
+                        <div
+                          className="flex gap-0.5 shrink-0 opacity-0 group-hover/card:opacity-100 transition-opacity"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button type="button" title="Edit" onClick={() => setEditingId(pin.id)}>
+                            <Edit3
+                              className="h-2.5 w-2.5"
+                              style={{ color: colors.textSecondary }}
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            title="Delete"
+                            onClick={() => handleDeletePin(pin.id)}
                           >
-                            {q.shortName}
-                          </div>
+                            <Trash2 className="h-2 w-2 text-red-400" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* %Change */}
+                      <div className="flex items-baseline gap-1">
+                        <span
+                          className="text-[9px] font-bold font-mono"
+                          style={{ color: pctColor }}
+                        >
+                          {isUp ? "▲" : "▼"}
+                          {fmtPct(pct)}
+                        </span>
+                        <SessionGlyph state={q?.marketState} />
+                        {sincePin != null && (
+                          <span
+                            className="text-[7px] font-mono"
+                            style={{ color: sincePin >= 0 ? "#4ade8066" : "#f8717166" }}
+                          >
+                            {sincePin >= 0 ? "+" : ""}
+                            {sincePin.toFixed(1)}% pin
+                          </span>
                         )}
                       </div>
-                      {/* Edit / delete — visible on hover */}
-                      {/* biome-ignore lint/a11y/useKeyWithClickEvents: not a control — the handler only stops the card's click from firing; the buttons inside are keyboard-reachable on their own */}
-                      <div
-                        className="flex gap-0.5 shrink-0 opacity-0 group-hover/card:opacity-100 transition-opacity"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button type="button" title="Edit" onClick={() => setEditingId(pin.id)}>
-                          <Edit3 className="h-2.5 w-2.5" style={{ color: colors.textSecondary }} />
-                        </button>
-                        <button
-                          type="button"
-                          title="Delete"
-                          onClick={() => handleDeletePin(pin.id)}
-                        >
-                          <Trash2 className="h-2 w-2 text-red-400" />
-                        </button>
-                      </div>
-                    </div>
+                      <SessionRow quote={q} colors={colors} />
 
-                    {/* %Change */}
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-[9px] font-bold font-mono" style={{ color: pctColor }}>
-                        {isUp ? "▲" : "▼"}
-                        {fmtPct(pct)}
-                      </span>
-                      {sincePin != null && (
-                        <span
-                          className="text-[7px] font-mono"
-                          style={{ color: sincePin >= 0 ? "#4ade8066" : "#f8717166" }}
+                      {/* Signals — same daily scan as the table view, compacted */}
+                      {cardSig && (
+                        <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                          <ScoreChip score={cardSig.score} />
+                          <TrendCell state={cardSig.trend.state} />
+                          <RsiCell rsi={cardSig.rsi} />
+                          {cardSig.breakout.state !== "NONE" && <BreakoutCell sig={cardSig} />}
+                        </div>
+                      )}
+
+                      {/* Sparkline */}
+                      <div className="mt-auto pt-0.5">
+                        <MiniSparkline prices={spark} isUp={isUp} />
+                      </div>
+
+                      {/* Comment */}
+                      {pin.comment && (
+                        <div
+                          className="text-[7px] truncate mt-0.5"
+                          style={{ color: `${dotColor}88` }}
                         >
-                          {sincePin >= 0 ? "+" : ""}
-                          {sincePin.toFixed(1)}% pin
-                        </span>
+                          {pin.comment}
+                        </div>
                       )}
                     </div>
-
-                    {/* Signals — same daily scan as the table view, compacted */}
-                    {cardSig && (
-                      <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                        <ScoreChip score={cardSig.score} />
-                        <TrendCell state={cardSig.trend.state} />
-                        <RsiCell rsi={cardSig.rsi} />
-                        {cardSig.breakout.state !== "NONE" && <BreakoutCell sig={cardSig} />}
-                      </div>
-                    )}
-
-                    {/* Sparkline */}
-                    <div className="mt-auto pt-0.5">
-                      <MiniSparkline prices={spark} isUp={isUp} />
-                    </div>
-
-                    {/* Comment */}
-                    {pin.comment && (
-                      <div
-                        className="text-[7px] truncate mt-0.5"
-                        style={{ color: `${dotColor}88` }}
-                      >
-                        {pin.comment}
-                      </div>
-                    )}
-                  </div>
+                  </SymbolContextMenu>
                 );
               })}
 
@@ -2053,241 +2134,267 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
                         const isDragOver = dragOverIdx === visualIdx && dragIdx !== visualIdx;
 
                         return (
-                          <tr
+                          <SymbolContextMenu
                             key={pin.id}
-                            draggable
-                            onDragStart={() => setDragIdx(visualIdx)}
-                            onDragOver={(e) => {
-                              e.preventDefault();
-                              setDragOverIdx(visualIdx);
-                            }}
-                            onDrop={() => {
-                              if (dragIdx !== null) handleReorder(dragIdx, visualIdx);
-                              setDragIdx(null);
-                              setDragOverIdx(null);
-                            }}
-                            onDragEnd={() => {
-                              setDragIdx(null);
-                              setDragOverIdx(null);
-                            }}
-                            className="group/row hover:bg-[#111] transition-colors"
-                            style={{
-                              borderBottom: "1px solid #1a1a1a",
-                              borderTop: isDragOver ? "2px solid #00FFFF" : undefined,
-                              opacity: dragIdx === visualIdx ? 0.4 : 1,
-                              background: isEditing
-                                ? `${colors.accent}15`
-                                : hasAlert
-                                  ? sellAlert
-                                    ? "#ef444408"
-                                    : "#22c55e08"
-                                  : undefined,
-                            }}
+                            symbol={pin.symbol}
+                            colors={colors}
+                            onOpen={handleSymbolClick}
+                            onRemove={() => handleDeletePin(pin.id)}
                           >
-                            <td className="px-0.5 py-0.5 cursor-grab active:cursor-grabbing">
-                              <GripVertical
-                                className="h-2.5 w-2.5"
-                                style={{ color: colors.textSecondary, opacity: 0.4 }}
-                              />
-                            </td>
-                            <td className="px-1 py-0.5 text-center">
-                              <span
-                                className="inline-block w-2 h-2"
-                                style={{ background: dotColor, boxShadow: `0 0 3px ${dotColor}66` }}
-                              />
-                            </td>
-                            <td className="px-1 py-0.5">
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  className="font-bold hover:opacity-70 flex items-center gap-0.5"
-                                  style={{ color: colors.accent }}
-                                  onClick={() => handleSymbolClick(pin.symbol)}
+                            <tr
+                              draggable
+                              onDragStart={() => setDragIdx(visualIdx)}
+                              onDragOver={(e) => {
+                                e.preventDefault();
+                                setDragOverIdx(visualIdx);
+                              }}
+                              onDrop={() => {
+                                if (dragIdx !== null) handleReorder(dragIdx, visualIdx);
+                                setDragIdx(null);
+                                setDragOverIdx(null);
+                              }}
+                              onDragEnd={() => {
+                                setDragIdx(null);
+                                setDragOverIdx(null);
+                              }}
+                              className="group/row hover:bg-[#111] transition-colors"
+                              style={{
+                                borderBottom: "1px solid #1a1a1a",
+                                borderTop: isDragOver ? "2px solid #00FFFF" : undefined,
+                                opacity: dragIdx === visualIdx ? 0.4 : 1,
+                                background: isEditing
+                                  ? `${colors.accent}15`
+                                  : hasAlert
+                                    ? sellAlert
+                                      ? "#ef444408"
+                                      : "#22c55e08"
+                                    : undefined,
+                              }}
+                            >
+                              <td className="px-0.5 py-0.5 cursor-grab active:cursor-grabbing">
+                                <GripVertical
+                                  className="h-2.5 w-2.5"
+                                  style={{ color: colors.textSecondary, opacity: 0.4 }}
+                                />
+                              </td>
+                              <td className="px-1 py-0.5 text-center">
+                                {/* Group indicator: was a flat colour square that read as
+                                    decoration until you had a second group to compare it
+                                    against. An icon plus tooltip says what it is on its
+                                    own, same glyph as the "New group" toolbar button. */}
+                                <Layers
+                                  className="h-2.5 w-2.5 inline-block"
+                                  style={{ color: dotColor }}
+                                  aria-label={group?.name ?? "Watchlist"}
                                 >
-                                  {pin.symbol}
-                                  <ExternalLink className="h-2 w-2 opacity-0 group-hover/row:opacity-50" />
-                                </button>
-                                {hasAlert && (
-                                  <span
-                                    className="text-[8px] px-1 py-0 font-bold animate-pulse"
-                                    style={{
-                                      background: sellAlert ? "#ef444422" : "#22c55e22",
-                                      color: sellAlert ? "#ef4444" : "#4ade80",
-                                      border: `1px solid ${sellAlert ? "#ef444444" : "#22c55e44"}`,
-                                    }}
+                                  <title>{group?.name ?? "Watchlist"}</title>
+                                </Layers>
+                              </td>
+                              <td className="px-1 py-0.5">
+                                <div className="flex items-center gap-1 min-w-0">
+                                  <button
+                                    type="button"
+                                    className="font-bold hover:opacity-70 flex items-center gap-0.5 shrink-0"
+                                    style={{ color: colors.accent }}
+                                    onClick={() => handleSymbolClick(pin.symbol)}
                                   >
-                                    {sellAlert ? "SELL" : "BUY"}
-                                  </span>
-                                )}
-                                {pinTagObjects.map((t) => (
-                                  <TagChip key={t.id} tag={t} />
-                                ))}
-                              </div>
-                              {/* LAST / %CHG / CHG sit on their own line under the
+                                    {pin.symbol}
+                                    <ExternalLink className="h-2 w-2 opacity-0 group-hover/row:opacity-50" />
+                                  </button>
+                                  {/* Company name inline, not on its own row — at this
+                                      size it read as a caption under every ticker and
+                                      cost a full line per row for something secondary.
+                                      Shrinks and truncates before anything else does. */}
+                                  {q?.shortName && (
+                                    <span
+                                      className="text-[8px] truncate min-w-0"
+                                      style={{ color: colors.textSecondary, flexShrink: 100 }}
+                                      title={q.shortName}
+                                    >
+                                      {q.shortName}
+                                    </span>
+                                  )}
+                                  {hasAlert && (
+                                    <span
+                                      className="text-[8px] px-1 py-0 font-bold animate-pulse"
+                                      style={{
+                                        background: sellAlert ? "#ef444422" : "#22c55e22",
+                                        color: sellAlert ? "#ef4444" : "#4ade80",
+                                        border: `1px solid ${sellAlert ? "#ef444444" : "#22c55e44"}`,
+                                      }}
+                                    >
+                                      {sellAlert ? "SELL" : "BUY"}
+                                    </span>
+                                  )}
+                                  {pinTagObjects.map((t) => (
+                                    <TagChip key={t.id} tag={t} />
+                                  ))}
+                                  <AlertBellCell symbol={pin.symbol} colors={colors} />
+                                </div>
+                                {/* LAST / %CHG / CHG sit on their own line under the
                                 symbol — as columns they pushed the signal grid far
                                 away from the ticker in a ~370px panel. */}
-                              {q && (
-                                <div className="font-mono whitespace-nowrap leading-tight">
-                                  {price != null && (
-                                    <span className="font-bold" style={{ color: colors.text }}>
-                                      ${fmtPrice(price)}
+                                {q && (
+                                  <div className="font-mono whitespace-nowrap leading-tight">
+                                    {price != null && (
+                                      <span className="font-bold" style={{ color: colors.text }}>
+                                        ${fmtPrice(price)}
+                                      </span>
+                                    )}
+                                    <span className="ml-1" style={{ color: pctColor }}>
+                                      <span className="text-[8px]">{isUp ? "▲" : "▼"}</span>
+                                      <span className="font-bold">{fmtPct(pct)}</span>
+                                      <span className="text-[8px] ml-0.5" style={{ opacity: 0.75 }}>
+                                        {isUp ? "+" : ""}
+                                        {chg.toFixed(2)}
+                                      </span>
                                     </span>
-                                  )}
-                                  <span className="ml-1" style={{ color: pctColor }}>
-                                    <span className="text-[8px]">{isUp ? "▲" : "▼"}</span>
-                                    <span className="font-bold">{fmtPct(pct)}</span>
-                                    <span className="text-[8px] ml-0.5" style={{ opacity: 0.75 }}>
-                                      {isUp ? "+" : ""}
-                                      {chg.toFixed(2)}
-                                    </span>
-                                  </span>
-                                </div>
-                              )}
-                              {q?.shortName && (
-                                <div
-                                  className="text-[8px] truncate max-w-[110px]"
-                                  style={{ color: colors.textSecondary }}
-                                >
-                                  {q.shortName}
-                                </div>
-                              )}
-                              {pin.comment && (
-                                <button
-                                  type="button"
-                                  className="flex items-center gap-0.5 text-[8px] hover:opacity-70 max-w-[120px]"
-                                  style={{ color: `${dotColor}99` }}
-                                  onClick={() =>
-                                    setExpandedComment(expandedComment === pin.id ? null : pin.id)
-                                  }
-                                >
-                                  <MessageSquare className="h-2 w-2 shrink-0" />
-                                  <span
-                                    className={
-                                      expandedComment === pin.id
-                                        ? "whitespace-pre-wrap"
-                                        : "truncate"
+                                    <SessionGlyph state={q.marketState} className="ml-1" />
+                                  </div>
+                                )}
+                                <SessionRow quote={q} colors={colors} />
+                                {pin.comment && (
+                                  <button
+                                    type="button"
+                                    className="flex items-center gap-0.5 text-[8px] hover:opacity-70 max-w-[120px]"
+                                    style={{ color: `${dotColor}99` }}
+                                    onClick={() =>
+                                      setExpandedComment(expandedComment === pin.id ? null : pin.id)
                                     }
                                   >
-                                    {pin.comment}
-                                  </span>
-                                </button>
-                              )}
-                            </td>
-                            {/* 3×2 signal grid — column order matches the header chips */}
-                            <td className="px-0.5 py-0.5 whitespace-nowrap">
-                              <div
-                                className={`grid ${SIGNAL_GRID_COLS} gap-x-1 gap-y-0 text-right leading-tight`}
-                              >
-                                <span>
-                                  <ScoreChip score={sig?.score} />
-                                </span>
-                                <span>
-                                  <TrendCell state={sig?.trend.state} />
-                                </span>
-                                <span>
-                                  <RsiCell rsi={sig?.rsi} />
-                                </span>
-                                <span>
-                                  <MacdCell macd={sig?.macd} />
-                                </span>
-                                <span>
-                                  <BreakoutCell sig={sig} />
-                                </span>
-                                <span>
-                                  <AtrCell atrPct={sig?.atrPct} />
-                                </span>
-                              </div>
-                            </td>
-                            <td className="px-1 py-0.5 text-right">
-                              <VolumeBar
-                                current={q?.regularMarketVolume}
-                                avg={q?.averageDailyVolume3Month}
-                                rvol={sig?.rvol}
-                                colors={colors}
-                              />
-                            </td>
-                            <td className="px-1 py-0.5 text-right">
-                              <div className="flex items-center justify-end gap-1">
-                                {pin.buyTarget != null ? (
-                                  <span
-                                    style={{ color: buyAlert ? "#4ade80" : colors.textSecondary }}
-                                  >
-                                    <span className="text-[8px]">B</span>${fmtPrice(pin.buyTarget)}
-                                    {price != null && (
-                                      <span
-                                        className="text-[8px] ml-0.5"
-                                        style={{ color: colors.textSecondary }}
-                                      >
-                                        ({(((pin.buyTarget - price) / price) * 100).toFixed(0)}%)
-                                      </span>
-                                    )}
-                                  </span>
-                                ) : (
-                                  <span style={{ color: "#222" }}>—</span>
-                                )}
-                                <span style={{ color: "#333" }}>|</span>
-                                {pin.sellTarget != null ? (
-                                  <span
-                                    style={{ color: sellAlert ? "#ef4444" : colors.textSecondary }}
-                                  >
-                                    <span className="text-[8px]">S</span>${fmtPrice(pin.sellTarget)}
-                                    {price != null && (
-                                      <span
-                                        className="text-[8px] ml-0.5"
-                                        style={{ color: colors.textSecondary }}
-                                      >
-                                        ({(((pin.sellTarget - price) / price) * 100).toFixed(0)}%)
-                                      </span>
-                                    )}
-                                  </span>
-                                ) : (
-                                  <span style={{ color: "#222" }}>—</span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-1 py-0.5 text-right font-bold">
-                              {sincePin != null ? (
-                                <div>
-                                  <span style={{ color: sincePin >= 0 ? "#00FF00" : "#FF0000" }}>
-                                    {fmtPct(sincePin)}
-                                  </span>
-                                  {pin.priceAtPin != null && (
-                                    <div
-                                      className="text-[8px]"
-                                      style={{ color: colors.textSecondary }}
+                                    <MessageSquare className="h-2 w-2 shrink-0" />
+                                    <span
+                                      className={
+                                        expandedComment === pin.id
+                                          ? "whitespace-pre-wrap"
+                                          : "truncate"
+                                      }
                                     >
-                                      @{fmtPrice(pin.priceAtPin)}
-                                    </div>
+                                      {pin.comment}
+                                    </span>
+                                  </button>
+                                )}
+                              </td>
+                              {/* 3×2 signal grid — column order matches the header chips */}
+                              <td className="px-0.5 py-0.5 whitespace-nowrap">
+                                <div
+                                  className={`grid ${SIGNAL_GRID_COLS} gap-x-1 gap-y-0 text-right leading-tight`}
+                                >
+                                  <span>
+                                    <ScoreChip score={sig?.score} />
+                                  </span>
+                                  <span>
+                                    <TrendCell state={sig?.trend.state} />
+                                  </span>
+                                  <span>
+                                    <RsiCell rsi={sig?.rsi} />
+                                  </span>
+                                  <span>
+                                    <MacdCell macd={sig?.macd} />
+                                  </span>
+                                  <span>
+                                    <BreakoutCell sig={sig} />
+                                  </span>
+                                  <span>
+                                    <AtrCell atrPct={sig?.atrPct} />
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-1 py-0.5 text-right">
+                                <VolumeBar
+                                  current={q?.regularMarketVolume}
+                                  avg={q?.averageDailyVolume3Month}
+                                  rvol={sig?.rvol}
+                                  colors={colors}
+                                />
+                              </td>
+                              <td className="px-1 py-0.5 text-right">
+                                <div className="flex items-center justify-end gap-1">
+                                  {pin.buyTarget != null ? (
+                                    <span
+                                      style={{ color: buyAlert ? "#4ade80" : colors.textSecondary }}
+                                    >
+                                      <span className="text-[8px]">B</span>$
+                                      {fmtPrice(pin.buyTarget)}
+                                      {price != null && (
+                                        <span
+                                          className="text-[8px] ml-0.5"
+                                          style={{ color: colors.textSecondary }}
+                                        >
+                                          ({(((pin.buyTarget - price) / price) * 100).toFixed(0)}%)
+                                        </span>
+                                      )}
+                                    </span>
+                                  ) : (
+                                    <span style={{ color: "#222" }}>—</span>
+                                  )}
+                                  <span style={{ color: "#333" }}>|</span>
+                                  {pin.sellTarget != null ? (
+                                    <span
+                                      style={{
+                                        color: sellAlert ? "#ef4444" : colors.textSecondary,
+                                      }}
+                                    >
+                                      <span className="text-[8px]">S</span>$
+                                      {fmtPrice(pin.sellTarget)}
+                                      {price != null && (
+                                        <span
+                                          className="text-[8px] ml-0.5"
+                                          style={{ color: colors.textSecondary }}
+                                        >
+                                          ({(((pin.sellTarget - price) / price) * 100).toFixed(0)}%)
+                                        </span>
+                                      )}
+                                    </span>
+                                  ) : (
+                                    <span style={{ color: "#222" }}>—</span>
                                   )}
                                 </div>
-                              ) : (
-                                <span style={{ color: colors.textSecondary }}>—</span>
-                              )}
-                            </td>
-                            <td className="px-1 py-0.5 text-center">
-                              <div className="flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity">
-                                <button
-                                  type="button"
-                                  title="Edit"
-                                  onClick={() => setEditingId(isEditing ? null : pin.id)}
-                                >
-                                  <Edit3
-                                    className="h-2.5 w-2.5"
-                                    style={{
-                                      color: isEditing ? colors.accent : colors.textSecondary,
-                                    }}
-                                  />
-                                </button>
-                                <button
-                                  type="button"
-                                  title="Delete"
-                                  onClick={() => handleDeletePin(pin.id)}
-                                >
-                                  <Trash2 className="h-2.5 w-2.5 text-red-400" />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
+                              </td>
+                              <td className="px-1 py-0.5 text-right font-bold">
+                                {sincePin != null ? (
+                                  <div>
+                                    <span style={{ color: sincePin >= 0 ? "#00FF00" : "#FF0000" }}>
+                                      {fmtPct(sincePin)}
+                                    </span>
+                                    {pin.priceAtPin != null && (
+                                      <div
+                                        className="text-[8px]"
+                                        style={{ color: colors.textSecondary }}
+                                      >
+                                        @{fmtPrice(pin.priceAtPin)}
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span style={{ color: colors.textSecondary }}>—</span>
+                                )}
+                              </td>
+                              <td className="px-1 py-0.5 text-center">
+                                <div className="flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity">
+                                  <button
+                                    type="button"
+                                    title="Edit"
+                                    onClick={() => setEditingId(isEditing ? null : pin.id)}
+                                  >
+                                    <Edit3
+                                      className="h-2.5 w-2.5"
+                                      style={{
+                                        color: isEditing ? colors.accent : colors.textSecondary,
+                                      }}
+                                    />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title="Delete"
+                                    onClick={() => handleDeletePin(pin.id)}
+                                  >
+                                    <Trash2 className="h-2.5 w-2.5 text-red-400" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          </SymbolContextMenu>
                         );
                       })}
 

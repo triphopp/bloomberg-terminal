@@ -11,6 +11,8 @@
     "lint": "biome lint .",
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit",
+    "test:alerts": "node --test lib/alerts/__tests__/*.test.ts",
+    "test:chart": "node --test components/bloomberg/chart/__tests__/*.test.ts",
     "analyze": "ANALYZE=true next build",
     "analyze:server": "ANALYZE=true next build --experimental-build-mode=compile",
     "prepare": "husky"

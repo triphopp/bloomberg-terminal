@@ -38,8 +38,8 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
     setLoading(true);
     try {
       const isMultiLot = allLots && allLots.length > 1;
-      if (!sellPartial && isMultiLot) {
-        // Close every lot individually so all are marked sold
+      if (isMultiLot && (!sellPartial || Number.parseFloat(sellVolume) >= positionVolume)) {
+        // Full sell across all lots: close every lot individually
         for (const lot of allLots) {
           const r = await fetch("/api/v2/portfolio/sell", {
             method: "POST",
@@ -52,6 +52,27 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
             }),
           });
           if (!r.ok) throw new Error(await r.text());
+        }
+      } else if (isMultiLot && sellPartial) {
+        // Partial sell across multiple lots: consume lot by lot until the
+        // requested volume is filled (each lot's own volume caps the request).
+        let remaining = Number.parseFloat(sellVolume);
+        for (const lot of allLots) {
+          if (remaining <= 1e-8) break;
+          const consume = Math.min(remaining, lot.volume);
+          const fullyConsumesLot = consume >= lot.volume - 1e-8;
+          const r = await fetch("/api/v2/portfolio/sell", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              trade_id: lot.id,
+              sell_volume: fullyConsumesLot ? 0 : consume,
+              sell_price: price,
+              sell_date: sellDate,
+            }),
+          });
+          if (!r.ok) throw new Error(await r.text());
+          remaining -= consume;
         }
       } else {
         const vol = sellPartial ? Number.parseFloat(sellVolume) : 0;

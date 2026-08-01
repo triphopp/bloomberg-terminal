@@ -336,7 +336,9 @@ export default function VolatilityView({
   const filteredData = getFilteredAndSortedData();
 
   return (
-    <div className={`h-full overflow-y-auto font-mono bg-[${colors.background}] text-[${colors.text}]`}>
+    <div
+      className={`h-full overflow-y-auto font-mono bg-[${colors.background}] text-[${colors.text}]`}
+    >
       {/* Header */}
       <div className={`flex items-center gap-2 bg-[${colors.surface}] px-2 py-1`}>
         <BloombergButton color="default" onClick={onBack}>

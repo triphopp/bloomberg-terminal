@@ -147,13 +147,24 @@ def _get_live_price(symbol: str, account_id: str) -> Optional[float]:
 
 _prev_cache: TTLCache = TTLCache(ttl=300, maxsize=300)
 
-# Stale-while-revalidate layer: last known good quote per symbol (never expires).
+# Stale-while-revalidate layer: last known good quote per symbol.
 # When the 60s TTL cache misses but a stale value exists, we serve the stale
 # value immediately and refresh in a background thread — so page loads never
 # block on yfinance after the very first fetch of a symbol.
+#
+# Entries carry the local date they were captured on. Serving a quote across a
+# date boundary is NOT acceptable: day P&L is (price - prev_close), and a
+# yesterday-stamped pair yields yesterday's move, which then sits on screen
+# looking like today's. Past midnight the stale value is dropped and the caller
+# blocks on a real fetch instead. Within a day, stale-serving is still free.
 _stale_quotes: dict[str, dict] = {}
 _stale_lock = threading.Lock()
 _refresh_inflight: set[str] = set()
+
+
+def _today_key() -> str:
+    """Local calendar date, the granularity at which prev_close rolls over."""
+    return datetime.now().strftime("%Y-%m-%d")
 
 
 def _fetch_one_quote(sym: str) -> dict:
@@ -175,7 +186,21 @@ def _store_quote(sym: str, price, prev) -> None:
         _prev_cache.set(sym, prev)
     if price or prev:
         with _stale_lock:
-            _stale_quotes[sym] = {"price": price, "prev_close": prev}
+            _stale_quotes[sym] = {"price": price, "prev_close": prev, "day": _today_key()}
+
+
+def _get_fresh_stale(sym: str) -> Optional[dict]:
+    """Last-known quote, but only if captured today. None once the date rolls."""
+    with _stale_lock:
+        entry = _stale_quotes.get(sym)
+        if entry is None:
+            return None
+        if entry.get("day") != _today_key():
+            # Yesterday's pair would render as yesterday's day move. Drop it so
+            # the caller does a blocking fetch and the row is right immediately.
+            _stale_quotes.pop(sym, None)
+            return None
+        return {"price": entry.get("price"), "prev_close": entry.get("prev_close")}
 
 
 def _fetch_symbols_now(to_fetch: list[str]) -> dict[str, dict]:
@@ -192,13 +217,30 @@ def _fetch_symbols_now(to_fetch: list[str]) -> dict[str, dict]:
     except Exception:
         pass
 
-    # Fill missing with individual fallback — parallel, not one-at-a-time
-    missing = [s for s in to_fetch if result.get(s, {}).get("price") is None]
+    # Fill missing with individual fallback — parallel, not one-at-a-time.
+    # A row needs BOTH price and prev_close: with prev_close missing, day P&L
+    # silently renders as "—" even though the price came through fine.
+    missing = [
+        s
+        for s in to_fetch
+        if result.get(s, {}).get("price") is None or result.get(s, {}).get("prev_close") is None
+    ]
     if missing:
         with ThreadPoolExecutor(max_workers=min(8, len(missing))) as ex:
             for sym, q in zip(missing, ex.map(_fetch_one_quote, missing)):
-                result[sym] = q
-                _store_quote(sym, q["price"], q["prev_close"])
+                # Merge, never replace: the batch may have supplied one of the
+                # two fields, and a failed fallback returns None for both.
+                prior = result.get(sym) or {}
+                merged = {
+                    "price": q.get("price") if q.get("price") is not None else prior.get("price"),
+                    "prev_close": (
+                        q.get("prev_close")
+                        if q.get("prev_close") is not None
+                        else prior.get("prev_close")
+                    ),
+                }
+                result[sym] = merged
+                _store_quote(sym, merged["price"], merged["prev_close"])
     return result
 
 
@@ -224,19 +266,19 @@ def _batch_fetch_prices(symbols: list[str]) -> dict[str, dict]:
     """Batch-fetch current prices + prev_close for multiple yfinance symbols.
     Returns dict[sym] = {"price": float|None, "prev_close": float|None}.
     Fresh-cache hit → served as-is. TTL-expired but stale value known → stale
-    served instantly + background refresh. Never-seen symbols → blocking fetch.
+    served instantly + background refresh. Never-seen symbols, and symbols whose
+    only known value is from a previous day → blocking fetch.
     """
     result: dict[str, dict] = {}
-    cold: list[str] = []      # never seen — must block
-    stale_syms: list[str] = []  # expired but have last-known value
+    cold: list[str] = []      # never seen (or last seen yesterday) — must block
+    stale_syms: list[str] = []  # expired but have a last-known value from today
 
     for sym in symbols:
         cached_price = _price_cache.get(sym)
         if cached_price is not None:
             result[sym] = {"price": cached_price, "prev_close": _prev_cache.get(sym)}
             continue
-        with _stale_lock:
-            stale = _stale_quotes.get(sym)
+        stale = _get_fresh_stale(sym)
         if stale is not None:
             result[sym] = dict(stale)
             stale_syms.append(sym)
@@ -1522,6 +1564,14 @@ def get_open_positions(
 
 _premarket_cache: TTLCache = TTLCache(ttl=30, maxsize=300)
 
+# Last good session quote per symbol, kept for the current day. `.info` is a
+# heavy, rate-limited call and a handful of symbols fail on any given sweep;
+# without this the row blanks to "—" and the table looks randomly incomplete
+# each refresh. Serving the last good value keeps the set of shown symbols
+# stable, which is what "some symbols are missing" actually came down to.
+_session_last_good: dict[str, dict] = {}
+_session_lock = threading.Lock()
+
 
 def _session_pct(price: Optional[float], change: Optional[float]) -> Optional[float]:
     """Percent move, derived from change/reference so it is scaling-agnostic
@@ -1533,16 +1583,38 @@ def _session_pct(price: Optional[float], change: Optional[float]) -> Optional[fl
     return round((change / ref) * 100, 2) if ref else None
 
 
+def _session_last_good_get(yf_sym: str) -> Optional[dict]:
+    """Previous good quote for this symbol, if it was captured today."""
+    with _session_lock:
+        entry = _session_last_good.get(yf_sym)
+        if entry is None:
+            return None
+        if entry.get("day") != _today_key():
+            _session_last_good.pop(yf_sym, None)
+            return None
+        quote = dict(entry)
+        quote.pop("day", None)
+        return quote
+
+
 def _fetch_session_quote(yf_sym: str) -> dict:
+    """Session quote, or the last good one for today if the fetch fails.
+
+    Returns {} only when the symbol has never resolved today — the caller must
+    not cache that, or one transient yfinance error blanks the row for the
+    whole TTL.
+    """
     try:
         raw = market_data.get_info(yf_sym).raw or {}
     except Exception:
-        return {}
+        return _session_last_good_get(yf_sym) or {}
+    if not raw:
+        return _session_last_good_get(yf_sym) or {}
     pre_price = _to_float(raw.get("preMarketPrice"))
     pre_change = _to_float(raw.get("preMarketChange"))
     post_price = _to_float(raw.get("postMarketPrice"))
     post_change = _to_float(raw.get("postMarketChange"))
-    return {
+    quote = {
         "market_state": raw.get("marketState"),
         "regular_price": _to_float(raw.get("regularMarketPrice")),
         "pre_price": pre_price,
@@ -1552,6 +1624,13 @@ def _fetch_session_quote(yf_sym: str) -> dict:
         "post_change": post_change,
         "post_change_pct": _session_pct(post_price, post_change),
     }
+    # A response with no marketState is yfinance handing back a husk (rate
+    # limited, or a symbol it briefly can't resolve). Prefer the last good one.
+    if quote["market_state"] is None:
+        return _session_last_good_get(yf_sym) or quote
+    with _session_lock:
+        _session_last_good[yf_sym] = {**quote, "day": _today_key()}
+    return quote
 
 
 @router.get("/premarket")
@@ -1591,11 +1670,17 @@ def get_premarket(account_id: Optional[str] = Query(None)):
             to_fetch[bare] = yf_sym
 
     if to_fetch:
-        with ThreadPoolExecutor(max_workers=min(8, len(to_fetch))) as ex:
+        # 4 workers, not 8: `.info` is the rate-limited endpoint, and hammering
+        # it is what produced the empty responses that blanked rows.
+        with ThreadPoolExecutor(max_workers=min(4, len(to_fetch))) as ex:
             fetched = list(ex.map(_fetch_session_quote, to_fetch.values()))
         for (bare, yf_sym), quote in zip(to_fetch.items(), fetched):
-            _premarket_cache.set(yf_sym, quote)
-            result[bare] = quote
+            # Never cache a failure: a 30s TTL on {} means one transient error
+            # blanks that symbol for 30s on every poll, which reads as "the
+            # pre-market column randomly drops symbols".
+            if quote:
+                _premarket_cache.set(yf_sym, quote)
+                result[bare] = quote
 
     return {"quotes": result}
 

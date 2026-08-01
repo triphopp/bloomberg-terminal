@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, ChevronRight, Plus, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Plus, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { INDICATOR_REGISTRY } from "./indicators";
 import type { ChartColors, ChartIndicator, IndicatorRegistryEntry } from "./types";
@@ -38,10 +38,13 @@ export function IndicatorPicker({
 }: IndicatorPickerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [paramValues, setParamValues] = useState<Record<string, Record<string, number | string>>>(
     {}
   );
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -55,11 +58,32 @@ export function IndicatorPicker({
     return () => document.removeEventListener("mousedown", handler);
   }, [isOpen]);
 
+  // Reset the filters on open so the list never comes back pre-narrowed by a
+  // search the user has since forgotten about.
+  useEffect(() => {
+    if (!isOpen) return;
+    setQuery("");
+    setCategoryFilter(null);
+    searchRef.current?.focus();
+  }, [isOpen]);
+
+  const q = query.trim().toLowerCase();
+  const matches = INDICATOR_REGISTRY.filter(
+    (e) =>
+      (!categoryFilter || e.category === categoryFilter) &&
+      (!q || e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q))
+  );
   const grouped = CATEGORY_ORDER.map((cat) => ({
     category: cat,
     label: CATEGORY_LABELS[cat] ?? cat,
-    items: INDICATOR_REGISTRY.filter((e) => e.category === cat),
+    items: matches.filter((e) => e.category === cat),
   })).filter((g) => g.items.length > 0);
+
+  // Categories that exist at all — the chips stay stable while typing so the row
+  // doesn't reflow underneath the pointer.
+  const categories = CATEGORY_ORDER.filter((cat) =>
+    INDICATOR_REGISTRY.some((e) => e.category === cat)
+  );
 
   function getParams(entry: IndicatorRegistryEntry): Record<string, number | string> {
     const saved = paramValues[entry.id];
@@ -133,9 +157,80 @@ export function IndicatorPicker({
 
         {isOpen && (
           <div
-            className="absolute top-full left-0 z-50 mt-1 border min-w-[220px] max-h-[400px] overflow-y-auto"
+            className="absolute top-full left-0 z-50 mt-1 border min-w-[240px] max-h-[400px] overflow-y-auto"
             style={{ backgroundColor: colors.surface, borderColor: colors.border }}
           >
+            {/* Filter header — sticky so it stays reachable while the list scrolls */}
+            <div
+              className="sticky top-0 z-10 border-b px-2 py-1.5 flex flex-col gap-1"
+              style={{ backgroundColor: colors.surface, borderColor: colors.border }}
+            >
+              <div className="flex items-center gap-1">
+                <Search className="h-2.5 w-2.5 shrink-0" style={{ color: colors.textSecondary }} />
+                <input
+                  ref={searchRef}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      e.stopPropagation();
+                      if (query) setQuery("");
+                      else setIsOpen(false);
+                    }
+                    // Enter adds the only remaining match — the fast path for
+                    // "type three letters, hit enter".
+                    if (e.key === "Enter" && matches.length === 1) {
+                      handleAdd(matches[0]);
+                    }
+                  }}
+                  placeholder="FILTER"
+                  className="flex-1 min-w-0 bg-transparent outline-none text-[9px] font-mono uppercase"
+                  style={{ color: colors.text }}
+                />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={() => setQuery("")}
+                    className="shrink-0 hover:opacity-70"
+                    title="Clear filter"
+                  >
+                    <X className="h-2.5 w-2.5" style={{ color: colors.textSecondary }} />
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-1 flex-wrap">
+                {categories.map((cat) => {
+                  const on = categoryFilter === cat;
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setCategoryFilter(on ? null : cat)}
+                      className="px-1 py-0 text-[8px] font-mono border transition-colors hover:opacity-70"
+                      style={{
+                        borderColor: on ? (colors.accent ?? colors.positive) : colors.border,
+                        color: on ? (colors.accent ?? colors.positive) : colors.textSecondary,
+                        backgroundColor: on
+                          ? `${colors.accent ?? colors.positive}15`
+                          : "transparent",
+                      }}
+                    >
+                      {CATEGORY_LABELS[cat] ?? cat}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {grouped.length === 0 && (
+              <div
+                className="px-3 py-2 text-[9px] font-mono"
+                style={{ color: colors.textSecondary }}
+              >
+                NO MATCH
+              </div>
+            )}
+
             {onToggleWindowUnit && (
               <button
                 type="button"

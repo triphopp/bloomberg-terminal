@@ -4,11 +4,10 @@ import { Button } from "@/components/ui/button";
 import { useAtom } from "jotai";
 import { type ReactNode, useEffect, useState } from "react";
 import { errorAtom, isDarkModeAtom } from "../atoms";
-import { useTerminalUI } from "../hooks";
-import { KeyboardShortcuts } from "../core/keyboard-shortcuts";
 import { GlobalSearch } from "../core/global-search";
-import { bloombergColors } from "../lib/theme-config";
+import { KeyboardShortcuts } from "../core/keyboard-shortcuts";
 import { ShortcutIndicator } from "../core/shortcut-indicator";
+import { bloombergColors } from "../lib/theme-config";
 
 type TerminalLayoutProps = {
   children: ReactNode;
@@ -22,31 +21,24 @@ type TerminalLayoutProps = {
 
 export function TerminalLayout({ children, shortcuts }: TerminalLayoutProps) {
   // Use Jotai atoms directly instead of props
-  const [isDarkMode, setIsDarkMode] = useAtom(isDarkModeAtom);
+  const [isDarkMode] = useAtom(isDarkModeAtom);
   const [error, setError] = useAtom(errorAtom);
-  const { handleThemeToggle } = useTerminalUI();
 
   const colors = isDarkMode ? bloombergColors.dark : bloombergColors.light;
 
-  // Apply theme to body
+  // Dark mode is permanent (isDarkModeAtom defaults true, no toggle UI left
+  // to flip it) — this just keeps the body class in sync for any CSS that
+  // still keys off it.
   useEffect(() => {
     document.body.classList.toggle("dark", isDarkMode);
     document.body.classList.toggle("light", !isDarkMode);
-
-    // Add event listener for theme toggle
-    const handleThemeToggle = () => {
-      setIsDarkMode(!isDarkMode);
-    };
-
-    document.addEventListener("toggle-theme", handleThemeToggle);
-
-    return () => {
-      document.removeEventListener("toggle-theme", handleThemeToggle);
-    };
-  }, [isDarkMode, setIsDarkMode]);
+  }, [isDarkMode]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden flex flex-col font-mono" style={{ backgroundColor: colors.background, color: colors.text }}>
+    <div
+      className="h-screen w-screen overflow-hidden flex flex-col font-mono"
+      style={{ backgroundColor: colors.background, color: colors.text }}
+    >
       {children}
 
       {/* Global Search overlay — available from any view */}

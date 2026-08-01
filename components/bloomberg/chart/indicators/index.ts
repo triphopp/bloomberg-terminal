@@ -33,6 +33,17 @@ export type { FootprintData, FootprintCandle, FootprintLevel } from "./order-foo
 
 import type { IndicatorRegistryEntry } from "../types";
 import { createAbsorption } from "./absorption";
+import {
+  BB_WIDTH_LABELS,
+  BOLLINGER_B_LABELS,
+  BOLLINGER_LABELS,
+  EMA_LABELS,
+  MACD_LABELS,
+  RSI_LABELS,
+  RVOL_LABELS,
+  SMA_LABELS,
+  STOCHASTIC_LABELS,
+} from "./alertLabels";
 import { createBollingerBands } from "./bollinger";
 import { createBollingerB } from "./bollinger-b";
 import { createBollingerWidth } from "./bollinger-width";
@@ -62,6 +73,8 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     ],
     timeScalableParams: ["period"],
     factory: createEMA,
+    outputs: [{ key: "value", label: "EMA", unbounded: true }],
+    alertLabels: EMA_LABELS,
   },
   {
     id: "sma",
@@ -74,6 +87,8 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     ],
     timeScalableParams: ["period"],
     factory: createSMA,
+    outputs: [{ key: "value", label: "SMA", unbounded: true }],
+    alertLabels: SMA_LABELS,
   },
 
   // ─── Momentum ───
@@ -90,6 +105,10 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     ],
     timeScalableParams: ["fast", "slow", "signal"],
     factory: createMACD,
+    // Only "hist" is wired up in backend/alerts/operands.py's phase-2 subset —
+    // line/signal join `outputs` once the backend resolver supports them too.
+    outputs: [{ key: "hist", label: "Histogram", unbounded: true }],
+    alertLabels: MACD_LABELS,
   },
   {
     id: "rsi",
@@ -102,6 +121,8 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     ],
     timeScalableParams: ["period"],
     factory: createRSI,
+    outputs: [{ key: "rsi", label: "RSI", range: [0, 100] }],
+    alertLabels: RSI_LABELS,
   },
   {
     id: "stochastic",
@@ -115,6 +136,11 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     ],
     timeScalableParams: ["kPeriod", "dPeriod"],
     factory: createStochastic,
+    outputs: [
+      { key: "k", label: "%K", range: [0, 100] },
+      { key: "d", label: "%D", range: [0, 100] },
+    ],
+    alertLabels: STOCHASTIC_LABELS,
   },
 
   // ─── Volatility ───
@@ -130,6 +156,12 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     ],
     timeScalableParams: ["period"],
     factory: createBollingerBands,
+    outputs: [
+      { key: "upper", label: "Upper Band", unbounded: true },
+      { key: "middle", label: "Middle Band", unbounded: true },
+      { key: "lower", label: "Lower Band", unbounded: true },
+    ],
+    alertLabels: BOLLINGER_LABELS,
   },
   {
     id: "bollinger-b",
@@ -143,6 +175,8 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     ],
     timeScalableParams: ["period"],
     factory: createBollingerB,
+    outputs: [{ key: "b", label: "%B", range: [0, 1] }],
+    alertLabels: BOLLINGER_B_LABELS,
   },
   {
     id: "bb-width",
@@ -165,6 +199,8 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     ],
     timeScalableParams: ["period", "lookback"],
     factory: createBollingerWidth,
+    outputs: [{ key: "width", label: "BB Width", unbounded: true }],
+    alertLabels: BB_WIDTH_LABELS,
   },
 
   // ─── Volume ───
@@ -199,6 +235,8 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     // (intraday it averages the same time-of-day across prior days), so it is
     // interval-invariant as written and must not be rescaled.
     factory: createRVOL,
+    outputs: [{ key: "rvol", label: "RVOL", unbounded: true }],
+    alertLabels: RVOL_LABELS,
   },
   {
     id: "flow-toxicity",

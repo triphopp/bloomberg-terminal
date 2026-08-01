@@ -40,6 +40,14 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     ("paper_positions",         ["account_id", "symbol"]),    # UNIQUE(account_id, symbol)
     ("paper_snapshots",         ["account_id", "date"]),      # UNIQUE(account_id, date)
     ("paper_option_positions",  ["id"]),
+    # alert_rules is the rule DEFINITIONS the user authored — same shape as
+    # pinned_assets, syncs the same way. alert_rule_state (per-symbol scan
+    # cursor) and alert_events (fired history, auto-increment id — would
+    # collide across devices like symbol_lists/trade_audit_log above) are
+    # deliberately NOT synced: state regenerates itself from a fresh scan on
+    # whichever device runs the scanner, and merging two devices' independent
+    # scan cursors could double-fire or silently drop an edge transition.
+    ("alert_rules",              ["id"]),
 ]
 
 TABLE_PK: dict[str, list[str]] = {t: pk for t, pk in SYNC_TABLES}
