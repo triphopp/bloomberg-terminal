@@ -14,10 +14,10 @@ function ago(iso: string | null): string {
 }
 
 /**
- * Header chip: cloud-sync state (PC↔Mac via Google Drive). Dot colors:
- *   grey  = disabled,  red = configured but drive offline,
- *   amber = conflicts preserved,  green = synced.
- * Popover shows device, last pull/push, drive path + manual PULL/PUSH.
+ * Header chip: collapsed to a status light (cloud-sync, PC↔Mac via Google
+ * Drive) — dot colors: grey = disabled, red = configured but drive offline,
+ * amber = conflicts preserved, green = synced. Hover for the state in words;
+ * click still opens the popover (device, last pull/push, manual PULL/PUSH).
  */
 export function SyncStatus({ isDarkMode }: { isDarkMode: boolean }) {
   const colors = isDarkMode ? bloombergColors.dark : bloombergColors.light;
@@ -36,18 +36,14 @@ export function SyncStatus({ isDarkMode }: { isDarkMode: boolean }) {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1 px-2 h-full transition-opacity hover:opacity-100"
-        style={{ color: colors.textSecondary, fontSize: 9, borderLeft: sep, opacity: 0.85 }}
-        title="Portfolio cloud sync"
+        className="flex items-center justify-center px-2 h-full transition-opacity hover:opacity-100"
+        style={{ borderLeft: sep, opacity: 0.85 }}
+        title={`Cloud sync: ${label} — click for details`}
       >
         <span
           className="inline-block rounded-full"
           style={{ width: 6, height: 6, background: dot }}
         />
-        <span className="font-bold" style={{ color: colors.accent }}>
-          SYNC
-        </span>
-        <span style={{ opacity: 0.45, fontSize: 8 }}>▾</span>
       </button>
 
       {open && (

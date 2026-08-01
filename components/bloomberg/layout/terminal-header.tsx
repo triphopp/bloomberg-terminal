@@ -1,6 +1,6 @@
 "use client";
 
-import { Moon, Search, Settings, Sun } from "lucide-react";
+import { Search, Settings } from "lucide-react";
 import type React from "react";
 import { bloombergColors } from "../lib/theme-config";
 import { ProviderSwitch } from "./provider-switch";
@@ -19,7 +19,6 @@ type TerminalHeaderProps = {
   navItems: NavItem[];
   onSearchClick: () => void;
   onHelpClick: () => void;
-  onThemeToggle: () => void;
   showYTD: boolean;
   onYTDToggle: () => void;
   centerSlot?: React.ReactNode;
@@ -33,7 +32,6 @@ export function TerminalHeader({
   navItems,
   onSearchClick,
   onHelpClick,
-  onThemeToggle,
   showYTD,
   onYTDToggle,
   centerSlot,
@@ -97,21 +95,20 @@ export function TerminalHeader({
         {/* Portfolio cloud-sync status (hidden when sync disabled) */}
         <SyncStatus isDarkMode={isDarkMode} />
 
-        {/* %YTD / %DAILY toggle */}
+        {/* %YTD / %DAILY toggle — collapsed to a status light like the
+            provider/sync chips; hover to read the mode, click (or "Y") to
+            flip it. */}
         <button
           type="button"
           onClick={onYTDToggle}
-          className="flex items-center gap-0.5 px-2 h-full transition-opacity hover:opacity-100"
-          style={{
-            color: showYTD ? colors.positive : colors.accent,
-            fontSize: 9,
-            borderLeft: sep,
-            opacity: 0.85,
-          }}
-          title="Toggle %YTD / %Daily (Y)"
+          className="flex items-center justify-center px-2 h-full transition-opacity hover:opacity-100"
+          style={{ borderLeft: sep, opacity: 0.85 }}
+          title={`Showing ${showYTD ? "%YTD" : "%Daily"} — click to switch (Y)`}
         >
-          <span className="font-bold">%{showYTD ? "YTD" : "DAILY"}</span>
-          <span style={{ opacity: 0.45, fontSize: 8, marginLeft: 2 }}>Y</span>
+          <span
+            className="inline-block rounded-full"
+            style={{ width: 6, height: 6, background: showYTD ? colors.positive : colors.accent }}
+          />
         </button>
 
         {/* Esc:back — sub-views only, clickable when onBack provided */}
@@ -134,17 +131,6 @@ export function TerminalHeader({
               Esc:back
             </span>
           ))}
-
-        {/* Theme toggle */}
-        <button
-          type="button"
-          onClick={onThemeToggle}
-          className="flex items-center gap-0.5 px-1.5 h-full transition-colors hover:opacity-70"
-          style={{ color: colors.textSecondary, fontSize: 9, borderLeft: sep }}
-          title={isDarkMode ? "Light mode" : "Dark mode"}
-        >
-          {isDarkMode ? <Sun className="h-2.5 w-2.5" /> : <Moon className="h-2.5 w-2.5" />}
-        </button>
 
         <button
           type="button"

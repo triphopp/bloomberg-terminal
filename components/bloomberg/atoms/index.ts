@@ -53,7 +53,12 @@ const GlobalState = {
 };
 
 // UI state atoms
-export const isDarkModeAtom = atom(false);
+// Dark mode is the only supported theme now — the toggle UI was removed,
+// so this stays true. Left as a settable atom (not a constant) because
+// bloombergColors.light/dark and the isDarkMode prop chain are still wired
+// through dozens of components; flipping the flag here was far cheaper than
+// ripping that out.
+export const isDarkModeAtom = atom(true);
 export const errorAtom = atom<string | null>(null);
 export const isShortcutsHelpOpenAtom = atom(false);
 export const isGlobalSearchOpenAtom = atom(false);
@@ -222,6 +227,23 @@ export const chartVPConfigAtom = atomWithStorage<VPConfig>(
     showNakedPoc: true,
     showHvnLvn: false,
   },
+  undefined,
+  { getOnInit: true }
+);
+
+/**
+ * User-dragged sub-pane heights, keyed by indicator registry id ("rsi", "macd").
+ *
+ * lightweight-charts keeps pane heights inside the chart instance, and the chart
+ * is torn down and rebuilt whenever its data/indicators change — so a height the
+ * user dragged survived only until the next rebuild or view switch, and every
+ * navigation silently reverted it. Keying by indicator id (not pane index) means
+ * the height follows the indicator even when panes above it are added or
+ * removed. Absent entries fall back to the computed default.
+ */
+export const chartPaneHeightsAtom = atomWithStorage<Record<string, number>>(
+  "chart:pane-heights",
+  {},
   undefined,
   { getOnInit: true }
 );
