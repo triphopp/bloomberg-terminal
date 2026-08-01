@@ -37,7 +37,10 @@ interface ClippingContent extends ClippingMeta {
 
 /** Remove markdown image syntax — FB CDN links expire and clutter the AI prompt */
 function stripImages(md: string): string {
-  return md.replace(/!\[.*?\]\([^)]*\)/g, "").replace(/\n{3,}/g, "\n\n").trim();
+  return md
+    .replace(/!\[.*?\]\([^)]*\)/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 const CLIPPINGS_DIR_KEY = "bloomberg_clippings_dir";
@@ -57,8 +60,13 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
   useEffect(() => {
     try {
       const saved = localStorage.getItem(CLIPPINGS_DIR_KEY);
-      if (saved) { setClippingsDir(saved); setDirInput(saved); }
-    } catch { /* ignore */ }
+      if (saved) {
+        setClippingsDir(saved);
+        setDirInput(saved);
+      }
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   // ── File list state ──────────────────────────────────────────────────────────
@@ -89,27 +97,30 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
   const panel = { backgroundColor: colors.surface, borderColor: colors.border };
 
   // ── Fetch list ───────────────────────────────────────────────────────────────
-  const fetchList = useCallback(async (dirOverride?: string) => {
-    setListLoading(true);
-    setListError(null);
-    const dir = dirOverride ?? clippingsDir;
-    try {
-      const params = new URLSearchParams();
-      if (dir) params.set("dir", dir);
-      const qs = params.toString();
-      const res = await fetch(`/api/clippings${qs ? `?${qs}` : ""}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const items: ClippingMeta[] = data.clippings ?? [];
-      setClippings(items);
-      setFiltered(items);
-      if (data.error) setListError(data.error);
-    } catch (err) {
-      setListError(err instanceof Error ? err.message : "Failed to load");
-    } finally {
-      setListLoading(false);
-    }
-  }, [clippingsDir]);
+  const fetchList = useCallback(
+    async (dirOverride?: string) => {
+      setListLoading(true);
+      setListError(null);
+      const dir = dirOverride ?? clippingsDir;
+      try {
+        const params = new URLSearchParams();
+        if (dir) params.set("dir", dir);
+        const qs = params.toString();
+        const res = await fetch(`/api/clippings${qs ? `?${qs}` : ""}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const items: ClippingMeta[] = data.clippings ?? [];
+        setClippings(items);
+        setFiltered(items);
+        if (data.error) setListError(data.error);
+      } catch (err) {
+        setListError(err instanceof Error ? err.message : "Failed to load");
+      } finally {
+        setListLoading(false);
+      }
+    },
+    [clippingsDir]
+  );
 
   // ── Fetch Ollama models ──────────────────────────────────────────────────────
   const fetchModels = useCallback(async () => {
@@ -150,24 +161,27 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
   }, [filterQuery, clippings]);
 
   // ── Select file ──────────────────────────────────────────────────────────────
-  const handleSelectFile = useCallback(async (file: string) => {
-    setSelectedFile(file);
-    setContent(null);
-    setAiOutput("");
-    setAiError(null);
-    setContentLoading(true);
-    try {
-      const params = new URLSearchParams({ file });
-      if (clippingsDir) params.set("dir", clippingsDir);
-      const res = await fetch(`/api/clippings/content?${params.toString()}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setContent(await res.json());
-    } catch (err) {
-      setAiError(err instanceof Error ? err.message : "Failed to load content");
-    } finally {
-      setContentLoading(false);
-    }
-  }, [clippingsDir]);
+  const handleSelectFile = useCallback(
+    async (file: string) => {
+      setSelectedFile(file);
+      setContent(null);
+      setAiOutput("");
+      setAiError(null);
+      setContentLoading(true);
+      try {
+        const params = new URLSearchParams({ file });
+        if (clippingsDir) params.set("dir", clippingsDir);
+        const res = await fetch(`/api/clippings/content?${params.toString()}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        setContent(await res.json());
+      } catch (err) {
+        setAiError(err instanceof Error ? err.message : "Failed to load content");
+      } finally {
+        setContentLoading(false);
+      }
+    },
+    [clippingsDir]
+  );
 
   // ── AI stream ────────────────────────────────────────────────────────────────
   const handleAiAction = useCallback(
@@ -205,7 +219,10 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
           for (const line of lines) {
             if (!line.startsWith("data: ")) continue;
             const data = JSON.parse(line.slice(6));
-            if (data.error) { setAiError(data.error); break; }
+            if (data.error) {
+              setAiError(data.error);
+              break;
+            }
             if (data.token) setAiOutput((prev) => prev + data.token);
           }
         }
@@ -219,7 +236,9 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
     [selectedFile, selectedModel, customPrompt, clippingsDir]
   );
 
-  // Auto-scroll AI output
+  // Auto-scroll AI output — aiOutput is the trigger (re-run on every chunk
+  // appended), not a value the effect body reads.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   useEffect(() => {
     if (aiScrollRef.current) {
       aiScrollRef.current.scrollTop = aiScrollRef.current.scrollHeight;
@@ -238,11 +257,15 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
         className="flex items-center gap-2 px-2 py-1 shrink-0"
         style={{ backgroundColor: colors.surface, borderBottom: `1px solid ${colors.border}` }}
       >
-        <span className="text-[9px] font-mono opacity-40" style={{ color: colors.textSecondary }}>DIR:</span>
-        <span className="text-xs truncate max-w-xs" style={{ color: colors.textSecondary }} title={clippingsDir || CLIPPINGS_DIR_LABEL}>
-          {clippingsDir
-            ? clippingsDir.split(/[\\/]/).pop() || clippingsDir
-            : CLIPPINGS_DIR_LABEL}
+        <span className="text-[9px] font-mono opacity-40" style={{ color: colors.textSecondary }}>
+          DIR:
+        </span>
+        <span
+          className="text-xs truncate max-w-xs"
+          style={{ color: colors.textSecondary }}
+          title={clippingsDir || CLIPPINGS_DIR_LABEL}
+        >
+          {clippingsDir ? clippingsDir.split(/[\\/]/).pop() || clippingsDir : CLIPPINGS_DIR_LABEL}
         </span>
 
         <div className="ml-auto flex items-center gap-2">
@@ -269,9 +292,7 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
               className="text-xs bg-transparent border px-1.5 py-0.5 font-mono outline-none"
               style={{ borderColor: colors.border, color: colors.text }}
             >
-              {models.length === 0 && (
-                <option value="llama3.2">llama3.2</option>
-              )}
+              {models.length === 0 && <option value="llama3.2">llama3.2</option>}
               {models.map((m) => (
                 <option key={m} value={m}>
                   {m}
@@ -303,7 +324,11 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
               if (e.key === "Enter") {
                 const val = dirInput.trim();
                 setClippingsDir(val);
-                try { localStorage.setItem(CLIPPINGS_DIR_KEY, val); } catch { /* ignore */ }
+                try {
+                  localStorage.setItem(CLIPPINGS_DIR_KEY, val);
+                } catch {
+                  /* ignore */
+                }
                 fetchList(val);
                 setShowSettings(false);
               }
@@ -317,7 +342,11 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
             onClick={() => {
               const val = dirInput.trim();
               setClippingsDir(val);
-              try { localStorage.setItem(CLIPPINGS_DIR_KEY, val); } catch { /* ignore */ }
+              try {
+                localStorage.setItem(CLIPPINGS_DIR_KEY, val);
+              } catch {
+                /* ignore */
+              }
               fetchList(val);
               setShowSettings(false);
             }}
@@ -330,7 +359,11 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
               onClick={() => {
                 setClippingsDir("");
                 setDirInput("");
-                try { localStorage.removeItem(CLIPPINGS_DIR_KEY); } catch { /* ignore */ }
+                try {
+                  localStorage.removeItem(CLIPPINGS_DIR_KEY);
+                } catch {
+                  /* ignore */
+                }
                 fetchList("");
                 setShowSettings(false);
               }}
@@ -344,17 +377,13 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
 
       {/* ── Two-panel body ─────────────────────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden">
-
         {/* ── Left: file list ─────────────────────────────────────────────────── */}
         <div
           className="flex flex-col shrink-0 border-r overflow-hidden"
           style={{ width: 280, borderColor: colors.border }}
         >
           {/* Filter input */}
-          <div
-            className="px-2 py-1.5 border-b shrink-0"
-            style={{ borderColor: colors.border }}
-          >
+          <div className="px-2 py-1.5 border-b shrink-0" style={{ borderColor: colors.border }}>
             <input
               type="text"
               value={filterQuery}
@@ -366,7 +395,10 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
           </div>
 
           {/* File list */}
-          <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 #000" }}>
+          <div
+            className="flex-1 overflow-y-auto"
+            style={{ scrollbarWidth: "thin", scrollbarColor: "#333 #000" }}
+          >
             {listLoading && (
               <div className="flex justify-center py-8">
                 <RefreshCw className="h-4 w-4 animate-spin" style={{ color: colors.accent }} />
@@ -386,26 +418,21 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
                   className="w-full text-left px-2 py-1 border-b hover:opacity-80 transition-opacity"
                   style={{
                     borderColor: colors.border,
-                    backgroundColor:
-                      selectedFile === c.file ? `${colors.accent}18` : "transparent",
+                    backgroundColor: selectedFile === c.file ? `${colors.accent}18` : "transparent",
                   }}
                 >
                   <div className="flex items-start gap-1.5">
                     <BookOpen
                       className="h-3 w-3 mt-0.5 shrink-0"
                       style={{
-                        color:
-                          selectedFile === c.file
-                            ? colors.accent
-                            : colors.textSecondary,
+                        color: selectedFile === c.file ? colors.accent : colors.textSecondary,
                       }}
                     />
                     <div className="min-w-0">
                       <p
                         className="text-xs font-bold truncate"
                         style={{
-                          color:
-                            selectedFile === c.file ? colors.accent : colors.text,
+                          color: selectedFile === c.file ? colors.accent : colors.text,
                         }}
                       >
                         {c.title}
@@ -430,10 +457,7 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
                 </button>
               ))}
             {!listLoading && filtered.length === 0 && !listError && (
-              <p
-                className="py-8 text-center text-xs"
-                style={{ color: colors.textSecondary }}
-              >
+              <p className="py-8 text-center text-xs" style={{ color: colors.textSecondary }}>
                 No clippings found
               </p>
             )}
@@ -449,7 +473,10 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
         </div>
 
         {/* ── Right: content + AI ─────────────────────────────────────────────── */}
-        <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 #000" }}>
+        <div
+          className="flex-1 overflow-y-auto"
+          style={{ scrollbarWidth: "thin", scrollbarColor: "#333 #000" }}
+        >
           {/* Empty state */}
           {!selectedFile && (
             <div className="flex flex-col items-center justify-center h-full py-20 gap-3">
@@ -463,10 +490,7 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
           {/* Loading content */}
           {selectedFile && contentLoading && (
             <div className="flex items-center justify-center py-20 gap-2">
-              <RefreshCw
-                className="h-5 w-5 animate-spin"
-                style={{ color: colors.accent }}
-              />
+              <RefreshCw className="h-5 w-5 animate-spin" style={{ color: colors.accent }} />
               <span className="text-[10px]" style={{ color: colors.textSecondary }}>
                 Loading…
               </span>
@@ -476,12 +500,9 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
           {/* Content loaded */}
           {selectedFile && content && !contentLoading && (
             <div className="p-3 space-y-3 max-w-4xl">
-
               {/* ── Metadata header ── */}
               <div>
-                <h2 className="text-sm font-bold leading-snug mb-1">
-                  {content.title}
-                </h2>
+                <h2 className="text-sm font-bold leading-snug mb-1">{content.title}</h2>
                 <div
                   className="flex flex-wrap items-center gap-3 text-xs"
                   style={{ color: colors.textSecondary }}
@@ -572,9 +593,7 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
                       value={customPrompt}
                       onChange={(e) => setCustomPrompt(e.target.value)}
                       onKeyDown={(e) =>
-                        e.key === "Enter" &&
-                        customPrompt.trim() &&
-                        handleAiAction("custom")
+                        e.key === "Enter" && customPrompt.trim() && handleAiAction("custom")
                       }
                       placeholder="Ask anything about this article…"
                       className="flex-1 bg-transparent text-xs border px-2 py-1 outline-none font-mono placeholder:opacity-40"
@@ -614,16 +633,10 @@ export default function ClippingsView({ onBack }: { onBack: () => void }) {
                       backgroundColor: colors.background,
                     }}
                   >
-                    <pre
-                      className="whitespace-pre-wrap font-mono"
-                      style={{ color: colors.text }}
-                    >
+                    <pre className="whitespace-pre-wrap font-mono" style={{ color: colors.text }}>
                       {aiOutput}
                       {aiLoading && (
-                        <span
-                          className="animate-pulse"
-                          style={{ color: colors.accent }}
-                        >
+                        <span className="animate-pulse" style={{ color: colors.accent }}>
                           ▋
                         </span>
                       )}

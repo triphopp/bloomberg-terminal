@@ -1,23 +1,32 @@
 "use client";
 
-import { AlertTriangle, TrendingDown, TrendingUp, Minus, RefreshCw } from "lucide-react";
+import { AlertTriangle, Minus, RefreshCw, TrendingDown, TrendingUp } from "lucide-react";
 import { useAllocation } from "../hooks/useAllocation";
-import type { RotationScores, RotationEntry } from "../hooks/useCountryRotation";
+import type { RotationEntry, RotationScores } from "../hooks/useCountryRotation";
 
 const CLASS_COLORS: Record<string, string> = {
-  STRONG_OVERWEIGHT:  "#00e676",
-  OVERWEIGHT:         "#4ade80",
-  NEUTRAL:            "#888888",
-  UNDERWEIGHT:        "#f87171",
+  STRONG_OVERWEIGHT: "#00e676",
+  OVERWEIGHT: "#4ade80",
+  NEUTRAL: "#888888",
+  UNDERWEIGHT: "#f87171",
   STRONG_UNDERWEIGHT: "#ff1744",
 };
 
 const COUNTRY_FLAGS: Record<string, string> = {
-  "United States":   "🇺🇸", "Europe": "🇪🇺", "Japan": "🇯🇵",
-  "India":           "🇮🇳", "China": "🇨🇳", "Brazil": "🇧🇷",
-  "Canada":          "🇨🇦", "Taiwan": "🇹🇼", "South Korea": "🇰🇷",
-  "Australia":       "🇦🇺", "Thailand": "🇹🇭",
-  "Developed ex-US": "🌍", "Emerging Markets": "🌏", "Asia ex-Japan": "🌏",
+  "United States": "🇺🇸",
+  Europe: "🇪🇺",
+  Japan: "🇯🇵",
+  India: "🇮🇳",
+  China: "🇨🇳",
+  Brazil: "🇧🇷",
+  Canada: "🇨🇦",
+  Taiwan: "🇹🇼",
+  "South Korea": "🇰🇷",
+  Australia: "🇦🇺",
+  Thailand: "🇹🇭",
+  "Developed ex-US": "🌍",
+  "Emerging Markets": "🌏",
+  "Asia ex-Japan": "🌏",
 };
 
 function ScoreMiniBar({ score, maxAbs = 2.0 }: { score: number; maxAbs?: number }) {
@@ -26,7 +35,8 @@ function ScoreMiniBar({ score, maxAbs = 2.0 }: { score: number; maxAbs?: number 
   return (
     <div className="flex items-center gap-1.5">
       <span className="text-[10px] font-mono w-8 text-right" style={{ color }}>
-        {score > 0 ? "+" : ""}{score.toFixed(1)}
+        {score > 0 ? "+" : ""}
+        {score.toFixed(1)}
       </span>
       <div className="flex-1 h-1.5 rounded-sm" style={{ backgroundColor: "#1a1a1a" }}>
         <div
@@ -44,17 +54,19 @@ function AllocationBadge() {
 
   const { regime, conflict } = data;
   const colors: Record<string, string> = {
-    STRONG_RISK_ON:  "#00e676",
-    MILD_RISK_ON:    "#76ff03",
-    NEUTRAL:         "#9e9e9e",
-    MILD_RISK_OFF:   "#ff9800",
+    STRONG_RISK_ON: "#00e676",
+    MILD_RISK_ON: "#76ff03",
+    NEUTRAL: "#9e9e9e",
+    MILD_RISK_OFF: "#ff9800",
     STRONG_RISK_OFF: "#ff1744",
   };
   const color = colors[regime] ?? "#9e9e9e";
 
   return (
     <div className="flex items-center gap-2">
-      <span className="text-[10px] font-mono" style={{ color: "#757575" }}>ALLOC:</span>
+      <span className="text-[10px] font-mono" style={{ color: "#757575" }}>
+        ALLOC:
+      </span>
       <span
         className="text-[10px] font-mono px-2 py-0.5 border rounded-sm"
         style={{ color, borderColor: color, backgroundColor: `${color}10` }}
@@ -74,12 +86,16 @@ function AllocationBadge() {
 function RowItem({ entry }: { entry: RotationEntry }) {
   const color = CLASS_COLORS[entry.classification] ?? "#888";
   const flag = COUNTRY_FLAGS[entry.country] ?? "";
-  const ScoreIcon = entry.rotation_score > 0 ? TrendingUp : entry.rotation_score < 0 ? TrendingDown : Minus;
+  const ScoreIcon =
+    entry.rotation_score > 0 ? TrendingUp : entry.rotation_score < 0 ? TrendingDown : Minus;
 
   return (
     <div
       className="flex items-center gap-3 px-3 py-2 border-b"
-      style={{ borderColor: "#151515", backgroundColor: entry.rank % 2 === 0 ? "#050505" : "transparent" }}
+      style={{
+        borderColor: "#151515",
+        backgroundColor: entry.rank % 2 === 0 ? "#050505" : "transparent",
+      }}
     >
       {/* Rank */}
       <span className="text-[10px] font-mono w-5 text-right" style={{ color: "#616161" }}>
@@ -90,14 +106,21 @@ function RowItem({ entry }: { entry: RotationEntry }) {
       <div className="w-36 min-w-[9rem]">
         <div className="flex items-center gap-1.5">
           <span className="text-xs">{flag}</span>
-          <span className="text-[10px] font-mono font-bold" style={{ color: "#ccc" }}>{entry.country}</span>
+          <span className="text-[10px] font-mono font-bold" style={{ color: "#ccc" }}>
+            {entry.country}
+          </span>
           {entry.type === "regional" && (
-            <span className="text-[8px] font-mono px-1 rounded" style={{ color: "#757575", backgroundColor: "#111" }}>
+            <span
+              className="text-[8px] font-mono px-1 rounded"
+              style={{ color: "#757575", backgroundColor: "#111" }}
+            >
               REG
             </span>
           )}
         </div>
-        <span className="text-[8px] font-mono" style={{ color: "#424242" }}>{entry.ticker}</span>
+        <span className="text-[8px] font-mono" style={{ color: "#424242" }}>
+          {entry.ticker}
+        </span>
       </div>
 
       {/* Rotation Score */}
@@ -105,10 +128,14 @@ function RowItem({ entry }: { entry: RotationEntry }) {
         <div className="flex items-center gap-1 mb-0.5">
           <ScoreIcon className="h-3 w-3" style={{ color }} />
           <span className="text-xs font-bold font-mono" style={{ color }}>
-            {entry.rotation_score > 0 ? "+" : ""}{entry.rotation_score.toFixed(2)}
+            {entry.rotation_score > 0 ? "+" : ""}
+            {entry.rotation_score.toFixed(2)}
           </span>
         </div>
-        <span className="text-[8px] font-mono px-1.5 py-0.5 rounded-sm" style={{ color, backgroundColor: `${color}15` }}>
+        <span
+          className="text-[8px] font-mono px-1.5 py-0.5 rounded-sm"
+          style={{ color, backgroundColor: `${color}15` }}
+        >
           {entry.classification.replace(/_/g, " ")}
         </span>
       </div>
@@ -119,13 +146,22 @@ function RowItem({ entry }: { entry: RotationEntry }) {
           <ScoreMiniBar score={entry.layers.M.score} />
           <div className="flex gap-2 mt-0.5">
             <span className="text-[8px] font-mono" style={{ color: "#555" }}>
-              12M-1M: {entry.layers.M.momentum_12m_1m != null ? `${(entry.layers.M.momentum_12m_1m * 100).toFixed(1)}%` : "—"}
+              12M-1M:{" "}
+              {entry.layers.M.momentum_12m_1m != null
+                ? `${(entry.layers.M.momentum_12m_1m * 100).toFixed(1)}%`
+                : "—"}
             </span>
             <span className="text-[8px] font-mono" style={{ color: "#555" }}>
-              6M: {entry.layers.M.momentum_6m != null ? `${(entry.layers.M.momentum_6m * 100).toFixed(1)}%` : "—"}
+              6M:{" "}
+              {entry.layers.M.momentum_6m != null
+                ? `${(entry.layers.M.momentum_6m * 100).toFixed(1)}%`
+                : "—"}
             </span>
             <span className="text-[8px] font-mono" style={{ color: "#555" }}>
-              3M: {entry.layers.M.momentum_3m != null ? `${(entry.layers.M.momentum_3m * 100).toFixed(1)}%` : "—"}
+              3M:{" "}
+              {entry.layers.M.momentum_3m != null
+                ? `${(entry.layers.M.momentum_3m * 100).toFixed(1)}%`
+                : "—"}
             </span>
           </div>
         </div>
@@ -133,10 +169,16 @@ function RowItem({ entry }: { entry: RotationEntry }) {
           <ScoreMiniBar score={entry.layers.Q.score} />
           <div className="flex gap-2 mt-0.5">
             <span className="text-[8px] font-mono" style={{ color: "#555" }}>
-              GDP: {entry.layers.Q.gdp_growth_3y_ma != null ? `${entry.layers.Q.gdp_growth_3y_ma.toFixed(1)}%` : "—"}
+              GDP:{" "}
+              {entry.layers.Q.gdp_growth_3y_ma != null
+                ? `${entry.layers.Q.gdp_growth_3y_ma.toFixed(1)}%`
+                : "—"}
             </span>
             <span className="text-[8px] font-mono" style={{ color: "#555" }}>
-              CA: {entry.layers.Q.current_account != null ? `${entry.layers.Q.current_account.toFixed(1)}%` : "—"}
+              CA:{" "}
+              {entry.layers.Q.current_account != null
+                ? `${entry.layers.Q.current_account.toFixed(1)}%`
+                : "—"}
             </span>
           </div>
         </div>
@@ -144,7 +186,10 @@ function RowItem({ entry }: { entry: RotationEntry }) {
           <ScoreMiniBar score={entry.layers.C.score} />
           <div className="mt-0.5">
             <span className="text-[8px] font-mono" style={{ color: "#555" }}>
-              YLD: {entry.layers.C.dividend_yield != null ? `${(entry.layers.C.dividend_yield * 100).toFixed(2)}%` : "—"}
+              YLD:{" "}
+              {entry.layers.C.dividend_yield != null
+                ? `${(entry.layers.C.dividend_yield * 100).toFixed(2)}%`
+                : "—"}
             </span>
           </div>
         </div>
@@ -164,20 +209,35 @@ export function RotationTab({
   isLoading: boolean;
   error: unknown;
   refresh?: () => void;
-  colors: { accent: string; text: string; textSecondary: string; border: string; surface: string; background: string };
+  colors: {
+    accent: string;
+    text: string;
+    textSecondary: string;
+    border: string;
+    surface: string;
+    background: string;
+  };
 }) {
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-16" style={{ color: colors.textSecondary }}>
+      <div
+        className="flex items-center justify-center py-16"
+        style={{ color: colors.textSecondary }}
+      >
         <RefreshCw className="h-4 w-4 animate-spin mr-2" />
-        <span className="text-sm font-mono">Loading rotation scores... (fetching 14 ETFs + World Bank data)</span>
+        <span className="text-sm font-mono">
+          Loading rotation scores... (fetching 14 ETFs + World Bank data)
+        </span>
       </div>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="flex items-center gap-2 p-4 border text-sm font-mono" style={{ borderColor: "#ef5350", color: "#ef5350" }}>
+      <div
+        className="flex items-center gap-2 p-4 border text-sm font-mono"
+        style={{ borderColor: "#ef5350", color: "#ef5350" }}
+      >
         <AlertTriangle className="h-4 w-4" />
         <span>Backend unavailable: {String(error ?? "no data")}</span>
       </div>
@@ -195,7 +255,10 @@ export function RotationTab({
         style={{ borderColor: colors.border, backgroundColor: colors.surface }}
       >
         <div className="flex items-center gap-4">
-          <span className="text-xs font-bold font-mono tracking-widest" style={{ color: colors.accent }}>
+          <span
+            className="text-xs font-bold font-mono tracking-widest"
+            style={{ color: colors.accent }}
+          >
             ⚡ COUNTRY EQUITY ROTATION
           </span>
           <span className="text-[10px] font-mono" style={{ color: colors.textSecondary }}>
@@ -210,15 +273,26 @@ export function RotationTab({
             <span>Carry: {fresh.carry}</span>
           </div>
           {refresh && (
-            <button type="button" onClick={refresh} className="p-1 hover:opacity-70" title="Refresh">
-              <RefreshCw className={`h-3 w-3 ${isLoading ? "animate-spin" : ""}`} style={{ color: colors.accent }} />
+            <button
+              type="button"
+              onClick={refresh}
+              className="p-1 hover:opacity-70"
+              title="Refresh"
+            >
+              <RefreshCw
+                className={`h-3 w-3 ${isLoading ? "animate-spin" : ""}`}
+                style={{ color: colors.accent }}
+              />
             </button>
           )}
         </div>
       </div>
 
       {/* Column Headers */}
-      <div className="flex items-center gap-3 px-3 py-1.5 text-[9px] font-mono font-bold shrink-0" style={{ color: "#555" }}>
+      <div
+        className="flex items-center gap-3 px-3 py-1.5 text-[9px] font-mono font-bold shrink-0"
+        style={{ color: "#555" }}
+      >
         <span className="w-5" />
         <span className="w-36">COUNTRY</span>
         <span className="w-28">SCORE</span>
@@ -235,10 +309,14 @@ export function RotationTab({
       </div>
 
       {/* Disclaimer */}
-      <p className="text-[8px] font-mono shrink-0 pt-1" style={{ color: "#424242", lineHeight: "1.6" }}>
-        Cross-sectional momentum per Jegadeesh & Titman (1993). Macro quality from World Bank GDP growth + current account.
-        Carry from dividend yield. All returns in USD. Regional ETFs (EFA, EEM, AAXJ) have no single-country macro data —
-        weights shift to M + C. This is a quantitative ranking tool, not investment advice.
+      <p
+        className="text-[8px] font-mono shrink-0 pt-1"
+        style={{ color: "#424242", lineHeight: "1.6" }}
+      >
+        Cross-sectional momentum per Jegadeesh & Titman (1993). Macro quality from World Bank GDP
+        growth + current account. Carry from dividend yield. All returns in USD. Regional ETFs (EFA,
+        EEM, AAXJ) have no single-country macro data — weights shift to M + C. This is a
+        quantitative ranking tool, not investment advice.
       </p>
     </div>
   );
