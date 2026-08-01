@@ -11,6 +11,7 @@
  * - All indicators are dynamically added/removed via the plugin system
  */
 
+import { useAtom } from "jotai";
 import {
   CandlestickSeries,
   HistogramSeries,
@@ -22,7 +23,9 @@ import {
   createSeriesMarkers,
 } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
+import { chartPaneHeightsAtom } from "../atoms";
 import { OverlayPrimitive } from "./overlay-primitive";
+import { clampPaneHeight, computePaneLayout, paneKey } from "./pane-layout";
 import type {
   CanvasOverlay,
   ChartColors,
@@ -63,38 +66,10 @@ export interface ModularChartProps {
 }
 
 // ── Pane sizing ──────────────────────────────────────────────────────────────
-//
-// Sub-panes used to be a flat 80px each and the chart simply grew taller with
-// every indicator added — past the parent's height it was clipped, which is what
-// made stacked indicators appear to bleed into the volume pane. Instead, fit the
-// panes to the height actually available and only overflow (with a scrollbar)
-// once even the minimums no longer fit.
+// Layout arithmetic lives in ./pane-layout so it can be tested on its own.
 
-const SUB_PANE_MAX = 80;
-const SUB_PANE_MIN = 44; // below this a pane's price scale labels start to collide
-const MAIN_PANE_MIN = 140;
 /** Quantize measured height so a 1px reflow doesn't rebuild the whole chart. */
 const HEIGHT_STEP = 8;
-
-interface PaneLayout {
-  /** Total height handed to lightweight-charts */
-  chartHeight: number;
-  /** Height of each sub-pane */
-  subPaneHeight: number;
-}
-
-function computePaneLayout(available: number, paneCount: number): PaneLayout {
-  if (paneCount === 0) {
-    return { chartHeight: available, subPaneHeight: 0 };
-  }
-  const subPaneHeight = Math.max(
-    SUB_PANE_MIN,
-    Math.min(SUB_PANE_MAX, Math.floor((available - MAIN_PANE_MIN) / paneCount))
-  );
-  // Below this the panes would have to shrink past SUB_PANE_MIN, so scroll instead.
-  const needed = MAIN_PANE_MIN + paneCount * subPaneHeight;
-  return { chartHeight: Math.max(available, needed), subPaneHeight };
-}
 
 /**
  * Darkness of the surface the chart is actually painted on.
@@ -158,6 +133,8 @@ export function ModularChart({
 
   // Height the parent actually grants us (0 until first measurement).
   const [availableHeight, setAvailableHeight] = useState(0);
+  // Pane heights the user dragged, persisted across rebuilds and view switches.
+  const [paneHeights, setPaneHeights] = useAtom(chartPaneHeightsAtom);
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -176,10 +153,15 @@ export function ModularChart({
 
   const paneIndicators = indicators.filter((i) => i.type === "pane");
   const overlayIndicators = indicators.filter((i) => i.type === "overlay");
-  const { chartHeight, subPaneHeight } = computePaneLayout(
+  const paneKeys = paneIndicators.map((i) => paneKey(i.id));
+  const { chartHeight, heightFor } = computePaneLayout(
     availableHeight > 0 ? availableHeight : height,
-    paneIndicators.length
+    paneKeys,
+    paneHeights
   );
+  // Serialised layout — the effect must rebuild when a restored height changes,
+  // and `heightFor` is a fresh closure every render so it cannot be a dep itself.
+  const paneHeightSig = paneKeys.map((k) => `${k}:${heightFor(k)}`).join(",");
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: chart is fully rebuilt from these inputs; colors object identity is intentionally excluded
   useEffect(() => {
@@ -259,12 +241,18 @@ export function ModularChart({
     }
 
     // ── Render pane indicators — each gets its own isolated pane ──
+    // Panes are recorded as they are created (a pane is skipped when the series
+    // has too few bars, so pane index does not track indicator index) and read
+    // back on teardown to capture whatever the user dragged them to.
+    const builtPanes: { key: string; baseline: number | null; read: () => number }[] = [];
     for (const indicator of paneIndicators) {
       if (data.length < indicator.minBars) continue;
       const outputs = indicator.compute(data, indicator.config);
 
+      const key = paneKey(indicator.id);
       const subPane = chart.addPane();
-      subPane.setHeight(subPaneHeight);
+      subPane.setHeight(heightFor(key));
+      builtPanes.push({ key, baseline: null, read: () => subPane.getHeight() });
 
       for (const output of outputs) {
         const isVolume = output.priceScaleId === "vol";
@@ -392,15 +380,62 @@ export function ModularChart({
     };
     chart.subscribeClick(clickHandler);
 
+    /**
+     * Re-record what the panes currently measure.
+     *
+     * setHeight() is a request, not an assignment — lightweight-charts turns it
+     * into a stretch factor and normalises across panes, so asking for 80 can
+     * settle at 28. Diffing teardown height against the *requested* value would
+     * flag every pane as user-resized on the first rebuild and pin panes nobody
+     * touched, so the baseline is the settled height instead.
+     *
+     * Re-taken after any programmatic resize too: chart.resize() renormalises
+     * every pane, and that must not be mistaken for a drag either.
+     */
+    const takeBaseline = () => {
+      for (const p of builtPanes) {
+        try {
+          p.baseline = Math.round(p.read());
+        } catch {
+          /* pane gone — leave the previous baseline */
+        }
+      }
+    };
+
     // ── Resize observer ──
     const ro = new ResizeObserver(() => {
       if (container) {
         chart.resize(container.clientWidth, chartHeight);
+        takeBaseline();
       }
     });
     ro.observe(container);
 
+    // First baseline, once the initial layout has settled.
+    const baselineFrame = requestAnimationFrame(takeBaseline);
+
     return () => {
+      cancelAnimationFrame(baselineFrame);
+      // Read pane heights back BEFORE the chart is destroyed. A drag only lives
+      // inside the chart instance, so this teardown is the single point where a
+      // resize can be captured — miss it and the next rebuild silently reverts
+      // to the computed default, which is exactly what used to happen on every
+      // view switch. Panes with no baseline yet (torn down inside the same frame
+      // they were built) are skipped: no drag can have happened.
+      const dragged: Record<string, number> = {};
+      for (const p of builtPanes) {
+        if (p.baseline === null) continue;
+        try {
+          const now = Math.round(p.read());
+          if (now > 0 && Math.abs(now - p.baseline) > 1) dragged[p.key] = clampPaneHeight(now);
+        } catch {
+          /* pane already gone — nothing to capture */
+        }
+      }
+      if (Object.keys(dragged).length > 0) {
+        setPaneHeights((prev) => ({ ...prev, ...dragged }));
+      }
+
       markersPlugin?.detach();
       overlayUnsubscribe?.();
       chart.unsubscribeClick(clickHandler);
@@ -410,7 +445,7 @@ export function ModularChart({
       mainSeriesRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, isDark, chartHeight, subPaneHeight, indicators, overlays, eventMarkers]);
+  }, [data, isDark, chartHeight, paneHeightSig, indicators, overlays, eventMarkers]);
 
   // The wrapper is what gets measured, so it always renders — including in the
   // empty state, otherwise the ResizeObserver would never attach and the chart

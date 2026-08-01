@@ -5,6 +5,7 @@ import { useAtom, useSetAtom } from "jotai";
 import {
   Activity,
   BarChart2,
+  Check,
   ChevronDown,
   ChevronUp,
   GripVertical,
@@ -42,6 +43,7 @@ import {
 } from "../atoms";
 import {
   BAR_INTERVALS,
+  INTERVAL_DEFAULT_RANGE,
   INTERVAL_LABEL,
   INTERVAL_VALID_RANGES,
   IndicatorPicker,
@@ -309,39 +311,72 @@ function RegionHeader({
   );
 }
 
-// ── Quote Summary Bar ─────────────────────────────────────────────────────────
+// ── Quote fields ──────────────────────────────────────────────────────────────
 
-function QuoteSummaryBar({
-  quote,
-  colors,
-  hurst,
-}: { quote: Record<string, unknown>; colors: typeof bloombergColors.dark; hurst?: number | null }) {
+interface QuoteField {
+  label: string;
+  value: string;
+  color?: string;
+}
+
+/**
+ * Split the quote into the handful of numbers that move during the session and
+ * the reference data that is fixed for the day.
+ *
+ * They used to share one wrapping bar, which meant a dozen static fundamentals
+ * pushed the chart down by a row or two to show numbers nobody re-reads tick to
+ * tick. Only the live ones earn permanent space; the rest go behind a popover.
+ */
+function splitQuoteFields(
+  quote: Record<string, unknown>,
+  colors: typeof bloombergColors.dark,
+  hurst?: number | null
+): { live: QuoteField[]; stat: QuoteField[] } {
   const q = quote as Record<string, number | string | null | undefined>;
   const price = q.regularMarketPrice as number | undefined;
   const chg = q.regularMarketChange as number | undefined;
   const pct = q.regularMarketChangePercent as number | undefined;
   const isUp = (pct ?? 0) >= 0;
   const pctColor = isUp ? "#00FF00" : "#FF0000";
-  const items: { label: string; value: string; color?: string }[] = [];
-  if (price != null) items.push({ label: "LAST", value: `$${fmtPrice(price)}` });
+
+  // Outside regular hours CHG/VOL describe the *previous* session, while the
+  // number actually ticking is the pre/after-hours delta shown by
+  // ExtendedHoursPrice. Demote them so the header shows what is live now.
+  const state = q.marketState as string | undefined;
+  const extendedHours =
+    state === "PRE" || state === "PREPRE" || state === "POST" || state === "POSTPOST";
+
+  // LAST and %CHG live in the symbol header, so they are deliberately absent here.
+  const live: QuoteField[] = [];
+  const stat: QuoteField[] = [];
+  const session = extendedHours ? stat : live;
   if (chg != null)
-    items.push({
+    session.push({
       label: "CHG",
       value: `${isUp ? "+" : ""}${(chg as number).toFixed(2)}`,
       color: pctColor,
     });
-  if (pct != null) items.push({ label: "%CHG", value: fmtPct(pct as number), color: pctColor });
   if (q.regularMarketVolume != null)
-    items.push({ label: "VOL", value: fmtCompact(q.regularMarketVolume as number) });
-  if (q.marketCap != null) items.push({ label: "MCAP", value: fmtCompact(q.marketCap as number) });
-  if (q.trailingPE != null)
-    items.push({ label: "P/E", value: (q.trailingPE as number).toFixed(1) });
-  if (q.beta != null) items.push({ label: "BETA", value: (q.beta as number).toFixed(2) });
+    session.push({ label: "VOL", value: fmtCompact(q.regularMarketVolume as number) });
+
+  if (q.regularMarketOpen != null)
+    stat.push({ label: "OPEN", value: `$${fmtPrice(q.regularMarketOpen as number)}` });
+  if (q.regularMarketPreviousClose != null)
+    stat.push({ label: "PREV", value: `$${fmtPrice(q.regularMarketPreviousClose as number)}` });
   if (q.fiftyTwoWeekLow != null && q.fiftyTwoWeekHigh != null)
-    items.push({
+    stat.push({
       label: "52W",
       value: `${fmtPrice(q.fiftyTwoWeekLow as number)}-${fmtPrice(q.fiftyTwoWeekHigh as number)}`,
     });
+  if (q.marketCap != null) stat.push({ label: "MCAP", value: fmtCompact(q.marketCap as number) });
+  if (q.trailingPE != null) stat.push({ label: "P/E", value: (q.trailingPE as number).toFixed(1) });
+  // Forward P/E sits next to trailing so the two are read together — a forward
+  // well below trailing is the market pricing in earnings growth, and vice versa.
+  if (q.forwardPE != null)
+    stat.push({ label: "FWD P/E", value: (q.forwardPE as number).toFixed(1) });
+  if (q.beta != null) stat.push({ label: "BETA", value: (q.beta as number).toFixed(2) });
+  if (q.epsTrailingTwelveMonths != null)
+    stat.push({ label: "EPS", value: `$${(q.epsTrailingTwelveMonths as number).toFixed(2)}` });
   if (q.dividendYield != null && (q.dividendYield as number) > 0) {
     const yieldPct = (q.dividendYield as number) * 100;
     const eps = q.epsTrailingTwelveMonths as number | undefined;
@@ -349,33 +384,205 @@ function QuoteSummaryBar({
     // Sanity check: hide if yield > 30% or payout ratio > 200% (bad/stale Yahoo data)
     const payoutOk = !eps || eps <= 0 || divRate / eps < 2.0;
     if (yieldPct < 30 && payoutOk)
-      items.push({ label: "DIV", value: `${yieldPct.toFixed(2)}%`, color: "#4ade80" });
+      stat.push({ label: "DIV", value: `${yieldPct.toFixed(2)}%`, color: "#4ade80" });
   }
-  if (q.epsTrailingTwelveMonths != null)
-    items.push({ label: "EPS", value: `$${(q.epsTrailingTwelveMonths as number).toFixed(2)}` });
-  if (q.regularMarketOpen != null)
-    items.push({ label: "OPEN", value: `$${fmtPrice(q.regularMarketOpen as number)}` });
-  if (q.regularMarketPreviousClose != null)
-    items.push({ label: "PREV", value: `$${fmtPrice(q.regularMarketPreviousClose as number)}` });
   if (hurst != null) {
     const hColor = hurst < 0.45 ? colors.positive : hurst > 0.55 ? colors.negative : colors.text;
     const hLabel = hurst < 0.45 ? "mean-reverting" : hurst > 0.55 ? "trending" : "random walk";
-    items.push({ label: "HURST", value: `${hurst.toFixed(3)} (${hLabel})`, color: hColor });
+    stat.push({ label: "HURST", value: `${hurst.toFixed(3)} (${hLabel})`, color: hColor });
   }
+
+  return { live, stat };
+}
+
+function FieldChip({ field, colors }: { field: QuoteField; colors: typeof bloombergColors.dark }) {
+  return (
+    <span className="whitespace-nowrap shrink-0">
+      <span style={{ color: colors.textSecondary }}>{field.label}:</span>
+      <span className="font-bold ml-0.5" style={{ color: field.color ?? colors.text }}>
+        {field.value}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * Open/close state plus fixed-viewport coordinates for a dropdown panel.
+ *
+ * The toolbar rows clip their overflow so they can never grow a second line,
+ * which would also clip an absolutely-positioned panel inside them. Positioning
+ * the panel `fixed` against the trigger's measured rect escapes that clip —
+ * fixed elements are laid out against the viewport, not the scroll ancestor.
+ */
+function useAnchoredPanel() {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const place = useCallback(() => {
+    const r = triggerRef.current?.getBoundingClientRect();
+    if (r) setPos({ left: r.left, top: r.bottom + 2 });
+  }, []);
+
+  const toggle = useCallback(() => {
+    setOpen((v) => {
+      if (!v) place();
+      return !v;
+    });
+  }, [place]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    // Re-measure rather than close: clicking the trigger can itself scroll an
+    // ancestor (the browser scrolls a partly-hidden button into view), and
+    // closing on that would shut the panel the same tick it opened.
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, place]);
+
+  return { open, setOpen, toggle, pos, wrapRef, triggerRef };
+}
+
+/**
+ * Bar interval as a dropdown rather than nine inline buttons.
+ *
+ * Intervals that don't cover the selected period are still listed, marked with
+ * the range they'd switch to — picking one is legal (handleIntervalChange moves
+ * the period to a valid one), so hiding them would obscure a working path.
+ */
+function IntervalPicker({
+  colors,
+  barInterval,
+  timePeriod,
+  onChange,
+}: {
+  colors: typeof bloombergColors.dark;
+  barInterval: BarInterval;
+  timePeriod: TimePeriod;
+  onChange: (iv: BarInterval) => void;
+}) {
+  const { open, setOpen, toggle, pos, wrapRef, triggerRef } = useAnchoredPanel();
 
   return (
     <div
-      className="flex flex-wrap gap-x-2 gap-y-0 px-1 py-0.5 text-[9px] font-mono"
-      style={{ background: "#0a0a0a", borderBottom: `1px solid ${colors.border}` }}
+      className="shrink-0 ml-2 pl-2 flex items-center gap-1"
+      style={{ borderLeft: `1px solid ${colors.border}` }}
+      ref={wrapRef}
     >
-      {items.map((it) => (
-        <span key={it.label}>
-          <span style={{ color: colors.textSecondary }}>{it.label}:</span>
-          <span className="font-bold ml-0.5" style={{ color: it.color ?? colors.text }}>
-            {it.value}
-          </span>
-        </span>
-      ))}
+      <span className="text-[9px] font-mono" style={{ color: colors.textSecondary }}>
+        TF
+      </span>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="flex items-center gap-0.5 text-[9px] font-bold font-mono px-1.5 py-0.5 border transition-colors"
+        style={{
+          borderColor: colors.accent,
+          backgroundColor: `${colors.accent}22`,
+          color: colors.accent,
+        }}
+        onClick={toggle}
+        title="Bar interval"
+      >
+        {INTERVAL_LABEL[barInterval]}
+        <ChevronDown className="h-2.5 w-2.5" />
+      </button>
+      {open && pos && (
+        <div
+          className="fixed z-50 border min-w-[110px]"
+          style={{
+            left: pos.left,
+            top: pos.top,
+            background: colors.surface,
+            borderColor: colors.border,
+          }}
+        >
+          {BAR_INTERVALS.map((iv) => {
+            const active = barInterval === iv;
+            const fitsPeriod = INTERVAL_VALID_RANGES[iv as BarInterval].includes(timePeriod);
+            return (
+              <button
+                key={iv}
+                type="button"
+                className="w-full flex items-center justify-between gap-2 px-2 py-1 text-[9px] font-mono border-b hover:opacity-70"
+                style={{
+                  borderColor: `${colors.border}44`,
+                  color: active ? colors.accent : colors.text,
+                  background: active ? `${colors.accent}14` : "transparent",
+                }}
+                onClick={() => {
+                  onChange(iv as BarInterval);
+                  setOpen(false);
+                }}
+              >
+                <span className="font-bold">{INTERVAL_LABEL[iv as BarInterval]}</span>
+                {!fitsPeriod && (
+                  <span className="text-[8px] opacity-40">
+                    →{PERIOD_LABEL[INTERVAL_DEFAULT_RANGE[iv as BarInterval]]}
+                  </span>
+                )}
+                {active && <Check className="h-2.5 w-2.5" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Static fundamentals, revealed on demand so they cost no vertical space. */
+function QuoteStatsPopover({
+  fields,
+  colors,
+}: { fields: QuoteField[]; colors: typeof bloombergColors.dark }) {
+  const { open, toggle, pos, wrapRef, triggerRef } = useAnchoredPanel();
+
+  if (fields.length === 0) return null;
+
+  return (
+    <div className="shrink-0" ref={wrapRef}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="flex items-center gap-0.5 px-1 text-[9px] font-mono border hover:opacity-70"
+        style={{
+          borderColor: open ? colors.accent : colors.border,
+          color: open ? colors.accent : colors.textSecondary,
+          background: open ? `${colors.accent}15` : "transparent",
+        }}
+        onClick={toggle}
+        title="Fundamentals & reference data"
+      >
+        DETAILS
+        <ChevronDown className="h-2.5 w-2.5" />
+      </button>
+      {open && pos && (
+        <div
+          className="fixed z-50 border px-2 py-1.5 grid gap-x-4 gap-y-0.5 text-[9px] font-mono"
+          style={{
+            left: pos.left,
+            top: pos.top,
+            background: colors.surface,
+            borderColor: colors.border,
+            gridTemplateColumns: "repeat(2, max-content)",
+          }}
+        >
+          {fields.map((f) => (
+            <FieldChip key={f.label} field={f} colors={colors} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -791,6 +998,16 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   const hurst = useMemo(
     () => calcHurst(chartData.map((d: { price: number }) => d.price)),
     [chartData]
+  );
+
+  const quoteFields = useMemo(
+    () =>
+      quote
+        ? // calcHurst needs >=2 R/S bucket sizes (8/16/32/64) to regress on —
+          // that requires >=65 bars, else it silently falls back to a flat 0.5
+          splitQuoteFields(quote, colors, chartData.length >= 65 ? hurst : null)
+        : { live: [], stat: [] },
+    [quote, colors, chartData.length, hurst]
   );
 
   // Volume stats
@@ -1391,23 +1608,33 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
           })()}
       </div>
 
-      {/* Symbol header */}
+      {/* Symbol header — price, the live quote fields, and everything else behind
+          DETAILS. This absorbed what used to be two more full-width rows (the
+          quote summary bar and the extended-hours strip). Height is fixed at one
+          line: every child is nowrap/shrink-0 except the company name, which
+          takes the slack and truncates, so the row can never wrap or scroll. */}
       <div
-        className="px-1 py-0.5 shrink-0 flex items-center gap-2"
+        className="px-1 py-0.5 shrink-0 flex flex-nowrap items-center gap-2 overflow-hidden"
         style={{ background: "#050505", borderBottom: `1px solid ${colors.border}` }}
       >
         {selectedSymbol ? (
           <>
-            <span className="text-sm font-bold font-mono" style={{ color: colors.accent }}>
+            <span
+              className="text-sm font-bold font-mono whitespace-nowrap shrink-0"
+              style={{ color: colors.accent }}
+            >
               {selectedLabel || selectedSymbol}
             </span>
             {quote && (
               <>
-                <span className="text-sm font-bold font-mono" style={{ color: colors.text }}>
+                <span
+                  className="text-sm font-bold font-mono whitespace-nowrap shrink-0"
+                  style={{ color: colors.text }}
+                >
                   ${fmtPrice(quote.regularMarketPrice)}
                 </span>
                 <span
-                  className="text-xs font-bold font-mono"
+                  className="text-xs font-bold font-mono whitespace-nowrap shrink-0"
                   style={{
                     color: (quote.regularMarketChangePercent ?? 0) >= 0 ? "#00FF00" : "#FF0000",
                   }}
@@ -1415,16 +1642,41 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                   {(quote.regularMarketChangePercent ?? 0) >= 0 ? "▲" : "▼"}
                   {fmtPct(quote.regularMarketChangePercent ?? 0)}
                 </span>
+                {/* The live quote fields (CHG, VOL) — the only ones that move
+                    intraday, so the only ones worth permanent space. Clips
+                    rather than pushing the row wider. */}
+                <span className="flex items-center gap-2 text-[9px] font-mono min-w-0 overflow-hidden">
+                  {quoteFields.live.map((f) => (
+                    <FieldChip key={f.label} field={f} colors={colors} />
+                  ))}
+                </span>
+                <QuoteStatsPopover fields={quoteFields.stat} colors={colors} />
+                <MarketSessionBadge state={quote.marketState as string | undefined} compact />
+                {/* Pre/after-hours price folded into the header instead of its own
+                    full-width row below — it's only relevant outside regular hours,
+                    so a dedicated row sat empty (or absent, shifting layout) most
+                    of the trading day. */}
+                <ExtendedHoursPrice
+                  quote={quote}
+                  positiveColor="#00FF00"
+                  negativeColor="#FF0000"
+                  hideLabel
+                />
+                {/* Gives up width first (flexShrink far above the default 1) and
+                    truncates — the one field cheap enough to lose characters.
+                    Everything left of it keeps its digits intact. */}
                 {quote.shortName && (
-                  <span className="text-[9px] truncate" style={{ color: colors.textSecondary }}>
+                  <span
+                    className="text-[9px] truncate flex-1 min-w-0"
+                    style={{ color: colors.textSecondary, flexShrink: 100 }}
+                  >
                     {quote.shortName}
                   </span>
                 )}
-                <MarketSessionBadge state={quote.marketState as string | undefined} />
               </>
             )}
             <button
-              className="ml-auto text-[8px] px-1 py-0 border hover:opacity-70"
+              className="ml-auto shrink-0 text-[8px] px-1 py-0 border hover:opacity-70"
               style={{ borderColor: "#00FFFF44", color: "#00FFFF" }}
               onClick={handleGoToEquity}
             >
@@ -1438,28 +1690,14 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
         )}
       </div>
 
-      {/* Quote details */}
-      {quote && (
-        <QuoteSummaryBar
-          quote={quote}
-          colors={colors}
-          // calcHurst needs >=2 R/S bucket sizes (8/16/32/64) to regress on —
-          // that requires >=65 bars, else it silently falls back to a flat 0.5
-          hurst={chartData.length >= 65 ? hurst : null}
-        />
-      )}
-      {quote && (
-        <div
-          className="px-2 py-0.5 shrink-0"
-          style={{ background: "#050505", borderBottom: `1px solid ${colors.border}` }}
-        >
-          <ExtendedHoursPrice quote={quote} positiveColor="#00FF00" negativeColor="#FF0000" />
-        </div>
-      )}
-
-      {/* Time period tabs + chart type + volume toggle */}
+      {/* Period + bar interval + chart type — one row that never wraps.
+          Period and interval are the same "what timeframe" decision, so they
+          share a row; the interval collapses to a dropdown because nine buttons
+          spelled out was what forced this row onto a second line. */}
+      {/* Scrollbar hidden rather than thin: a classic scrollbar adds ~13px of
+          height, which would re-create the very second row this merge removed. */}
       <div
-        className="flex items-center gap-0 px-1 py-0.5 shrink-0"
+        className="flex flex-nowrap items-center gap-0 px-1 py-0.5 shrink-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         style={{ background: "#050505", borderBottom: `1px solid ${colors.border}` }}
       >
         {TIME_PERIODS.map((p) => {
@@ -1472,7 +1710,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
           return (
             <button
               key={p}
-              className="text-[9px] font-bold font-mono px-1.5 py-0.5"
+              className="text-[9px] font-bold font-mono px-1.5 py-0.5 shrink-0"
               disabled={disabled}
               style={{
                 background: active ? colors.accent : "transparent",
@@ -1489,7 +1727,15 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
             </button>
           );
         })}
-        <div className="ml-auto flex items-center gap-1">
+        {heatmapChartType === "candle" && (
+          <IntervalPicker
+            colors={colors}
+            barInterval={barInterval as BarInterval}
+            timePeriod={timePeriod as TimePeriod}
+            onChange={(iv) => handleHeatmapInterval(iv)}
+          />
+        )}
+        <div className="ml-auto shrink-0 flex items-center gap-1">
           {/* Chart type toggle */}
           <div className="flex border overflow-hidden" style={{ borderColor: colors.border }}>
             <button
@@ -1648,35 +1894,6 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
               FP{footprintLoading ? "…" : ""}
             </button>
           )}
-        </div>
-      )}
-
-      {/* Timeframe interval row (candle mode only) */}
-      {heatmapChartType === "candle" && (
-        <div
-          className="flex items-center gap-1 px-1 py-0.5 shrink-0"
-          style={{ background: "#050505", borderBottom: `1px solid ${colors.border}` }}
-        >
-          <span className="text-[9px] font-mono mr-1" style={{ color: colors.textSecondary }}>
-            TF
-          </span>
-          {BAR_INTERVALS.map((iv) => {
-            const active = barInterval === iv;
-            return (
-              <button
-                key={iv}
-                className="text-[9px] font-bold font-mono px-1.5 py-0.5 border transition-colors"
-                style={{
-                  borderColor: active ? colors.accent : colors.border,
-                  backgroundColor: active ? `${colors.accent}22` : "transparent",
-                  color: active ? colors.accent : colors.textSecondary,
-                }}
-                onClick={() => handleHeatmapInterval(iv as BarInterval)}
-              >
-                {INTERVAL_LABEL[iv as BarInterval]}
-              </button>
-            );
-          })}
         </div>
       )}
 
