@@ -288,10 +288,14 @@ def _download(symbols: list[str]) -> dict[str, pd.DataFrame]:
     if raw is None or raw.empty:
         return {}
 
-    # yfinance returns a flat frame for a single symbol and a 2-level column
-    # MultiIndex for several.
-    if len(symbols) == 1:
+    # Older yfinance versions returned a flat frame for a single symbol and
+    # only used a 2-level column MultiIndex for several. The installed
+    # version now returns a MultiIndex even for one symbol, so check the
+    # actual shape instead of trusting len(symbols) == 1.
+    if not isinstance(raw.columns, pd.MultiIndex):
         return {symbols[0]: raw}
+    if len(symbols) == 1:
+        return {symbols[0]: raw.droplevel(0, axis=1)}
     out: dict[str, pd.DataFrame] = {}
     for sym in symbols:
         if sym in raw.columns.get_level_values(0):
