@@ -1,8 +1,16 @@
 "use client";
 
 import { useAtom } from "jotai";
-import { memo, Suspense, useCallback, useEffect } from "react";
 import dynamic from "next/dynamic";
+import { Suspense, memo, useCallback, useEffect } from "react";
+import {
+  chartTypeAtom,
+  focusHeatmapSearchAtom,
+  isGlobalSearchOpenAtom,
+  showHeatmapSettingsAtom,
+  showYTDAtom,
+  stockSearchSymbolAtom,
+} from "../atoms";
 import {
   addWatchlistAtom,
   closeConfirmModalAtom,
@@ -13,46 +21,62 @@ import {
   openConfirmModalAtom,
 } from "../atoms/terminal-ui";
 import { resetFiltersAtom } from "../atoms/terminal-ui";
-import { chartTypeAtom, focusHeatmapSearchAtom, isGlobalSearchOpenAtom, showHeatmapSettingsAtom, showYTDAtom, stockSearchSymbolAtom } from "../atoms";
 import { ConfirmationModal } from "../core/confirmation-modal";
 import { ShortcutsHelp } from "../core/keyboard-shortcuts";
 import { ViewSkeleton } from "../core/view-skeleton";
 import { Watchlist } from "../core/watchlist";
 import { useTerminalUI, useViewPrefetch } from "../hooks";
 import { useMarketDataQuery } from "../hooks";
-import { TerminalHeader } from "../layout/terminal-header";
-import { bloombergColors } from "../lib/theme-config";
-import type { NavItem } from "../layout/terminal-header";
-import { TerminalLayout } from "../layout/terminal-layout";
 import { AlertTicker } from "../layout/alert-ticker";
 import { TailRiskRibbon } from "../layout/tail-risk-ribbon";
+import { TerminalHeader } from "../layout/terminal-header";
+import type { NavItem } from "../layout/terminal-header";
+import { TerminalLayout } from "../layout/terminal-layout";
+import { bloombergColors } from "../lib/theme-config";
 import type { MarketItem } from "../types";
 
 // ── Eager: default landing view ────────────────────────────────────
-import { MarketView, KeyIndicatorsBar } from "../views/market-view";
+import { KeyIndicatorsBar, MarketView } from "../views/market-view";
 
 // ── Lazy: loaded only when user navigates to that view ─────────────
-const MarketMoversView = dynamic(() => import("../views/market-movers-view"), { loading: () => <ViewSkeleton /> });
-const MacroView        = dynamic(() => import("../views/macro-view").then(m => m.MacroView),        { loading: () => <ViewSkeleton /> });
-const CreditView       = dynamic(() => import("../views/credit-view").then(m => m.CreditView),      { loading: () => <ViewSkeleton /> });
-const NewsView         = dynamic(() => import("../views/news-view"),                                { loading: () => <ViewSkeleton /> });
-const ClippingsView    = dynamic(() => import("../views/clippings-view"),                           { loading: () => <ViewSkeleton /> });
-const StockView        = dynamic(() => import("../views/stock-view"),                               { loading: () => <ViewSkeleton /> });
-const PortfolioView    = dynamic(() => import("../views/portfolio-view").then(m => m.PortfolioView), { loading: () => <ViewSkeleton /> });
-const CryptoView       = dynamic(() => import("../views/crypto-view").then(m => m.CryptoView),      { loading: () => <ViewSkeleton /> });
-const FxView           = dynamic(() => import("../views/fx-view").then(m => m.FxView),              { loading: () => <ViewSkeleton /> });
-const TailRiskView     = dynamic(() => import("../views/tail-risk-view").then(m => m.TailRiskView), { loading: () => <ViewSkeleton /> });
+const MarketMoversView = dynamic(() => import("../views/market-movers-view"), {
+  loading: () => <ViewSkeleton />,
+});
+const MacroView = dynamic(() => import("../views/macro-view").then((m) => m.MacroView), {
+  loading: () => <ViewSkeleton />,
+});
+const CreditView = dynamic(() => import("../views/credit-view").then((m) => m.CreditView), {
+  loading: () => <ViewSkeleton />,
+});
+const NewsView = dynamic(() => import("../views/news-view"), { loading: () => <ViewSkeleton /> });
+const ClippingsView = dynamic(() => import("../views/clippings-view"), {
+  loading: () => <ViewSkeleton />,
+});
+const StockView = dynamic(() => import("../views/stock-view"), { loading: () => <ViewSkeleton /> });
+const PortfolioView = dynamic(
+  () => import("../views/portfolio-view").then((m) => m.PortfolioView),
+  { loading: () => <ViewSkeleton /> }
+);
+const CryptoView = dynamic(() => import("../views/crypto-view").then((m) => m.CryptoView), {
+  loading: () => <ViewSkeleton />,
+});
+const FxView = dynamic(() => import("../views/fx-view").then((m) => m.FxView), {
+  loading: () => <ViewSkeleton />,
+});
+const TailRiskView = dynamic(() => import("../views/tail-risk-view").then((m) => m.TailRiskView), {
+  loading: () => <ViewSkeleton />,
+});
 
 const MemoMarketMovers = memo(MarketMoversView);
-const MemoMacro        = memo(MacroView);
-const MemoCredit       = memo(CreditView);
-const MemoNews         = memo(NewsView);
-const MemoClippings    = memo(ClippingsView);
-const MemoStock        = memo(StockView);
-const MemoPortfolio    = memo(PortfolioView);
-const MemoCrypto       = memo(CryptoView);
-const MemoFx           = memo(FxView);
-const MemoTailRisk     = memo(TailRiskView);
+const MemoMacro = memo(MacroView);
+const MemoCredit = memo(CreditView);
+const MemoNews = memo(NewsView);
+const MemoClippings = memo(ClippingsView);
+const MemoStock = memo(StockView);
+const MemoPortfolio = memo(PortfolioView);
+const MemoCrypto = memo(CryptoView);
+const MemoFx = memo(FxView);
+const MemoTailRisk = memo(TailRiskView);
 
 function BloombergTerminal() {
   const {
@@ -61,7 +85,6 @@ function BloombergTerminal() {
     setCurrentView,
     isShortcutsHelpOpen,
     setIsShortcutsHelpOpen,
-    handleThemeToggle,
     handleMarketView,
     handleNewsView,
     handleMoversView,
@@ -79,7 +102,9 @@ function BloombergTerminal() {
   const { prefetchTier1 } = useViewPrefetch();
 
   // Prefetch tier-1 view chunks when idle after mount
-  useEffect(() => { prefetchTier1(); }, [prefetchTier1]);
+  useEffect(() => {
+    prefetchTier1();
+  }, [prefetchTier1]);
 
   // Jotai atoms
   const [isConfirmModalOpen] = useAtom(isConfirmModalOpenAtom);
@@ -120,29 +145,41 @@ function BloombergTerminal() {
 
   // ── Navigation items with shortcut keys ──────────────────────────────────
   const navItems: NavItem[] = [
-    { id: "market",     label: "MKT",   shortcut: "1", onClick: handleMarketView },
-    { id: "news",       label: "NEWS",  shortcut: "2", onClick: handleNewsView },
-    { id: "movers",     label: "GMOV",  shortcut: "3", onClick: handleMoversView },
-    { id: "clippings",  label: "CLIP",  shortcut: "4", onClick: handleClippingsView },
-    { id: "macro",      label: "MACRO", shortcut: "5", onClick: handleMacroView },
-    { id: "credit",     label: "CRDT",  shortcut: "6", onClick: handleCreditView },
-    { id: "portfolio",  label: "PORT",  shortcut: "P", onClick: handlePortfolioView },
-    { id: "crypto",     label: "CRYP",  shortcut: "C", onClick: handleCryptoView },
-    { id: "fx",         label: "FX",    shortcut: "E", onClick: handleFxView },
-    { id: "tail",       label: "TAIL",  shortcut: "T", onClick: handleTailView },
+    { id: "market", label: "MKT", shortcut: "1", onClick: handleMarketView },
+    { id: "news", label: "NEWS", shortcut: "2", onClick: handleNewsView },
+    { id: "movers", label: "GMOV", shortcut: "3", onClick: handleMoversView },
+    { id: "clippings", label: "CLIP", shortcut: "4", onClick: handleClippingsView },
+    { id: "macro", label: "MACRO", shortcut: "5", onClick: handleMacroView },
+    { id: "credit", label: "CRDT", shortcut: "6", onClick: handleCreditView },
+    { id: "portfolio", label: "PORT", shortcut: "P", onClick: handlePortfolioView },
+    { id: "crypto", label: "CRYP", shortcut: "C", onClick: handleCryptoView },
+    { id: "fx", label: "FX", shortcut: "E", onClick: handleFxView },
+    { id: "tail", label: "TAIL", shortcut: "T", onClick: handleTailView },
   ];
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
   const shortcuts = [
     // Search
     { key: "/", action: () => setIsGlobalSearchOpen(true), description: "Open global search" },
-    { key: "k", ctrlKey: true, action: () => setIsGlobalSearchOpen(true), description: "Open global search" },
+    {
+      key: "k",
+      ctrlKey: true,
+      action: () => setIsGlobalSearchOpen(true),
+      description: "Open global search",
+    },
     // Esc → back to market (not confirm)
     { key: "Escape", action: handleEscape, description: "Back / close overlay" },
     // Refresh
     { key: "r", ctrlKey: true, action: refreshData, description: "Refresh data" },
     // YTD toggle
-    { key: "y", action: () => { if (currentView !== "portfolio") setShowYTD((v) => !v); }, description: currentView === "portfolio" ? "Toggle THB ↔ USD (PORT only)" : "Toggle %Chg YTD / Daily" },
+    {
+      key: "y",
+      action: () => {
+        if (currentView !== "portfolio") setShowYTD((v) => !v);
+      },
+      description:
+        currentView === "portfolio" ? "Toggle THB ↔ USD (PORT only)" : "Toggle %Chg YTD / Daily",
+    },
     // View shortcuts (number keys)
     { key: "1", action: handleMarketView, description: "Market overview" },
     { key: "2", action: handleNewsView, description: "News" },
@@ -151,33 +188,53 @@ function BloombergTerminal() {
     { key: "5", action: handleMacroView, description: "Macro" },
     { key: "6", action: handleCreditView, description: "Credit" },
     { key: "p", action: handlePortfolioView, description: "Portfolio" },
-    { key: "i", action: () => { handleMarketView(); signalHeatmapSearch(n => n + 1); }, description: "Focus symbol search (MKT)" },
+    {
+      key: "i",
+      action: () => {
+        handleMarketView();
+        signalHeatmapSearch((n) => n + 1);
+      },
+      description: "Focus symbol search (MKT)",
+    },
     { key: "c", action: handleCryptoView, description: "Crypto" },
     { key: "e", action: handleFxView, description: "FX / Forex" },
     { key: "t", action: handleTailView, description: "Tail Risk Monitor" },
     // Help
     { key: "?", shiftKey: true, action: handleHelpClick, description: "Show keyboard shortcuts" },
     // Toggle chart type
-    { key: "T", ctrlKey: true, shiftKey: true, action: () => setGlobalChartType(t => t === "candle" ? "area" : "candle"), description: "Toggle Area / Candle chart" },
+    {
+      key: "T",
+      ctrlKey: true,
+      shiftKey: true,
+      action: () => setGlobalChartType((t) => (t === "candle" ? "area" : "candle")),
+      description: "Toggle Area / Candle chart",
+    },
     // New watchlist
-    { key: "n", ctrlKey: true, action: () => setIsWatchlistOpen(true), description: "Create new watchlist" },
+    {
+      key: "n",
+      ctrlKey: true,
+      action: () => setIsWatchlistOpen(true),
+      description: "Create new watchlist",
+    },
     // Tab switching within view
-    { key: "1–9", altKey: true, description: "Switch to tab N in current view" } as any,
+    // Display-only in the help panel — actual per-view tab shortcuts (1–9) are
+    // bound inside each view, not here, so this entry has no action to run.
+    { key: "1–9", altKey: true, action: () => {}, description: "Switch to tab N in current view" },
   ];
 
   const headerColors = isDarkMode ? bloombergColors.dark : bloombergColors.light;
 
   const VIEW_SUBTITLES: Record<string, string> = {
-    news:      "NEWS & SOCIAL",
-    movers:    "GLOBAL MARKET MOVERS",
+    news: "NEWS & SOCIAL",
+    movers: "GLOBAL MARKET MOVERS",
     clippings: "CLIPPINGS · OLLAMA AI",
-    macro:     "MACRO ECONOMICS",
-    credit:    "CREDIT RISK & STRESS",
+    macro: "MACRO ECONOMICS",
+    credit: "CREDIT RISK & STRESS",
     portfolio: "PORTFOLIO",
-    crypto:    "CRYPTO",
-    fx:        "FX / FOREX",
-    stock:     "STOCK ANALYSIS",
-    tail:      "TAIL RISK MONITOR",
+    crypto: "CRYPTO",
+    fx: "FX / FOREX",
+    stock: "STOCK ANALYSIS",
+    tail: "TAIL RISK MONITOR",
   };
 
   // ── Shared header (filter bar + key indicators merged in) ─────────────────
@@ -189,19 +246,19 @@ function BloombergTerminal() {
         navItems={navItems}
         onSearchClick={() => setIsGlobalSearchOpen(true)}
         onHelpClick={handleHelpClick}
-        onThemeToggle={handleThemeToggle}
         showYTD={showYTD}
         onYTDToggle={() => setShowYTD((v) => !v)}
         centerSlot={
-          currentView === "market" && data
-            ? <KeyIndicatorsBar data={data} colors={headerColors} />
-            : VIEW_SUBTITLES[currentView]
-            ? (
-              <span className="text-[9px] font-mono px-2 tracking-widest" style={{ color: headerColors.textSecondary, opacity: 0.55 }}>
-                {VIEW_SUBTITLES[currentView]}
-              </span>
-            )
-            : undefined
+          currentView === "market" && data ? (
+            <KeyIndicatorsBar data={data} colors={headerColors} />
+          ) : VIEW_SUBTITLES[currentView] ? (
+            <span
+              className="text-[9px] font-mono px-2 tracking-widest"
+              style={{ color: headerColors.textSecondary, opacity: 0.55 }}
+            >
+              {VIEW_SUBTITLES[currentView]}
+            </span>
+          ) : undefined
         }
         onSettingsClick={() => setShowHeatmapSettings((v) => !v)}
         onBack={currentView !== "market" ? handleEscape : undefined}
@@ -280,9 +337,7 @@ function BloombergTerminal() {
     <TerminalLayout shortcuts={shortcuts}>
       {headerBlock}
       <div className="flex-1 min-h-0 overflow-hidden">
-        <Suspense fallback={<ViewSkeleton />}>
-          {renderView()}
-        </Suspense>
+        <Suspense fallback={<ViewSkeleton />}>{renderView()}</Suspense>
       </div>
       <TailRiskRibbon />
       <AlertTicker />
