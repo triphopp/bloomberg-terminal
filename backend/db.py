@@ -492,6 +492,13 @@ def init_portfolio_v2() -> None:
         # (POST /api/v2/portfolio/accounts).
 
 
+def init_alerts_schema() -> None:
+    """Alert Rule Engine tables (memory/plans/alert-rule-engine.md §5)."""
+    from alerts.schema import create_alert_tables
+    with get_db() as conn:
+        create_alert_tables(conn)
+
+
 def init_sync_layer() -> None:
     """Cloud-sync support: per-row `updated_at` (LWW) + delete tombstones.
 

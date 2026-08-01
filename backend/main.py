@@ -17,12 +17,13 @@ logging.basicConfig(
 logger = logging.getLogger("api")
 
 from config import CORS_ORIGINS
-from db import init_db, init_portfolio_v2, init_sync_layer, seed_symbol_lists
+from db import init_db, init_portfolio_v2, init_sync_layer, init_alerts_schema, seed_symbol_lists
 from analytics.regime_calibration import ensure_model_fresh
 from analytics.regime_v2 import ensure_v2_fresh
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals
+from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals
 import sync
+from alerts import scheduler as alert_scheduler
 
 app = FastAPI(title="Market Data API")
 
@@ -37,6 +38,7 @@ app.add_middleware(
 init_db()
 init_portfolio_v2()
 init_sync_layer()
+init_alerts_schema()
 seed_symbol_lists()
 
 # ── Cloud sync: pull latest from G: (read cloud first), then start pusher ──────
@@ -49,6 +51,9 @@ ensure_v2_fresh(triggered_by="startup")
 
 # ── BC calibration (runs in background if missing or >90 days old) ────────────
 ensure_calibrated(triggered_by="startup")
+
+# ── Alert rules: periodic scan (no-ops while no rule is enabled) ──────────────
+alert_scheduler.start_background_scan()
 
 # ── Mount routers ─────────────────────────────────────────────────────────────
 app.include_router(market.router)
@@ -87,6 +92,7 @@ app.include_router(regime.router)
 app.include_router(rotation.router)
 app.include_router(stoploss.router)
 app.include_router(alerts.router)
+app.include_router(alert_rules.router)
 app.include_router(ticker.router)
 app.include_router(analytics.router)
 app.include_router(fear_greed.router)

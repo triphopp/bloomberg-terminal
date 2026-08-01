@@ -28,7 +28,7 @@ def _device(monkeypatch, tmp_path, name):
     importlib.reload(config)
     import db
     importlib.reload(db)
-    db.init_db(); db.init_portfolio_v2(); db.init_sync_layer()
+    db.init_db(); db.init_portfolio_v2(); db.init_alerts_schema(); db.init_sync_layer()
     import sync.config as scfg
     importlib.reload(scfg)
     import sync.manager as mgr
@@ -115,3 +115,63 @@ def test_conflict_preserved(cloud, tmp_path, monkeypatch):
     assert res["conflicts"] >= 1, "divergent edits should register a conflict"
     # loser version is written to conflicts/ — zero data loss
     assert list((cloud / "conflicts").glob("*.json")), "conflict file not written"
+
+
+def _add_alert_rule(db, name: str, enabled: int = 1) -> str:
+    rid = str(uuid.uuid4())
+    with db.get_db() as c:
+        c.execute(
+            "INSERT INTO alert_rules "
+            "(id, name, enabled, scope_json, timeframe, expr_json, trigger, "
+            " cooldown_bars, notify_json, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?, datetime('now'), datetime('now'))",
+            (rid, name, enabled, '{"type":"watchlist"}', "1d",
+             '{"op":"cmp","left":{"src":"price","field":"close"},"cmp":"gt","right":{"src":"const","value":1}}',
+             "edge", 1, '["ticker"]'),
+        )
+    return rid
+
+
+def test_alert_rules_sync_but_state_and_events_stay_local(cloud, tmp_path, monkeypatch):
+    """alert_rules (the definitions) syncs like pinned_assets does. alert_rule_state
+    and alert_events are deliberately excluded from SYNC_TABLES (sync/config.py) —
+    each device should end up with its own independent, un-synced copies."""
+    import time
+
+    # PC creates a rule + local scan state/event, pushes
+    db, sync = _device(monkeypatch, tmp_path, "PC")
+    rid = _add_alert_rule(db, "AMD RVOL Spike")
+    with db.get_db() as c:
+        c.execute(
+            "INSERT INTO alert_rule_state (rule_id, symbol, last_state) VALUES (?, 'AMD', 'true')",
+            (rid,),
+        )
+        c.execute(
+            "INSERT INTO alert_events (rule_id, symbol, fired_at, bar_time, snapshot_json) "
+            "VALUES (?, 'AMD', datetime('now'), '2026-01-01', '{}')",
+            (rid,),
+        )
+    assert sync.push()["status"] == "ok"
+
+    # MAC pulls: gets the rule DEFINITION, but no state/events (never pushed anywhere)
+    db, sync = _device(monkeypatch, tmp_path, "MAC")
+    assert sync.pull()["status"] == "ok"
+    with db.get_db() as c:
+        rules = c.execute("SELECT id, name, enabled FROM alert_rules").fetchall()
+        state_rows = c.execute("SELECT * FROM alert_rule_state").fetchall()
+        event_rows = c.execute("SELECT * FROM alert_events").fetchall()
+    assert [r["name"] for r in rules] == ["AMD RVOL Spike"], "rule definition should have synced"
+    assert state_rows == [], "scan state must NOT sync — each device regenerates its own"
+    assert event_rows == [], "fired-event history must NOT sync — excluded from SYNC_TABLES"
+
+    # MAC disables the rule, pushes; PC pulls and should see it disabled (LWW)
+    time.sleep(1.1)
+    with db.get_db() as c:
+        c.execute("UPDATE alert_rules SET enabled = 0, updated_at = datetime('now') WHERE id = ?", (rid,))
+    sync.push()
+
+    db, sync = _device(monkeypatch, tmp_path, "PC")
+    sync.pull()
+    with db.get_db() as c:
+        enabled = c.execute("SELECT enabled FROM alert_rules WHERE id = ?", (rid,)).fetchone()["enabled"]
+    assert enabled == 0, "LWW should carry MAC's disable across to PC"

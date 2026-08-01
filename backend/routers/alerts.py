@@ -42,7 +42,7 @@ def _get_stoploss_breaches(account_id: str) -> list[dict]:
             rows = conn.execute("""
                 SELECT t.symbol, AVG(t.price_entry) as avg_entry
                 FROM trades t
-                WHERE t.status = 'open'
+                WHERE t.win_loss = 'P'
                   AND (? = 'all' OR t.account_id = ?)
                 GROUP BY t.symbol
             """, (account_id, account_id)).fetchall()

@@ -9,7 +9,10 @@
  *   - "pane"    → rendered in a separate sub-pane below (e.g. MACD, RSI, Volume)
  */
 
+import type { AlertLabel, IndicatorOutput } from "@/lib/alerts/labels";
 import type { IChartApi, ISeriesApi, SeriesType } from "lightweight-charts";
+
+export type { AlertLabel, IndicatorOutput };
 
 // ── OHLCV Bar ────────────────────────────────────────────────────────────────
 
@@ -165,6 +168,10 @@ export interface IndicatorRegistryEntry {
    * durations — standard deviations, thresholds, ratios must never be scaled.
    */
   timeScalableParams?: string[];
+  /** Values this indicator exposes for use as an alert Operand (plan §2). */
+  outputs?: IndicatorOutput[];
+  /** Named predicate templates for the alert rule builder (plan §2, §8.5). */
+  alertLabels?: AlertLabel[];
 }
 
 // ── Chart State ──────────────────────────────────────────────────────────────

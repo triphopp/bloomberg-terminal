@@ -1,3 +1,4 @@
+import { Toaster } from "@/components/ui/sonner";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import "../styles/globals.css";
@@ -17,6 +18,7 @@ function AppSkeleton() {
         <div className="flex gap-1">
           {[...Array(12)].map((_, i) => (
             <div
+              // biome-ignore lint/suspicious/noArrayIndexKey: fixed-length decorative array, never reordered or mutated
               key={i}
               className="w-2 h-6 animate-pulse"
               style={{
@@ -39,9 +41,8 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
-        <Suspense fallback={<AppSkeleton />}>
-          {children}
-        </Suspense>
+        <Suspense fallback={<AppSkeleton />}>{children}</Suspense>
+        <Toaster position="bottom-right" />
       </body>
     </html>
   );
