@@ -16,6 +16,35 @@ logging.basicConfig(
 )
 logger = logging.getLogger("api")
 
+
+class _SuppressReloadShutdownRace(logging.Filter):
+    """Hide one specific benign traceback from `uvicorn --reload` on Ctrl+C.
+
+    The reloader's parent supervisor SIGTERMs the worker child while the child
+    is already mid-shutdown from its own SIGINT — uvicorn's capture_signals()
+    then re-raises the captured signal into asyncio.Runner's default SIGINT
+    handler, which raises KeyboardInterrupt inside whichever coroutine happens
+    to be resuming at that instant (usually the lifespan's `await receive()`).
+    The server has already exited 0 and freed its port by the time this logs;
+    it's cosmetic, not a real failure, and reproduces even without `npm run
+    dev:all` in the picture (confirmed with a bare `python -m uvicorn --reload`
+    under a plain process-group SIGINT). Verified 2026-08-01: never triggers
+    without --reload, and the message carries no exc_info (asyncio's own
+    default_exception_handler pre-formats the traceback into the string), so
+    matching has to be on the message text itself.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.exc_info is not None:
+            return True
+        msg = record.getMessage()
+        if "Traceback (most recent call last):" not in msg:
+            return True
+        return not ("KeyboardInterrupt" in msg and "asyncio.exceptions.CancelledError" in msg)
+
+
+logging.getLogger("uvicorn.error").addFilter(_SuppressReloadShutdownRace())
+
 from config import CORS_ORIGINS
 from db import init_db, init_portfolio_v2, init_sync_layer, init_alerts_schema, seed_symbol_lists
 from analytics.regime_calibration import ensure_model_fresh

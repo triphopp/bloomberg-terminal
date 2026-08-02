@@ -8,98 +8,52 @@
 
 ```
 memory/
-├── INDEX.md                         ← คุณอยู่ที่นี่
+├── INDEX.md                         ← คุณอยู่ที่นี่ (navigation map — ห้ามใส่ content จริง)
 ├── AGENTS.md                        ← กฎการเขียนรายงาน + format สำหรับทุก agent (อ่านก่อนเขียนไฟล์ใดๆ)
-├── project_summary.md               ← ข้อมูลครบทุกอย่าง (อ่านก่อนทุกครั้ง)
+├── project_summary.md               ← slim core: stack, env vars, 46 routers, DB schema, 7 views, known issues
 │
-├── reference/
-│   ├── architecture.md             ← stack, data flow, 26 routers, key files, วิธีเพิ่ม view/endpoint
+├── reference/                       ← ✅ tracked ใน git (มีครบทุกเครื่อง)
+│   ├── architecture.md             ← stack, data flow, routers, key files, วิธีเพิ่ม view/endpoint
 │   ├── api-endpoints.md            ← all endpoints per router + caching strategy + Next.js proxy routes
-│   ├── frontend-structure.md       ← full component tree + key exports per file + keyboard shortcuts
+│   ├── frontend-structure.md       ← full component tree + key exports + keyboard shortcuts + TICK DATA board
 │   ├── data-shapes.md              ← API response JSON shapes + TypeScript interfaces (avoid reading routers)
 │   ├── gotchas.md                  ← error dictionary + anti-patterns + "Where is X?" lookup + env var map
 │   ├── data-catalog.md             ← 17 data categories available for analysis
-│   └── terminal-commands.md        ← command mode reference: ALERT/VIEW/DISPLAY/INFO commands + ticker crawl
+│   └── terminal-commands.md        ← command mode: ALERT/VIEW/DISPLAY/INFO commands + ticker crawl
 │
-├── plans/
-│   ├── completed/analytics-cash-card.md ← ✅ CASH tile + MARKET VALUE split (excl./incl. idle cash) in ANALYTICS Capital Breakdown (done 2026-07-14)
-│   ├── completed/cash-transfer-feature.md ← ✅ Linked-pair TRANSFER entry_type in cash_ledger, fixes per-account invested_capital on inter-account moves (done 2026-07-14)
-│   ├── system-audit-2026-07/        ← 🔍 Bug audit ทั้งระบบ: fixes/ (F01–F09) + refactor/ (R01–R06) + README tracker [ACTIVE 2026-07-02]
-│   ├── completed/analytics-charts-enhancement.md ← ✅ PORT Analytics: Dividend M/Q/Y + stacked bar + currency fix (done 2026-06-05)
-│   ├── completed/dcc-correlation-monitor.md ← ✅ EWMA-DCC correlation spike detection + EWS integration + backtest (done 2026-06-06)
-│   ├── completed/trade-edit-and-sector-standard.md ← ✅ TradeEditModal + TradePatch 17 fields + bulk-patch-sector (done 2026-05-23)
-│   ├── bloomberg-cli-mcp.md         ← Bloomberg CLI + MCP server: bloomberg market/portfolio/sectors + bloomberg mcp (13 tools) [NOT STARTED]
-│   ├── data-source-contract.md     ← Canonical response models (QuoteSnapshot, OHLCVFrame ฯลฯ) + plug-and-play provider swap [NOT STARTED]
-│   ├── portfolio-risk-system.md     ← Risk Engine: VaR/CVaR/Greeks/Stress + RiskTab + Action Log [PLANNING]
-│   ├── refactor-backlog.md          ← technical debt + pending refactors
-│   ├── ui-design-system.md          ← Bloomberg UI standardization: design tokens, shared primitives [IN PROGRESS — Step 1 done]
-│   ├── threshold-calibration.md             ← Regime threshold calibration: RMT (GEOM) + MRS 4-state HMM (CORR) [NOT STARTED]
-│   ├── yield-curve-interpretation-workflow.md ← 5-dimension yield curve interpretation [NOT STARTED]
-│   │
-│   ├── infra/                       ← Infrastructure & DevOps plans
-│   │   ├── load-optimization.md         ← 7-step CPU/RAM fix [steps 5-6 ยังค้าง]
-│   │   └── production-infrastructure.md ← Docker, CI/CD, structlog, SQLite→PG, Redis, thread semaphore [NOT STARTED]
-│   │
-│   └── completed/                   ← ✅ 24 plans ที่ implement เสร็จ 100%
-│       ├── algorithmic-fixes.md         ← AF-1~5 done 2026-05-22
-│       ├── backtest-v2.md               ← done 2026-05-22
-│       ├── chart-data-range.md          ← All 5 steps: MAX period + default 3m + cache TTL 12h + range badge + loading skeleton done 2026-05-29
-│       ├── country-equity-rotation.md   ← 3-layer rotation engine (Momentum + Macro Quality + Carry) 14 ETFs + ROTATION tab in Macro view done 2026-05-29
-│       ├── data-source-contract.md      ← Canonical models + typed adapter + 6 routers migrated + Phase B bug fixes done 2026-05-29
-│       ├── equity-allocation-signal.md  ← 3-layer confluence engine: backend analytics + router + SQLite + ALLOCATION tab in Macro view done 2026-05-29
-│       ├── frontend-code-splitting.md   ← all 7 changes done: code-splitting + React.memo + Suspense (2026-05-22) + optimizePackageImports + dead deps removal + prefetch hook + bundle analyzer (2026-05-29)
-│       ├── gmov-enhancement.md          ← done 2026-05-22
-│       ├── international-sectors.md     ← done 2026-05-22
-│       ├── launch-scripts.md            ← done 2026-05-22
-│       ├── macro-worldbank-charts.md    ← done 2026-05-20
-│       ├── market-quality-framework.md  ← done 2026-05-21
-│       ├── market-session-workflow.md   ← done 2026-05-21
-│       ├── portfolio-sell-dividend-y-key.md ← done 2026-05-23
-│       ├── portfolio-view-refactor.md   ← done 2026-05-23 — 2,610→2 lines, 15 files in portfolio/
-│       ├── sector-classification-db.md  ← done 2026-05-22
-│       ├── sector-bc-issues.md          ← P1+P2+P3+P6+P7 fixed 2026-05-30 (FRED SSL + disk cache + parallel breadth + HYG-LQD fallback)
-│       ├── sector-selection-signal.md   ← 4-layer BC+MOM+VAL+F: backend analytics (5) + router + SECTOR tab in Macro view done 2026-05-29
-│       ├── tab-shortcuts-header-slim.md ← Alt+N sub-tab shortcuts + per-view header removal + ← ESC clickable + centerSlot subtitle done 2026-05-30
-│       ├── macro-tab-consolidation.md   ← MACRO 9→6 tabs: mktquality+allocation+rotation+sector → SIGNALS split-panel done 2026-05-30
-│       ├── strategy-classifier.md       ← done 2026-05-22
-│       ├── trade-edit-and-sector-standard.md ← TradePatch 17 fields + bulk-patch-sector + TradeEditModal done 2026-05-23
-│       ├── us-sector-rotation.md        ← ⛔ DEPRECATED — merged into sector-selection-signal.md
-│       ├── portfolio-cloud-sync.md      ← ✅ PC↔Mac Google Drive sync: JSON snapshots, startup pull, row-LWW + tombstones, SYNC chip, no login (done 2026-06-26)
-│       └── view-consolidation.md        ← done 2026-05-21
-│
-└── sessions/
-    ├── INDEX.md                    ← audit trail: ไฟล์ไหนถูกเปลี่ยนเมื่อไหร่
-    ├── 2026-05-22-algorithmic-fixes-and-frontend-opt.md
-    ├── 2026-05-22-sector-classification-db.md
-    ├── 2026-05-21-view-consolidation-and-design-system.md
-    ├── 2026-05-21-market-session-display.md
-    ├── 2026-05-21-market-quality-framework.md
-    ├── 2026-05-20-bar-chart-domain.md
-    ├── 2026-05-19-pipeline-refactor.md
-    ├── 2026-05-18-bot-statistics.md
-    ├── 2026-05-18-all-changes.md
-    └── reports/                    ← audit reports
-        ├── analytics-charts-risk-assessment.md ← 🔴 F2 cost methodology flaw + O(P×T), F3 partial conversion
-        ├── frontend-performance-report.md ← ⚡ Bundle audit: 762KB views, no code-split, 1.1MB initial JS
-        ├── production-readiness-report.md ← 🔴 47 gaps for 100k-user deployment (12 critical blockers)
-        ├── computation-analysis-report.md ← 🦀 Rust viability: 4 heavy computations + 5 algorithmic fixes + roadmap
-        ├── macro-worldbank-charts-report.md
-        ├── gmov-enhancement-report.md
-        ├── api-test-report.md
-        ├── hardcoded-values.md
-        └── unit-tests.md
+├── plans/                           ← ⚠️ gitignored — machine-local
+├── sessions/                        ← ⚠️ gitignored — machine-local
+└── reports/                         ← ⚠️ gitignored — machine-local
 ```
+
+> ### ⚠️ `plans/` · `sessions/` · `reports/` ไม่ได้อยู่ใน git
+>
+> `.gitignore` (บรรทัด 53-56) กันไว้ทั้ง 3 โฟลเดอร์ เพราะเป็น audit trail ส่วนตัว
+> **ผลคือแต่ละเครื่องมีไฟล์ไม่เหมือนกัน** และ INDEX.md (ซึ่ง tracked) จะ list ไฟล์ที่เครื่องอื่นมีแต่เครื่องนี้ไม่มี
+>
+> **การที่ไฟล์ในตารางข้างล่างไม่มีอยู่ ไม่ได้แปลว่ามันถูกลบ** — แปลว่ามันอยู่บนเครื่องอื่น
+> ก่อนสรุปว่า plan ไหนหายไป ให้เช็คบนเครื่องที่สร้างมันก่อน
+>
+> **สถานะ ณ 2026-08-01 บนเครื่อง macOS (`~/bloomberg-terminal`):**
+> ```
+> plans/alert-rule-engine.md                          🔄 phase 4+6/7 done
+> plans/pane-height-persistence-fix.md                📋 planned
+> plans/completed/tickdata-rates-fx-consolidation.md  ✅ done 2026-08-01
+> ```
+> `sessions/` และ `reports/` ยังไม่มีบนเครื่องนี้
 
 ---
 
 ## ต้องการรู้เรื่องอะไร → อ่านที่ไหน
+
+> เส้นทาง `plans/*` · `reports/*` · `sessions/*` เป็น machine-local (ดูคำเตือนข้างบน) — `reference/*` กับ `project_summary.md` มีครบทุกเครื่อง
 
 | ต้องการ | ไฟล์ |
 |---------|------|
 | **กฎการเขียน report / format / workflow** | **`AGENTS.md`** |
 | วิธี run app (2 terminals, env vars) | `reference/architecture.md` → "Running the app" |
 | Tech stack, API endpoints ทั้งหมด, DB schema | `project_summary.md` |
-| Keyboard shortcuts (1-6, P, C, E, Y, i…) | `project_summary.md` → "Global Keyboard Shortcuts" |
+| Keyboard shortcuts (1-6, P, T, Y, i… — `C`/`E` freed 2026-08-01) | `project_summary.md` → "Global Keyboard Shortcuts" |
 | Key file paths (atoms, hooks, chart) | `reference/architecture.md` → "Key files" |
 | วิธีเพิ่ม view / endpoint ใหม่ | `reference/architecture.md` → "Navigation" + "Backend layout" |
 | Known bugs / limitations | `project_summary.md` → "Known Issues" |
@@ -113,6 +67,8 @@ memory/
 | **Bloomberg CLI + MCP Server** (`bloomberg market/portfolio/mcp`, 13 MCP tools) | `plans/bloomberg-cli-mcp.md` |
 | **Portfolio Risk Management System** (VaR/CVaR/Greeks/Stress, RiskTab, Action Log) | `plans/portfolio-risk-system.md` |
 | **Data Source Contract** (canonical models + OHLCVFrame migration fix + Dividends fix + cache clear) | ✅ Phase A+B partial done — `plans/completed/data-source-contract.md`; Phase B remainder in `plans/data-source-contract.md` |
+| **Pane Height Persistence Fix** (pane ยุบ 0 + drag ไม่ persist ข้าม reload) 📋 | `plans/pane-height-persistence-fix.md` |
+| **TICK DATA Consolidation** (RATES·US/JP curve + FX เข้า MKT tick board, ลบ CRYP/FX views) ✅ done 2026-08-01 | `plans/completed/tickdata-rates-fx-consolidation.md` |
 | **Analytics Charts Risk Assessment (F2 critical issues)** | `reports/analytics-charts-risk-assessment.md` |
 | **Trade Edit + Sector Standardization** (ทำเสร็จแล้ว) | `plans/completed/trade-edit-and-sector-standard.md` |
 | **Trade Edit Risk Assessment (11 risks, all fixable)** | `reports/trade-edit-risk-assessment.md` |
@@ -127,6 +83,9 @@ memory/
 | **Stock Analysis Nested Tab Shortcuts** (Alt+N outer, Alt+Shift+N inner) | ❌ not started — `plans/stock-analysis-tab-shortcuts.md` |
 | **VP Indicator Upgrade** (session timezone fix B1 🔴, visible-range VP, delta profile, naked POC, HVN/LVN, config UI) | 🔄 code-complete, browser verify pending — `plans/vp-indicator-upgrade.md`; audit: `reports/vp-indicator-risk-report.md` |
 | **P/E History Pane + EPS Surprise Labels** (`/api/stock/pe-history`, PEPane recharts sub-pane + valuation bands, earnings beat/miss color) | 🔄 code-complete, backend HTTP verified, frontend visual pending — `plans/pe-earnings-visualization.md` |
+| **US/JP bond curves** (`/api/rates/curve`, UST 11 tenor FRED + JGB 15 tenor MOF, ทำไม yfinance ใช้ไม่ได้) | `reference/api-endpoints.md` → Rates; shape ใน `reference/data-shapes.md` |
+| **TICK DATA board** (6 sections, ยุบได้, bp vs %chg, `selectedTickId` vs `selectedLabel`) | `reference/frontend-structure.md` → "MKT — TICK DATA board" |
+| **Ctrl+C แล้ว dev:all ขึ้น traceback** | `reference/gotchas.md` → "npm run dev:all dumps a scary traceback" |
 | Data catalog — ข้อมูลทั้งหมดที่ดึงได้ 17 หมวด | `reference/data-catalog.md` |
 | **SEC Thailand API** — endpoints, key config, migration status, One Report structure | `project_summary.md` → "SEC Thailand Open API" |
 | International sectors (TH/CN/KR/EU) + sector constituents (ทำเสร็จแล้ว) | `plans/completed/international-sectors.md` |
@@ -144,7 +103,7 @@ memory/
 | Load optimization steps ที่ค้าง | `plans/infra/load-optimization.md` |
 | View consolidation (ลบ GVOL/EQTY, reassign keys) (ทำเสร็จแล้ว) | `plans/completed/view-consolidation.md` |
 | UI Design System shared primitives | `plans/ui-design-system.md` + `components/bloomberg/core/ui-primitives.tsx` |
-| 9 views — keyboard shortcuts (1-6, P, C, E) | `CLAUDE.md` → "Views" section |
+| 7 views — keyboard shortcuts (1-6, P, T) + TICK DATA board | `CLAUDE.md` → "Views" section |
 | session X ทำอะไร / ไฟล์ไหนเปลี่ยน | `sessions/INDEX.md` |
 | **OPTIONS Greeks math derivation + bug log** | `reports/options-greeks-math-report.md` |
 | **Strategy Builder** (19 templates, multi-expiry Calendar/Diagonal, payoff w/ BS pricing, PoP/E[P&L]/Kelly ranking) | ✅ done 2026-06-08 — `plans/completed/strategy-builder.md` |
@@ -154,11 +113,11 @@ memory/
 
 ---
 
-## Feature Status (อัพเดต 2026-06-02)
+## Feature Status (อัพเดต 2026-08-01)
 
 | Feature | สถานะ |
 |---------|--------|
-| Backend 22 routers modular (inc. sec + sec_v2) | ✅ |
+| Backend 46 routers modular (inc. sec + sec_v2 + rates) | ✅ verified 2026-08-01 — 46 files = 46 mounted |
 | **SEC Thailand API — legacy (old portal)** Fund factsheet + Fund daily + Common | ✅ done 2026-05-29 — `routers/sec.py`, expires 2026-06-30 |
 | **SEC Thailand API — Bond v2** (6 endpoints, cursor pagination) | ✅ done 2026-05-29 — `routers/sec_v2.py`, `SEC2_API_KEY` |
 | **SEC Thailand API — Fund v2** (21 endpoints: general-info/factsheet/outstanding/daily) | ✅ done 2026-05-29 — `routers/sec_v2.py`, `SEC2_API_KEY` |
@@ -178,9 +137,9 @@ memory/
 | International sectors (TH/CN/KR/EU) | 🔄 ready to seed — run POST /api/sectors/fetch per index |
 | Dynamic symbol lists (SQLite) | 📋 planned |
 | Data Source Adapter Layer | 🔄 Phase A done (models + typed adapter + 6 routers migrated) |
-| Tests | ✅ backend/tests/test_greeks.py (58 tests, 58 pass) — `cd backend && python -m pytest tests/ -v` |
+| Tests | ✅ verified 2026-08-01 — backend **291 pass** (`pytest tests/ -q`), frontend **44** (`npm run test:alerts`) + **13** (`npm run test:chart`) |
 | Market Quality Framework — 4 layers | ✅ done 2026-05-21 |
-| View Consolidation (12→10→9 views) | ✅ — GVOL/EQTY removed 2026-05-21; RMI removed 2026-05-24; keys reordered (CLIP=4, MACRO=5, CRDT=6, PORT=P) |
+| View Consolidation (12→10→9→7 views) | ✅ — GVOL/EQTY removed 2026-05-21; RMI 2026-05-24; **CRYP `C` + FX `E` 2026-08-01** (FX → TICK DATA board, crypto → global search). Keys `C`/`E` now free |
 | UI Design System — ui-primitives.tsx | 🔄 in progress — Step 1 done (primitives created), 7 views + header remain (market-view is reference impl) |
 | UI Design System — news/clippings audit | ✅ done 2026-05-21 — both already well-aligned |
 | Macro — World Bank Charts | ✅ done 2026-05-20 |
@@ -230,7 +189,7 @@ memory/
 | Yield Curve Interpretation (5-dimension) | ❌ not started — planning |
 | View-aware queries (don't fetch inactive views) | ❌ not started |
 | Cache race condition fix (cache stampede) | ❌ not started |
-| **Frontend: code splitting** (next/dynamic 9 views) | ✅ done 2026-05-22 — `bloomberg-terminal.tsx` lines 35-44: 9 lazy views + MarketView eager — plan moved to `completed/` |
+| **Frontend: code splitting** (next/dynamic) | ✅ done 2026-05-22 — `bloomberg-terminal.tsx`: **8 lazy views** + MarketView eager (was 9 — CryptoView/FxView removed 2026-08-01, TailRiskView added) |
 | **Frontend: React.memo + Suspense + skeleton** | ✅ done 2026-05-22 — memo() ทุก view, `<Suspense>` wrap renderView(), ViewSkeleton CSS tokens |
 | **Frontend: inline styles → constants** | 🔄 partial done 2026-05-22 — ViewSkeleton only; full extraction deferred (low ROI) |
 | **Frontend: optimizePackageImports** (27 radix-ui + lucide-react + recharts) | ✅ done 2026-05-29 — `next.config.mjs` + `output: "standalone"` |
@@ -254,6 +213,10 @@ memory/
 | **Algorithmic fixes — AF-4** (15-pass→single-pass, sector aggregates) | ✅ done 2026-05-22 — `market.py`: `_single_pass_aggregates()` helper |
 | **Algorithmic fixes — AF-5** (useMemo 4-layer, GridTradingTab + StrategyFitTab) | ✅ done 2026-05-22 — `stock-view.tsx`: prices→stats→gridParams→sim→suit, calcHurst ไม่ rerun บน slider drag |
 | **Computation optimization — Phase 3 Rust/WASM** (hurst-rs, grid-sim-rs, strategy-rs) | 📋 planned — only if AF-1~5 insufficient |
+| **TICK DATA cross-asset board** (RATES·US 11 + RATES·JP 15 + FX 20 + 3 index regions, ยุบได้) | ✅ done 2026-08-01 — `plans/completed/tickdata-rates-fx-consolidation.md` |
+| **Rates router** (`/api/rates/curve` — FRED daily UST + MOF JGB CSV + FRED fallback) | ✅ done 2026-08-01 — `backend/routers/rates.py` |
+| **dev:all Ctrl+C traceback** | ✅ fixed 2026-08-01 — cosmetic uvicorn reload race, filtered in `backend/main.py` |
+| **Pane indicator height persistence** | 🔴 open — root-caused 2026-08-01, `plans/pane-height-persistence-fix.md` |
 
 ---
 

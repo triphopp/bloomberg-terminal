@@ -120,21 +120,21 @@ async def get_x():
     return data
 ```
 
-## Views (9 views, post-RMI removal 2026-05-24)
+## Views (7 views, post-CRYP/FX removal 2026-08-01)
 
 | Key | Button | View | Content |
 |-----|--------|------|---------|
-| `1` | MKT   | market-view    | Watchlist · Chart · Global indices ticker |
+| `1` | MKT   | market-view    | Watchlist · Chart · TICK DATA board (indices · RATES·US · RATES·JP · FX) |
 | `2` | NEWS  | news-view      | Financial news · Facebook social feed · Polymarket column (right 256px) |
 | `3` | GMOV  | market-movers  | Global indices table · Heatmap treemap |
 | `4` | CLIP  | clippings-view | Obsidian markdown notes · Ollama AI |
 | `5` | MACRO | macro-view     | 7 tabs: dashboard, yield, indicators, fed, country, compare, signals |
 | `6` | CRDT  | credit-view    | 4 tabs: overview, spreads, stress, consumer |
 | `P` | PORT  | portfolio-view | 5 top-level: PORTFOLIO (sub: POSITIONS·OPTIONS·TRADES·CASH·ENTRY) · ANALYTICS (sub: P&L·BACKTEST) · RISK · TOOLS (sub: THESES·IMPORT) · PAPER (sub: DASHBOARD·TRADE·POSITIONS·OPTIONS·HISTORY) |
-| `C` | CRYP  | crypto-view    | 20 crypto coins · Chart |
-| `E` | FX    | fx-view        | 20 FX pairs · Chart |
 
-**Removed:** GVOL (fake `Math.random()` data), EQTY (duplicates MKT search), RMI (removed 2026-05-24)  
+**TICK DATA board** (MKT right panel): 6 collapsible sections — AMERICAS · EMEA · ASIA PACIFIC (`/api/market-data`) · RATES·US (11 UST tenors, FRED daily) · RATES·JP (15 JGB tenors, MOF CSV) · FX (`/api/fx`). Collapse state in `localStorage["bloomberg_tickdata_sections"]`. Yield rows show bp, not %chg, and only 4 tenors (`^IRX ^FVX ^TNX ^TYX`) can drive the chart.
+
+**Removed:** GVOL (fake `Math.random()` data), EQTY (duplicates MKT search), RMI (removed 2026-05-24), CRYP `C` + FX `E` (2026-08-01 — FX folded into the TICK DATA board; crypto via global search `BTC-USD` → stock-view, which also has Order Footprint. **Backend `crypto.py`/`fx.py` routers stay** — `/api/crypto/footprint` powers that indicator). Keys `C` and `E` are now free.  
 **Stock analysis** (9 tabs: financials, options, etc.) still accessible from global search / heatmap click  
 **Country/sovereign data** → use MACRO [6] → COUNTRY tab (was in CRDT sovereign, now consolidated)
 

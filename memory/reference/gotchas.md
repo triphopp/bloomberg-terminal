@@ -197,3 +197,16 @@ Same pattern used in the new `/risk/capm` endpoint. Also added an error state + 
 - `addIndicator` now REPLACES the existing spec when a pane indicator is re-added with different params; overlays still stack (SMA 20 + SMA 50 is a legitimate setup).
 
 **Rule:** when a callback prop takes optional extra arguments, forward the handler directly instead of wrapping it in an arrow that names only the first parameter.
+
+## Bug: `npm run dev:all` / `dev:no-ollama` dumps a scary traceback on Ctrl+C (fixed 2026-08-01)
+
+**Symptom:** hitting Ctrl+C on `npm run dev:all` prints a full Python `KeyboardInterrupt` → `asyncio.exceptions.CancelledError` traceback under `[BACKEND]` and looks like the backend crashed.
+
+**It is cosmetic — verified with repeated real signal tests (2026-08-01):** every process exits 0, the reloader stops, and ports 8000/3000 are freed every single time, with or without the fix. Nothing was ever hung, leaked, or corrupted.
+
+**Root cause (isolated by testing `--reload` on/off + solo uvicorn vs. full `concurrently` stack):**
+Only reproduces with `uvicorn --reload`, and only reliably when `next dev` is running alongside it (timing-dependent — a bare `python -m uvicorn --reload` with no sibling process rarely triggers it, the full stack triggers it ~100% of the time). Sequence: the reloader's parent supervisor and the worker child are in the same process group, so a terminal Ctrl+C delivers SIGINT to both. The child's own SIGINT-triggered shutdown is already clean — but the parent, seeing the child not yet exited, sends an explicit SIGTERM (`uvicorn/supervisors/multiprocess.py: Process.terminate()`) that lands mid-shutdown. Uvicorn's `capture_signals()` (`uvicorn/server.py`) then re-raises the captured signal into `asyncio.Runner`'s own default SIGINT handler, which raises `KeyboardInterrupt` inside whatever coroutine happens to be resuming at that instant — usually the lifespan's `await receive()` — and asyncio logs the orphaned `CancelledError` via the `uvicorn.error` logger as a pre-formatted traceback **string with no `exc_info`** (not a real unhandled exception object).
+
+**Fix:** `backend/main.py` adds `_SuppressReloadShutdownRace`, a `logging.Filter` on the `uvicorn.error` logger that drops only records where `exc_info` is `None` (so it can never hide a real logged exception) **and** the message text contains both `KeyboardInterrupt` and `asyncio.exceptions.CancelledError`. Verified with 4 back-to-back full-stack SIGINT tests (0/4 tracebacks) plus 3 unit cases (benign message dropped, a real `exc_info` error kept, an unrelated traceback-shaped message kept).
+
+**Rule:** don't try to "fix" this via `concurrently` flags (`--kill-signal`, `--kill-timeout`, etc.) — the race is entirely inside uvicorn's own signal handling and reproduces even with a raw `kill -INT` to the process group, no `concurrently` involved. Any future noisy-shutdown report should first check whether it matches this exact pattern before assuming a new bug.
