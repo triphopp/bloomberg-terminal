@@ -93,7 +93,7 @@ ALERT → Tab → ALERT CLEAR (first match)
 ### Navigation
 
 ```
-MKT   NEWS   GMOV   CLIP   MACRO   CRDT   PORT   CRYP   FX
+MKT   NEWS   GMOV   CLIP   MACRO   CRDT   PORT
 ```
 
 ### Settings

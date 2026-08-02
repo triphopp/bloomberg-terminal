@@ -35,8 +35,6 @@ const VIEW_LABELS: Record<string, string> = {
   macro: "MACRO",
   credit: "CREDIT",
   portfolio: "PORTFOLIO",
-  crypto: "CRYPTO",
-  fx: "FX",
 };
 
 export function TerminalFilterBar({ isDarkMode, watchlists, currentView }: TerminalFilterBarProps) {
@@ -49,8 +47,12 @@ export function TerminalFilterBar({ isDarkMode, watchlists, currentView }: Termi
   const [flash, setFlash] = useState(false);
   const mountedRef = useRef(false);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: showYTD is a trigger-only dep — the effect re-runs on toggle but never reads the value
   useEffect(() => {
-    if (!mountedRef.current) { mountedRef.current = true; return; }
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      return;
+    }
     setFlash(true);
     const t = setTimeout(() => setFlash(false), 700);
     return () => clearTimeout(t);
@@ -70,14 +72,13 @@ export function TerminalFilterBar({ isDarkMode, watchlists, currentView }: Termi
       }}
     >
       {/* Current view breadcrumb */}
-      <span
-        className="text-[9px] font-bold tracking-widest"
-        style={{ color: colors.accent }}
-      >
+      <span className="text-[9px] font-bold tracking-widest" style={{ color: colors.accent }}>
         {VIEW_LABELS[currentView] ?? currentView.toUpperCase()}
       </span>
 
-      <span className="text-[8px]" style={{ color: colors.border }}>│</span>
+      <span className="text-[8px]" style={{ color: colors.border }}>
+        │
+      </span>
 
       {/* Watchlist selector */}
       <DropdownMenu>
@@ -98,7 +99,9 @@ export function TerminalFilterBar({ isDarkMode, watchlists, currentView }: Termi
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <span className="text-[8px]" style={{ color: colors.border }}>│</span>
+      <span className="text-[8px]" style={{ color: colors.border }}>
+        │
+      </span>
 
       {/* %Chg mode badge */}
       <span

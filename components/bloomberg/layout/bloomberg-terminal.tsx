@@ -57,12 +57,6 @@ const PortfolioView = dynamic(
   () => import("../views/portfolio-view").then((m) => m.PortfolioView),
   { loading: () => <ViewSkeleton /> }
 );
-const CryptoView = dynamic(() => import("../views/crypto-view").then((m) => m.CryptoView), {
-  loading: () => <ViewSkeleton />,
-});
-const FxView = dynamic(() => import("../views/fx-view").then((m) => m.FxView), {
-  loading: () => <ViewSkeleton />,
-});
 const TailRiskView = dynamic(() => import("../views/tail-risk-view").then((m) => m.TailRiskView), {
   loading: () => <ViewSkeleton />,
 });
@@ -74,8 +68,6 @@ const MemoNews = memo(NewsView);
 const MemoClippings = memo(ClippingsView);
 const MemoStock = memo(StockView);
 const MemoPortfolio = memo(PortfolioView);
-const MemoCrypto = memo(CryptoView);
-const MemoFx = memo(FxView);
 const MemoTailRisk = memo(TailRiskView);
 
 function BloombergTerminal() {
@@ -93,8 +85,6 @@ function BloombergTerminal() {
     handleMacroView,
     handleCreditView,
     handlePortfolioView,
-    handleCryptoView,
-    handleFxView,
     handleTailView,
     handleHelpClick,
   } = useTerminalUI();
@@ -152,8 +142,6 @@ function BloombergTerminal() {
     { id: "macro", label: "MACRO", shortcut: "5", onClick: handleMacroView },
     { id: "credit", label: "CRDT", shortcut: "6", onClick: handleCreditView },
     { id: "portfolio", label: "PORT", shortcut: "P", onClick: handlePortfolioView },
-    { id: "crypto", label: "CRYP", shortcut: "C", onClick: handleCryptoView },
-    { id: "fx", label: "FX", shortcut: "E", onClick: handleFxView },
     { id: "tail", label: "TAIL", shortcut: "T", onClick: handleTailView },
   ];
 
@@ -196,8 +184,6 @@ function BloombergTerminal() {
       },
       description: "Focus symbol search (MKT)",
     },
-    { key: "c", action: handleCryptoView, description: "Crypto" },
-    { key: "e", action: handleFxView, description: "FX / Forex" },
     { key: "t", action: handleTailView, description: "Tail Risk Monitor" },
     // Help
     { key: "?", shiftKey: true, action: handleHelpClick, description: "Show keyboard shortcuts" },
@@ -231,8 +217,6 @@ function BloombergTerminal() {
     macro: "MACRO ECONOMICS",
     credit: "CREDIT RISK & STRESS",
     portfolio: "PORTFOLIO",
-    crypto: "CRYPTO",
-    fx: "FX / FOREX",
     stock: "STOCK ANALYSIS",
     tail: "TAIL RISK MONITOR",
   };
@@ -322,10 +306,6 @@ function BloombergTerminal() {
         return <MemoCredit onBack={handleBack} />;
       case "portfolio":
         return <MemoPortfolio />;
-      case "crypto":
-        return <MemoCrypto onBack={handleBack} />;
-      case "fx":
-        return <MemoFx onBack={handleBack} />;
       case "tail":
         return <MemoTailRisk onBack={handleBack} />;
       default:
