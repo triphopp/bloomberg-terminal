@@ -21,7 +21,7 @@ from db import init_db, init_portfolio_v2, init_sync_layer, init_alerts_schema, 
 from analytics.regime_calibration import ensure_model_fresh
 from analytics.regime_v2 import ensure_v2_fresh
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals
+from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals
 import sync
 from alerts import scheduler as alert_scheduler
 
@@ -65,6 +65,7 @@ app.include_router(news.router)
 app.include_router(social.router)
 app.include_router(macro.router)
 app.include_router(global_yields.router)
+app.include_router(rates.router, tags=["Rates"])
 app.include_router(crisis.router)
 app.include_router(sovereign.router)
 app.include_router(portfolio.router)

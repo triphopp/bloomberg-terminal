@@ -310,3 +310,39 @@ interface Dividend { id: string; account_id: string; asset: string; pay_date: st
 ```ts
 interface PolySignal { type: string; label: string; color: string; question: string; probability: number; volume: number; status: "LIKELY"|"UNCERTAIN"|"UNLIKELY"; direction: "UP"|"DOWN"|"STABLE"; delta_24h: number|null; implied_odds: number; regime_flag: "HIGH_CONVICTION"|"UNCERTAIN"; event_slug: string; slug: string; description: string; end_date: string; is_open: boolean; }
 ```
+
+
+---
+
+## `/api/rates/curve` — bond curve tick rows (`routers/rates.py`)
+
+```jsonc
+{
+  "us": [ /* Row[] — 11 UST tenors, ordered 1M → 30Y */ ],
+  "jp": [ /* Row[] — 15 JGB tenors, ordered 1Y → 40Y */ ],
+  "usError": null,        // string when FRED_API_KEY is unset
+  "jpSource": "mof",      // "fred" when the MOF fallback kicked in
+  "jpStale": false,       // true = single OECD monthly 10Y row only
+  "asOf": "2026-08-01T05:12:33.101Z"
+}
+```
+
+Row:
+```jsonc
+{
+  "id": "US 10Y",         // country + tenor; also the TICK DATA highlight key
+  "country": "US",        // "US" | "JP"
+  "tenor": "10Y",
+  "value": 4.68,          // PERCENT, not a price
+  "changeBp": 1.0,        // BASIS POINTS vs previous observation; null if only one obs
+  "ytdBp": 49.0,          // BASIS POINTS vs first observation of the current year
+  "sparkline1": [4.21, /* … up to 30 obs */],
+  "chartSymbol": "^TNX",  // null unless the tenor is 3M/5Y/10Y/30Y
+  "asOf": "2026-07-30"
+}
+```
+
+⚠️ `changeBp`/`ytdBp` are **basis points**, deliberately not `change`/`pctChange`: a percent-change on a
+yield is meaningless (0.05% → 0.10% is not a "+100%" event). The frontend `RateRow` therefore renders
+`—` in the %CHG column and colours yield-up red (bond price down), matching MACRO's convention.
+TS interface: `RateRowData` in `hooks/useRatesCurve.ts`.
