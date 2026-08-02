@@ -7,6 +7,7 @@ import {
   BarChart2,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   GripVertical,
   LineChart,
@@ -17,7 +18,7 @@ import {
   Search,
   Settings,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Area,
   Bar,
@@ -57,12 +58,14 @@ import type { BarInterval, IndicatorRegistryEntry, OhlcvBar, TimePeriod } from "
 import { FearGreedPane } from "../chart/FearGreedPane";
 import { PEPane } from "../chart/PEPane";
 import { ExtendedHoursPrice, MarketSessionBadge } from "../core/market-session";
+import { type FxPair, useFxTicks } from "../hooks/useFxTicks";
 import { useMarketDataQuery } from "../hooks/useMarketDataQuery";
+import { type RateRowData, useRatesCurve } from "../hooks/useRatesCurve";
 import { useStockHistory, useStockQuote, useStockSearch } from "../hooks/useStockData";
 import { calcHurst } from "../lib/market-utils";
 import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import { displayName, displaySymbol } from "../lib/symbol-display";
-import { bloombergColors } from "../lib/theme-config";
+import { bloombergColors, cn } from "../lib/theme-config";
 import type { MarketItem } from "../types";
 import { PinnedAssets } from "./pinned-assets";
 import { SectorRegimeHeatmap } from "./sector-regime-heatmap";
@@ -106,6 +109,39 @@ function loadLayout(): LayoutSettings {
   }
 }
 
+// ── TICK DATA sections ────────────────────────────────────────────────────────
+// The board went from ~20 rows (indices only) to ~66 once the US/JP curves and
+// FX moved in, so each section collapses independently.
+
+const LS_TICK_SECTIONS = "bloomberg_tickdata_sections";
+
+type TickSection = "americas" | "emea" | "asiaPacific" | "ratesUS" | "ratesJP" | "fx";
+
+const TICK_SECTIONS: TickSection[] = [
+  "americas",
+  "emea",
+  "asiaPacific",
+  "ratesUS",
+  "ratesJP",
+  "fx",
+];
+
+/** JP curve and FX start collapsed — 35 extra rows on first open is a wall. */
+const DEFAULT_COLLAPSED_SECTIONS: TickSection[] = ["ratesJP", "fx"];
+
+function loadTickSections(): TickSection[] {
+  if (typeof window === "undefined") return DEFAULT_COLLAPSED_SECTIONS;
+  try {
+    const s = localStorage.getItem(LS_TICK_SECTIONS);
+    if (!s) return DEFAULT_COLLAPSED_SECTIONS;
+    const parsed = JSON.parse(s);
+    if (!Array.isArray(parsed)) return DEFAULT_COLLAPSED_SECTIONS;
+    return parsed.filter((x): x is TickSection => TICK_SECTIONS.includes(x));
+  } catch {
+    return DEFAULT_COLLAPSED_SECTIONS;
+  }
+}
+
 function saveLayout(layout: LayoutSettings) {
   try {
     localStorage.setItem(LS_LAYOUT_KEY, JSON.stringify(layout));
@@ -144,6 +180,31 @@ function fmtCompact(n: number | null | undefined): string {
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
   return n.toFixed(0);
+}
+
+/** JPY crosses quote to 3 decimals (157.243); everything else to 5 (1.09241). */
+function fmtFxPrice(id: string, n: number | null | undefined): string {
+  if (n == null) return "—";
+  const d = id.toUpperCase().includes("JPY") ? 3 : 5;
+  return n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+
+/** The 4 UST tenors that have a yfinance series — see `_UST_CHART` in rates.py. */
+const RATE_CHART_SYMBOLS = new Set(["^IRX", "^FVX", "^TNX", "^TYX"]);
+
+/** Chart-panel quote formatting. Rates and FX now reach this panel from the
+ *  TICK DATA board, and neither is denominated in dollars: a 10Y yield is
+ *  `4.745%`, EUR/USD is `1.15274`, and only equities/indices get a "$". */
+function fmtQuote(symbol: string, n: number | null | undefined): string {
+  if (n == null) return "—";
+  if (RATE_CHART_SYMBOLS.has(symbol)) return `${n.toFixed(3)}%`;
+  if (symbol.toUpperCase().endsWith("=X")) return fmtFxPrice(symbol, n);
+  return `$${fmtPrice(n)}`;
+}
+
+function fmtBp(bp: number | null | undefined): string {
+  if (bp == null) return "—";
+  return `${bp >= 0 ? "+" : ""}${bp.toFixed(1)}bp`;
 }
 
 function fmtVolShort(n: number): string {
@@ -290,23 +351,215 @@ function RegionHeader({
   label,
   count,
   colors,
-}: { label: string; count: number; colors: typeof bloombergColors.dark }) {
+  collapsed,
+  onToggle,
+  note,
+}: {
+  label: string;
+  count: number;
+  colors: typeof bloombergColors.dark;
+  /** omit both to render a plain, non-interactive header */
+  collapsed?: boolean;
+  onToggle?: () => void;
+  /** small right-aligned annotation, e.g. a stale-data warning */
+  note?: string;
+}) {
+  const interactive = onToggle != null;
   return (
     <tr>
       <td
         colSpan={6}
-        className="px-1 py-0.5 text-[9px] font-bold tracking-widest"
+        className={cn(
+          "px-1 py-0.5 text-[9px] font-bold tracking-widest",
+          interactive && "cursor-pointer hover:bg-[#141414]"
+        )}
         style={{
           background: "#0a0a0a",
           color: colors.accent,
           borderBottom: `1px solid ${colors.border}`,
         }}
+        onClick={onToggle}
       >
-        {label}{" "}
-        <span className="font-mono" style={{ color: colors.textSecondary }}>
-          ({count})
+        <span className="inline-flex items-center gap-1 w-full">
+          {interactive &&
+            (collapsed ? (
+              <ChevronRight className="h-2.5 w-2.5 shrink-0" />
+            ) : (
+              <ChevronDown className="h-2.5 w-2.5 shrink-0" />
+            ))}
+          {label}{" "}
+          <span className="font-mono" style={{ color: colors.textSecondary }}>
+            ({count})
+          </span>
+          {note && (
+            <span className="ml-auto font-mono text-[8px] normal-case" style={{ color: "#facc15" }}>
+              {note}
+            </span>
+          )}
         </span>
       </td>
+    </tr>
+  );
+}
+
+/** Single-row placeholder inside the tick table (loading / error / empty). */
+function TickNotice({
+  colors,
+  loading,
+  error,
+  empty,
+}: {
+  colors: typeof bloombergColors.dark;
+  loading?: boolean;
+  error?: string | null;
+  empty?: boolean;
+}) {
+  if (error) {
+    return (
+      <tr>
+        <td colSpan={6} className="px-2 py-1 text-[9px] font-mono" style={{ color: "#facc15" }}>
+          {error}
+        </td>
+      </tr>
+    );
+  }
+  if (loading) {
+    return (
+      <tr>
+        <td
+          colSpan={6}
+          className="px-2 py-1 text-[9px] font-mono"
+          style={{ color: colors.textSecondary }}
+        >
+          loading…
+        </td>
+      </tr>
+    );
+  }
+  if (empty) {
+    return (
+      <tr>
+        <td
+          colSpan={6}
+          className="px-2 py-1 text-[9px] font-mono"
+          style={{ color: colors.textSecondary }}
+        >
+          no data
+        </td>
+      </tr>
+    );
+  }
+  return null;
+}
+
+/** Yield row: value is a percentage and moves are basis points, not %chg.
+ *  Colour follows MACRO's convention — yield up = red (bond price down). */
+function RateRow({
+  row,
+  colors,
+  isSelected,
+  onClick,
+}: {
+  row: RateRowData;
+  colors: typeof bloombergColors.dark;
+  isSelected: boolean;
+  onClick: () => void;
+}) {
+  const chg = row.changeBp;
+  const chgColor =
+    chg == null || chg === 0 ? colors.textSecondary : chg > 0 ? "#FF0000" : "#00FF00";
+  const ytdColor = row.ytdBp >= 0 ? "#f87171" : "#4ade80";
+  const chartable = row.chartSymbol != null;
+  return (
+    <tr
+      className="cursor-pointer hover:bg-[#111] transition-colors"
+      style={{
+        background: isSelected ? "#0a1628" : undefined,
+        borderBottom: "1px solid #1a1a1a",
+        borderLeft: isSelected ? "2px solid #00FFFF" : "2px solid transparent",
+      }}
+      onClick={onClick}
+      title={
+        chartable
+          ? `${row.id} — as of ${row.asOf}`
+          : `${row.id} — as of ${row.asOf} · no intraday series for this tenor`
+      }
+    >
+      <td className="px-1 py-0.5 text-left">
+        <span
+          className="font-bold text-[10px]"
+          style={{
+            color: isSelected ? "#00FFFF" : chartable ? colors.accent : colors.textSecondary,
+          }}
+        >
+          {row.tenor}
+        </span>
+      </td>
+      <td className="px-1 py-0.5 text-right font-bold text-[10px]" style={{ color: colors.text }}>
+        {row.value.toFixed(3)}%
+      </td>
+      <td className="px-1 py-0.5 text-right text-[10px]" style={{ color: chgColor }}>
+        {fmtBp(chg)}
+      </td>
+      {/* %CHG is meaningless on a yield (0.05% → 0.10% is not "+100%") */}
+      <td className="px-1 py-0.5 text-right text-[9px]" style={{ color: colors.textSecondary }}>
+        —
+      </td>
+      <td className="px-1 py-0.5 text-right text-[9px]">
+        <span style={{ color: ytdColor }}>{fmtBp(row.ytdBp)}</span>
+      </td>
+      <td className="px-0.5 py-0.5 w-[40px]">
+        {row.sparkline1?.length > 2 && <MiniSparkline data={row.sparkline1} color={chgColor} />}
+      </td>
+    </tr>
+  );
+}
+
+/** FX row: rates need 5 decimals (3 for JPY crosses), not the 2 fmtPrice gives. */
+function FxRow({
+  pair,
+  colors,
+  isSelected,
+  onClick,
+}: {
+  pair: FxPair;
+  colors: typeof bloombergColors.dark;
+  isSelected: boolean;
+  onClick: () => void;
+}) {
+  const pct = pair.pctChange ?? 0;
+  const isUp = pct >= 0;
+  const pctColor = isUp ? "#00FF00" : "#FF0000";
+  return (
+    <tr
+      className="cursor-pointer hover:bg-[#111] transition-colors"
+      style={{
+        background: isSelected ? "#0a1628" : undefined,
+        borderBottom: "1px solid #1a1a1a",
+        borderLeft: isSelected ? "2px solid #00FFFF" : "2px solid transparent",
+      }}
+      onClick={onClick}
+    >
+      <td className="px-1 py-0.5 text-left">
+        <span
+          className="font-bold text-[10px]"
+          style={{ color: isSelected ? "#00FFFF" : colors.accent }}
+        >
+          {pair.id}
+        </span>
+      </td>
+      <td className="px-1 py-0.5 text-right font-bold text-[10px]" style={{ color: colors.text }}>
+        {fmtFxPrice(pair.id, pair.price)}
+      </td>
+      <td className="px-1 py-0.5 text-right text-[10px]" style={{ color: pctColor }}>
+        {pair.change == null ? "—" : `${isUp ? "+" : ""}${fmtFxPrice(pair.id, pair.change)}`}
+      </td>
+      <td className="px-1 py-0.5 text-right font-bold text-[10px]" style={{ color: pctColor }}>
+        <span className="text-[8px]">{isUp ? "▲" : "▼"}</span> {fmtPct(pct)}
+      </td>
+      {/* FX overview carries no YTD — left blank rather than faked */}
+      <td className="px-1 py-0.5 text-right text-[9px]" />
+      <td className="px-0.5 py-0.5 w-[40px]" />
     </tr>
   );
 }
@@ -779,6 +1032,34 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
 
   const { marketData, refreshData, isLoading: marketLoading } = useMarketDataQuery();
 
+  // TICK DATA cross-asset sections — indices come from useMarketDataQuery above,
+  // rates and FX from their own endpoints (merged client-side so /api/market-data
+  // keeps the shape GMOV / ticker / heatmap also depend on).
+  const { data: ratesData, isLoading: ratesLoading } = useRatesCurve();
+  const { data: fxData } = useFxTicks();
+  const usRates = ratesData?.us ?? [];
+  const jpRates = ratesData?.jp ?? [];
+  const fxPairs = fxData?.pairs ?? [];
+
+  // Which tick row is lit. Kept separate from selectedLabel — that captions
+  // whatever the chart is drawing, and the two diverge for tenors with no
+  // chartable series (clicking US 7Y must light the row without relabelling a
+  // chart that is still showing something else).
+  const [selectedTickId, setSelectedTickId] = useState<string | null>(null);
+  const [collapsedSections, setCollapsedSections] = useState<TickSection[]>(loadTickSections);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_TICK_SECTIONS, JSON.stringify(collapsedSections));
+    } catch {
+      /* ignore */
+    }
+  }, [collapsedSections]);
+  const toggleSection = useCallback((id: TickSection) => {
+    setCollapsedSections((prev) =>
+      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]
+    );
+  }, []);
+
   // Layout settings
   const [layout, setLayout] = useState<LayoutSettings>(DEFAULT_LAYOUT);
   const [showSettings, setShowSettings] = useAtom(showHeatmapSettingsAtom);
@@ -1095,15 +1376,35 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     (item: MarketItem) => {
       setSelectedSymbol(item.symbol ?? indexToSymbol(item.id));
       setSelectedLabel(item.id);
+      setSelectedTickId(item.id);
     },
     [indexToSymbol]
   );
+
+  const handleRateSelect = useCallback((row: RateRowData) => {
+    // Only 4 UST tenors have a yfinance series (^IRX/^FVX/^TNX/^TYX). For the
+    // rest, highlight the row but leave BOTH the chart and its label alone —
+    // relabelling the header to "US 7Y" while it still draws the previously
+    // selected symbol would caption someone else's prices as a 7Y yield.
+    setSelectedTickId(row.id);
+    if (row.chartSymbol) {
+      setSelectedSymbol(row.chartSymbol);
+      setSelectedLabel(row.id);
+    }
+  }, []);
+
+  const handleFxSelect = useCallback((pair: FxPair) => {
+    setSelectedSymbol(pair.symbol); // e.g. "EURUSD=X"
+    setSelectedLabel(pair.id);
+    setSelectedTickId(pair.id);
+  }, []);
 
   const handleSearchSubmit = useCallback(() => {
     const sym = searchInput.trim().toUpperCase();
     if (!sym) return;
     setSelectedSymbol(sym);
     setSelectedLabel(sym);
+    setSelectedTickId(null);
     addToRecent(sym, sym);
     setSearchInput("");
     setShowDropdown(false);
@@ -1119,6 +1420,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
       const dispSym = displaySymbol({ symbol });
       const dispName = name ? displayName({ symbol, shortname: name }) : "";
       setSelectedLabel(dispName ? `${dispSym} – ${dispName}` : dispSym);
+      setSelectedTickId(null);
       addToRecent(symbol, dispName || dispSym);
       setSearchInput("");
       setSearchQuery("");
@@ -1157,6 +1459,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
         const first = marketData.americas[0];
         setSelectedSymbol(first.symbol ?? indexToSymbol(first.id));
         setSelectedLabel(first.id);
+        setSelectedTickId(first.id); // light the default row in the board too
       }
     }
   }, [pins, marketData, selectedSymbol, indexToSymbol]);
@@ -1166,8 +1469,16 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     ...(marketData?.emea ?? []),
     ...(marketData?.asiaPacific ?? []),
   ];
-  const upCount = allMarketItems.filter((m) => m.pctChange > 0).length;
-  const downCount = allMarketItems.filter((m) => m.pctChange < 0).length;
+  // Indices + FX only. Rate rows are deliberately excluded: "yield up" means the
+  // bond market fell, so counting them alongside "index up" would make the ▲/▼
+  // tally mix two opposite meanings.
+  const upCount =
+    allMarketItems.filter((m) => m.pctChange > 0).length +
+    fxPairs.filter((p) => (p.pctChange ?? 0) > 0).length;
+  const downCount =
+    allMarketItems.filter((m) => m.pctChange < 0).length +
+    fxPairs.filter((p) => (p.pctChange ?? 0) < 0).length;
+  const tickRowCount = allMarketItems.length + usRates.length + jpRates.length + fxPairs.length;
 
   // ── Panel Renderers ─────────────────────────────────────────────────────────
 
@@ -1276,7 +1587,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
             TICK DATA
           </span>
           <span className="text-[9px] font-mono" style={{ color: colors.textSecondary }}>
-            ({allMarketItems.length})
+            ({tickRowCount})
           </span>
           <span className="text-[8px] ml-1">
             <span style={{ color: "#00FF00" }}>▲{upCount}</span>
@@ -1345,44 +1656,103 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 </tr>
               </thead>
               <tbody>
+                {/* ── RATES · US — full UST curve, FRED daily ── */}
                 <RegionHeader
-                  label="AMERICAS"
-                  count={marketData?.americas?.length ?? 0}
+                  label="RATES · US"
+                  count={usRates.length}
                   colors={colors}
+                  collapsed={collapsedSections.includes("ratesUS")}
+                  onToggle={() => toggleSection("ratesUS")}
+                  note={ratesData?.usError ? "FRED key missing" : undefined}
                 />
-                {(marketData?.americas ?? []).map((item: MarketItem) => (
-                  <TickRow
-                    key={item.id}
-                    item={item}
+                {!collapsedSections.includes("ratesUS") && (
+                  <TickNotice
                     colors={colors}
-                    isSelected={selectedLabel === item.id}
-                    onClick={() => handleTickSelect(item)}
+                    loading={ratesLoading}
+                    error={ratesData?.usError}
+                    empty={usRates.length === 0}
                   />
-                ))}
-                <RegionHeader label="EMEA" count={marketData?.emea?.length ?? 0} colors={colors} />
-                {(marketData?.emea ?? []).map((item: MarketItem) => (
-                  <TickRow
-                    key={item.id}
-                    item={item}
-                    colors={colors}
-                    isSelected={selectedLabel === item.id}
-                    onClick={() => handleTickSelect(item)}
-                  />
-                ))}
+                )}
+                {!collapsedSections.includes("ratesUS") &&
+                  usRates.map((row) => (
+                    <RateRow
+                      key={row.id}
+                      row={row}
+                      colors={colors}
+                      isSelected={selectedTickId === row.id}
+                      onClick={() => handleRateSelect(row)}
+                    />
+                  ))}
+
+                {/* ── RATES · JP — full JGB curve, MOF daily ── */}
                 <RegionHeader
-                  label="ASIA PACIFIC"
-                  count={marketData?.asiaPacific?.length ?? 0}
+                  label="RATES · JP"
+                  count={jpRates.length}
                   colors={colors}
+                  collapsed={collapsedSections.includes("ratesJP")}
+                  onToggle={() => toggleSection("ratesJP")}
+                  note={ratesData?.jpStale ? "MOF down — OECD monthly" : undefined}
                 />
-                {(marketData?.asiaPacific ?? []).map((item: MarketItem) => (
-                  <TickRow
-                    key={item.id}
-                    item={item}
-                    colors={colors}
-                    isSelected={selectedLabel === item.id}
-                    onClick={() => handleTickSelect(item)}
-                  />
+                {!collapsedSections.includes("ratesJP") && (
+                  <TickNotice colors={colors} loading={ratesLoading} empty={jpRates.length === 0} />
+                )}
+                {!collapsedSections.includes("ratesJP") &&
+                  jpRates.map((row) => (
+                    <RateRow
+                      key={row.id}
+                      row={row}
+                      colors={colors}
+                      isSelected={selectedTickId === row.id}
+                      onClick={() => handleRateSelect(row)}
+                    />
+                  ))}
+
+                {(
+                  [
+                    ["americas", "AMERICAS", marketData?.americas],
+                    ["emea", "EMEA", marketData?.emea],
+                    ["asiaPacific", "ASIA PACIFIC", marketData?.asiaPacific],
+                  ] as [TickSection, string, MarketItem[] | undefined][]
+                ).map(([id, label, items]) => (
+                  <Fragment key={id}>
+                    <RegionHeader
+                      label={label}
+                      count={items?.length ?? 0}
+                      colors={colors}
+                      collapsed={collapsedSections.includes(id)}
+                      onToggle={() => toggleSection(id)}
+                    />
+                    {!collapsedSections.includes(id) &&
+                      (items ?? []).map((item: MarketItem) => (
+                        <TickRow
+                          key={item.id}
+                          item={item}
+                          colors={colors}
+                          isSelected={selectedTickId === item.id}
+                          onClick={() => handleTickSelect(item)}
+                        />
+                      ))}
+                  </Fragment>
                 ))}
+
+                {/* ── FX — moved here from the removed FX [E] view ── */}
+                <RegionHeader
+                  label="FX"
+                  count={fxPairs.length}
+                  colors={colors}
+                  collapsed={collapsedSections.includes("fx")}
+                  onToggle={() => toggleSection("fx")}
+                />
+                {!collapsedSections.includes("fx") &&
+                  fxPairs.map((pair) => (
+                    <FxRow
+                      key={pair.symbol}
+                      pair={pair}
+                      colors={colors}
+                      isSelected={selectedTickId === pair.id}
+                      onClick={() => handleFxSelect(pair)}
+                    />
+                  ))}
               </tbody>
             </table>
           }
@@ -1631,7 +2001,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                   className="text-sm font-bold font-mono whitespace-nowrap shrink-0"
                   style={{ color: colors.text }}
                 >
-                  ${fmtPrice(quote.regularMarketPrice)}
+                  {fmtQuote(selectedSymbol, quote.regularMarketPrice)}
                 </span>
                 <span
                   className="text-xs font-bold font-mono whitespace-nowrap shrink-0"
@@ -1804,19 +2174,40 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
             windowUnit={heatmapWindowUnit}
             onToggleWindowUnit={toggleHeatmapWindowUnit}
           />
-          {heatmapOhlcv.some((d) => (d.volume ?? 0) > 0) && (
-            <button
-              className="text-[8px] px-1 py-0 font-bold border"
-              style={{
-                borderColor: heatmapShowVP ? colors.accent : colors.border,
-                color: heatmapShowVP ? colors.accent : colors.textSecondary,
-                background: heatmapShowVP ? `${colors.accent}15` : "transparent",
-              }}
-              onClick={toggleHeatmapVP}
-            >
-              VP
-            </button>
-          )}
+          {(() => {
+            // Volume Profile needs traded volume, and several things reachable
+            // from this view report none: calculated indices (^VIX, ^OVX — a
+            // formula over option prices, nothing actually trades), yields
+            // (^TNX) and FX (=X). Cash indices like ^GSPC/^DJI DO carry volume
+            // (Yahoo sums the constituents), so this can't key off "is an index".
+            // Show the button greyed out with a reason rather than unmounting
+            // it, which reads as "the indicator vanished".
+            const hasVolume = heatmapOhlcv.some((d) => (d.volume ?? 0) > 0);
+            return (
+              <button
+                className="text-[8px] px-1 py-0 font-bold border"
+                style={{
+                  borderColor: heatmapShowVP && hasVolume ? colors.accent : colors.border,
+                  color: !hasVolume
+                    ? colors.border
+                    : heatmapShowVP
+                      ? colors.accent
+                      : colors.textSecondary,
+                  background: heatmapShowVP && hasVolume ? `${colors.accent}15` : "transparent",
+                  cursor: hasVolume ? "pointer" : "not-allowed",
+                }}
+                disabled={!hasVolume}
+                title={
+                  hasVolume
+                    ? "Volume Profile"
+                    : "Volume Profile — this symbol reports no volume (calculated indices like VIX, plus yields and FX, quote a level with nothing trading behind it)"
+                }
+                onClick={toggleHeatmapVP}
+              >
+                VP
+              </button>
+            );
+          })()}
           <button
             className="text-[8px] px-1 py-0 font-bold border"
             title={
@@ -1961,24 +2352,33 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
               style={{ borderTop: "1px solid #1a1a1a", color: colors.textSecondary }}
             >
               <span>
-                O:<span style={{ color: colors.text }}>${fmtPrice(chartData[0]?.price)}</span>
+                O:
+                <span style={{ color: colors.text }}>
+                  {fmtQuote(selectedSymbol, chartData[0]?.price)}
+                </span>
               </span>
               <span>
                 H:
                 <span style={{ color: colors.text }}>
-                  ${fmtPrice(Math.max(...chartData.map((d: { price: number }) => d.price)))}
+                  {fmtQuote(
+                    selectedSymbol,
+                    Math.max(...chartData.map((d: { price: number }) => d.price))
+                  )}
                 </span>
               </span>
               <span>
                 L:
                 <span style={{ color: colors.text }}>
-                  ${fmtPrice(Math.min(...chartData.map((d: { price: number }) => d.price)))}
+                  {fmtQuote(
+                    selectedSymbol,
+                    Math.min(...chartData.map((d: { price: number }) => d.price))
+                  )}
                 </span>
               </span>
               <span>
                 C:
                 <span style={{ color: colors.text }}>
-                  ${fmtPrice(chartData[chartData.length - 1]?.price)}
+                  {fmtQuote(selectedSymbol, chartData[chartData.length - 1]?.price)}
                 </span>
               </span>
               <span style={{ color: chartColor }}>
@@ -2056,7 +2456,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                       }}
                       formatter={(v: number, name: string) => {
                         if (name === "volume") return [fmtVolShort(v), "Vol"];
-                        return [`$${fmtPrice(v)}`, "Price"];
+                        return [fmtQuote(selectedSymbol, v), "Price"];
                       }}
                       labelStyle={{ color: colors.textSecondary }}
                     />
@@ -2235,24 +2635,33 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
               style={{ borderTop: "1px solid #1a1a1a", color: colors.textSecondary }}
             >
               <span>
-                O:<span style={{ color: colors.text }}>${fmtPrice(chartData[0]?.price)}</span>
+                O:
+                <span style={{ color: colors.text }}>
+                  {fmtQuote(selectedSymbol, chartData[0]?.price)}
+                </span>
               </span>
               <span>
                 H:
                 <span style={{ color: colors.text }}>
-                  ${fmtPrice(Math.max(...chartData.map((d: { price: number }) => d.price)))}
+                  {fmtQuote(
+                    selectedSymbol,
+                    Math.max(...chartData.map((d: { price: number }) => d.price))
+                  )}
                 </span>
               </span>
               <span>
                 L:
                 <span style={{ color: colors.text }}>
-                  ${fmtPrice(Math.min(...chartData.map((d: { price: number }) => d.price)))}
+                  {fmtQuote(
+                    selectedSymbol,
+                    Math.min(...chartData.map((d: { price: number }) => d.price))
+                  )}
                 </span>
               </span>
               <span>
                 C:
                 <span style={{ color: colors.text }}>
-                  ${fmtPrice(chartData[chartData.length - 1]?.price)}
+                  {fmtQuote(selectedSymbol, chartData[chartData.length - 1]?.price)}
                 </span>
               </span>
               {showVolume && avgVolume > 0 && (

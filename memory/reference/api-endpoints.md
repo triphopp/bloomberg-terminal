@@ -115,6 +115,21 @@
 - `GET /api/v2/portfolio/risk/parity` — Equal Risk Contribution (ERC) rebalance actions
 - `DELETE /api/v2/portfolio/risk/cache` — clear caches
 
+## Rates (`routers/rates.py`)
+- `GET /api/rates/curve` — full US Treasury + JGB curves as flat tick rows for the MKT TICK DATA board.
+  Returns `{us: Row[], jp: Row[], usError, jpSource: "mof"|"fred", jpStale, asOf}`; TTLCache 1h (MOF
+  history file 24h). Proxy: `app/api/rates/route.ts` (45s timeout — cold cache = 11 FRED calls + 1.2 MB CSV).
+  - **US** = FRED daily constant-maturity, 11 tenors `DGS1MO/3MO/6MO/1/2/3/5/7/10/20/30`.
+    Needs `FRED_API_KEY`; without it `us: []` and `usError` carries the message.
+  - **JP** = MOF CSV, 15 tenors 1Y–40Y. Two files: `.../interest_rate/jgbcme.csv` (current month, live
+    values) + `.../interest_rate/historical/jgbcme_all.csv` (1974→, YTD baseline + sparkline). **The
+    `/english/` path is required** — the Japanese path 404s with a 20 KB HTML page, so the parser
+    rejects anything whose first line isn't `Interest Rate`. On failure it falls back to FRED
+    `IRLTLT01JPM156N` (OECD monthly 10Y, one row) and sets `jpStale: true`.
+  - Deliberately separate from `/api/macro/global-yields`, which owns the `table/curves/series` shape
+    that MACRO [6] → YIELD renders. Do not merge them.
+- `DELETE /api/rates/curve` — clear the cache
+
 ## FX (`routers/fx.py`)
 - `GET /api/fx` — 20 major FX pairs overview (rate, day change)
 - `GET /api/fx/history/{symbol}` — FX pair history

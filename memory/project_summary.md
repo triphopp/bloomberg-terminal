@@ -1,13 +1,13 @@
 # Bloomberg Terminal — Project Summary
 
-**Working directory:** `D:\Agents\Claude\bloomberg-terminal-main`
-**Last updated:** 2026-07-14 (Multi-Currency Portfolio)
+**Repo:** `bloomberg-terminal` — macOS `~/bloomberg-terminal`, Windows `D:\Agents\Claude\bloomberg-terminal-main`
+**Last updated:** 2026-08-01 (TICK DATA consolidation + rates router)
 
 > Slim core reference. Navigate via [memory/INDEX.md](INDEX.md).
 > - [reference/api-endpoints.md](reference/api-endpoints.md) — all endpoints, caching table, Next.js proxy routes
 > - [reference/frontend-structure.md](reference/frontend-structure.md) — component tree + exports + keyboard shortcuts
 > - [reference/data-shapes.md](reference/data-shapes.md) — API response JSON shapes + TypeScript interfaces
-> - [reference/architecture.md](reference/architecture.md) — stack, data flow, 26 routers, analytics folder, key files
+> - [reference/architecture.md](reference/architecture.md) — stack, data flow, routers, analytics folder, key files
 > - [reference/gotchas.md](reference/gotchas.md) — error dict + anti-patterns + "Where is X?" + env var map
 
 ---
@@ -24,10 +24,12 @@ python -m uvicorn main:app --port 8000 --reload
 npm run dev  # → http://localhost:3000
 ```
 
-```powershell
-# Tests
-cd backend && python -m pytest tests/ -v   # 58 unit tests (Greeks, SEC)
-npx tsc --noEmit                            # TypeScript check
+```bash
+# Tests — verified 2026-08-01
+cd backend && python -m pytest tests/ -q   # 291 passed (greeks, alerts, sync, portfolio, SEC, DCC)
+npm run test:alerts                        # 44 passed (node:test)
+npm run test:chart                         # 13 passed (pane-layout)
+npx tsc --noEmit                           # TypeScript check
 ```
 
 ---
@@ -109,13 +111,17 @@ OPENAI_API_KEY      — optional
 | `pins.py` | `/api/pins/*` (groups, assets, tags CRUD) | SQLite |
 | `clippings.py` | `/api/clippings/*` | filesystem + Ollama |
 | `news.py` | `/api/news/facebook` | RSSHub / Graph API |
+| `social.py` | `/api/social/feed` | RSSHub / Graph API |
 | `macro.py` | `/api/macro` | FRED + Alpha Vantage (2-layer cache) |
 | `crisis.py` | `/api/crisis` | FRED |
 | `sovereign.py` | `/api/sovereign/*` | World Bank |
 | `portfolio.py` | `/api/portfolio/*` (theses, research, transactions, backtest) | filesystem + SQLite |
 | `portfolio_v2.py` | `/api/v2/portfolio/*` (accounts, trades CRUD, open-positions, sell, dividends, import) | SQLite |
 | `risk.py` | `/api/v2/portfolio/risk/*` (VaR/CVaR/Parity/Stress/Position-size) | Ledoit-Wolf |
+| `backtest_v2.py` | `/api/v2/portfolio/backtest/*` (equity, holdings-timeline, distribution) | SQLite trades + yfinance |
 | `fx.py` | `/api/fx/*` | yfinance |
+| `rates.py` | `/api/rates/curve` (UST 11 tenors + JGB 15 tenors, tick-row shape) | FRED daily + MOF CSV |
+| `global_yields.py` | `/api/macro/global-yields` (MACRO YIELD tab — `table/curves/series` shape) | FRED (US daily + OECD monthly) |
 | `crypto.py` | `/api/crypto/*` | yfinance |
 | `etf.py` | `/api/etf/{symbol}` | yfinance |
 | `footprint.py` | `/api/crypto/footprint` | Binance aggTrades |
@@ -123,6 +129,10 @@ OPENAI_API_KEY      — optional
 | `polymarket.py` | `/api/polymarket/*` (signals, search, MCP endpoint) | Gamma API |
 | `bot.py` | `/api/bot/*` (auctions, rates, fx, statistics) | BOT API |
 | `sectors.py` | `/api/sectors/*` (classification, search, override) | Wikipedia + yfinance + SQLite |
+| `screener.py` | `/api/screener/sp500*` (by sector) | yfinance |
+| `config_router.py` | `/api/config/symbols/*` (symbol_lists CRUD) | SQLite |
+| `circuit_breaker.py` | `/api/circuit-breaker/{check,market,margin}` | yfinance |
+| `listing_gate.py` | `/api/listing-gate/screen` (IPO quality gate: hard filters + weighted score) | yfinance |
 | `sec.py` | `/api/sec/*` (legacy, expires 2026-06-30) | api.sec.or.th (old portal) |
 | `sec_v2.py` | `/api/sec/v2/*` (52 routes: Bond v2 + Fund v2 + One Report v1) | api.sec.or.th (new portal) |
 | `allocation.py` | `/api/allocation/*` (signal, layers, history) | FRED + ETF data |
@@ -133,6 +143,9 @@ OPENAI_API_KEY      — optional
 | `stoploss.py` | `/api/stoploss/{regime,atr,compute}` | yfinance (5min cache) |
 | `fear_greed.py` | `/api/fear-greed`, `/api/fear-greed/history` | yfinance ^VIX/SPY/TLT/HYG/LQD/RSP (5min/60min cache) |
 | `alerts.py` | `/api/alerts` | stoploss + regime + SQLite (60s cache) |
+| `alert_rules.py` | `/api/alerts/rules*` (CRUD, preview, scan, events) | SQLite + boolean-AST engine |
+| `ticker.py` | `/api/ticker` (crawl-strip items + alerts) | reuses existing caches, TTL 60s |
+| `tail_risk.py` | `/api/tail-risk/{signals,vix-term}` | yfinance |
 | `analytics.py` | `/api/analytics/{corr,beta,vol,return,drawdown,sharpe,zscore,rsi,compare,rank}` | yfinance + TTLCache 300s |
 | `paper_trading.py` | `/api/paper/*` (accounts, orders, positions, fills, equity-curve) | yfinance + SQLite |
 | `providers.py` | `/api/providers` (list+health), `/api/providers/active` (switch), `/api/providers/auto-failover` | quote registry |
@@ -187,21 +200,19 @@ Holdings computed via **average-cost method** in `db.compute_holdings()`.
 
 ---
 
-## Frontend Views — 9 views (post-RMI removal 2026-05-24)
+## Frontend Views — 7 views (post-CRYP/FX removal 2026-08-01)
 
 | Key | Button | View | Component |
 |-----|--------|------|-----------|
-| `1` | MKT | Market View (default) | `market-view.tsx` — watchlist + chart + Regime Detection panel |
+| `1` | MKT | Market View (default) | `market-view.tsx` — watchlist + chart + Regime Detection + TICK DATA board (6 collapsible sections: AMERICAS/EMEA/ASIA PACIFIC + RATES·US + RATES·JP + FX) |
 | `2` | NEWS | News | `news-view.tsx` — NEWSFEED / SOCIAL tabs + Polymarket right column (256px fixed) |
 | `3` | GMOV | Market Movers | `market-movers-view.tsx` — indices table + heatmap treemap |
 | `4` | CLIP | Clippings + AI | `clippings-view.tsx` |
 | `5` | MACRO | Macro Economics | `macro-view.tsx` — 7 tabs: dashboard, yield, indicators, fed, country, compare, **signals** |
 | `6` | CRDT | Credit / Stress | `credit-view.tsx` — 4 tabs: overview, spreads, stress, consumer |
 | `P` | PORT | Portfolio | `portfolio-view.tsx` (barrel → `portfolio/`) — 5 top-level tabs: PORTFOLIO (sub: POSITIONS\|OPTIONS\|TRADES\|CASH\|ENTRY=manual trade form) · ANALYTICS (sub: P&L incl. Total Return per port + CAPM β/α table\|BACKTEST) · RISK (standalone) · TOOLS (sub: THESES\|IMPORT) · PAPER (sub: DASHBOARD\|TRADE\|POSITIONS\|OPTIONS\|HISTORY) |
-| `C` | CRYP | Crypto | `crypto-view.tsx` |
-| `E` | FX | FX / Forex | `fx-view.tsx` |
 
-Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24). Stock analysis (9 tabs) accessible via global search / heatmap click.
+Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026-08-01 — FX merged into the MKT TICK DATA board; crypto via global search `BTC-USD` → stock-view). Backend `crypto.py`/`fx.py` routers kept: `/api/crypto/footprint` feeds the Order Footprint indicator. Keys `C`/`E` are free. Stock analysis (9 tabs) accessible via global search / heatmap click.
 
 ---
 
@@ -219,6 +230,9 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24). Stock analysis (9 tabs)
 10. **SEC One Report**: `report_year` must be Gregorian (2023 not 2566); `language` must be `T`/`E` not `1`/`2`. Returns 204 when no data for section.
 11. **Options DataFreshness**: Yahoo Finance ~15min delay — yellow `⏱` badge shown on all delayed values.
 12. **Options Greeks Q3 bug**: Fixed 2026-06-03 — was using d₂ instead of d₁, overestimating ~50-100%.
+13. **`npm run dev:all` Ctrl+C traceback**: Fixed 2026-08-01 — cosmetic only (every process always exited 0 and freed its port). `uvicorn --reload`'s supervisor SIGTERMs the worker mid-shutdown; `main.py` now filters that one benign `KeyboardInterrupt`/`CancelledError` record. Details in `reference/gotchas.md`.
+14. **Pane indicator heights don't persist** 🔴 open — dragging an RSI/MACD pane is lost on reload and panes can collapse to 0px on rebuild. Root-caused 2026-08-01 (lightweight-charts v5 converts `setHeight` px → stretch factor against a stale total). Plan: `plans/pane-height-persistence-fix.md`.
+15. **Volume Profile unavailable on rates/FX/VIX**: `^TNX`, `*=X`, `^VIX`, `^OVX` report `volume: 0` from Yahoo (calculated indices and yields have nothing trading behind them), so the VP button renders disabled with a tooltip. Cash indices (`^GSPC`/`^DJI`) DO carry volume — the gate is data-driven, not symbol-class-driven.
 
 ---
 
@@ -237,6 +251,8 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24). Stock analysis (9 tabs)
 - [x] **Multi-Currency Sub-Portfolio** — done 2026-07-14: `trades.currency` เป็น instrument ccy authoritative, rollup ต่อ trade, mixed-ccy account, realized trading P&L ใช้ exit-date FX (ไม่รวม principal FX attribution), แสดง `ECON` FX-inclusive attribution แยก, live MTM และ daily `fx_rates` (`plans/completed/multi-currency-portfolio.md`)
 - [ ] **VP Indicator Upgrade** — แก้ session timezone bug (B1 🔴) + visible-range VP + delta profile + naked POC + HVN/LVN + config UI; audit: `reports/vp-indicator-risk-report.md` (`plans/vp-indicator-upgrade.md`)
 - [ ] **P/E History Pane + EPS Surprise Labels** — endpoint `/api/stock/pe-history` (TTM EPS × weekly close, 13–20yr), `PEPane.tsx` recharts sub-pane + valuation percentile bands, earnings marker สี beat/miss; code-complete, backend HTTP verified, frontend visual pending (`plans/pe-earnings-visualization.md`)
+- [x] **TICK DATA Consolidation** done 2026-08-01 — เพิ่ม RATES·US (UST 11 tenor, FRED daily) + RATES·JP (JGB 1Y–40Y, MOF CSV) + FX เข้า TICK DATA panel ใน MKT, section ยุบได้; ลบ CRYP [C] + FX [E] views (backend crypto/fx router คงไว้) (`plans/completed/tickdata-rates-fx-consolidation.md`)
+- [ ] **Pane Height Persistence Fix** — pane indicator ยุบเป็น 0 ตอน rebuild (lw v5 setHeight→stretch แปลงบนฐานว่าง) + drag จับเฉพาะ teardown ทำให้ reload แล้วหาย + wrapper h=0; แผนแก้ 3 ชั้น: defer setHeight 2-frame, capturePaneDrags 4 จุดเรียก, ซ่อม height chain (`plans/pane-height-persistence-fix.md`)
 - [ ] Polymarket: dashboard view in frontend
 - [ ] BOT: frontend view for Bond Auction + yield trend chart
 - [ ] BOT: activate Stat-ExchangeRate → add THB FX view

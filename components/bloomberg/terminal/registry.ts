@@ -196,24 +196,6 @@ const NAV: CommandDef[] = [
       return { kind: "navigate", view: "portfolio" };
     },
   },
-  {
-    name: "CRYP",
-    group: "nav",
-    description: "Go to Crypto view",
-    handler: (_, ctx) => {
-      ctx.setView("crypto");
-      return { kind: "navigate", view: "crypto" };
-    },
-  },
-  {
-    name: "FX",
-    group: "nav",
-    description: "Go to FX / Forex view",
-    handler: (_, ctx) => {
-      ctx.setView("fx");
-      return { kind: "navigate", view: "fx" };
-    },
-  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

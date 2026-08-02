@@ -16,12 +16,41 @@ logging.basicConfig(
 )
 logger = logging.getLogger("api")
 
+
+class _SuppressReloadShutdownRace(logging.Filter):
+    """Hide one specific benign traceback from `uvicorn --reload` on Ctrl+C.
+
+    The reloader's parent supervisor SIGTERMs the worker child while the child
+    is already mid-shutdown from its own SIGINT — uvicorn's capture_signals()
+    then re-raises the captured signal into asyncio.Runner's default SIGINT
+    handler, which raises KeyboardInterrupt inside whichever coroutine happens
+    to be resuming at that instant (usually the lifespan's `await receive()`).
+    The server has already exited 0 and freed its port by the time this logs;
+    it's cosmetic, not a real failure, and reproduces even without `npm run
+    dev:all` in the picture (confirmed with a bare `python -m uvicorn --reload`
+    under a plain process-group SIGINT). Verified 2026-08-01: never triggers
+    without --reload, and the message carries no exc_info (asyncio's own
+    default_exception_handler pre-formats the traceback into the string), so
+    matching has to be on the message text itself.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.exc_info is not None:
+            return True
+        msg = record.getMessage()
+        if "Traceback (most recent call last):" not in msg:
+            return True
+        return not ("KeyboardInterrupt" in msg and "asyncio.exceptions.CancelledError" in msg)
+
+
+logging.getLogger("uvicorn.error").addFilter(_SuppressReloadShutdownRace())
+
 from config import CORS_ORIGINS
 from db import init_db, init_portfolio_v2, init_sync_layer, init_alerts_schema, seed_symbol_lists
 from analytics.regime_calibration import ensure_model_fresh
 from analytics.regime_v2 import ensure_v2_fresh
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals
+from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals
 import sync
 from alerts import scheduler as alert_scheduler
 
@@ -65,6 +94,7 @@ app.include_router(news.router)
 app.include_router(social.router)
 app.include_router(macro.router)
 app.include_router(global_yields.router)
+app.include_router(rates.router, tags=["Rates"])
 app.include_router(crisis.router)
 app.include_router(sovereign.router)
 app.include_router(portfolio.router)

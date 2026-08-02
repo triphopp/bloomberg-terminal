@@ -26,8 +26,6 @@ components/bloomberg/
 │   ├── macro/country-tab.tsx    ← CountryMacroTab + World Bank charts + country constants (POPULAR_COUNTRIES, WB_CATEGORIES, fmtWbVal)
 │   ├── credit-view.tsx          ← CRDT: 4 tabs (overview/spreads/stress/consumer)
 │   ├── stock-view.tsx           ← Equity analysis (9 tabs) — no nav button, via search/heatmap
-│   ├── crypto-view.tsx          ← CRYP: 20 coins + chart
-│   ├── fx-view.tsx              ← FX: 20 pairs + chart
 │   ├── pinned-assets.tsx        ← Pinned assets sidebar
 │   ├── rotation-tab.tsx         ← COUNTRY EQUITY ROTATION tab (inside macro-view SIGNALS)
 │   ├── sector-tab.tsx           ← SECTOR SELECTION tab (inside macro-view SIGNALS)
@@ -99,6 +97,8 @@ components/bloomberg/
 │   ├── useStockData.ts
 │   ├── useSectorSelection.ts    ← sector selection signal hook
 │   ├── useWatchlistSignals.ts   ← batch daily technical scan for the watchlist
+│   ├── useRatesCurve.ts         ← /api/rates → UST + JGB curves for the TICK DATA board (`RateRowData`)
+│   ├── useFxTicks.ts            ← /api/fx overview for the TICK DATA FX section (`FxPair`)
 │   ├── useAiMarketAnalysis.ts
 │   └── index.ts
 │
@@ -157,8 +157,8 @@ components/bloomberg/
 |----------|--------|
 | `1`–`6` | Navigate views: MKT(1), NEWS(2), GMOV(3), CLIP(4), MACRO(5), CRDT(6) |
 | `P` | Portfolio view |
-| `C` | Crypto view |
-| `E` | FX / Forex view |
+| `C` | *(free — was Crypto until 2026-08-01)* |
+| `E` | *(free — was FX until 2026-08-01)* |
 | `Alt+1`–`Alt+N` | Switch sub-tab within current view (MACRO 1-7, CRDT 1-4, PORT 1-8, NEWS 1-2) |
 | `/` or `Ctrl+K` | Open global search |
 | `Esc` / `← ESC` button | Back to market/home |
@@ -177,3 +177,32 @@ components/bloomberg/
 2. Add handler in `hooks/useTerminalUI.ts`
 3. Add view block in `layout/bloomberg-terminal.tsx`
 4. Add nav button in `layout/terminal-header.tsx`
+
+
+---
+
+## MKT — TICK DATA board (`views/market-view.tsx`)
+
+The right-hand `tickdata` panel is a cross-asset board, not just world indices. Six sections, each
+collapsible; collapse state persists in `localStorage["bloomberg_tickdata_sections"]`
+(default collapsed: `ratesJP`, `fx` — 35 extra rows on first open is a wall).
+
+Render order top-to-bottom: **RATES · US → RATES · JP → AMERICAS → EMEA → ASIA PACIFIC → FX**
+(rates pinned to the top since they're the reason the board grew from 3 sections to 6).
+
+| Section | Source | Row component |
+|---------|--------|---------------|
+| RATES · US (11 tenors) | `useRatesCurve` → `/api/rates` | `RateRow` |
+| RATES · JP (15 tenors) | `useRatesCurve` → `/api/rates` | `RateRow` |
+| AMERICAS / EMEA / ASIA PACIFIC | `useMarketDataQuery` → `/api/market-data` | `TickRow` |
+| FX (20 pairs) | `useFxTicks` → `/api/fx` | `FxRow` |
+
+Things that will bite:
+- **One highlight, one state.** `selectedTickId` lights the row; `selectedLabel` captions the chart.
+  They deliberately diverge — clicking a tenor with no `chartSymbol` (7 of 11 UST, all 15 JGB) lights
+  the row but must NOT touch `selectedLabel`, or the header reads "US 7Y" over someone else's prices.
+- **`upCount`/`downCount` exclude rate rows** — "yield up" means the bond market fell, so mixing them
+  into the ▲/▼ tally would count two opposite meanings together. FX rows are included.
+- **`fmtQuote(symbol, n)`** decides the unit in the chart panel: `%` for `^IRX/^FVX/^TNX/^TYX`,
+  `fmtFxPrice` for `*=X` (5 dp, 3 dp for JPY crosses), `$` otherwise. `/api/stock` serves both
+  `EURUSD=X` and `^TNX` directly — verified, no special-casing needed in `useStockHistory`.

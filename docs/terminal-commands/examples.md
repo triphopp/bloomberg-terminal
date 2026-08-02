@@ -213,8 +213,6 @@ corr(SYMBOL, EXISTING_HOLDING, 1y)
 MKT     → market chart + watchlist
 NEWS    → news + social feed
 PORT    → portfolio tracker
-CRYP    → crypto prices
-FX      → forex pairs
 MACRO   → macro dashboard
 
 # Settings

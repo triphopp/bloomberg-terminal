@@ -66,17 +66,7 @@ export const tickerEnabledAtom = atom(true); // Bloomberg crawl strip
 
 // View state atoms
 export const currentViewAtom = atom<
-  | "market"
-  | "news"
-  | "movers"
-  | "stock"
-  | "clippings"
-  | "macro"
-  | "credit"
-  | "portfolio"
-  | "crypto"
-  | "fx"
-  | "tail"
+  "market" | "news" | "movers" | "stock" | "clippings" | "macro" | "credit" | "portfolio" | "tail"
 >("market");
 
 // Portfolio atoms

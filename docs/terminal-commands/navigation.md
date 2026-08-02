@@ -15,14 +15,13 @@
 | `MACRO` | macro-view | 7 tabs: dashboard, yield, indicators, fed, country, compare, signals |
 | `CRDT` | credit-view | 4 tabs: overview, spreads, stress, consumer |
 | `PORT` | portfolio-view | 8 tabs: positions, options, trades, analytics, cash, import, theses, risk |
-| `CRYP` | crypto-view | 20 crypto coins + chart |
-| `FX` | fx-view | 20 FX pairs + chart |
+
+> `CRYP` และ `FX` ถูกลบ 2026-08-01 — FX ย้ายไปอยู่ใน TICK DATA board ของ `MKT`, crypto ใช้ global search (`BTC-USD`) เข้า stock-view แทน
 
 **ตัวอย่าง:**
 ```
 MKT     → ไป market view
 PORT    → ไป portfolio view
-CRYP    → ไป crypto view
 ```
 
 ---

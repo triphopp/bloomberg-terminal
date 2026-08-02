@@ -46,14 +46,6 @@ export function useTerminalUI() {
     setCurrentView("portfolio");
   }, [setCurrentView]);
 
-  const handleCryptoView = useCallback(() => {
-    setCurrentView("crypto");
-  }, [setCurrentView]);
-
-  const handleFxView = useCallback(() => {
-    setCurrentView("fx");
-  }, [setCurrentView]);
-
   const handleTailView = useCallback(() => {
     setCurrentView("tail");
   }, [setCurrentView]);
@@ -105,8 +97,6 @@ export function useTerminalUI() {
     handleMacroView,
     handleCreditView,
     handlePortfolioView,
-    handleCryptoView,
-    handleFxView,
     handleTailView,
     handleCancelClick,
     handleNewClick,
