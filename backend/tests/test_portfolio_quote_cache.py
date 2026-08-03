@@ -28,7 +28,11 @@ def _clear_caches():
 def test_stale_quote_from_today_is_served():
     _clear_caches()
     pv2._store_quote("AAPL", 190.0, 188.0)
-    assert pv2._get_fresh_stale("AAPL") == {"price": 190.0, "prev_close": 188.0}
+    # Subset check, not equality: the cache also carries timezone/exchange
+    # (added for session-freshness detection) that this test doesn't concern.
+    fresh = pv2._get_fresh_stale("AAPL")
+    assert fresh["price"] == 190.0
+    assert fresh["prev_close"] == 188.0
 
 
 def test_stale_quote_from_yesterday_is_dropped():
@@ -92,7 +96,9 @@ def test_fallback_runs_when_only_prev_close_is_missing(monkeypatch):
 
     out = pv2._fetch_symbols_now(["XYZ"])
     # Merged, not replaced: batch supplied the price, the fallback the prev_close.
-    assert out["XYZ"] == {"price": 50.0, "prev_close": 48.0}
+    # Subset check — the result also carries timezone/exchange now.
+    assert out["XYZ"]["price"] == 50.0
+    assert out["XYZ"]["prev_close"] == 48.0
 
 
 # ── Session quotes: a failed fetch must not blank a known symbol ────────────
