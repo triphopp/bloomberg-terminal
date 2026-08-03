@@ -53,6 +53,10 @@ export interface Trade {
   day_pnl_thb?: number;
   day_pnl_base?: number;
   day_pct?: number;
+  /** Quote is from a finished session, not today's — day_pnl* are null in that case */
+  day_stale?: boolean;
+  /** Exchange-local date of that finished session, e.g. "2026-07-31" */
+  day_session_date?: string | null;
 }
 
 export interface CashEntry {

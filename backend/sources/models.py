@@ -36,6 +36,15 @@ class QuoteSnapshot:
     three_month_average_volume: Optional[float] = None
     market_cap:                 Optional[float] = None
 
+    # Close of the previous REGULAR session, as Yahoo reports it. Distinct from
+    # ``previous_close``, which yfinance derives from its own price history and
+    # can disagree (AAPL 2026-07-31: previous_close 312.33 vs the real prior
+    # close 333.43). Day-change maths must prefer this one.
+    regular_market_previous_close: Optional[float] = None
+    # IANA name of the exchange's timezone, e.g. "America/New_York". Needed to
+    # decide whether a quote belongs to the current trading day.
+    timezone:                   Optional[str]   = None
+
     # ── Extended fields (not in fast_info, populated from info when available) ──
 
     regular_market_price:       Optional[float] = None
@@ -62,6 +71,8 @@ class QuoteSnapshot:
         field_map = {
             "lastPrice":                  "last_price",
             "previousClose":              "previous_close",
+            "regularMarketPreviousClose": "regular_market_previous_close",
+            "timezone":                   "timezone",
             "regularMarketVolume":        "regular_market_volume",
             "threeMonthAverageVolume":    "three_month_average_volume",
             "marketCap":                  "market_cap",

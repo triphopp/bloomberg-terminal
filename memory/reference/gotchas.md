@@ -210,3 +210,49 @@ Only reproduces with `uvicorn --reload`, and only reliably when `next dev` is ru
 **Fix:** `backend/main.py` adds `_SuppressReloadShutdownRace`, a `logging.Filter` on the `uvicorn.error` logger that drops only records where `exc_info` is `None` (so it can never hide a real logged exception) **and** the message text contains both `KeyboardInterrupt` and `asyncio.exceptions.CancelledError`. Verified with 4 back-to-back full-stack SIGINT tests (0/4 tracebacks) plus 3 unit cases (benign message dropped, a real `exc_info` error kept, an unrelated traceback-shaped message kept).
 
 **Rule:** don't try to "fix" this via `concurrently` flags (`--kill-signal`, `--kill-timeout`, etc.) — the race is entirely inside uvicorn's own signal handling and reproduces even with a raw `kill -INT` to the process group, no `concurrently` involved. Any future noisy-shutdown report should first check whether it matches this exact pattern before assuming a new bug.
+
+## Bug: DAY P&L showed the PREVIOUS session's move (fixed 2026-08-03)
+
+**Symptom:** on a Bangkok morning, PORT → OPEN POSITIONS showed a day P&L for every US holding even though the US market had not opened. The figures were the *last completed session's* move (AAPL -7.35%, Friday's), presented as today's.
+
+**Root cause (two independent bugs):**
+
+1. **Stale session.** Yahoo keeps serving the last completed session's `regularMarketPrice` / `regularMarketPreviousClose` after a market closes. `marketState` was `PREPRE` and `regularMarketTime` pointed at Friday 16:00 ET, but nothing in the *numbers* reveals that — they are internally consistent, just from the wrong day. The existing `_stale_quotes` day-guard did not help: it guards OUR cache, not the upstream data.
+2. **Wrong reference price.** The code used `fast_info.previous_close`, which yfinance derives from its own price history and which disagrees with the real prior close (AAPL 2026-07-31: `previous_close` 312.33 vs the actual 333.43 = `regular_market_previous_close`). Day P&L was therefore wrong *even during live sessions*.
+
+**Fix:**
+- `backend/market_session.py` — `is_current_session()` compares the exchange-local date of `regularMarketTime` against the exchange-local today. Fails OPEN (probe error / unknown tz / crypto+FX ⇒ "current") so a data hiccup never blanks the book.
+- `_pick_prev_close()` in portfolio_v2 prefers `regular_market_previous_close`, falling back to `previous_close` (indices often report NaN — note `NaN != NaN` is the NaN check used).
+- `/open-positions` nulls `day_pnl*` when the session is not current and adds `day_stale` + `day_session_date`; the UI renders `· ·` with a tooltip and tags the Today total with "(N pending)".
+
+**Gotcha inside the gotcha:** cache the session probe by **exchange code** (NMS, SET, CMX), never by timezone. COMEX gold and Nasdaq equities are both `America/New_York`, but gold trades through the night the equities are shut — a timezone-keyed cache handed live gold the equities' "stale" verdict.
+
+**Rule:** any day-change figure needs a freshness check against the exchange's own clock. Server-local dates get Asia/US pairs wrong by a whole day.
+
+## Bug: stale pre/post-market quotes leak through `marketState` (fixed 2026-08-03)
+
+**Symptom (latent):** the PRE/POST column gated on `marketState`, allowing `CLOSED` to display `postMarketPrice`. All weekend Yahoo reports `CLOSED` while still serving Friday's after-hours quote, so the column would have shown a two-day-old price as if it were live. Same family as the DAY P&L staleness bug above.
+
+**Root cause:** `marketState` says which session type is *notionally* current, not whether the quote attached to it is from today. At 03:00 ET Monday, `marketState=PREPRE` yet `postMarketPrice` is still Friday 19:59's.
+
+**Fix:** Yahoo ships `preMarketTime` / `postMarketTime` alongside the prices, in the same `.info` payload already fetched — no extra call. `_fetch_session_quote` nulls each side whose timestamp is not today's exchange-local date (`market_session.is_today_at`), and keeps `pre_date` / `post_date` in the payload so the UI can explain the gap.
+
+**Related improvement:** when the regular session has not opened but an extended-hours session IS live, the DAY P&L cell now renders that move (`PRE +฿682 (+1.50%)`) instead of a blank — it is the only live number for that position. The "Today" total still sums regular-session P&L only, tagged "(N pending)".
+
+**Rule:** never gate an extended-hours price on `marketState` alone — check the price's own timestamp.
+
+## Bug: `regularMarketTime` overwritten with `datetime.now()` (fixed 2026-08-03)
+
+**Symptom:** WATCHLIST showed `AMD $476.15 ▼-1.90%` badged **PRE-MARKET** at 14:20 Bangkok. Both parts were wrong: the numbers were Friday's regular-session move, and the US market was not pre-trading.
+
+**Root cause (three layers):**
+1. `stock.py` stamped `"regularMarketTime": int(datetime.now().timestamp())` — destroying the ONE field that reveals staleness. Every quote looked live by construction.
+2. `SESSION_CONFIG` mapped `PREPRE` → label "PRE-MARKET". Yahoo separates trading from non-trading states: `PRE` is the 04:00–09:30 ET session, `PREPRE` is the dead overnight stretch before it. Same for `POST` vs `POSTPOST`.
+3. `extendedSessionMove` / `ExtendedHoursPrice` accepted `PREPRE`/`POSTPOST`, so a last print from an ended session could render as a live extended-hours quote.
+
+**Fix:**
+- `stock.py` and `market.py` publish Yahoo's real `regularMarketTime` plus `quoteDate` / `isCurrentSession` / `marketState`; pre/post prices are nulled when their own timestamps are not today's.
+- `PREPRE` / `POSTPOST` now label as CLOSED, and only `PRE` / `POST` produce an extended-hours price.
+- `staleMoveStyle()` gives WATCHLIST and TICK DATA a dimmed (0.45) change with a weekday tag (`Fri`) and a tooltip, instead of hiding the row — the last close is still the most recent fact, it just is not today's move.
+
+**Rule:** never overwrite a vendor timestamp with server time "for convenience" — it is the only evidence a consumer has about freshness.

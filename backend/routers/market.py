@@ -16,6 +16,7 @@ from config import (
     ETF_SIZE_CACHE_TTL,
 )
 from db import get_symbol_list, get_heatmap_groups
+from market_session import is_today_at, local_date_of
 
 router = APIRouter()
 
@@ -132,6 +133,12 @@ def fetch_one(cfg: dict) -> dict | None:
         etf_sym = INDEX_ETF_MAP.get(cfg["symbol"])
         size = fetch_etf_size(etf_sym) if etf_sym else compute_size(fi)
 
+        # Session freshness: `change`/`pctChange` above are whatever Yahoo last
+        # published, which after a close is the PREVIOUS session's move. Ship the
+        # verdict so the UI can mark it rather than passing it off as today's.
+        tz_name = info.get("exchangeTimezoneName")
+        market_time = info.get("regularMarketTime")
+
         return {
             "id": cfg["id"],
             "symbol": cfg["symbol"],
@@ -141,6 +148,9 @@ def fetch_one(cfg: dict) -> dict | None:
             "change": change,
             "pctChange": pct_change,
             "avat": vol_m,
+            "quoteDate": local_date_of(market_time, tz_name),
+            "isCurrentSession": is_today_at(market_time, tz_name),
+            "marketState": info.get("marketState"),
             "time": datetime.now().strftime("%H:%M"),
             "ytd": ytd,
             "ytdCur": ytd,

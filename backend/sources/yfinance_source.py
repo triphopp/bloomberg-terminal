@@ -90,6 +90,10 @@ class YFinanceSource(MarketDataSource):
             symbol=symbol,
             last_price=_safe_float(getattr(fi, "last_price", None)),
             previous_close=_safe_float(getattr(fi, "previous_close", None)),
+            regular_market_previous_close=_safe_float(
+                getattr(fi, "regular_market_previous_close", None)),
+            timezone=getattr(fi, "timezone", None),
+            exchange=getattr(fi, "exchange", None),
             regular_market_volume=_safe_int(getattr(fi, "regular_market_volume", None)),
             three_month_average_volume=_safe_float(getattr(fi, "three_month_average_volume", None)),
             market_cap=_safe_float(getattr(fi, "market_cap", None)),
@@ -214,6 +218,10 @@ class YFinanceSource(MarketDataSource):
                         symbol=sym,
                         last_price=_safe_float(getattr(fi, "last_price", None)),
                         previous_close=_safe_float(getattr(fi, "previous_close", None)),
+                        regular_market_previous_close=_safe_float(
+                            getattr(fi, "regular_market_previous_close", None)),
+                        timezone=getattr(fi, "timezone", None),
+                        exchange=getattr(fi, "exchange", None),
                         regular_market_volume=_safe_int(getattr(fi, "regular_market_volume", None)),
                         three_month_average_volume=_safe_float(
                             getattr(fi, "three_month_average_volume", None)),

@@ -3,6 +3,11 @@ export type MarketItem = {
   id: string;
   /** yfinance ticker for this row, e.g. "^GSPTSE" — absent on the static fallback dataset */
   symbol?: string;
+  /** Exchange-local date the quote last traded, "YYYY-MM-DD" */
+  quoteDate?: string | null;
+  /** False when that date is not the exchange's today — change/pctChange are a past session's */
+  isCurrentSession?: boolean | null;
+  marketState?: string | null;
   num?: string;
   rmi?: string;
   value: number;
