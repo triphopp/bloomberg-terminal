@@ -17,13 +17,21 @@ interface SessionConfig {
   bg: string;
 }
 
+// Yahoo's marketState distinguishes sessions that are TRADING from the dead
+// stretches around them, and the two must not share a label:
+//   PRE      pre-market is open        (04:00–09:30 ET)
+//   PREPRE   overnight, nothing trades (20:00–04:00 ET)
+//   POST     after-hours is open       (16:00–20:00 ET)
+//   POSTPOST after-hours has ended     (from 20:00 ET)
+// Labelling PREPRE "PRE-MARKET" told users the market was pre-trading at 07:00
+// Bangkok — hours before it actually is — next to a price frozen at the last
+// close. The closed states now say so.
 const SESSION_CONFIG: Record<string, SessionConfig> = {
   PRE: { label: "PRE-MARKET", short: "PRE", Icon: Sunrise, color: "#f59e0b", bg: "#f59e0b22" },
-  PREPRE: { label: "PRE-MARKET", short: "PRE", Icon: Sunrise, color: "#f59e0b", bg: "#f59e0b22" },
+  PREPRE: { label: "CLOSED", short: "CLOSED", Icon: Moon, color: "#6b7280", bg: "#6b728022" },
   REGULAR: { label: "MARKET OPEN", short: "OPEN", Icon: Sun, color: "#22c55e", bg: "#22c55e22" },
   POST: { label: "AFTER-HOURS", short: "AH", Icon: Sunset, color: "#818cf8", bg: "#818cf822" },
-  // Yahoo's POSTPOST is the overnight stretch after after-hours has closed.
-  POSTPOST: { label: "AFTER-HOURS", short: "AH", Icon: Moon, color: "#818cf8", bg: "#818cf822" },
+  POSTPOST: { label: "CLOSED", short: "CLOSED", Icon: Moon, color: "#6b7280", bg: "#6b728022" },
   CLOSED: { label: "CLOSED", short: "CLOSED", Icon: Moon, color: "#6b7280", bg: "#6b728022" },
 };
 
@@ -37,6 +45,44 @@ export interface SessionQuote {
   postMarketChange?: number | null;
   postMarketChangePercent?: number | null;
   regularMarketPrice?: number | null;
+  /** Exchange-local date the regular quote was last traded, "YYYY-MM-DD" */
+  quoteDate?: string | null;
+  /** False when that date is not the exchange's today — the move is a past session's */
+  isCurrentSession?: boolean | null;
+}
+
+/** Short weekday tag for a "YYYY-MM-DD", e.g. "Fri" — used to date a stale move. */
+export function sessionDayTag(quoteDate: string | null | undefined): string | null {
+  if (!quoteDate) return null;
+  const d = new Date(`${quoteDate}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-US", { weekday: "short" });
+}
+
+/**
+ * How to render a regular-session change that may not be today's.
+ *
+ * Returns null while the quote IS current, so callers keep their normal styling
+ * and pay nothing for the common case.
+ */
+export function staleMoveStyle(
+  quote:
+    | {
+        quoteDate?: string | null;
+        isCurrentSession?: boolean | null;
+      }
+    | null
+    | undefined
+): { opacity: number; tag: string | null; title: string } | null {
+  if (!quote || quote.isCurrentSession !== false) return null;
+  const tag = sessionDayTag(quote.quoteDate);
+  return {
+    // Dimmed rather than hidden: the last close is still the most recent fact
+    // about the instrument, it just is not today's move.
+    opacity: 0.45,
+    tag,
+    title: `Last traded ${quote.quoteDate ?? "before today"} — this is that session's move, not today's`,
+  };
 }
 
 export function sessionConfig(state: string | null | undefined): SessionConfig | null {
@@ -65,7 +111,11 @@ export function extendedSessionMove(quote: SessionQuote | null | undefined): {
   const state = quote?.marketState;
   const cfg = sessionConfig(state);
   if (!quote || !cfg) return null;
-  if ((state === "PRE" || state === "PREPRE") && quote.preMarketPrice != null) {
+  // Only the states that are actually TRADING. PREPRE/POSTPOST are the closed
+  // stretches either side; their prices are the last print of a session that
+  // has ended, so callers fall through to the regular fields (which carry an
+  // isCurrentSession flag of their own).
+  if (state === "PRE" && quote.preMarketPrice != null) {
     return {
       price: quote.preMarketPrice,
       change: quote.preMarketChange ?? null,
@@ -75,7 +125,7 @@ export function extendedSessionMove(quote: SessionQuote | null | undefined): {
       label: cfg.label,
     };
   }
-  if ((state === "POST" || state === "POSTPOST") && quote.postMarketPrice != null) {
+  if (state === "POST" && quote.postMarketPrice != null) {
     return {
       price: quote.postMarketPrice,
       change: quote.postMarketChange ?? null,
@@ -165,7 +215,7 @@ export function ExtendedHoursPrice({
   // toolbar row wider; whitespace-nowrap so it never wraps to a second line.
   const cls =
     "flex items-center gap-2 text-[10px] font-mono whitespace-nowrap min-w-0 overflow-hidden";
-  if ((state === "PRE" || state === "PREPRE") && quote?.preMarketPrice) {
+  if (state === "PRE" && quote?.preMarketPrice) {
     const pct = quote.preMarketChangePercent ?? 0;
     const chg = quote.preMarketChange ?? 0;
     return (
@@ -180,7 +230,7 @@ export function ExtendedHoursPrice({
       </div>
     );
   }
-  if ((state === "POST" || state === "POSTPOST") && quote?.postMarketPrice) {
+  if (state === "POST" && quote?.postMarketPrice) {
     const pct = quote.postMarketChangePercent ?? 0;
     const chg = quote.postMarketChange ?? 0;
     return (

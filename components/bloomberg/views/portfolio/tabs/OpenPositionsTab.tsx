@@ -48,6 +48,27 @@ interface SessionQuote {
   post_price: number | null;
   post_change: number | null;
   post_change_pct: number | null;
+  /** Exchange-local dates of each extended-hours quote. The backend nulls the
+   *  price when its date isn't today's; these stay so the UI can explain why. */
+  pre_date?: string | null;
+  post_date?: string | null;
+}
+
+/** The live extended-hours side of a session quote, or null when neither is on. */
+function activeSession(
+  s: SessionQuote | undefined
+): { label: "PRE" | "POST"; change: number; pct: number | null } | null {
+  if (!s) return null;
+  const st = (s.market_state || "").toUpperCase();
+  // Prices are already freshness-filtered server-side; marketState just picks
+  // which side is the one currently running.
+  if (st.startsWith("PRE") && s.pre_price != null && s.pre_change != null) {
+    return { label: "PRE", change: s.pre_change, pct: s.pre_change_pct };
+  }
+  if ((st.startsWith("POST") || st === "CLOSED") && s.post_price != null && s.post_change != null) {
+    return { label: "POST", change: s.post_change, pct: s.post_change_pct };
+  }
+  return null;
 }
 
 function DerivativesSection({ accountId, colors }: { accountId: string; colors: Colors }) {
@@ -414,16 +435,7 @@ export function OpenPositionsTab({
   // post-market session, collapses on its own once the session ends. Not a
   // user-toggled col — never enters showCols / the COLS picker.
   const sessionActive = useMemo(
-    () =>
-      positions.some((p) => {
-        const s = session[p.symbol];
-        if (!s) return false;
-        const st = (s.market_state || "").toUpperCase();
-        return (
-          (st.startsWith("PRE") && s.pre_price != null) ||
-          ((st.startsWith("POST") || st === "CLOSED") && s.post_price != null)
-        );
-      }),
+    () => positions.some((p) => activeSession(session[p.symbol]) != null),
     [positions, session]
   );
 
@@ -481,6 +493,9 @@ export function OpenPositionsTab({
     return a + (p.day_pnl ?? 0) / thb_per_usd;
   }, 0);
   const hasDayData = positions.some((p) => p.day_pnl != null);
+  // Positions whose market has not traded today. Their day P&L is deliberately
+  // absent, so the "Today" total covers only part of the book — say how much.
+  const stalePositions = positions.filter((p) => p.day_stale).length;
   const totalCost = positions.reduce((a, p) => {
     if (p.cost_basis_base != null) return a + p.cost_basis_base;
     return a + toBase(p.price_entry * p.volume, posCcy(p));
@@ -524,6 +539,15 @@ export function OpenPositionsTab({
                 {csym}
                 {fmtK(Math.abs(totalDayPnl))}
               </span>
+              {stalePositions > 0 && (
+                <span
+                  className="text-[8px] ml-0.5"
+                  style={{ color: colors.textSecondary }}
+                  title={`${stalePositions} position(s) sit on markets that have not opened today. Their regular-session move does not exist yet, so they are excluded here — any pre-market move is shown per row instead.`}
+                >
+                  ({stalePositions} pending)
+                </span>
+              )}
             </span>
           )}
           {totalUnreal !== 0 && (
@@ -871,18 +895,15 @@ export function OpenPositionsTab({
                           ),
                         "PRE/POST": (() => {
                           const s = session[p.symbol];
-                          if (!s) return <span style={{ color: colors.textSecondary }}>—</span>;
-                          const st = (s.market_state || "").toUpperCase();
-                          const isPre = s.pre_price != null && st.startsWith("PRE");
-                          const isPost =
-                            !isPre &&
-                            s.post_price != null &&
-                            (st.startsWith("POST") || st === "CLOSED");
-                          const px = isPre ? s.pre_price : isPost ? s.post_price : null;
-                          const pct = isPre ? s.pre_change_pct : isPost ? s.post_change_pct : null;
+                          const ext = activeSession(s);
+                          if (!s || !ext)
+                            return <span style={{ color: colors.textSecondary }}>—</span>;
+                          const isPre = ext.label === "PRE";
+                          const px = isPre ? s.pre_price : s.post_price;
+                          const pct = ext.pct;
                           if (px == null)
                             return <span style={{ color: colors.textSecondary }}>—</span>;
-                          const label = isPre ? "PRE" : "POST";
+                          const label = ext.label;
                           const labelColor = isPre ? "#f59e0b" : "#38bdf8";
                           const pxNative = toBase(px, acc);
                           return (
@@ -928,8 +949,52 @@ export function OpenPositionsTab({
                                   : p.day_pnl != null
                                     ? p.day_pnl / thb_per_usd
                                     : null;
-                          if (dayPnl == null)
-                            return <span style={{ color: colors.textSecondary }}>—</span>;
+                          if (dayPnl == null) {
+                            // The regular session has not traded today. If an
+                            // extended-hours session IS running, show that move
+                            // instead of a blank — it is the only live number
+                            // there is, and it is what the position is actually
+                            // doing right now.
+                            const ext = p.day_stale ? activeSession(session[p.symbol]) : null;
+                            if (ext) {
+                              const extPnl = toBase(ext.change * p.volume, acc);
+                              const extColor = ext.label === "PRE" ? "#f59e0b" : "#38bdf8";
+                              return (
+                                <span
+                                  className="flex items-center gap-1"
+                                  title={`${ext.label}-market move — the regular session has not opened yet (last close ${p.day_session_date ?? "unknown"})`}
+                                >
+                                  <span
+                                    className="text-[7px] px-0.5 rounded font-bold"
+                                    style={{ background: `${extColor}22`, color: extColor }}
+                                  >
+                                    {ext.label}
+                                  </span>
+                                  <span className="font-bold" style={{ color: pnlColor(extPnl) }}>
+                                    {extPnl >= 0 ? "+" : "-"}
+                                    {sym}
+                                    {fmtK(Math.abs(extPnl))}
+                                    {ext.pct != null && (
+                                      <span className="text-[8px] ml-0.5 font-normal">
+                                        ({ext.pct >= 0 ? "+" : ""}
+                                        {ext.pct.toFixed(2)}%)
+                                      </span>
+                                    )}
+                                  </span>
+                                </span>
+                              );
+                            }
+                            // Blank because that market has not traded today —
+                            // say so, otherwise it reads as missing data.
+                            const staleHint = p.day_stale
+                              ? `Market has not opened yet — last session ${p.day_session_date ?? "unknown"}`
+                              : undefined;
+                            return (
+                              <span style={{ color: colors.textSecondary }} title={staleHint}>
+                                {p.day_stale ? "· ·" : "—"}
+                              </span>
+                            );
+                          }
                           return (
                             <span className="font-bold" style={{ color: pnlColor(dayPnl) }}>
                               {dayPnl >= 0 ? "+" : "-"}

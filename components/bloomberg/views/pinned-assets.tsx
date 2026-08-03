@@ -36,7 +36,7 @@ import {
   pinnedAssetsAtom,
   stockSearchSymbolAtom,
 } from "../atoms";
-import { SessionGlyph, extendedSessionMove } from "../core/market-session";
+import { SessionGlyph, extendedSessionMove, staleMoveStyle } from "../core/market-session";
 import {
   type TrendState,
   type WatchlistSignal,
@@ -89,6 +89,8 @@ interface Quote {
   postMarketPrice?: number | null;
   postMarketChange?: number | null;
   postMarketChangePercent?: number | null;
+  quoteDate?: string | null;
+  isCurrentSession?: boolean | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1852,13 +1854,29 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
 
                       {/* %Change */}
                       <div className="flex items-baseline gap-1">
-                        <span
-                          className="text-[9px] font-bold font-mono"
-                          style={{ color: pctColor }}
-                        >
-                          {isUp ? "▲" : "▼"}
-                          {fmtPct(pct)}
-                        </span>
+                        {(() => {
+                          const stale = staleMoveStyle(q);
+                          return (
+                            <>
+                              <span
+                                className="text-[9px] font-bold font-mono"
+                                style={{ color: pctColor, opacity: stale?.opacity }}
+                                title={stale?.title}
+                              >
+                                {isUp ? "▲" : "▼"}
+                                {fmtPct(pct)}
+                              </span>
+                              {stale?.tag && (
+                                <span
+                                  className="text-[7px] font-bold font-mono"
+                                  style={{ color: colors.textSecondary }}
+                                >
+                                  {stale.tag}
+                                </span>
+                              )}
+                            </>
+                          );
+                        })()}
                         <SessionGlyph state={q?.marketState} />
                         {sincePin != null && (
                           <span
@@ -2234,24 +2252,51 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
                                 {/* LAST / %CHG / CHG sit on their own line under the
                                 symbol — as columns they pushed the signal grid far
                                 away from the ticker in a ~370px panel. */}
-                                {q && (
-                                  <div className="font-mono whitespace-nowrap leading-tight">
-                                    {price != null && (
-                                      <span className="font-bold" style={{ color: colors.text }}>
-                                        ${fmtPrice(price)}
-                                      </span>
-                                    )}
-                                    <span className="ml-1" style={{ color: pctColor }}>
-                                      <span className="text-[8px]">{isUp ? "▲" : "▼"}</span>
-                                      <span className="font-bold">{fmtPct(pct)}</span>
-                                      <span className="text-[8px] ml-0.5" style={{ opacity: 0.75 }}>
-                                        {isUp ? "+" : ""}
-                                        {chg.toFixed(2)}
-                                      </span>
-                                    </span>
-                                    <SessionGlyph state={q.marketState} className="ml-1" />
-                                  </div>
-                                )}
+                                {q &&
+                                  (() => {
+                                    // A move from a session that has already ended
+                                    // is dimmed and dated, so it cannot be read as
+                                    // today's.
+                                    const stale = staleMoveStyle(q);
+                                    return (
+                                      <div
+                                        className="font-mono whitespace-nowrap leading-tight"
+                                        title={stale?.title}
+                                      >
+                                        {price != null && (
+                                          <span
+                                            className="font-bold"
+                                            style={{ color: colors.text }}
+                                          >
+                                            ${fmtPrice(price)}
+                                          </span>
+                                        )}
+                                        <span
+                                          className="ml-1"
+                                          style={{ color: pctColor, opacity: stale?.opacity }}
+                                        >
+                                          <span className="text-[8px]">{isUp ? "▲" : "▼"}</span>
+                                          <span className="font-bold">{fmtPct(pct)}</span>
+                                          <span
+                                            className="text-[8px] ml-0.5"
+                                            style={{ opacity: 0.75 }}
+                                          >
+                                            {isUp ? "+" : ""}
+                                            {chg.toFixed(2)}
+                                          </span>
+                                        </span>
+                                        {stale?.tag && (
+                                          <span
+                                            className="text-[7px] ml-0.5 font-bold"
+                                            style={{ color: colors.textSecondary }}
+                                          >
+                                            {stale.tag}
+                                          </span>
+                                        )}
+                                        <SessionGlyph state={q.marketState} className="ml-1" />
+                                      </div>
+                                    );
+                                  })()}
                                 <SessionRow quote={q} colors={colors} />
                                 {pin.comment && (
                                   <button

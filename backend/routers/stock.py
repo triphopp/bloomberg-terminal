@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from cache import TTLCache
 from config import STOCK_CACHE_TTL, MAX_HISTORY_CACHE_TTL, PERIOD_TO_YF, HISTORY_PERIOD_MAP, VALID_INTERVALS
+from market_session import is_today_at, local_date_of
 from sources import market_data
 
 _DETAIL_TTL = 3600  # 1 hour — financials, events, SEC filings
@@ -568,6 +569,21 @@ def stock_quote(symbol: str):
             change = round(price - prev, 4)
         pct = round((change / prev) * 100, 4) if prev else 0.0
 
+        # ── Session freshness ────────────────────────────────────────────
+        # Yahoo keeps serving the last completed session after a market shuts,
+        # so `change`/`pct` above can be a previous day's move. Publish the real
+        # trade timestamp and a verdict so callers can label or suppress it.
+        tz_name = info.get("exchangeTimezoneName")
+        market_time = info.get("regularMarketTime")
+        quote_date = local_date_of(market_time, tz_name)
+        is_current = is_today_at(market_time, tz_name)
+
+        # Extended-hours prices carry their own timestamps; drop whichever is
+        # not from today. `marketState` alone is not enough — it reads CLOSED
+        # all weekend while last Friday's postMarketPrice sits in the payload.
+        pre_fresh = is_today_at(info.get("preMarketTime"), tz_name)
+        post_fresh = is_today_at(info.get("postMarketTime"), tz_name)
+
         data = {
             "symbol":                     symbol.upper(),
             "longName":                   info.get("longName"),
@@ -578,7 +594,13 @@ def stock_quote(symbol: str):
             "regularMarketPrice":         round(price, 4),
             "regularMarketChange":        change,
             "regularMarketChangePercent": pct,
-            "regularMarketTime":          int(datetime.now().timestamp()),
+            # Yahoo's own trade timestamp — NOT datetime.now(). Stamping "now"
+            # here made every quote look live and hid exactly the staleness the
+            # consumers below need to detect.
+            "regularMarketTime":          market_time,
+            "quoteDate":                  quote_date,
+            "isCurrentSession":           is_current,
+            "exchangeTimezone":           tz_name,
             "marketCap":                  info.get("marketCap") or getattr(fi, "market_cap", None),
             "trailingPE":                 info.get("trailingPE"),
             "forwardPE":                  info.get("forwardPE"),
@@ -616,12 +638,12 @@ def stock_quote(symbol: str):
             "sharesOutstanding":          info.get("sharesOutstanding") or getattr(fi, "shares", None),
             # ── Market session ─────────────────────────────────────────
             "marketState":               info.get("marketState"),
-            "preMarketPrice":            info.get("preMarketPrice"),
-            "preMarketChange":           _safe_float(info.get("preMarketChange")),
-            "preMarketChangePercent":    _safe_float(info.get("preMarketChangePercent")),
-            "postMarketPrice":           info.get("postMarketPrice"),
-            "postMarketChange":          _safe_float(info.get("postMarketChange")),
-            "postMarketChangePercent":   _safe_float(info.get("postMarketChangePercent")),
+            "preMarketPrice":            info.get("preMarketPrice") if pre_fresh else None,
+            "preMarketChange":           _safe_float(info.get("preMarketChange")) if pre_fresh else None,
+            "preMarketChangePercent":    _safe_float(info.get("preMarketChangePercent")) if pre_fresh else None,
+            "postMarketPrice":           info.get("postMarketPrice") if post_fresh else None,
+            "postMarketChange":          _safe_float(info.get("postMarketChange")) if post_fresh else None,
+            "postMarketChangePercent":   _safe_float(info.get("postMarketChangePercent")) if post_fresh else None,
             "sector":                    info.get("sector"),
             "industry":                  info.get("industry"),
         }

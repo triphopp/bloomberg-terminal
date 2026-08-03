@@ -57,7 +57,7 @@ import {
 import type { BarInterval, IndicatorRegistryEntry, OhlcvBar, TimePeriod } from "../chart";
 import { FearGreedPane } from "../chart/FearGreedPane";
 import { PEPane } from "../chart/PEPane";
-import { ExtendedHoursPrice, MarketSessionBadge } from "../core/market-session";
+import { ExtendedHoursPrice, MarketSessionBadge, staleMoveStyle } from "../core/market-session";
 import { type FxPair, useFxTicks } from "../hooks/useFxTicks";
 import { useMarketDataQuery } from "../hooks/useMarketDataQuery";
 import { type RateRowData, useRatesCurve } from "../hooks/useRatesCurve";
@@ -289,6 +289,9 @@ function TickRow({
 }) {
   const isUp = item.pctChange >= 0;
   const pctColor = isUp ? "#00FF00" : "#FF0000";
+  // Dim + date a move that belongs to a session which has already ended, so a
+  // closed market's last change cannot be misread as today's.
+  const stale = staleMoveStyle(item);
   return (
     <tr
       className="cursor-pointer hover:bg-[#111] transition-colors"
@@ -310,12 +313,27 @@ function TickRow({
       <td className="px-1 py-0.5 text-right font-bold text-[10px]" style={{ color: colors.text }}>
         {fmtPrice(item.value)}
       </td>
-      <td className="px-1 py-0.5 text-right text-[10px]" style={{ color: pctColor }}>
+      <td
+        className="px-1 py-0.5 text-right text-[10px]"
+        style={{ color: pctColor, opacity: stale?.opacity }}
+        title={stale?.title}
+      >
         {isUp ? "+" : ""}
         {item.change.toFixed(2)}
       </td>
-      <td className="px-1 py-0.5 text-right font-bold text-[10px]" style={{ color: pctColor }}>
-        <span className="text-[8px]">{isUp ? "▲" : "▼"}</span> {fmtPct(item.pctChange)}
+      <td
+        className="px-1 py-0.5 text-right font-bold text-[10px]"
+        style={{ color: pctColor }}
+        title={stale?.title}
+      >
+        <span style={{ opacity: stale?.opacity }}>
+          <span className="text-[8px]">{isUp ? "▲" : "▼"}</span> {fmtPct(item.pctChange)}
+        </span>
+        {stale?.tag && (
+          <span className="text-[7px] ml-0.5 font-normal" style={{ color: colors.textSecondary }}>
+            {stale.tag}
+          </span>
+        )}
       </td>
       <td className="px-1 py-0.5 text-right text-[9px]">
         {item.ytd !== 0 && (

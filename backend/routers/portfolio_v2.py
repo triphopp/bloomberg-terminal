@@ -19,6 +19,7 @@ from sources import market_data
 
 from cache import TTLCache
 from db import get_db
+from market_session import is_current_session, is_today_at, local_date_of, session_date_for
 from portfolio_currency import (
     convert_amount,
     fx_rate as _fx,
@@ -167,26 +168,60 @@ def _today_key() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
+def _pick_prev_close(snap) -> Optional[float]:
+    """Previous REGULAR close, preferring Yahoo's own field.
+
+    ``previous_close`` is derived by yfinance from its price history and can
+    disagree with the real prior close (AAPL 2026-07-31: 312.33 vs 333.43),
+    which silently skews every day-change figure. Prefer
+    ``regular_market_previous_close`` and keep the derived one as the fallback
+    for symbols where Yahoo leaves it empty (many indices report NaN).
+    """
+    for attr in ("regular_market_previous_close", "previous_close"):
+        val = getattr(snap, attr, None)
+        try:
+            num = float(val) if val is not None else None
+        except (TypeError, ValueError):
+            num = None
+        # NaN != NaN — the cheapest way to reject the NaN yfinance hands back.
+        if num is not None and num == num and num > 0:
+            return num
+    return None
+
+
 def _fetch_one_quote(sym: str) -> dict:
-    """Fetch a single symbol's quote via fast_info. Returns {"price","prev_close"}."""
+    """Fetch a single symbol's quote via fast_info.
+
+    Returns {"price", "prev_close", "timezone"}.
+    """
     try:
         info = market_data.get_fast_info(sym)
         price = getattr(info, "last_price", None) or getattr(info, "regular_market_price", None)
-        prev = getattr(info, "previous_close", None)
         return {"price": float(price) if price else None,
-                "prev_close": float(prev) if prev else None}
+                "prev_close": _pick_prev_close(info),
+                "timezone": getattr(info, "timezone", None),
+                "exchange": getattr(info, "exchange", None)}
     except Exception:
-        return {"price": None, "prev_close": None}
+        return {"price": None, "prev_close": None, "timezone": None, "exchange": None}
 
 
-def _store_quote(sym: str, price, prev) -> None:
+def _store_quote(sym: str, price, prev, tz=None, exchange=None) -> None:
     if price:
         _price_cache.set(sym, price)
     if prev:
         _prev_cache.set(sym, prev)
     if price or prev:
         with _stale_lock:
-            _stale_quotes[sym] = {"price": price, "prev_close": prev, "day": _today_key()}
+            prior = _stale_quotes.get(sym) or {}
+            _stale_quotes[sym] = {
+                "price": price,
+                "prev_close": prev,
+                # Venue and its timezone never change for a symbol, so keep the
+                # last known ones when a refresh happens not to carry them.
+                "timezone": tz or prior.get("timezone"),
+                "exchange": exchange or prior.get("exchange"),
+                "day": _today_key(),
+            }
 
 
 def _get_fresh_stale(sym: str) -> Optional[dict]:
@@ -200,7 +235,12 @@ def _get_fresh_stale(sym: str) -> Optional[dict]:
             # the caller does a blocking fetch and the row is right immediately.
             _stale_quotes.pop(sym, None)
             return None
-        return {"price": entry.get("price"), "prev_close": entry.get("prev_close")}
+        return {
+            "price": entry.get("price"),
+            "prev_close": entry.get("prev_close"),
+            "timezone": entry.get("timezone"),
+            "exchange": entry.get("exchange"),
+        }
 
 
 def _fetch_symbols_now(to_fetch: list[str]) -> dict[str, dict]:
@@ -211,9 +251,11 @@ def _fetch_symbols_now(to_fetch: list[str]) -> dict[str, dict]:
         for sym in to_fetch:
             snap = batch.quotes.get(sym) if hasattr(batch, "quotes") else None
             price = snap.last_price if snap else None
-            prev = snap.previous_close if snap else None
-            result[sym] = {"price": price, "prev_close": prev}
-            _store_quote(sym, price, prev)
+            prev = _pick_prev_close(snap) if snap else None
+            tz = getattr(snap, "timezone", None) if snap else None
+            exch = getattr(snap, "exchange", None) if snap else None
+            result[sym] = {"price": price, "prev_close": prev, "timezone": tz, "exchange": exch}
+            _store_quote(sym, price, prev, tz, exch)
     except Exception:
         pass
 
@@ -238,9 +280,12 @@ def _fetch_symbols_now(to_fetch: list[str]) -> dict[str, dict]:
                         if q.get("prev_close") is not None
                         else prior.get("prev_close")
                     ),
+                    "timezone": q.get("timezone") or prior.get("timezone"),
+                    "exchange": q.get("exchange") or prior.get("exchange"),
                 }
                 result[sym] = merged
-                _store_quote(sym, merged["price"], merged["prev_close"])
+                _store_quote(sym, merged["price"], merged["prev_close"],
+                             merged["timezone"], merged["exchange"])
     return result
 
 
@@ -276,7 +321,13 @@ def _batch_fetch_prices(symbols: list[str]) -> dict[str, dict]:
     for sym in symbols:
         cached_price = _price_cache.get(sym)
         if cached_price is not None:
-            result[sym] = {"price": cached_price, "prev_close": _prev_cache.get(sym)}
+            known = _get_fresh_stale(sym) or {}
+            result[sym] = {
+                "price": cached_price,
+                "prev_close": _prev_cache.get(sym),
+                "timezone": known.get("timezone"),
+                "exchange": known.get("exchange"),
+            }
             continue
         stale = _get_fresh_stale(sym)
         if stale is not None:
@@ -1535,7 +1586,21 @@ def get_open_positions(
             pos["cost_basis_base"] = None
             pos["market_value_base"] = None
         # ── Day P&L (today's move vs previous close) ──────────────────────────
-        if price and prev_close and prev_close > 0:
+        # Only when the quote actually belongs to today's session. Yahoo keeps
+        # serving the last completed session once a market closes, so before the
+        # US open this would otherwise render Friday's move as today's.
+        day_is_current = (
+            is_current_session(yf_sym, quote.get("timezone"), quote.get("exchange"))
+            if yf_sym and quote
+            else True
+        )
+        pos["day_stale"] = not day_is_current
+        pos["day_session_date"] = (
+            None
+            if day_is_current
+            else session_date_for(yf_sym, quote.get("timezone"), quote.get("exchange"))
+        )
+        if day_is_current and price and prev_close and prev_close > 0:
             vol = _to_float_or_zero(pos["volume"])
             day_pnl = (price - prev_close) * vol
             pos["day_pnl"] = round(day_pnl, 4)
@@ -1610,19 +1675,32 @@ def _fetch_session_quote(yf_sym: str) -> dict:
         return _session_last_good_get(yf_sym) or {}
     if not raw:
         return _session_last_good_get(yf_sym) or {}
-    pre_price = _to_float(raw.get("preMarketPrice"))
-    pre_change = _to_float(raw.get("preMarketChange"))
-    post_price = _to_float(raw.get("postMarketPrice"))
-    post_change = _to_float(raw.get("postMarketChange"))
+    # Yahoo keeps serving the LAST session's extended-hours quote long after it
+    # ends: at 03:00 ET on Monday, `postMarketPrice` is still Friday 19:59's.
+    # Each side carries its own timestamp, so drop the one that isn't from
+    # today's exchange-local date rather than trusting `marketState` alone
+    # (which reports CLOSED all weekend while the stale price sits there).
+    tz_name = raw.get("exchangeTimezoneName")
+    pre_time = raw.get("preMarketTime")
+    post_time = raw.get("postMarketTime")
+    pre_fresh = is_today_at(pre_time, tz_name)
+    post_fresh = is_today_at(post_time, tz_name)
+
+    pre_price = _to_float(raw.get("preMarketPrice")) if pre_fresh else None
+    pre_change = _to_float(raw.get("preMarketChange")) if pre_fresh else None
+    post_price = _to_float(raw.get("postMarketPrice")) if post_fresh else None
+    post_change = _to_float(raw.get("postMarketChange")) if post_fresh else None
     quote = {
         "market_state": raw.get("marketState"),
         "regular_price": _to_float(raw.get("regularMarketPrice")),
         "pre_price": pre_price,
         "pre_change": pre_change,
         "pre_change_pct": _session_pct(pre_price, pre_change),
+        "pre_date": local_date_of(pre_time, tz_name),
         "post_price": post_price,
         "post_change": post_change,
         "post_change_pct": _session_pct(post_price, post_change),
+        "post_date": local_date_of(post_time, tz_name),
     }
     # A response with no marketState is yfinance handing back a husk (rate
     # limited, or a symbol it briefly can't resolve). Prefer the last good one.
