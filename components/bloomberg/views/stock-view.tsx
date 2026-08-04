@@ -40,6 +40,7 @@ import {
 } from "../atoms";
 import {
   ChartTimeframeBar,
+  EventDetailPopover,
   IndicatorPicker,
   ModularChart,
   useChartIndicators,
@@ -4330,6 +4331,8 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
     showEvents,
     toggleEvents,
     supportsEvents,
+    selectedEvent,
+    clearSelectedEvent,
     showVolumeProfile,
     addIndicator: addChartIndicator,
     removeIndicator: removeChartIndicator,
@@ -5125,6 +5128,16 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                   onBarClick={handleChartClick}
                   crosshairCursor={regressionArmed}
                 />
+                {selectedEvent && (
+                  <EventDetailPopover
+                    markers={selectedEvent.markers}
+                    anchor={selectedEvent.anchor}
+                    data={ohlcvData}
+                    colors={colors}
+                    symbol={activeSymbol}
+                    onClose={clearSelectedEvent}
+                  />
+                )}
                 {fearGreedActive && fearGreedQuery.data?.history && (
                   <FearGreedPane data={fearGreedQuery.data.history} colors={colors} height={100} />
                 )}
