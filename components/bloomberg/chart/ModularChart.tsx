@@ -20,10 +20,11 @@ import {
   LineSeries,
   type SeriesType,
   createChart,
-  createSeriesMarkers,
 } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
 import { chartPaneHeightsAtom } from "../atoms";
+import { createEventRailOverlay } from "./event-rail-overlay";
+import { placeEvents } from "./event-reaction";
 import { OverlayPrimitive } from "./overlay-primitive";
 import { clampPaneHeight, computePaneLayout, paneKey } from "./pane-layout";
 import type {
@@ -36,6 +37,19 @@ import type {
 } from "./types";
 
 // ── Props ────────────────────────────────────────────────────────────────────
+
+/** Extra context handed to `onBarClick` alongside the bar time. */
+export interface ChartClickContext {
+  /** Click position in viewport coordinates — anchor for a popover. */
+  point?: { x: number; y: number };
+  /**
+   * Event markers within `EVENT_HIT_BARS` of the clicked bar, nearest first.
+   * Lets the caller open a detail card without doing its own hit-testing —
+   * only the chart knows how bar times map to indices. More than one means the
+   * user clicked a cluster and should be offered the list.
+   */
+  events?: ChartEventMarker[];
+}
 
 export interface ModularChartProps {
   /** OHLCV data (ascending time order, unique times) */
@@ -57,10 +71,11 @@ export interface ModularChartProps {
   eventMarkers?: ChartEventMarker[];
   /**
    * Fired with the bar time when the user clicks inside the data area. Used by
-   * the Regression Channel to pick its two endpoints. Held in a ref internally,
-   * so passing a fresh closure each render does not rebuild the chart.
+   * the Regression Channel to pick its two endpoints, and by the event detail
+   * card via `ctx.event`. Held in a ref internally, so passing a fresh closure
+   * each render does not rebuild the chart.
    */
-  onBarClick?: (time: string | number) => void;
+  onBarClick?: (time: string | number, ctx?: ChartClickContext) => void;
   /** Show a crosshair cursor — signals that a click will be captured. */
   crosshairCursor?: boolean;
 }
@@ -98,18 +113,20 @@ function isDarkSurface(el: HTMLElement | null, fallback: boolean): boolean {
 
 // ── Marker styling ──────────────────────────────────────────────────────────
 
-const EVENT_MARKER_STYLES: Record<
-  ChartEventMarker["type"],
-  {
-    shape: "circle" | "square" | "arrowUp" | "arrowDown";
-    colorDark: string;
-    colorLight: string;
-  }
-> = {
-  dividend: { shape: "circle", colorDark: "#4fc3f7", colorLight: "#0288d1" },
-  earnings: { shape: "square", colorDark: "#ffb74d", colorLight: "#e65100" },
-  split: { shape: "arrowDown", colorDark: "#ce93d8", colorLight: "#7b1fa2" },
-};
+/**
+ * How far from a marker a click still counts as hitting it, in bars.
+ *
+ * At 1Y daily inside the narrow MKT panel a bar is barely 2px wide, so demanding
+ * an exact bar match would make the rail chips effectively unclickable.
+ */
+const EVENT_HIT_BARS = 2;
+
+/**
+ * Extra bottom margin on the price scale when the event rail is showing, as a
+ * fraction of the pane. Keeps the candles from being drawn behind the chips —
+ * the rail paints on top, so without this the lowest wicks disappear under it.
+ */
+const RAIL_SCALE_MARGIN = 0.1;
 
 export function ModularChart({
   data,
@@ -170,6 +187,17 @@ export function ModularChart({
 
     const gridColor = isDark ? "#2a2a2a" : "#dcdcdc";
 
+    // ── Event markers (dividends, earnings, splits) ──
+    // Drawn by the event rail overlay further down, not as series markers. All
+    // that is needed here is a bar index per marker so a click can be matched
+    // back to it. Resolved before the chart exists because the price scale needs
+    // to know up front whether to reserve room for the rail.
+    const indexByTime = new Map<string, number>();
+    data.forEach((d, i) => indexByTime.set(String(d.time), i));
+
+    const placedEvents = placeEvents(eventMarkers, data);
+    const hasRail = placedEvents.length > 0;
+
     // ── Create chart ──
     const chart = createChart(container, {
       width: container.clientWidth,
@@ -194,7 +222,7 @@ export function ModularChart({
         textColor: colors.textSecondary,
         scaleMargins: {
           top: 0.05,
-          bottom: 0.05,
+          bottom: hasRail ? RAIL_SCALE_MARGIN : 0.05,
         },
       },
       timeScale: {
@@ -283,71 +311,7 @@ export function ModularChart({
 
     chart.timeScale().fitContent();
 
-    // ── Event markers (dividends, earnings, splits) ──
-    let markersPlugin: ReturnType<typeof createSeriesMarkers> | null = null;
-    if (eventMarkers.length > 0) {
-      const dataTimeSet = new Set(data.map((d) => (typeof d.time === "number" ? d.time : d.time)));
-      const isIntradayData = data.length > 0 && typeof data[0].time === "number";
-
-      const lwMarkers = eventMarkers
-        .filter((em) => {
-          if (isIntradayData) {
-            const ts =
-              typeof em.time === "number"
-                ? em.time
-                : Math.floor(new Date(`${em.time}T00:00:00`).getTime() / 1000);
-            for (const dt of dataTimeSet) {
-              if (typeof dt === "number" && Math.abs(dt - ts) < 86400) return true;
-            }
-            return false;
-          }
-          const dateStr = typeof em.time === "string" ? em.time.slice(0, 10) : "";
-          return dataTimeSet.has(dateStr);
-        })
-        .map((em) => {
-          const style = EVENT_MARKER_STYLES[em.type];
-          // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts Time union
-          let markerTime: any;
-          if (isIntradayData) {
-            if (typeof em.time === "number") {
-              markerTime = em.time;
-            } else {
-              const dayTs = Math.floor(new Date(`${em.time}T00:00:00`).getTime() / 1000);
-              let closest = data[0].time as number;
-              let minDiff = Math.abs(closest - dayTs);
-              for (const d of data) {
-                const diff = Math.abs((d.time as number) - dayTs);
-                if (diff < minDiff) {
-                  minDiff = diff;
-                  closest = d.time as number;
-                }
-              }
-              markerTime = closest;
-            }
-          } else {
-            markerTime = typeof em.time === "string" ? em.time.slice(0, 10) : em.time;
-          }
-
-          return {
-            time: markerTime,
-            position: "belowBar" as const,
-            shape: style.shape,
-            color: em.color ?? (isDark ? style.colorDark : style.colorLight),
-            text: em.label,
-            id: `${em.type}-${em.time}`,
-          };
-        })
-        .sort((a, b) => {
-          if (typeof a.time === "number" && typeof b.time === "number") return a.time - b.time;
-          return String(a.time).localeCompare(String(b.time));
-        });
-
-      if (lwMarkers.length > 0) {
-        markersPlugin = createSeriesMarkers(candleSeries, lwMarkers);
-      }
-    }
-
-    // ── Canvas overlays (Volume Profile, Footprint) ──
+    // ── Canvas overlays (Volume Profile, Footprint, Event Rail) ──
     // Attached to the candle series as primitives: lightweight-charts renders
     // them on pane 0's own canvas, so they are clipped to that pane (a naked
     // POC priced off-screen can no longer paint over the indicator sub-panes)
@@ -356,12 +320,17 @@ export function ModularChart({
     // with pointermove/wheel/dblclick listeners.
     let overlayUnsubscribe: (() => void) | null = null;
 
-    if (overlays.length > 0) {
+    // The event rail is an overlay like any other, so it inherits pane clipping
+    // and the redraw-on-every-invalidation behaviour for free — including the
+    // pan/zoom repositioning that a DOM-based rail would have to chase by hand.
+    const allOverlays = hasRail ? [...overlays, createEventRailOverlay(placedEvents)] : overlays;
+
+    if (allOverlays.length > 0) {
       // Measured once per chart build: overlay colors follow the painted surface,
       // not the theme flag (chart panels are hardcoded near-black in both themes).
       const surfaceDark = isDarkSurface(container, isDark);
 
-      const primitives = overlays.map((o) => new OverlayPrimitive(o, data, surfaceDark));
+      const primitives = allOverlays.map((o) => new OverlayPrimitive(o, data, surfaceDark));
       for (const p of primitives) {
         candleSeries.attachPrimitive(p);
       }
@@ -373,10 +342,34 @@ export function ModularChart({
       };
     }
 
-    // ── Bar clicks (Regression Channel range selection) ──
-    const clickHandler = (param: { time?: unknown }) => {
+    // ── Bar clicks (Regression Channel range selection, event detail card) ──
+    // The chart reports the bar time; the events near it and the viewport
+    // position are resolved here because only this scope knows the bar index
+    // mapping and where the container sits on screen.
+    const clickHandler = (param: { time?: unknown; point?: { x: number; y: number } }) => {
       if (param.time === undefined) return; // click landed outside the data
-      barClickRef.current?.(param.time as string | number);
+      const time = param.time as string | number;
+
+      // Every marker in range, nearest first — not just the closest one. Chips
+      // that collide on the rail are drawn as a single cluster, and opening only
+      // one of the events hidden behind it would misreport what was clicked.
+      let events: ChartEventMarker[] | undefined;
+      const clickedIdx = indexByTime.get(String(time));
+      if (clickedIdx !== undefined && hasRail) {
+        const near = placedEvents
+          .map((p) => ({ p, dist: Math.abs(p.barIdx - clickedIdx) }))
+          .filter((h) => h.dist <= EVENT_HIT_BARS)
+          .sort((a, b) => a.dist - b.dist);
+        if (near.length > 0) events = near.map((h) => h.p.marker);
+      }
+
+      let point: { x: number; y: number } | undefined;
+      if (param.point && container) {
+        const rect = container.getBoundingClientRect();
+        point = { x: rect.left + param.point.x, y: rect.top + param.point.y };
+      }
+
+      barClickRef.current?.(time, { point, events });
     };
     chart.subscribeClick(clickHandler);
 
@@ -436,7 +429,6 @@ export function ModularChart({
         setPaneHeights((prev) => ({ ...prev, ...dragged }));
       }
 
-      markersPlugin?.detach();
       overlayUnsubscribe?.();
       chart.unsubscribeClick(clickHandler);
       ro.disconnect();

@@ -196,10 +196,42 @@ export interface ChartEventMarker {
   label: string;
   /** e.g. dividend amount, EPS surprise %, split ratio */
   value?: number;
-  /** Extra detail shown in tooltip */
+  /** One-line summary shown in the detail popover header */
   detail?: string;
   /** Optional per-marker color override (e.g. earnings beat=green / miss=red) */
   color?: string;
+
+  // ── Raw fields, kept unformatted so the detail popover can lay them out ──
+  // The chart itself only needs `type`/`color`; everything below exists for the
+  // click-through detail card and must not be pre-baked into strings.
+  /** earnings — consensus EPS estimate ahead of the report */
+  epsEstimate?: number | null;
+  /** earnings — EPS actually reported */
+  reportedEPS?: number | null;
+  /** earnings — surprise %, positive = beat. Null for an upcoming report. */
+  surprise?: number | null;
+  /** earnings — Yahoo's "Event Type" string (e.g. "Earnings") */
+  eventType?: string;
+  /** earnings — original timestamp including the session hint (BMO/AMC) */
+  reportedAt?: string;
+  /** dividend — amount per share, in the listing currency */
+  dividend?: number;
+  /** split — new:old ratio (2 means a 2:1 split) */
+  splitRatio?: number;
+}
+
+/** How a marker's price reaction played out, derived from the loaded OHLCV. */
+export interface EventPriceReaction {
+  /** Open of the event bar vs the previous close, in % */
+  gapPct: number | null;
+  /** Close of the event bar vs the previous close, in % */
+  sameDayPct: number | null;
+  /** Close one bar later vs the previous close, in % */
+  nextDayPct: number | null;
+  /** Close five bars later vs the previous close, in % */
+  fiveDayPct: number | null;
+  /** Close on the event bar — used to express a dividend as a yield */
+  closeOnEvent: number | null;
 }
 
 // ── Canvas Overlay (for Volume Profile etc.) ─────────────────────────────────

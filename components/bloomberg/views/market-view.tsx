@@ -44,6 +44,7 @@ import {
 } from "../atoms";
 import {
   BAR_INTERVALS,
+  EventDetailPopover,
   INTERVAL_DEFAULT_RANGE,
   INTERVAL_LABEL,
   INTERVAL_VALID_RANGES,
@@ -1227,6 +1228,8 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     showEvents: heatmapShowEvents,
     toggleEvents: toggleHeatmapEvents,
     supportsEvents: heatmapSupportsEvents,
+    selectedEvent: mktSelectedEvent,
+    clearSelectedEvent: clearMktSelectedEvent,
     showPE: heatmapShowPE,
     togglePE: toggleHeatmapPE,
     peData: heatmapPeData,
@@ -2348,6 +2351,16 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 onBarClick={handleMktChartClick}
                 crosshairCursor={mktRegressionArmed}
               />
+              {mktSelectedEvent && (
+                <EventDetailPopover
+                  markers={mktSelectedEvent.markers}
+                  anchor={mktSelectedEvent.anchor}
+                  data={heatmapOhlcv}
+                  colors={colors}
+                  symbol={selectedSymbol}
+                  onClose={clearMktSelectedEvent}
+                />
+              )}
             </div>
             {fearGreedActiveInMkt && fearGreedMktQuery.data?.history && (
               <div className="shrink-0">

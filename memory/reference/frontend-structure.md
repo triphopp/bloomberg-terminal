@@ -57,12 +57,15 @@ components/bloomberg/
 │           └── ImportTab.tsx         ← Excel drag-drop + manual form (IS OPTION checkbox, VAT field)
 │
 ├── chart/
-│   ├── ModularChart.tsx         ← reusable chart container (candle + overlay/pane indicators + event markers w/ per-marker color)
+│   ├── ModularChart.tsx         ← reusable chart container (candle + overlay/pane indicators + event rail). No `createSeriesMarkers` — events are drawn by the rail overlay. `onBarClick(time, ctx)` reports every marker within 2 bars of the click + viewport coords
+│   ├── event-rail-overlay.ts    ← CanvasOverlay drawing labelled chips on a fixed row at the bottom of the price pane: `$` dividend, `E+`/`E-`/`E?` earnings, `x10` split, `···N` cluster. `clusterChips()` + `eventChipStyle()` are pure and tested
+│   ├── EventDetailPopover.tsx   ← detail card for clicked events: EST vs ACTUAL EPS + BEAT/MISS, dividend amount + yield, split ratio, gap/close/D+1/D+5 reaction. Opens on a list when a cluster is clicked. Closes on Escape or an outside click
+│   ├── event-reaction.ts        ← pure helpers: `earningsSession()` (BMO/AMC off `reportedAt`), `findEventBarIndex()` / `placeEvents()` (single placement rule shared by the rail and the card), `computeEventReaction()`. Tested in `__tests__/event-reaction.test.ts`
 │   ├── ChartTimeframeBar.tsx    ← period selector (1D/1W/1M/3M/YTD/1Y/5Y/MAX)
 │   ├── IndicatorPicker.tsx      ← technical indicator selector
 │   ├── FearGreedPane.tsx        ← recharts sub-pane (F&G 0–100 + zone bands)
 │   ├── PEPane.tsx               ← recharts sub-pane: trailing P/E line + p10/p90 valuation bands + percentile label (consumes /api/stock/pe-history)
-│   ├── useChartIndicators.ts    ← indicator/overlay state; exposes vpConfig, showPE via atoms
+│   ├── useChartIndicators.ts    ← indicator/overlay state; exposes vpConfig, showPE via atoms, plus `selectedEvent`/`clearSelectedEvent` for the detail card. Regression arming wins the click when both could claim it
 │   └── indicators/volume-profile.ts ← session+composite VP (gap-based sessions, delta, naked POC, HVN/LVN, VRVP)
 │
 ├── ui/

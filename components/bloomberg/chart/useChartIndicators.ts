@@ -13,7 +13,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_INDICATOR_SPECS,
   type IndicatorSpec,
@@ -28,6 +28,7 @@ import {
   chartWindowUnitAtom,
 } from "../atoms";
 import { useFootprintData } from "../hooks/useFootprintData";
+import type { ChartClickContext } from "./ModularChart";
 import type { PeStats } from "./PEPane";
 import { INDICATOR_REGISTRY, createCompositeVPOverlay, createSessionVPOverlay } from "./indicators";
 import { createFootprintOverlay } from "./indicators/order-footprint";
@@ -138,6 +139,14 @@ function detectFx(symbol: string | null | undefined): boolean {
 
 // ── Hook options ─────────────────────────────────────────────────────────────
 
+/** Event markers the user clicked, ready to be handed to the detail card. */
+export interface SelectedChartEvent {
+  /** Nearest first. More than one means a cluster was clicked. */
+  markers: ChartEventMarker[];
+  /** Click position in viewport coordinates. */
+  anchor: { x: number; y: number };
+}
+
 export interface ChartIndicatorOptions {
   symbol?: string | null;
   barInterval?: string;
@@ -161,6 +170,9 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
   // Arming is deliberately NOT persisted: reloading into "waiting for your
   // first click" with no visual cue would be baffling.
   const [regressionArmed, setRegressionArmed] = useState(false);
+  // Event marker whose detail card is open, plus where to anchor it. Transient
+  // by design — a card restored on reload with no click behind it is confusing.
+  const [selectedEvent, setSelectedEvent] = useState<SelectedChartEvent | null>(null);
   // The anchor lives in a ref as well as state: the click handler reaches the
   // chart through a ref, so two clicks landing before React re-renders would
   // both read a stale `null` and the second would just re-anchor instead of
@@ -368,20 +380,42 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
    * the range and disarms. Clicking the toolbar button again cancels.
    */
   const handleChartClick = useCallback(
-    (time: string | number) => {
-      if (!regressionArmed) return;
-      const anchor = pendingRef.current;
-      if (anchor == null) {
-        setAnchor(time);
+    (time: string | number, ctx?: ChartClickContext) => {
+      // Regression selection owns the click while armed — otherwise picking an
+      // endpoint that happens to sit near an earnings date would pop the detail
+      // card instead of closing the range.
+      if (regressionArmed) {
+        const anchor = pendingRef.current;
+        if (anchor == null) {
+          setAnchor(time);
+          return;
+        }
+        if (String(time) === String(anchor)) return; // same bar — ignore
+        setRegressionSel({ fromTime: anchor, toTime: time });
+        setAnchor(null);
+        setRegressionArmed(false);
         return;
       }
-      if (String(time) === String(anchor)) return; // same bar — ignore
-      setRegressionSel({ fromTime: anchor, toTime: time });
-      setAnchor(null);
-      setRegressionArmed(false);
+      // Clicking near a marker opens its detail card; clicking bare chart closes
+      // whatever card is open.
+      if (ctx?.events?.length && ctx.point) {
+        setSelectedEvent({ markers: ctx.events, anchor: ctx.point });
+      } else {
+        setSelectedEvent(null);
+      }
     },
     [regressionArmed, setAnchor, setRegressionSel]
   );
+
+  const clearSelectedEvent = useCallback(() => setSelectedEvent(null), []);
+
+  // A card left open across a symbol or interval change would describe an event
+  // that is no longer on the chart, and its reaction numbers would be measured
+  // against the wrong bars.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resets on identity change, not on the value it clears
+  useEffect(() => {
+    setSelectedEvent(null);
+  }, [symbol, barInterval, chartType]);
 
   /** Arm selection; if a channel already exists, clear it instead. */
   const toggleRegression = useCallback(() => {
@@ -419,6 +453,9 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     showEvents,
     toggleEvents,
     supportsEvents,
+    // Marker clicked on the chart — feed into <EventDetailPopover>
+    selectedEvent,
+    clearSelectedEvent,
     // VP
     showVolumeProfile,
     toggleVolumeProfile,

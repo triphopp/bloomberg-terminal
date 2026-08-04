@@ -7,16 +7,36 @@
 
 // Core component
 export { ModularChart } from "./ModularChart";
-export type { ModularChartProps } from "./ModularChart";
+export type { ChartClickContext, ModularChartProps } from "./ModularChart";
+
+// Event marker detail card (opened by clicking a marker on the chart)
+export { EventDetailPopover } from "./EventDetailPopover";
+export type { EventDetailPopoverProps } from "./EventDetailPopover";
+export {
+  computeEventReaction,
+  earningsSession,
+  findEventBarIndex,
+  placeEvents,
+} from "./event-reaction";
+export type { PlacedEvent } from "./event-reaction";
+export { clusterChips, createEventRailOverlay, eventChipStyle } from "./event-rail-overlay";
+export type { EventChipStyle } from "./event-rail-overlay";
 
 // Indicator picker UI
 export { IndicatorPicker } from "./IndicatorPicker";
 
 // Hooks
 export { useChartIndicators } from "./useChartIndicators";
+export type { SelectedChartEvent } from "./useChartIndicators";
 export { useChartTimeframe } from "./useChartTimeframe";
 export type { ChartTimeframeOptions } from "./useChartTimeframe";
-export { TIME_PERIODS, BAR_INTERVALS, PERIOD_LABEL, INTERVAL_LABEL, PERIOD_TO_YF } from "./useChartTimeframe";
+export {
+  TIME_PERIODS,
+  BAR_INTERVALS,
+  PERIOD_LABEL,
+  INTERVAL_LABEL,
+  PERIOD_TO_YF,
+} from "./useChartTimeframe";
 
 // Timeframe bar component
 export { ChartTimeframeBar } from "./ChartTimeframeBar";
@@ -30,6 +50,8 @@ export type {
   ChartColors,
   ChartIndicator,
   ChartEventMarker,
+  ChartEventType,
+  EventPriceReaction,
   ChartState,
   CanvasOverlay,
   IndicatorFactory,

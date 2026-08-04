@@ -306,6 +306,20 @@ interface CashEntry { id: string; account_id: string; date: string; income: numb
 interface Dividend { id: string; account_id: string; asset: string; pay_date: string; amount_per_unit: number; total_received: number; currency: string; amount_per_unit_base?: number; total_received_base?: number; reinvested_amount_base?: number; }
 ```
 
+### `ChartEventMarker` / `EventPriceReaction` (`chart/types.ts`)
+```ts
+type ChartEventType = "dividend" | "earnings" | "split";
+interface ChartEventMarker { time: string|number; type: ChartEventType; label: string; value?: number; detail?: string; color?: string;
+  // raw, unformatted — the detail popover lays these out; the chart itself only reads type/color
+  epsEstimate?: number|null; reportedEPS?: number|null; surprise?: number|null; eventType?: string;
+  reportedAt?: string;   // "YYYY-MM-DD HH:MM" — hour ≥16 means AMC, so the reaction is on the NEXT bar
+  dividend?: number; splitRatio?: number; }
+interface EventPriceReaction { gapPct: number|null; sameDayPct: number|null; nextDayPct: number|null; fiveDayPct: number|null; closeOnEvent: number|null; }
+```
+- Built by `hooks/useStockEvents.ts` from `/api/stock?type=dividends` + `type=earnings-calendar`. `time` is always sliced to `YYYY-MM-DD`.
+- `EventPriceReaction` is **derived client-side** from the OHLCV already on the chart (`chart/event-reaction.ts`) — no endpoint. Fields go `null` rather than wrong when the window runs off either edge of the loaded period.
+- `label` is still populated but is no longer drawn — markers are shape-only since 2026-08-04.
+
 ### `PolySignal` (news-view.tsx)
 ```ts
 interface PolySignal { type: string; label: string; color: string; question: string; probability: number; volume: number; status: "LIKELY"|"UNCERTAIN"|"UNLIKELY"; direction: "UP"|"DOWN"|"STABLE"; delta_24h: number|null; implied_odds: number; regime_flag: "HIGH_CONVICTION"|"UNCERTAIN"; event_slug: string; slug: string; description: string; end_date: string; is_open: boolean; }
