@@ -41,6 +41,12 @@ memory/
 > plans/completed/tickdata-rates-fx-consolidation.md  ✅ done 2026-08-01
 > ```
 > `sessions/` และ `reports/` ยังไม่มีบนเครื่องนี้
+>
+> **สถานะ ณ 2026-08-05 บนเครื่อง Windows (`D:\Agents\Claude\bloomberg-terminal-main`):**
+> ```
+> plans/rsi-scale-modes.md                             🔄 step 1-2/6 done
+> sessions/reports/rsi-seed-divergence-risk-report.md  📋 risk logged, ยังไม่แก้
+> ```
 
 ---
 

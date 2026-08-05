@@ -5,12 +5,23 @@
  * Default period: 14
  */
 
-import type { ChartIndicator, IndicatorFactory, OhlcvBar, IndicatorSeriesOutput } from "../types";
+import type { ChartIndicator, IndicatorFactory, IndicatorSeriesOutput, OhlcvBar } from "../types";
+import type { RsiState } from "./rsiInverse";
 
-function calcRSI(closes: number[], period: number): (number | null)[] {
+/**
+ * RSI plus the smoothing state that produced it.
+ *
+ * The value alone is not enough for anything that has to run the indicator
+ * backwards: RSI is `100 · avgGain / (avgGain + avgLoss)`, so the series
+ * preserves the ratio and discards the magnitude. Recovering "what close would
+ * put RSI at 70 tomorrow" needs `avgLoss` on its own, not just the ratio, so
+ * the state travels with the series rather than being recomputed later — a
+ * second pass would have to reproduce this exact seed and data window to agree.
+ */
+function calcRSIState(closes: number[], period: number): (RsiState | null)[] {
   if (closes.length < period + 1) return new Array(closes.length).fill(null);
 
-  const result: (number | null)[] = new Array(period).fill(null);
+  const result: (RsiState | null)[] = new Array(period).fill(null);
   let avgGain = 0;
   let avgLoss = 0;
 
@@ -23,8 +34,12 @@ function calcRSI(closes: number[], period: number): (number | null)[] {
   avgGain /= period;
   avgLoss /= period;
 
-  const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-  result.push(100 - 100 / (1 + rs));
+  // A window with no down bars pins RSI at 100. The old seed substituted a
+  // finite RS of 100 and pushed it through the formula, landing on 99.0099 —
+  // one bar reading a whole point below what every later bar in the same state
+  // reports. Short-circuit here the way the smoothed loop below does.
+  const rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  result.push({ rsi, avgGain, avgLoss });
 
   // Smoothed
   for (let i = period + 1; i < closes.length; i++) {
@@ -36,11 +51,13 @@ function calcRSI(closes: number[], period: number): (number | null)[] {
     avgLoss = (avgLoss * (period - 1) + loss) / period;
 
     const rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
-    result.push(rsi);
+    result.push({ rsi, avgGain, avgLoss });
   }
 
   return result;
 }
+
+export { calcRSIState };
 
 export const createRSI: IndicatorFactory = (overrides = {}) => {
   const period = (overrides.period as number) ?? 14;
@@ -53,8 +70,24 @@ export const createRSI: IndicatorFactory = (overrides = {}) => {
     description: `${period}-period Relative Strength Index`,
     minBars: period + 1,
     params: [
-      { key: "period", label: "Period", type: "number", default: period, min: 2, max: 100, step: 1 },
-      { key: "overbought", label: "Overbought", type: "number", default: 70, min: 50, max: 95, step: 5 },
+      {
+        key: "period",
+        label: "Period",
+        type: "number",
+        default: period,
+        min: 2,
+        max: 100,
+        step: 1,
+      },
+      {
+        key: "overbought",
+        label: "Overbought",
+        type: "number",
+        default: 70,
+        min: 50,
+        max: 95,
+        step: 5,
+      },
       { key: "oversold", label: "Oversold", type: "number", default: 30, min: 5, max: 50, step: 5 },
     ],
     config: { period, overbought: 70, oversold: 30 },
@@ -63,15 +96,15 @@ export const createRSI: IndicatorFactory = (overrides = {}) => {
       const p = config.period as number;
       const ob = config.overbought as number;
       const os = config.oversold as number;
-      const closes = data.map(d => d.close);
-      const rsiValues = calcRSI(closes, p);
+      const closes = data.map((d) => d.close);
+      const rsiStates = calcRSIState(closes, p);
       const scaleId = `rsi-${p}`;
 
       const rsiLine = data
-        .map((d, i) => ({ time: d.time, value: rsiValues[i]! }))
-        .filter(d => d.value != null);
+        .map((d, i) => ({ time: d.time, value: rsiStates[i]?.rsi as number }))
+        .filter((d) => d.value != null);
 
-      const times = rsiLine.map(d => d.time);
+      const times = rsiLine.map((d) => d.time);
 
       return [
         {
@@ -89,7 +122,7 @@ export const createRSI: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#ef5350",
           lineWidth: 1,
-          data: times.map(t => ({ time: t, value: ob })),
+          data: times.map((t) => ({ time: t, value: ob })),
           priceScaleId: scaleId,
         },
         {
@@ -98,7 +131,7 @@ export const createRSI: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#26a69a",
           lineWidth: 1,
-          data: times.map(t => ({ time: t, value: os })),
+          data: times.map((t) => ({ time: t, value: os })),
           priceScaleId: scaleId,
         },
         {
@@ -107,7 +140,7 @@ export const createRSI: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#555",
           lineWidth: 1,
-          data: times.map(t => ({ time: t, value: 50 })),
+          data: times.map((t) => ({ time: t, value: 50 })),
           priceScaleId: scaleId,
         },
       ];
