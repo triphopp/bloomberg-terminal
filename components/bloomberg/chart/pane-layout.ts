@@ -35,6 +35,39 @@ export function paneKey(indicatorId: string): string {
   return indicatorId.replace(/(-\d+(\.\d+)?)+$/, "") || indicatorId;
 }
 
+/** Divider lightweight-charts draws between panes — part of locating pane tops. */
+export const PANE_SEPARATOR = 1;
+
+/**
+ * Which sub-pane sits under a y offset inside the chart container.
+ *
+ * `paneHeights` is what the chart reports right now — `[main, ...subs]` — not
+ * what `computePaneLayout` asked for. A drag changes the real heights without a
+ * rebuild, so the requested layout goes stale the moment the user resizes
+ * anything.
+ *
+ * Returns null for the price pane, for a y outside every pane, and for a chart
+ * whose panes report zero height (which happens while sub-panes are collapsed —
+ * a band of zero width can never be hit, and guessing one would put a menu on a
+ * pane the user cannot see).
+ */
+export function subPaneKeyAtOffset(
+  offsetY: number,
+  paneHeights: number[],
+  subPaneKeys: string[]
+): string | null {
+  if (subPaneKeys.length === 0) return null;
+  if (paneHeights.length !== subPaneKeys.length + 1) return null;
+
+  let top = paneHeights[0] + PANE_SEPARATOR;
+  for (let i = 0; i < subPaneKeys.length; i++) {
+    const paneHeight = paneHeights[i + 1];
+    if (paneHeight > 0 && offsetY >= top && offsetY < top + paneHeight) return subPaneKeys[i];
+    top += paneHeight + PANE_SEPARATOR;
+  }
+  return null;
+}
+
 export interface PaneLayout {
   /** Total height handed to lightweight-charts */
   chartHeight: number;

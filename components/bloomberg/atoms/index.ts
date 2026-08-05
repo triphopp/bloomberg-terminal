@@ -1,5 +1,6 @@
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
+import type { RsiScaleConfig } from "../chart/indicators/rsiScale";
 import { marketData as fallbackData } from "../lib/marketData";
 import type { FilterState, MarketData } from "../types";
 
@@ -234,6 +235,23 @@ export const chartVPConfigAtom = atomWithStorage<VPConfig>(
 export const chartPaneHeightsAtom = atomWithStorage<Record<string, number>>(
   "chart:pane-heights",
   {},
+  undefined,
+  { getOnInit: true }
+);
+
+/**
+ * How the RSI sub-pane's price scale is presented. The modes and what they mean
+ * live with the chart code that renders them — see `chart/indicators/rsiScale`.
+ */
+export const chartRsiScaleAtom = atomWithStorage<RsiScaleConfig>(
+  "chart:rsi-scale",
+  {
+    mode: "standard",
+    basis: "closed",
+    rounding: "tick",
+    projectToPricePane: false,
+    clipOffScale: true,
+  },
   undefined,
   { getOnInit: true }
 );

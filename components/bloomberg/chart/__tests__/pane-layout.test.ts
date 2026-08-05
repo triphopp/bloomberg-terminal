@@ -9,6 +9,7 @@ import {
   clampPaneHeight,
   computePaneLayout,
   paneKey,
+  subPaneKeyAtOffset,
 } from "../pane-layout.ts";
 
 // ── paneKey ────────────────────────────────────────────────────────────────
@@ -105,4 +106,57 @@ test("panes never shrink below the label-collision minimum", () => {
   const l = computePaneLayout(200, ["volume", "rsi", "macd"], {});
   assert.equal(l.subPaneHeight, SUB_PANE_MIN);
   assert.ok(l.chartHeight > 200);
+});
+
+// ── subPaneKeyAtOffset ─────────────────────────────────────────────────────
+//
+// Resolves a pointer y to the sub-pane under it, so a right-click can be
+// attributed to the indicator it landed on rather than to the chart at large.
+
+// A 536px chart: 348px price pane, then volume and rsi at 80px, 1px dividers.
+const HEIGHTS = [348, 80, 80];
+const KEYS = ["volume", "rsi"];
+
+test("resolves a y inside each sub-pane", () => {
+  assert.equal(subPaneKeyAtOffset(400, HEIGHTS, KEYS), "volume");
+  assert.equal(subPaneKeyAtOffset(480, HEIGHTS, KEYS), "rsi");
+});
+
+test("the price pane is not a sub-pane", () => {
+  assert.equal(subPaneKeyAtOffset(0, HEIGHTS, KEYS), null);
+  assert.equal(subPaneKeyAtOffset(347, HEIGHTS, KEYS), null);
+});
+
+test("pane boundaries belong to the pane below", () => {
+  // volume starts one divider past the price pane and ends before rsi begins.
+  assert.equal(subPaneKeyAtOffset(349, HEIGHTS, KEYS), "volume");
+  assert.equal(subPaneKeyAtOffset(428, HEIGHTS, KEYS), "volume");
+  assert.equal(subPaneKeyAtOffset(429, HEIGHTS, KEYS), null); // the divider
+  assert.equal(subPaneKeyAtOffset(430, HEIGHTS, KEYS), "rsi");
+});
+
+test("below the last pane resolves to nothing", () => {
+  // The time axis lives past the panes and belongs to no indicator.
+  assert.equal(subPaneKeyAtOffset(520, HEIGHTS, KEYS), null);
+  assert.equal(subPaneKeyAtOffset(10_000, HEIGHTS, KEYS), null);
+});
+
+test("collapsed panes are never hit", () => {
+  // lightweight-charts reports 0 for sub-panes it has squashed. A zero-width
+  // band must not swallow the y that follows it, or a right-click would open a
+  // menu for a pane nobody can see.
+  assert.equal(subPaneKeyAtOffset(510, [510, 0, 0], KEYS), null);
+  assert.equal(subPaneKeyAtOffset(512, [510, 0, 0], KEYS), null);
+});
+
+test("a chart with no sub-panes resolves to nothing", () => {
+  assert.equal(subPaneKeyAtOffset(100, [536], []), null);
+});
+
+test("a pane count that disagrees with the keys is refused", () => {
+  // Reading heights and reading keys are separate calls; if a rebuild lands
+  // between them, guessing an alignment would attribute clicks to the wrong
+  // indicator.
+  assert.equal(subPaneKeyAtOffset(400, [348, 80], KEYS), null);
+  assert.equal(subPaneKeyAtOffset(400, [348, 80, 80, 80], KEYS), null);
 });

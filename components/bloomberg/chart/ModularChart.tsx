@@ -11,6 +11,16 @@
  * - All indicators are dynamically added/removed via the plugin system
  */
 
+import {
+  ContextMenu,
+  ContextMenuCheckboxItem,
+  ContextMenuContent,
+  ContextMenuLabel,
+  ContextMenuRadioGroup,
+  ContextMenuRadioItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { useAtom } from "jotai";
 import {
   CandlestickSeries,
@@ -18,15 +28,26 @@ import {
   type IChartApi,
   type ISeriesApi,
   LineSeries,
+  LineStyle,
   type SeriesType,
   createChart,
 } from "lightweight-charts";
-import { useEffect, useRef, useState } from "react";
-import { chartPaneHeightsAtom } from "../atoms";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { chartPaneHeightsAtom, chartRsiScaleAtom } from "../atoms";
 import { createEventRailOverlay } from "./event-rail-overlay";
 import { placeEvents } from "./event-reaction";
+import { calcRSIState } from "./indicators/rsi";
+import { priceForRsi } from "./indicators/rsiInverse";
+import {
+  RSI_SCALE_MODES,
+  type RsiScaleBasis,
+  type RsiScaleMode,
+  inferPriceDecimals,
+  rsiAxisFormatter,
+  rsiLevelPreview,
+} from "./indicators/rsiScale";
 import { OverlayPrimitive } from "./overlay-primitive";
-import { clampPaneHeight, computePaneLayout, paneKey } from "./pane-layout";
+import { clampPaneHeight, computePaneLayout, paneKey, subPaneKeyAtOffset } from "./pane-layout";
 import type {
   CanvasOverlay,
   ChartColors,
@@ -152,6 +173,15 @@ export function ModularChart({
   const [availableHeight, setAvailableHeight] = useState(0);
   // Pane heights the user dragged, persisted across rebuilds and view switches.
   const [paneHeights, setPaneHeights] = useAtom(chartPaneHeightsAtom);
+  const [rsiScale, setRsiScale] = useAtom(chartRsiScaleAtom);
+  // Sub-pane keys in creation order, so a pointer y can be resolved to the
+  // indicator under it. Heights are read from the chart on demand rather than
+  // cached here — a drag changes them without any rebuild.
+  const subPaneKeysRef = useRef<string[]>([]);
+  // Which sub-pane the pointer is over. Drives whether the right-click menu is
+  // armed at all: resolved on move rather than on the contextmenu event so the
+  // answer is already settled by the time Radix opens the menu.
+  const [hoveredPaneKey, setHoveredPaneKey] = useState<string | null>(null);
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -169,6 +199,35 @@ export function ModularChart({
   }, []);
 
   const paneIndicators = indicators.filter((i) => i.type === "pane");
+  const rsiIndicator = paneIndicators.find((i) => paneKey(i.id) === "rsi");
+  const rsiPeriod = (rsiIndicator?.config.period as number | undefined) ?? 14;
+
+  /**
+   * The bar every RSI level is projected from.
+   *
+   * Recomputed here rather than plumbed out of `compute()` so the axis and the
+   * plotted line can never disagree — same function, same closes, same seed. A
+   * second implementation would have to reproduce the warm-up exactly, and the
+   * one place that got it subtly wrong took a whole point off the first bar.
+   *
+   * "closed" steps back one bar: the last bar may still be forming, and a state
+   * that already contains the live price would make every projected level move
+   * with the quote it is supposed to be a target for.
+   */
+  const rsiBasis: RsiScaleBasis | null = useMemo(() => {
+    if (!rsiIndicator || data.length < rsiPeriod + 2) return null;
+    const closes = data.map((d) => d.close);
+    const states = calcRSIState(closes, rsiPeriod);
+    const idx = states.length - (rsiScale.basis === "closed" ? 2 : 1);
+    const state = idx >= 0 ? states[idx] : null;
+    if (!state) return null;
+    return {
+      close: closes[idx],
+      state,
+      period: rsiPeriod,
+      decimals: inferPriceDecimals(closes),
+    };
+  }, [data, rsiIndicator, rsiPeriod, rsiScale.basis]);
   const overlayIndicators = indicators.filter((i) => i.type === "overlay");
   const paneKeys = paneIndicators.map((i) => paneKey(i.id));
   const { chartHeight, heightFor } = computePaneLayout(
@@ -282,6 +341,19 @@ export function ModularChart({
       subPane.setHeight(heightFor(key));
       builtPanes.push({ key, baseline: null, read: () => subPane.getHeight() });
 
+      // "standard" pins RSI to 0–100 so the overbought/oversold lines sit where
+      // the eye expects them; "autofit" is lightweight-charts' own autoscale,
+      // which is what every pane got before this option existed.
+      const pinRsiRange = key === "rsi" && rsiScale.mode !== "autofit";
+      // The tick VALUES stay in RSI units — only their labels are rewritten.
+      // Transforming the series instead would be circular: each bar's RSI
+      // inverts to the close that produced it, so the "converted" line is just
+      // the price chart again.
+      const rsiFormatter = key === "rsi" ? rsiAxisFormatter(rsiScale.mode, rsiBasis) : null;
+      const rsiPriceFormat = rsiFormatter
+        ? ({ type: "custom", formatter: rsiFormatter, minMove: 0.01 } as const)
+        : undefined;
+
       for (const output of outputs) {
         const isVolume = output.priceScaleId === "vol";
 
@@ -302,10 +374,56 @@ export function ModularChart({
             priceLineVisible: false,
             lastValueVisible: false,
             crosshairMarkerVisible: false,
+            ...(pinRsiRange
+              ? { autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) }
+              : {}),
+            ...(rsiPriceFormat ? { priceFormat: rsiPriceFormat } : {}),
           });
           // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
           series.setData(output.data as any[]);
         }
+      }
+    }
+
+    subPaneKeysRef.current = builtPanes.map((p) => p.key);
+
+    // ── RSI levels projected onto the price pane ──
+    // Drawn as price lines on the current state, not as a series: the answer is
+    // "what close on the next bar puts RSI at 70", which is a different number
+    // every bar. Plotting it historically would be a path question with no
+    // unique answer, and plotting it as a flat line would be a lie.
+    if (rsiScale.projectToPricePane && rsiIndicator && rsiBasis) {
+      const floor = Math.min(...data.map((d) => d.low));
+      const ceiling = Math.max(...data.map((d) => d.high));
+      const span = ceiling - floor || ceiling;
+
+      for (const [levelKey, color] of [
+        ["oversold", colors.positive],
+        ["overbought", colors.negative],
+      ] as const) {
+        const level = rsiIndicator.config[levelKey] as number | undefined;
+        if (typeof level !== "number") continue;
+
+        const projection = priceForRsi(rsiBasis.close, rsiBasis.state, rsiBasis.period, level);
+        if (!projection) continue;
+        // Levels near 0 or 100 project absurdly far — RSI 95 can want a 60% day.
+        // Drawing that squashes the price scale to a sliver, and the reading is
+        // still there on the RSI axis.
+        if (
+          rsiScale.clipOffScale &&
+          (projection.price < floor - span || projection.price > ceiling + span)
+        ) {
+          continue;
+        }
+
+        candleSeries.createPriceLine({
+          price: projection.price,
+          color,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: `RSI ${level}`,
+        });
       }
     }
 
@@ -435,46 +553,146 @@ export function ModularChart({
       chart.remove();
       chartRef.current = null;
       mainSeriesRef.current = null;
+      subPaneKeysRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, isDark, chartHeight, paneHeightSig, indicators, overlays, eventMarkers]);
+  }, [
+    data,
+    isDark,
+    chartHeight,
+    paneHeightSig,
+    indicators,
+    overlays,
+    eventMarkers,
+    rsiScale,
+    rsiBasis,
+  ]);
+
+  /**
+   * Which sub-pane sits under a viewport y. Pane 0 is the price pane; the rest
+   * follow in creation order, which is the order `subPaneKeysRef` was filled in.
+   * The arithmetic lives in ./pane-layout so it can be tested without a canvas.
+   */
+  const subPaneKeyAt = (clientY: number): string | null => {
+    const chart = chartRef.current;
+    const container = containerRef.current;
+    if (!chart || !container) return null;
+
+    let heights: number[];
+    try {
+      heights = chart.panes().map((p) => p.getHeight());
+    } catch {
+      return null;
+    }
+
+    const offsetY = clientY - container.getBoundingClientRect().top;
+    return subPaneKeyAtOffset(offsetY, heights, subPaneKeysRef.current);
+  };
+
+  const rsiMenuArmed = hoveredPaneKey === "rsi" && rsiIndicator != null;
+  // The level the user is actually watching. Showing every level's target was
+  // six lines saying the same thing; overbought is the one being approached.
+  const rsiPreviewLevel = (rsiIndicator?.config.overbought as number | undefined) ?? 70;
 
   // The wrapper is what gets measured, so it always renders — including in the
   // empty state, otherwise the ResizeObserver would never attach and the chart
   // would come back at its fallback height once data arrives.
   return (
-    <div
-      ref={wrapperRef}
-      style={{
-        position: "relative",
-        width: "100%",
-        height: "100%",
-        minHeight: height,
-        // auto (not conditional): when the panes fit, no scrollbar appears — and a
-        // stale height measurement can never silently clip the bottom pane.
-        overflowY: "auto",
-        overflowX: "hidden",
-      }}
-    >
-      {data.length === 0 ? (
+    <ContextMenu>
+      {/*
+        The trigger spans the whole chart but is only armed over the RSI pane —
+        an overlay sized to that pane instead would have to swallow pointer
+        events, taking the crosshair with it.
+      */}
+      <ContextMenuTrigger disabled={!rsiMenuArmed} asChild>
         <div
-          className="flex h-full items-center justify-center font-mono text-xs"
-          style={{ color: colors.textSecondary }}
-        >
-          No OHLC data for this period
-        </div>
-      ) : (
-        // Overlays (Volume Profile, Footprint) render as series primitives on
-        // the chart's own canvas — no sibling <canvas> layers to position.
-        <div
-          ref={containerRef}
-          style={{
-            width: "100%",
-            height: chartHeight,
-            cursor: crosshairCursor ? "crosshair" : undefined,
+          ref={wrapperRef}
+          onPointerMove={(e) => {
+            const key = subPaneKeyAt(e.clientY);
+            if (key !== hoveredPaneKey) setHoveredPaneKey(key);
           }}
-        />
-      )}
-    </div>
+          onPointerLeave={() => setHoveredPaneKey(null)}
+          style={{
+            position: "relative",
+            width: "100%",
+            height: "100%",
+            minHeight: height,
+            // auto (not conditional): when the panes fit, no scrollbar appears — and a
+            // stale height measurement can never silently clip the bottom pane.
+            overflowY: "auto",
+            overflowX: "hidden",
+          }}
+        >
+          {data.length === 0 ? (
+            <div
+              className="flex h-full items-center justify-center font-mono text-xs"
+              style={{ color: colors.textSecondary }}
+            >
+              No OHLC data for this period
+            </div>
+          ) : (
+            // Overlays (Volume Profile, Footprint) render as series primitives on
+            // the chart's own canvas — no sibling <canvas> layers to position.
+            <div
+              ref={containerRef}
+              style={{
+                width: "100%",
+                height: chartHeight,
+                cursor: crosshairCursor ? "crosshair" : undefined,
+              }}
+            />
+          )}
+        </div>
+      </ContextMenuTrigger>
+
+      <ContextMenuContent className="w-64 font-mono text-xs">
+        <ContextMenuLabel className="font-mono text-xs">
+          {rsiIndicator?.name ?? "RSI"} scale
+        </ContextMenuLabel>
+        <ContextMenuSeparator />
+
+        <ContextMenuRadioGroup
+          value={rsiScale.mode}
+          onValueChange={(mode) => setRsiScale((prev) => ({ ...prev, mode: mode as RsiScaleMode }))}
+        >
+          {RSI_SCALE_MODES.map(({ mode, label }) => (
+            <ContextMenuRadioItem key={mode} value={mode}>
+              {label}
+            </ContextMenuRadioItem>
+          ))}
+        </ContextMenuRadioGroup>
+
+        <ContextMenuSeparator />
+        <ContextMenuCheckboxItem
+          checked={rsiScale.projectToPricePane}
+          onCheckedChange={(on) =>
+            setRsiScale((prev) => ({ ...prev, projectToPricePane: on === true }))
+          }
+        >
+          Draw levels on price pane
+        </ContextMenuCheckboxItem>
+        <ContextMenuCheckboxItem
+          checked={rsiScale.clipOffScale}
+          onCheckedChange={(on) => setRsiScale((prev) => ({ ...prev, clipOffScale: on === true }))}
+        >
+          Clip off-scale levels
+        </ContextMenuCheckboxItem>
+        <ContextMenuCheckboxItem
+          checked={rsiScale.basis === "live"}
+          onCheckedChange={(on) =>
+            setRsiScale((prev) => ({ ...prev, basis: on === true ? "live" : "closed" }))
+          }
+        >
+          Project from forming bar
+        </ContextMenuCheckboxItem>
+
+        <ContextMenuSeparator />
+        {/* Replaces the preview table an earlier design carried: one line, the
+            level being approached, what it costs. */}
+        <ContextMenuLabel className="font-mono text-[11px] font-normal opacity-70">
+          {rsiLevelPreview(rsiPreviewLevel, rsiBasis)}
+        </ContextMenuLabel>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
