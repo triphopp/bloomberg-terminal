@@ -23,7 +23,7 @@ import { useCallback, useEffect, useState } from "react";
 import { isDarkModeAtom } from "../../atoms";
 import { useTabShortcuts } from "../../hooks/useTabShortcuts";
 import { bloombergColors } from "../../lib/theme-config";
-import { FLAG } from "./helpers";
+import { FLAG, fetchRetry } from "./helpers";
 import { AnalyticsTab } from "./tabs/AnalyticsTab";
 import { BacktestTab } from "./tabs/BacktestTab";
 import { CashTab } from "./tabs/CashTab";
@@ -165,6 +165,9 @@ export function PortfolioView() {
   const [currency, setCurrency] = useState<"THB" | "USD">("THB");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
+  // Gates the tab content: every tab fetches once on mount with no retry of its
+  // own, so mounting them before the backend answers leaves them blank forever.
+  const [bootState, setBootState] = useState<"loading" | "ready" | "error">("loading");
 
   const [topTab, setTopTab] = useState<TopTab>("portfolio");
   const [portfolioSub, setPortfolioSub] = useState<PortfolioSub>("positions");
@@ -202,15 +205,24 @@ export function PortfolioView() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  const loadAccounts = useCallback(() => {
-    fetch("/api/v2/portfolio/accounts")
-      .then((r) => r.json())
-      .then((d) => setAccounts(Array.isArray(d) ? d : []))
-      .catch(() => {});
+  const loadAccounts = useCallback(async (signal?: AbortSignal) => {
+    setBootState((s) => (s === "ready" ? s : "loading"));
+    try {
+      const r = await fetchRetry("/api/v2/portfolio/accounts", { attempts: 10, signal });
+      const d = await r.json();
+      if (!r.ok || !Array.isArray(d)) throw new Error("bad payload");
+      setAccounts(d);
+      setBootState("ready");
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") return;
+      setBootState("error");
+    }
   }, []);
 
   useEffect(() => {
-    loadAccounts();
+    const ac = new AbortController();
+    loadAccounts(ac.signal);
+    return () => ac.abort();
   }, [loadAccounts]);
 
   const createAccount = useCallback(async () => {
@@ -294,20 +306,29 @@ export function PortfolioView() {
     }
   }, [deleteTarget, deleteConfirm, activeAccount, loadAccounts]);
 
-  const loadSummary = useCallback(async () => {
-    setLoadingSummary(true);
-    try {
-      const r = await fetch(`/api/v2/portfolio/summary?base_currency=${currency}`);
-      setSummary(await r.json());
-    } catch {
-      /* ignore */
-    } finally {
-      setLoadingSummary(false);
-    }
-  }, [currency]);
+  const loadSummary = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoadingSummary(true);
+      try {
+        const r = await fetchRetry(`/api/v2/portfolio/summary?base_currency=${currency}`, {
+          attempts: 10,
+          signal,
+        });
+        if (!r.ok) return;
+        setSummary(await r.json());
+      } catch {
+        /* handled by the boot banner driven off loadAccounts */
+      } finally {
+        setLoadingSummary(false);
+      }
+    },
+    [currency]
+  );
 
   useEffect(() => {
-    loadSummary();
+    const ac = new AbortController();
+    loadSummary(ac.signal);
+    return () => ac.abort();
   }, [loadSummary]);
 
   const acctBtnCls = "flex items-center gap-1 text-[9px] px-2 py-1 font-bold border transition-all";
@@ -380,7 +401,10 @@ export function PortfolioView() {
           )}
           <button
             type="button"
-            onClick={loadSummary}
+            onClick={() => {
+              loadSummary();
+              if (bootState !== "ready") loadAccounts();
+            }}
             disabled={loadingSummary}
             className="p-0.5 hover:opacity-70"
           >
@@ -486,48 +510,91 @@ export function PortfolioView() {
 
       {/* Content */}
       <div className="flex-1 overflow-hidden">
-        {topTab === "portfolio" && portfolioSub === "positions" && (
-          <OpenPositionsTab accountId={activeAccount} currency={currency} colors={colors} />
-        )}
-        {topTab === "portfolio" && portfolioSub === "options" && (
-          <OptionsTab accountId={activeAccount} colors={colors} />
-        )}
-        {topTab === "portfolio" && portfolioSub === "trades" && (
-          <TradeLogTab accountId={activeAccount} currency={currency} colors={colors} />
-        )}
-        {topTab === "portfolio" && portfolioSub === "cash" && (
-          <CashTab accountId={activeAccount} colors={colors} />
-        )}
-        {topTab === "portfolio" && portfolioSub === "entry" && (
-          <ImportTab colors={colors} variant="manual" />
+        {bootState === "loading" && (
+          <div className="flex h-full flex-col items-center justify-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" style={{ color: colors.accent }} />
+            <span className="text-[9px] font-bold" style={{ color: colors.textSecondary }}>
+              WAITING FOR BACKEND…
+            </span>
+          </div>
         )}
 
-        {topTab === "analytics" && analyticsSub === "analytics" && (
-          <AnalyticsTab
-            accountId={activeAccount}
-            currency={currency}
-            summary={summary}
-            colors={colors}
-          />
-        )}
-        {topTab === "analytics" && analyticsSub === "backtest" && (
-          <BacktestTab colors={colors} accountId={activeAccount} currency={currency} />
+        {bootState === "error" && (
+          <div className="flex h-full flex-col items-center justify-center gap-3">
+            <span className="text-[10px] font-bold" style={{ color: "#FF4444" }}>
+              ⚠ BACKEND UNAVAILABLE
+            </span>
+            <span className="text-[9px]" style={{ color: colors.textSecondary }}>
+              Could not reach the Python API on port 8000.
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                loadAccounts();
+                loadSummary();
+              }}
+              className="px-3 py-1 text-[9px] font-bold border"
+              style={{
+                borderColor: colors.accent,
+                color: colors.accent,
+                background: `${colors.accent}22`,
+              }}
+            >
+              RETRY
+            </button>
+          </div>
         )}
 
-        {topTab === "risk" && (
-          <RiskTab accountId={activeAccount} currency={currency} colors={colors} />
-        )}
+        {bootState === "ready" && (
+          <>
+            {topTab === "portfolio" && portfolioSub === "positions" && (
+              <OpenPositionsTab accountId={activeAccount} currency={currency} colors={colors} />
+            )}
+            {topTab === "portfolio" && portfolioSub === "options" && (
+              <OptionsTab accountId={activeAccount} colors={colors} />
+            )}
+            {topTab === "portfolio" && portfolioSub === "trades" && (
+              <TradeLogTab accountId={activeAccount} currency={currency} colors={colors} />
+            )}
+            {topTab === "portfolio" && portfolioSub === "cash" && (
+              <CashTab accountId={activeAccount} colors={colors} />
+            )}
+            {topTab === "portfolio" && portfolioSub === "entry" && (
+              <ImportTab colors={colors} variant="manual" />
+            )}
 
-        {topTab === "tools" && toolsSub === "theses" && <ThesesTab colors={colors} />}
-        {topTab === "tools" && toolsSub === "import" && (
-          <ImportTab colors={colors} variant="excel" />
-        )}
+            {topTab === "analytics" && analyticsSub === "analytics" && (
+              <AnalyticsTab
+                accountId={activeAccount}
+                currency={currency}
+                summary={summary}
+                colors={colors}
+              />
+            )}
+            {topTab === "analytics" && analyticsSub === "backtest" && (
+              <BacktestTab colors={colors} accountId={activeAccount} currency={currency} />
+            )}
 
-        {topTab === "paper" && paperSub === "dashboard" && <PaperDashboardTab colors={colors} />}
-        {topTab === "paper" && paperSub === "trade" && <PaperTradeTab colors={colors} />}
-        {topTab === "paper" && paperSub === "positions" && <PaperPositionsTab colors={colors} />}
-        {topTab === "paper" && paperSub === "options" && <PaperOptionsTab colors={colors} />}
-        {topTab === "paper" && paperSub === "history" && <PaperHistoryTab colors={colors} />}
+            {topTab === "risk" && (
+              <RiskTab accountId={activeAccount} currency={currency} colors={colors} />
+            )}
+
+            {topTab === "tools" && toolsSub === "theses" && <ThesesTab colors={colors} />}
+            {topTab === "tools" && toolsSub === "import" && (
+              <ImportTab colors={colors} variant="excel" />
+            )}
+
+            {topTab === "paper" && paperSub === "dashboard" && (
+              <PaperDashboardTab colors={colors} />
+            )}
+            {topTab === "paper" && paperSub === "trade" && <PaperTradeTab colors={colors} />}
+            {topTab === "paper" && paperSub === "positions" && (
+              <PaperPositionsTab colors={colors} />
+            )}
+            {topTab === "paper" && paperSub === "options" && <PaperOptionsTab colors={colors} />}
+            {topTab === "paper" && paperSub === "history" && <PaperHistoryTab colors={colors} />}
+          </>
+        )}
       </div>
 
       {/* Delete confirmation modal */}

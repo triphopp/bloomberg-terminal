@@ -60,3 +60,36 @@ export function subPortLabel(p: Trade): string | null {
 }
 
 export type Colors = typeof bloombergColors.dark;
+
+// The Python backend does a synchronous cloud-sync pull at import time, so on a
+// cold machine boot it can take tens of seconds to bind its port while Next is
+// already serving. A one-shot fetch that lands in that window gets a 503 from
+// the proxy route and — with the old silent `.catch(() => {})` — left the whole
+// view permanently blank. Retry with backoff on network errors and 5xx only;
+// 4xx is a real answer and must not be retried.
+export async function fetchRetry(
+  url: string,
+  {
+    attempts = 6,
+    baseDelayMs = 750,
+    signal,
+  }: { attempts?: number; baseDelayMs?: number; signal?: AbortSignal } = {}
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    try {
+      const r = await fetch(url, { signal });
+      if (r.status < 500) return r;
+      lastErr = new Error(`HTTP ${r.status}`);
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") throw e;
+      lastErr = e;
+    }
+    if (i < attempts - 1) {
+      const wait = Math.min(baseDelayMs * 2 ** i, 8_000);
+      await new Promise((res) => setTimeout(res, wait));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("Backend unavailable");
+}

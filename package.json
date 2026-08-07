@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/guard-next-cache.mjs",
+    "predev:all": "node scripts/guard-next-cache.mjs",
+    "predev:no-ollama": "node scripts/guard-next-cache.mjs",
     "dev": "next dev",
+    "dev:clean": "node -e \"require('node:fs').rmSync('.next',{recursive:true,force:true})\" && next dev",
     "dev:all": "concurrently --names \"BACKEND,FRONTEND,OLLAMA\" --prefix-colors \"cyan,green,magenta\" \"cd backend && $(command -v python3 || command -v python) -m uvicorn main:app --port 8000 --reload\" \"next dev\" \"ollama serve\"",
     "dev:no-ollama": "concurrently --names \"BACKEND,FRONTEND\" --prefix-colors \"cyan,green\" \"cd backend && $(command -v python3 || command -v python) -m uvicorn main:app --port 8000 --reload\" \"next dev\"",
     "build": "next build",
