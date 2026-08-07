@@ -52,6 +52,7 @@ from analytics.regime_v2 import ensure_v2_fresh
 from analytics.bc_calibration import ensure_calibrated
 from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals
 import sync
+from sync.gate import should_gate
 from alerts import scheduler as alert_scheduler
 
 app = FastAPI(title="Market Data API")
@@ -71,8 +72,11 @@ init_alerts_schema()
 seed_symbol_lists()
 
 # ── Cloud sync: pull latest from G: (read cloud first), then start pusher ──────
-sync.sync_startup()
-sync.start_background_push()
+# Runs on a worker thread. Doing it inline blocked the uvicorn port bind for as
+# long as the cloud round-trip took — on a cold machine boot Google Drive File
+# Stream is still mounting, so the frontend (already serving) hit a dead backend
+# and rendered empty views. _SYNC_GATED_PREFIXES below keeps correctness.
+sync.start_startup_async()
 
 # ── Regime model (trains in background if missing/stale) ──────────────────────
 ensure_model_fresh(triggered_by="startup")
@@ -131,6 +135,20 @@ app.include_router(paper_trading.router, tags=["Paper Trading"])
 app.include_router(providers.router, tags=["Providers"])
 app.include_router(sync_router.router, tags=["Sync"])
 app.include_router(watchlist_signals.router)
+
+
+# ── Sync gate ─────────────────────────────────────────────────────────────────
+# 503 + Retry-After tells the client to keep retrying while the startup pull is
+# still merging cloud snapshots — see sync/gate.py for which paths and why.
+@app.middleware("http")
+async def _gate_on_sync(request: Request, call_next):
+    if should_gate(request.url.path):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Cloud sync in progress", "syncing": True},
+            headers={"Retry-After": "2"},
+        )
+    return await call_next(request)
 
 
 @app.exception_handler(StarletteHTTPException)

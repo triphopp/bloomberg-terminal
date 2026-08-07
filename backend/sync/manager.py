@@ -28,6 +28,14 @@ _STATE_FILE = Path(__file__).resolve().parent.parent / ".sync_state.json"
 _lock = threading.Lock()
 _bg_started = False
 
+# Set once the startup pull+push has finished (or failed / been skipped). Cloud
+# I/O on a cold boot can take tens of seconds while Google Drive File Stream is
+# still mounting, so main.py runs sync_startup() on a worker thread to let
+# uvicorn bind its port immediately. Endpoints backed by SYNC_TABLES must wait
+# on this flag — serving them mid-pull would hand out pre-merge rows and let the
+# user edit data the merge is about to rewrite.
+startup_done = threading.Event()
+
 
 # ── local state (base hash + last sync times) ────────────────────────────────
 def _load_state() -> dict:
@@ -159,6 +167,23 @@ def sync_startup() -> dict:
     except Exception as e:  # never block app startup
         logger.warning("sync_startup failed (continuing local-only): %s", e)
         return {"status": "error", "error": str(e)}
+    finally:
+        # Always released, including on failure — a dead cloud drive must not
+        # leave the portfolio endpoints gated forever.
+        startup_done.set()
+
+
+def start_startup_async() -> None:
+    """Run sync_startup() (then arm the background pusher) on a worker thread so
+    module import — and therefore the uvicorn port bind — never waits on cloud
+    I/O. Callers gate SYNC_TABLES-backed reads on `startup_done`."""
+
+    def _run() -> None:
+        result = sync_startup()
+        logger.info("sync_startup finished: %s", result.get("status"))
+        start_background_push()
+
+    threading.Thread(target=_run, name="sync-startup", daemon=True).start()
 
 
 def get_status() -> dict:
@@ -170,6 +195,7 @@ def get_status() -> dict:
         "sync_dir":  str(cfg.sync_dir()) if cfg.sync_dir() else None,
         "autodetected": not os.getenv("SYNC_DIR", "").strip() and cfg.sync_dir() is not None,
         "reachable": bool(d and d["base"].exists()),
+        "startup_done": startup_done.is_set(),
         "last_pull": state.get("last_pull"),
         "last_push": state.get("last_push"),
         "last_conflicts": state.get("last_conflicts", 0),
