@@ -26,7 +26,7 @@ npm run dev  # → http://localhost:3000
 
 ```bash
 # Tests — verified 2026-08-01
-cd backend && python -m pytest tests/ -q   # 291 passed (greeks, alerts, sync, portfolio, SEC, DCC)
+cd backend && python -m pytest tests/ -q   # 321 passed (greeks, alerts, sync, portfolio, SEC, DCC)
 npm run test:alerts                        # 44 passed (node:test)
 npm run test:chart                         # 13 passed (pane-layout)
 npx tsc --noEmit                           # TypeScript check
@@ -78,9 +78,12 @@ PORTFOLIO_DB        — default portfolio.db
 
 # Portfolio Cloud Sync (PC ↔ MacOS via Google Drive) — backend/sync/
 SYNC_ENABLED        — "true" to activate (default off)
-SYNC_DIR            — shared cloud folder, e.g. "G:\My Drive\Investment Portfolio" (Win) / "/Users/you/Google Drive/Investment Portfolio" (Mac)
+SYNC_DIR            — shared cloud folder, e.g. G:\My Drive\Investment Portfolio (Win) / /Users/you/Google Drive/Investment Portfolio (Mac)
+                      ⚠️ NO quotes — a shell-exported value keeps them literally and the path never resolves (stripped since 2026-08-11)
 SYNC_DEVICE_ID      — blank → auto from hostname
 SYNC_PUSH_INTERVAL  — background push cadence sec (default 60)
+SYNC_PULL_INTERVAL  — manifest peer-change check sec (default 20) → auto-pull
+SYNC_PUSH_DEBOUNCE  — sec to coalesce writes before pushing (default 2)
 
 # SEC Thailand — OLD portal (expires 2026-06-30)
 SEC_COMMON_PRIMARY / SEC_FUND_FACTSHEET_PRIMARY / SEC_FUND_DAILY_PRIMARY
@@ -196,7 +199,11 @@ _sync_guard         (active)  -- flag; raised during restore to silence sync tri
 ```
 Holdings computed via **average-cost method** in `db.compute_holdings()`.
 
-**Cloud sync (`backend/sync/`):** `init_sync_layer()` adds `updated_at` + AFTER INSERT/UPDATE/DELETE triggers to synced tables (LWW + tombstones, all gated by `_sync_guard`). Local `.db` stays working copy; JSON snapshots (user tables only — excludes sector/risk/regime caches) exchanged via `SYNC_DIR`. **Never put `.db` on the cloud drive** (Drive byte-sync + WAL → corruption). Startup `sync.sync_startup()` = pull→merge→push; background pusher every `SYNC_PUSH_INTERVAL`s. Plan: `plans/completed/portfolio-cloud-sync.md`.
+**Cloud sync (`backend/sync/`):** `init_sync_layer()` adds `updated_at` (millisecond stamps) + AFTER INSERT/UPDATE/DELETE triggers to synced tables (tombstones, all gated by `_sync_guard`). Local `.db` stays working copy; JSON snapshots (user tables only — excludes sector/risk/regime caches) exchanged via `SYNC_DIR`. **Never put `.db` on the cloud drive** (Drive byte-sync + WAL → corruption).
+
+Merge is **three-way, field-level** (`merge.py`) against `.sync_base_<db>.json` — the merged state this device last agreed on, written after every pull, never pushed. Only same-field concurrent edits count as conflicts; losers go to `<SYNC_DIR>/conflicts/`. `paper_positions` is **not** synced (running aggregate → LWW drops fills); rebuilt from `paper_fills` by `derived.py` after each merge.
+
+Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`_bg_loop`) that auto-pulls when `manifest.json` shows a peer hash change (`SYNC_PULL_INTERVAL`, 20s) and pushes every `SYNC_PUSH_INTERVAL`s. Writes to synced paths also schedule a debounced push (main.py middleware → `sync.request_push`, `sync/gate.py:is_synced_write`). Plan: `plans/completed/portfolio-cloud-sync.md`.
 
 ---
 

@@ -525,6 +525,31 @@ def init_sync_layer() -> None:
         if conn.execute("SELECT COUNT(*) FROM _sync_guard").fetchone()[0] == 0:
             conn.execute("INSERT INTO _sync_guard (active) VALUES (0)")
 
+        # Millisecond stamp. `datetime('now')` is second-resolution, so two
+        # devices editing the same row inside one second produced equal
+        # timestamps — last-write-wins then had nothing to compare and the
+        # winner fell out of file iteration order, which the two machines can
+        # resolve DIFFERENTLY and stay diverged forever.
+        #
+        # The format keeps the space separator of `datetime('now')` on purpose:
+        # '2026-08-11 02:08:04.123' sorts after the existing
+        # '2026-08-11 02:08:04' under the plain string comparison the merge
+        # uses, so old and new rows stay orderable with no data migration. An
+        # ISO 'T'/'Z' form would have sorted every legacy row below every new
+        # one regardless of actual time.
+        now_ms = "strftime('%Y-%m-%d %H:%M:%f', 'now')"
+
+        # Tables that USED to be synced. Their triggers survive in any DB
+        # created before they were dropped from SYNC_TABLES, and would keep
+        # stamping updated_at and manufacturing tombstones for rows no peer
+        # will ever look at — paper_positions in particular is wiped and
+        # rebuilt on every merge, which would mean a tombstone per position
+        # per pull, forever.
+        for table in ("paper_positions",):
+            for suffix in ("ins", "upd", "del"):
+                conn.execute(f"DROP TRIGGER IF EXISTS trg_{table}_sync_{suffix}")
+            conn.execute("DELETE FROM sync_tombstones WHERE table_name = ?", (table,))
+
         for table, pk in SYNC_TABLES:
             # 1) updated_at column (skip if table absent or column exists)
             try:
@@ -533,41 +558,47 @@ def init_sync_layer() -> None:
                 pass
             try:
                 conn.execute(
-                    f"UPDATE {table} SET updated_at = datetime('now') WHERE updated_at IS NULL"
+                    f"UPDATE {table} SET updated_at = {now_ms} WHERE updated_at IS NULL"
                 )
             except Exception:
                 continue  # table not present in this DB
 
+            # Triggers are recreated, not IF NOT EXISTS'd: an install from
+            # before the millisecond change already has second-resolution
+            # bodies, and CREATE TRIGGER IF NOT EXISTS would leave them.
+            for suffix in ("ins", "upd", "del"):
+                conn.execute(f"DROP TRIGGER IF EXISTS trg_{table}_sync_{suffix}")
+
             # 2a) stamp updated_at on INSERT when caller didn't set it (else NULL
             #     breaks last-write-wins comparisons during merge)
             conn.execute(f"""
-                CREATE TRIGGER IF NOT EXISTS trg_{table}_sync_ins
+                CREATE TRIGGER trg_{table}_sync_ins
                 AFTER INSERT ON {table} FOR EACH ROW
                 WHEN (SELECT active FROM _sync_guard) = 0 AND NEW.updated_at IS NULL
                 BEGIN
-                    UPDATE {table} SET updated_at = datetime('now') WHERE rowid = NEW.rowid;
+                    UPDATE {table} SET updated_at = {now_ms} WHERE rowid = NEW.rowid;
                 END;
             """)
 
             # 2b) auto-stamp updated_at on UPDATE (match by rowid — always unique)
             conn.execute(f"""
-                CREATE TRIGGER IF NOT EXISTS trg_{table}_sync_upd
+                CREATE TRIGGER trg_{table}_sync_upd
                 AFTER UPDATE ON {table} FOR EACH ROW
                 WHEN (SELECT active FROM _sync_guard) = 0
                 BEGIN
-                    UPDATE {table} SET updated_at = datetime('now') WHERE rowid = NEW.rowid;
+                    UPDATE {table} SET updated_at = {now_ms} WHERE rowid = NEW.rowid;
                 END;
             """)
 
             # 3) record tombstone on DELETE (natural key joined by char(31))
             row_expr = " || char(31) || ".join(f"CAST(OLD.{c} AS TEXT)" for c in pk)
             conn.execute(f"""
-                CREATE TRIGGER IF NOT EXISTS trg_{table}_sync_del
+                CREATE TRIGGER trg_{table}_sync_del
                 AFTER DELETE ON {table} FOR EACH ROW
                 WHEN (SELECT active FROM _sync_guard) = 0
                 BEGIN
                     INSERT OR REPLACE INTO sync_tombstones (table_name, row_id, deleted_at)
-                    VALUES ('{table}', {row_expr}, datetime('now'));
+                    VALUES ('{table}', {row_expr}, {now_ms});
                 END;
             """)
 

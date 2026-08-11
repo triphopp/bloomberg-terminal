@@ -52,7 +52,7 @@ from analytics.regime_v2 import ensure_v2_fresh
 from analytics.bc_calibration import ensure_calibrated
 from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals
 import sync
-from sync.gate import should_gate
+from sync.gate import is_synced_write, should_gate
 from alerts import scheduler as alert_scheduler
 
 app = FastAPI(title="Market Data API")
@@ -148,7 +148,15 @@ async def _gate_on_sync(request: Request, call_next):
             content={"detail": "Cloud sync in progress", "syncing": True},
             headers={"Retry-After": "2"},
         )
-    return await call_next(request)
+    response = await call_next(request)
+    # Push shortly after a successful write to a synced table, instead of
+    # waiting out the 60s background tick. Debounced in sync.request_push, so a
+    # burst of edits still costs one snapshot write.
+    if (request.method in ("POST", "PUT", "PATCH", "DELETE")
+            and response.status_code < 400
+            and is_synced_write(request.url.path)):
+        sync.request_push()
+    return response
 
 
 @app.exception_handler(StarletteHTTPException)

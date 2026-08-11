@@ -41,9 +41,15 @@ def _upsert(conn: sqlite3.Connection, table: str, pk: list[str], rows: list[dict
                    f"ON CONFLICT({conflict}) DO NOTHING")
         else:
             set_clause = ", ".join(f"{c} = excluded.{c}" for c in setters)
+            # `>=`, not `>`: the merged row now carries max(local, remote)
+            # timestamps, so a field-level merge that took the local row's stamp
+            # and a peer's field would compare EQUAL and be skipped — the peer's
+            # edit would vanish at the last step after surviving the merge.
+            # Strictly-newer local rows are still refused, which is what guards
+            # a write that lands between the export and this restore.
             sql = (f"INSERT INTO {table} ({collist}) VALUES ({placeholders}) "
                    f"ON CONFLICT({conflict}) DO UPDATE SET {set_clause} "
-                   f"WHERE excluded.updated_at > COALESCE({table}.updated_at, '')")
+                   f"WHERE excluded.updated_at >= COALESCE({table}.updated_at, '')")
         try:
             cur = conn.execute(sql, [row[c] for c in cols])
             applied += cur.rowcount or 0

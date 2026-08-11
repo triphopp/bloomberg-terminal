@@ -14,6 +14,11 @@ from pathlib import Path
 
 # Snapshot schema version. Bump when the snapshot JSON shape changes in a way
 # that older clients cannot merge. Merge across mismatched versions is refused.
+# NOT bumped for the paper_positions removal: dropping a table is wire-compatible
+# in both directions — an old peer's paper_positions rows are simply ignored
+# (merge only walks SYNC_TABLES), and our snapshot's missing table upserts as an
+# empty list on their side, which is a no-op rather than a delete. Bumping would
+# have frozen every peer out until it upgraded, for no protocol gain.
 SCHEMA_VER = 2  # trades.exit_exchange_rate + dividends.currency
 
 # Tables included in cloud snapshots, with their NATURAL merge key.
@@ -37,7 +42,15 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     ("paper_accounts",          ["id"]),
     ("paper_orders",            ["id"]),
     ("paper_fills",             ["id"]),
-    ("paper_positions",         ["account_id", "symbol"]),    # UNIQUE(account_id, symbol)
+    # paper_positions is NOT here: it is a running aggregate that
+    # paper_trading.py:_execute_fill() mutates incrementally (qty += fill), and
+    # last-write-wins on a running total silently drops one device's fills
+    # (base 100, A buys 50 → 150, B buys 30 → 130; LWW keeps one, the other 30
+    # shares vanish even though both paper_fills rows merged fine). It is
+    # rebuilt from paper_fills after every merge — see derived.py.
+    #
+    # paper_snapshots DOES stay: each row is that day's equity marked at that
+    # day's prices, so it cannot be recomputed after the fact.
     ("paper_snapshots",         ["account_id", "date"]),      # UNIQUE(account_id, date)
     ("paper_option_positions",  ["id"]),
     # alert_rules is the rule DEFINITIONS the user authored — same shape as
@@ -51,6 +64,15 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
 ]
 
 TABLE_PK: dict[str, list[str]] = {t: pk for t, pk in SYNC_TABLES}
+
+# Tables holding real money. A delete only beats a concurrent edit here when it
+# is STRICTLY newer — on a same-timestamp tie the row survives and is reported as
+# a conflict, because an unwanted row is visible and deletable while a wrongly
+# deleted trade is silent and gone. Everything else keeps delete-wins-on-tie.
+MONEY_TABLES: frozenset[str] = frozenset({
+    "transactions", "trades", "cash_ledger", "dividends",
+    "option_positions", "portfolio_accounts", "position_cost_overrides",
+})
 
 # char(31) — unit separator — joins composite key parts inside tombstone row_id.
 TOMB_SEP = "\x1f"
@@ -69,8 +91,13 @@ def device_id() -> str:
 
 
 def sync_dir() -> Path | None:
-    """The shared cloud folder, or None if sync is disabled / unconfigured."""
-    raw = os.getenv("SYNC_DIR", "").strip()
+    """The shared cloud folder, or None if sync is disabled / unconfigured.
+
+    Quotes are stripped: a shell-exported SYNC_DIR (PowerShell `$env:SYNC_DIR =
+    "'G:\\My Drive\\...'"`) keeps them literally, and load_dotenv() does not
+    override an existing env var — the quoted path then never exists and sync
+    silently reports OFFLINE forever."""
+    raw = os.getenv("SYNC_DIR", "").strip().strip("'\"").strip()
     if raw:
         return Path(raw)
     return _autodetect_dir()
@@ -147,5 +174,9 @@ def enabled() -> bool:
     return autodetect_on() and sync_dir() is not None
 
 
-# How often the background pusher checks for local changes (seconds).
+# How often the background worker checks for local changes (seconds).
 PUSH_INTERVAL = int(os.getenv("SYNC_PUSH_INTERVAL", "60"))
+
+# How often it checks the cloud manifest for OTHER devices' pushes (seconds).
+# Cheap: one manifest.json read; a full merge only runs when a peer hash moved.
+PULL_INTERVAL = int(os.getenv("SYNC_PULL_INTERVAL", "20"))

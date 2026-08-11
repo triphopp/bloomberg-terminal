@@ -6,7 +6,7 @@ away; these assertions are what keeps that safe.
 """
 import pytest
 
-from sync.gate import SYNC_GATED_PREFIXES, should_gate
+from sync.gate import SYNC_GATED_PREFIXES, is_synced_write, should_gate
 
 
 @pytest.mark.parametrize(
@@ -24,6 +24,22 @@ from sync.gate import SYNC_GATED_PREFIXES, should_gate
 def test_synced_paths_are_gated_until_pull_finishes(path):
     assert should_gate(path, done=False) is True
     assert should_gate(path, done=True) is False
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("/api/v2/portfolio/trades", True),
+        ("/api/paper/orders", True),
+        ("/api/pins/assets", True),
+        ("/api/alerts/rules", True),      # synced table, but reads fine pre-merge
+        ("/api/alerts/scan", False),      # writes alert_events — never synced
+        ("/api/sync/pull", False),        # a push here would schedule another
+        ("/api/market-data", False),
+    ],
+)
+def test_only_synced_writes_schedule_a_push(path, expected):
+    assert is_synced_write(path) is expected
 
 
 @pytest.mark.parametrize(

@@ -28,6 +28,9 @@ backend/*.db
 backend/*.db-wal
 backend/*.db-shm
 backend/.sync_state.json
+# per-database sync sidecars: last pull/push state + the 3-way merge base
+backend/.sync_state_*.json
+backend/.sync_base*.json
 backend/*.db.bak*
 backend/.pytest_cache/
 backend/analytics/__pycache__/

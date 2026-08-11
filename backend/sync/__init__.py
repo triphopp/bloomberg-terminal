@@ -11,6 +11,7 @@ the cloud boundary.
 from .manager import (
     pull,
     push,
+    request_push,
     sync_startup,
     start_startup_async,
     startup_done,
@@ -21,6 +22,7 @@ from .manager import (
 __all__ = [
     "pull",
     "push",
+    "request_push",
     "sync_startup",
     "start_startup_async",
     "startup_done",
