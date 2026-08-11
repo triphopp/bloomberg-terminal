@@ -148,6 +148,14 @@
 
 **4. `paper_positions` lost fills.** It is a running total that `_execute_fill()` mutates incrementally, and LWW on a running total drops one device's fills (base 100, A→150, B→130, winner keeps one). Removed from `SYNC_TABLES`; rebuilt from `paper_fills` after every merge (`sync/derived.py`). **Rule: sync append-only base tables, recompute derived aggregates locally.** `paper_snapshots` stays synced — it marks each day at that day's prices and cannot be recomputed later.
 
+**5. 🔴 DATA LOSS — closed trades reverted to open on every restart (same day, caused by fix 3).** The first cut of the 3-way merge used **one shared ancestor** for both sides. After a merge the base holds the merged (new) value while an offline peer's snapshot still holds the old one, so the peer read as "changed" on rows it never touched, local read as "unchanged" (it now equalled the base), and the stale value won. Six trades lost their exit data; the user re-entered one sale twice before the cause was found (`trade_audit_log` shows the same `SELL_FULL` at 08:49 and 14:56).
+
+Fix: **per-peer ancestors** — `base["tables"]` for the local side, `base["peers"][device]` (that peer's snapshot as we last saw it) for each peer. An untouched peer then compares equal to itself and contributes nothing. No ancestor for a peer/row → fall back to row-level LWW; never guess one. Plus: "neither side changed but the values differ" means the two ancestors are from different eras — keep the merged side, it is not a conflict (that hole alone kept 16 false conflicts alive).
+
+**Recovery, if this class of bug ever bites again:** `trade_audit_log` (never synced, local-only, append-only) stores `fields_changed` old→new plus a full row `snapshot` per action — it recovered the one row that no cloud snapshot had, because the daily backup had already been overwritten with the corrupted state. Cross-check `<SYNC_DIR>/snapshots/<other-device>.json` first (a peer that has not synced still holds pre-corruption data), then `backups/`, then the audit log.
+
+**Rule that would have caught it: after any merge change, pull TWICE and diff.** A merge bug that reverts is invisible on the first pull — the answer looks right — and only shows on the second. `test_repeated_pull_does_not_revert` pulls three times.
+
 Related: `updated_at` stamps are now millisecond (`strftime('%Y-%m-%d %H:%M:%f')`, space separator kept so old second-resolution rows still sort correctly). At second resolution two same-second edits compared equal and the winner fell out of file iteration order — which two machines can resolve differently and stay diverged. Ties now break on `str(value)`, identically everywhere.
 
 ## Bug: RISK tab blank — `float() argument must be ... not 'dict'` (fixed 2026-07-12)

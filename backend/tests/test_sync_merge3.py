@@ -83,9 +83,41 @@ def test_stale_peer_is_not_a_conflict(cloud, tmp_path, monkeypatch):
         assert c.execute("SELECT volume FROM trades WHERE id=?", (tid,)).fetchone()["volume"] == 2000
 
 
+def test_repeated_pull_does_not_revert(cloud, tmp_path, monkeypatch):
+    """The restart bug: pull once, get the right answer; pull again (or reopen
+    the app, which pulls on startup) and a peer that never changed drags the
+    old value back.
+
+    Cause was one shared ancestor. After the first merge the base holds the
+    MERGED value while the offline peer still holds the old one, so the peer
+    reads as "changed" and local — now equal to the base — reads as
+    "unchanged", handing the stale value the win on every subsequent pull.
+    """
+    aid = str(uuid.uuid4())
+
+    db, sync = _device(monkeypatch, tmp_path, "MAC")
+    _seed(db, aid)
+    tid = _add_trade(db, aid, "COST.BK", 1000)
+    sync.push()                                   # MAC's snapshot freezes here
+
+    db, sync = _device(monkeypatch, tmp_path, "PC")
+    sync.pull()
+    time.sleep(0.05)
+    with db.get_db() as c:                        # PC closes the trade
+        c.execute("UPDATE trades SET volume=2000 WHERE id=?", (tid,))
+    sync.push()
+
+    for attempt in range(1, 4):                   # restart, restart, restart
+        sync.pull()
+        with db.get_db() as c:
+            vol = c.execute("SELECT volume FROM trades WHERE id=?", (tid,)).fetchone()["volume"]
+        assert vol == 2000, f"pull #{attempt} reverted to the stale peer's value ({vol})"
+
+
 def test_disjoint_field_edits_both_survive(cloud, tmp_path, monkeypatch):
     """Row-level LWW threw away every field of the losing row. Field-level
-    merge keeps each side's own edit."""
+    merge keeps each side's own edit — from the second time the two devices
+    meet, since the first meeting is what records the peer's ancestor."""
     aid = str(uuid.uuid4())
 
     db, sync = _device(monkeypatch, tmp_path, "PC")
@@ -95,6 +127,12 @@ def test_disjoint_field_edits_both_survive(cloud, tmp_path, monkeypatch):
 
     db, sync = _device(monkeypatch, tmp_path, "MAC")
     sync.pull()
+    sync.push()
+
+    db, sync = _device(monkeypatch, tmp_path, "PC")
+    sync.pull()                                  # first contact: records MAC's ancestor
+
+    db, sync = _device(monkeypatch, tmp_path, "MAC")
     time.sleep(0.05)
     with db.get_db() as c:                       # MAC edits note only
         c.execute("UPDATE trades SET note='from mac' WHERE id=?", (tid,))

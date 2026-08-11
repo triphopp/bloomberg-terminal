@@ -84,10 +84,14 @@ def _load_base() -> dict | None:
         return None  # first run → merge degrades to plain LWW
 
 
-def _save_base(tables: dict, tombstones: list) -> None:
+def _save_base(tables: dict, tombstones: list, peers: dict | None = None) -> None:
+    """Persist both ancestors: the merged result (local side) and each peer's
+    snapshot exactly as we saw it (that peer's side). See merge.py — sharing one
+    ancestor between the two sides silently reverts data on every pull."""
     try:
         write_json(_sidecar("base"), {"saved_at": _now(), "tables": tables,
-                                      "tombstones": tombstones})
+                                      "tombstones": tombstones,
+                                      "peers": peers or {}})
     except OSError:
         logger.warning("could not persist sync base (next merge falls back to LWW)")
 
@@ -149,7 +153,10 @@ def pull() -> dict:
         # compares against it. Saved after restore so a crash mid-restore leaves
         # the OLD base in place (stale base = extra conflicts; wrong base = lost
         # edits, because unchanged fields would look changed and vice versa).
-        _save_base(merged, tombs)
+        _save_base(merged, tombs, peers={
+            s["device"]: {"tables": s.get("tables", {})}
+            for s in peers if s.get("device")
+        })
 
         if conflicts:
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
