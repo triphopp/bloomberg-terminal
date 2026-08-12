@@ -202,6 +202,43 @@ function DerivativesSection({ accountId, colors }: { accountId: string; colors: 
   );
 }
 
+type NativeCurrency = "USD" | "USDT" | "THB";
+
+function toBaseCcy(v: number, from: NativeCurrency, display: string, thbPerUsd: number): number {
+  if ((from === "USD" || from === "USDT") && display === "THB") return v * thbPerUsd;
+  if (from === "THB" && display === "USD") return v / thbPerUsd;
+  return v;
+}
+
+// Native currency is per-instrument (pos_currency), not per-account — a .BK
+// position inside a USD account is THB. Fall back to acc_currency for rows
+// served before the backend added pos_currency.
+function posCurrency(p: Trade): NativeCurrency {
+  return (p.currency ?? p.pos_currency ?? p.acc_currency ?? "THB") as NativeCurrency;
+}
+
+/**
+ * Position cost in the display currency.
+ *
+ * Module-level and pure so the row renderer and the group sort call the exact
+ * same thing — a sort computed from a second copy of this formula would drift
+ * from the COST column the moment either one changed.
+ *
+ * Prefers the backend's entry-date-FX cost basis (what the summary badge and
+ * ANALYTICS totals use); falls back to live FX only when the backend supplied
+ * none, or when the user has set a manual cost override.
+ */
+function positionCost(
+  p: MergedPosition,
+  display: string,
+  thbPerUsd: number,
+  override?: number
+): number {
+  const acc = posCurrency(p);
+  if (override != null) return toBaseCcy(override, acc, display, thbPerUsd) * p.volume;
+  return p.cost_basis_base ?? toBaseCcy(p.price_entry, acc, display, thbPerUsd) * p.volume;
+}
+
 function DelayBadge({ warning, delay }: { warning: string; delay: number }) {
   const [show, setShow] = useState(false);
   return (
@@ -457,6 +494,25 @@ export function OpenPositionsTab({
     );
   }, [merged, filter]);
 
+  const toBase = (v: number, acc: NativeCurrency) => toBaseCcy(v, acc, currency, thb_per_usd);
+  const posCcy = posCurrency;
+
+  // Decorate: cost is computed ONCE per position, not once per comparison.
+  // Array.sort calls its comparator O(n log n) times, so a naive
+  // `(a, b) => cost(b) - cost(a)` would redo the FX conversion on every one of
+  // them. The COST cells read from this map too, so the number shown and the
+  // number sorted on are the same value rather than two evaluations that can
+  // drift apart.
+  const costByKey = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of filtered) {
+      m.set(p.rowKey, positionCost(p, currency, thb_per_usd, costOverrides[p.symbol]));
+    }
+    return m;
+  }, [filtered, currency, thb_per_usd, costOverrides]);
+
+  const costOf = (p: MergedPosition) => costByKey.get(p.rowKey) ?? 0;
+
   const groups = useMemo(() => {
     const map = new Map<string, MergedPosition[]>();
     for (const p of filtered) {
@@ -464,21 +520,21 @@ export function OpenPositionsTab({
       if (!map.has(key)) map.set(key, []);
       map.get(key)?.push(p);
     }
+    // Sort key only — the raw value stays in costByKey so a broken number still
+    // renders as itself in the cell. A NaN reaching the comparator would break
+    // sort's ordering contract and the whole group would come out in an
+    // engine-defined order, which reads as a random shuffle rather than a bug.
+    const rank = (p: MergedPosition) => {
+      const c = costByKey.get(p.rowKey);
+      return c != null && Number.isFinite(c) ? c : Number.NEGATIVE_INFINITY;
+    };
+    // Biggest money first, within each account. Group order itself is left
+    // alone — it follows the order the backend returned the accounts in.
+    // Array.sort is stable (ES2019+), so equal-cost rows keep backend order
+    // instead of swapping places between renders.
+    for (const rows of map.values()) rows.sort((a, b) => rank(b) - rank(a));
     return Array.from(map.entries());
-  }, [filtered]);
-
-  type NativeCurrency = "USD" | "USDT" | "THB";
-  const toBase = (v: number, acc: NativeCurrency) => {
-    if ((acc === "USD" || acc === "USDT") && currency === "THB") return v * thb_per_usd;
-    if (acc === "THB" && currency === "USD") return v / thb_per_usd;
-    return v;
-  };
-
-  // Native currency is per-instrument (pos_currency), not per-account — a .BK
-  // position inside a USD account is THB. Fall back to acc_currency for rows
-  // served before the backend added pos_currency.
-  const posCcy = (p: Trade): NativeCurrency =>
-    (p.currency ?? p.pos_currency ?? p.acc_currency ?? "THB") as NativeCurrency;
+  }, [filtered, costByKey]);
 
   const totalUnreal = positions.reduce((a, p) => {
     if (p.unrealized_pnl_base != null) return a + p.unrealized_pnl_base;
@@ -788,12 +844,10 @@ export function OpenPositionsTab({
                           ? ((curNative - overrideNative) / overrideNative) * 100
                           : p.unrealized_pct;
                       // Use backend's entry-date-FX cost basis (matches badge/ANALYTICS totals);
-                      // only fall back to live-FX entryNative when backend didn't supply one
+                      // only fall back to live-FX entry when backend didn't supply one
                       // (no live quote) or the user set a manual cost override.
-                      const costVal =
-                        overrideNative != null
-                          ? overrideNative * p.volume
-                          : (p.cost_basis_base ?? entryNative * p.volume);
+                      // Same helper the group sort uses — one formula, no drift.
+                      const costVal = costOf(p);
                       const targetNative =
                         p.price_target != null ? toBase(p.price_target, acc) : null;
                       const slNative =
