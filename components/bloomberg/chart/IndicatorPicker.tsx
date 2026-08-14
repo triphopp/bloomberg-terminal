@@ -326,27 +326,50 @@ export function IndicatorPicker({
                             const scaled =
                               windowUnit === "days" &&
                               (entry.timeScalableParams?.includes(p.key) ?? false);
+                            const controlId = `ind-param-${entry.id}-${p.key}`;
                             return (
                               <label
                                 key={p.key}
+                                htmlFor={controlId}
                                 className="flex items-center justify-between gap-2"
                               >
                                 <span className="text-[9px] font-mono opacity-60 min-w-[60px]">
                                   {p.label}
                                   {scaled && <span style={{ color: colors.positive }}> (d)</span>}
                                 </span>
-                                <input
-                                  type="number"
-                                  value={params[p.key] as number}
-                                  min={p.min}
-                                  max={p.max}
-                                  step={p.step ?? 1}
-                                  onChange={(e) =>
-                                    setParam(entry.id, p.key, Number.parseFloat(e.target.value))
-                                  }
-                                  className="w-16 text-right text-[9px] font-mono px-1 py-0.5 border bg-transparent outline-none"
-                                  style={{ borderColor: colors.border, color: colors.text }}
-                                />
+                                {p.type === "select" ? (
+                                  <select
+                                    id={controlId}
+                                    value={params[p.key] as string}
+                                    onChange={(e) => setParam(entry.id, p.key, e.target.value)}
+                                    className="text-right text-[9px] font-mono px-1 py-0.5 border outline-none"
+                                    style={{
+                                      borderColor: colors.border,
+                                      color: colors.text,
+                                      backgroundColor: colors.surface,
+                                    }}
+                                  >
+                                    {(p.options ?? []).map((o) => (
+                                      <option key={o.value} value={o.value}>
+                                        {o.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <input
+                                    id={controlId}
+                                    type="number"
+                                    value={params[p.key] as number}
+                                    min={p.min}
+                                    max={p.max}
+                                    step={p.step ?? 1}
+                                    onChange={(e) =>
+                                      setParam(entry.id, p.key, Number.parseFloat(e.target.value))
+                                    }
+                                    className="w-16 text-right text-[9px] font-mono px-1 py-0.5 border bg-transparent outline-none"
+                                    style={{ borderColor: colors.border, color: colors.text }}
+                                  />
+                                )}
                               </label>
                             );
                           })}
