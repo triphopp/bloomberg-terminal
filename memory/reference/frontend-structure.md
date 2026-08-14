@@ -62,11 +62,15 @@ components/bloomberg/
 │   ├── EventDetailPopover.tsx   ← detail card for clicked events: EST vs ACTUAL EPS + BEAT/MISS, dividend amount + yield, split ratio, gap/close/D+1/D+5 reaction. Opens on a list when a cluster is clicked. Closes on Escape or an outside click
 │   ├── event-reaction.ts        ← pure helpers: `earningsSession()` (BMO/AMC off `reportedAt`), `findEventBarIndex()` / `placeEvents()` (single placement rule shared by the rail and the card), `computeEventReaction()`. Tested in `__tests__/event-reaction.test.ts`
 │   ├── ChartTimeframeBar.tsx    ← period selector (1D/1W/1M/3M/YTD/1Y/5Y/MAX)
-│   ├── IndicatorPicker.tsx      ← technical indicator selector
+│   ├── IndicatorPicker.tsx      ← technical indicator selector (number params + `type:"select"` dropdown params)
 │   ├── FearGreedPane.tsx        ← recharts sub-pane (F&G 0–100 + zone bands)
 │   ├── PEPane.tsx               ← recharts sub-pane: trailing P/E line + p10/p90 valuation bands + percentile label (consumes /api/stock/pe-history)
 │   ├── useChartIndicators.ts    ← indicator/overlay state; exposes vpConfig, showPE via atoms, plus `selectedEvent`/`clearSelectedEvent` for the detail card. Regression arming wins the click when both could claim it
-│   └── indicators/volume-profile.ts ← session+composite VP (gap-based sessions, delta, naked POC, HVN/LVN, VRVP)
+│   ├── indicators/volume-profile.ts ← session+composite VP (gap-based sessions, delta, naked POC, HVN/LVN, VRVP)
+│   ├── indicators/rv-core.ts        ← realized-vol math shared by the 3 RV panes: `calcRealizedVol(bars, period, estimator, periodsPerYear)` (cc/parkinson/gk/rs/yz, returns ANNUALISED %), `inferPeriodsPerYear()` (median bar spacing → 252/52/12 or 252×bars-per-session), `rollingPercentRank()`. Tested in `__tests__/rv-core.test.ts`
+│   ├── indicators/realized-vol.ts   ← RV pane: 3 windows at once (5/21/63 default, 0 hides a line), estimator select
+│   ├── indicators/rv-rank.ts        ← RV percentile rank pane (RV window 21 vs 252-bar lookback), zone-coloured histogram + 50 midline
+│   └── indicators/rv-ratio.ts       ← RV(fast)/RV(slow) realized term structure pane, 1.0 reference line, expansion/compression thresholds
 │
 ├── ui/
 │   ├── CandlestickChart.tsx     ← custom OHLC candlestick chart

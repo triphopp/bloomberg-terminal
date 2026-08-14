@@ -19,6 +19,17 @@ export { createBollingerWidth } from "./bollinger-width";
 export { createVWAP } from "./vwap";
 export { createVolume } from "./volume";
 export { createRVOL } from "./rvol";
+export { createRealizedVol } from "./realized-vol";
+export { createRVRank } from "./rv-rank";
+export { createRVRatio } from "./rv-ratio";
+export {
+  calcRealizedVol,
+  inferPeriodsPerYear,
+  rollingPercentRank,
+  RV_ESTIMATOR_OPTIONS,
+  RV_ESTIMATOR_SHORT,
+} from "./rv-core";
+export type { RvEstimator } from "./rv-core";
 export { createFlowToxicity } from "./flow-toxicity";
 export { createAbsorption } from "./absorption";
 export { createStochastic } from "./stochastic";
@@ -51,7 +62,11 @@ import { createEMA } from "./ema";
 import { createFearGreed } from "./fear-greed";
 import { createFlowToxicity } from "./flow-toxicity";
 import { createMACD } from "./macd";
+import { createRealizedVol } from "./realized-vol";
 import { createRSI } from "./rsi";
+import { RV_ESTIMATOR_OPTIONS } from "./rv-core";
+import { createRVRank } from "./rv-rank";
+import { createRVRatio } from "./rv-ratio";
 import { createRVOL } from "./rvol";
 import { createSMA } from "./sma";
 import { createStochastic } from "./stochastic";
@@ -201,6 +216,97 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     factory: createBollingerWidth,
     outputs: [{ key: "width", label: "BB Width", unbounded: true }],
     alertLabels: BB_WIDTH_LABELS,
+  },
+  {
+    id: "realized-vol",
+    name: "Realized Vol",
+    category: "volatility",
+    type: "pane",
+    description: "Annualised realized vol at 3 windows (5/21/63) — 5 estimators, 0 hides a line",
+    defaultParams: [
+      { key: "fast", label: "Fast", type: "number", default: 5, min: 0, max: 250, step: 1 },
+      { key: "slow", label: "Slow", type: "number", default: 21, min: 0, max: 250, step: 1 },
+      { key: "long", label: "Long", type: "number", default: 63, min: 0, max: 500, step: 1 },
+      {
+        key: "estimator",
+        label: "Estimator",
+        type: "select",
+        default: "yz",
+        options: [...RV_ESTIMATOR_OPTIONS],
+      },
+    ],
+    timeScalableParams: ["fast", "slow", "long"],
+    factory: createRealizedVol,
+    // No `outputs`/`alertLabels` yet: alert operands must also resolve in
+    // backend/alerts/operands.py, which has no RV branch — advertising them
+    // here would offer rules the scanner cannot evaluate.
+  },
+  {
+    id: "rv-rank",
+    name: "RV Rank",
+    category: "volatility",
+    type: "pane",
+    description: "Percentile of RV within its trailing lookback — cyan ≤20 compressed, red ≥95",
+    defaultParams: [
+      { key: "period", label: "RV window", type: "number", default: 21, min: 2, max: 250, step: 1 },
+      {
+        key: "lookback",
+        label: "Rank lookback",
+        type: "number",
+        default: 252,
+        min: 30,
+        max: 1250,
+        step: 10,
+      },
+      {
+        key: "estimator",
+        label: "Estimator",
+        type: "select",
+        default: "yz",
+        options: [...RV_ESTIMATOR_OPTIONS],
+      },
+    ],
+    timeScalableParams: ["period", "lookback"],
+    factory: createRVRank,
+  },
+  {
+    id: "rv-ratio",
+    name: "RV Ratio",
+    category: "volatility",
+    type: "pane",
+    description: "RV(fast)/RV(slow) realized term structure — <1 compressed, >1 expanding",
+    defaultParams: [
+      { key: "fast", label: "Fast", type: "number", default: 5, min: 2, max: 250, step: 1 },
+      { key: "slow", label: "Slow", type: "number", default: 21, min: 2, max: 500, step: 1 },
+      {
+        key: "expansion",
+        label: "Expansion ≥",
+        type: "number",
+        default: 1.3,
+        min: 1,
+        max: 4,
+        step: 0.1,
+      },
+      {
+        key: "compression",
+        label: "Compression ≤",
+        type: "number",
+        default: 0.7,
+        min: 0.1,
+        max: 1,
+        step: 0.05,
+      },
+      {
+        key: "estimator",
+        label: "Estimator",
+        type: "select",
+        default: "yz",
+        options: [...RV_ESTIMATOR_OPTIONS],
+      },
+    ],
+    // Thresholds are ratios, not durations — only the two windows rescale.
+    timeScalableParams: ["fast", "slow"],
+    factory: createRVRatio,
   },
 
   // ─── Volume ───
