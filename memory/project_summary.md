@@ -113,7 +113,10 @@ OPENAI_API_KEY      — optional
 | `options.py` | `/api/options/*`, positions + Greeks | yfinance + greeks.py |
 | `pins.py` | `/api/pins/*` (groups, assets, tags CRUD) | SQLite |
 | `clippings.py` | `/api/clippings/*` | filesystem + Ollama |
-| `news.py` | `/api/news/facebook` | RSSHub / Graph API |
+| `news.py` | `/api/news/facebook`, `/api/news/feed` | RSSHub / Graph API + yfinance + RSS |
+| `news_watchlist.py` | `/api/news/watchlist`, `/api/news/sources` | 7 free news sources + sector DB + Polymarket pool |
+| `polymarket_stock.py` | `/api/polymarket/stock/{symbol}`, `/api/polymarket/stocks` | Gamma `/public-search` + `/events` (single-name price ladders) |
+| `company_filings.py` | `/api/company/filings|outlook|xbrl/{symbol}` | SEC EDGAR (submissions + 8-K EX-99.1 + XBRL companyconcept) — US only |
 | `social.py` | `/api/social/feed` | RSSHub / Graph API |
 | `macro.py` | `/api/macro` | FRED + Alpha Vantage (2-layer cache) |
 | `crisis.py` | `/api/crisis` | FRED |
@@ -152,6 +155,7 @@ OPENAI_API_KEY      — optional
 | `analytics.py` | `/api/analytics/{corr,beta,vol,return,drawdown,sharpe,zscore,rsi,compare,rank}` | yfinance + TTLCache 300s |
 | `paper_trading.py` | `/api/paper/*` (accounts, orders, positions, fills, equity-curve) | yfinance + SQLite |
 | `providers.py` | `/api/providers` (list+health), `/api/providers/active` (switch), `/api/providers/auto-failover` | quote registry |
+| `theses.py` | `/api/v2/theses/*` (CRUD + append-only event log + trade links + md import/export) | SQLite + `THESES_DIR` |
 | `sync_router.py` | `/api/sync/status`, `/api/sync/pull`, `/api/sync/push` | cloud-sync (`backend/sync/`) |
 | `watchlist_signals.py` | `/api/watchlist/signals` (batch daily technical scan) | yfinance batch (TTLCache 900s) |
 
@@ -194,6 +198,17 @@ paper_orders        (id, account_id, symbol, side buy/sell, order_type market/li
 paper_fills         (id, order_id, quantity, price, commission, filled_at)
 paper_positions     (id, account_id, symbol, quantity, avg_cost, realized_pnl) UNIQUE(account_id, symbol)
 paper_snapshots     (id, account_id, date, equity, cash, positions_value) UNIQUE(account_id, date)
+theses              (id TEXT uuid PK, symbol, resolved_symbol, market, account_id, sub_portfolio,
+                     title, category, strategy, status draft|active|watch|invalidated|closed,
+                     conviction 1-5, time_horizon, target_price, stop_price, currency, body,
+                     source_file, deleted_at, created_at, updated_at)
+-- 2026-08-15 (thesis system): materialised head, edited in place → field-level LWW merge.
+--   Soft delete = UPDATE deleted_at (NO tombstone, restorable on both devices); purge = real DELETE.
+thesis_events       (id TEXT uuid PK, thesis_id, event_type, payload JSON diff, note, occurred_at,
+                     device_id, created_at)  -- APPEND-ONLY: never UPDATEd, so LWW merge is a union
+thesis_links        (thesis_id, trade_id, role, created_at) PK(thesis_id,trade_id)
+allocation_targets  (id TEXT uuid PK, account_id, scope sector|symbol, key, target_pct, band_pct,
+                     updated_at) UNIQUE(account_id, scope, key)
 sync_tombstones     (table_name, row_id, deleted_at) PK(table_name,row_id)  -- cloud-sync delete log
 _sync_guard         (active)  -- flag; raised during restore to silence sync triggers
 ```
@@ -212,7 +227,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 | Key | Button | View | Component |
 |-----|--------|------|-----------|
 | `1` | MKT | Market View (default) | `market-view.tsx` — watchlist + chart + Regime Detection + TICK DATA board (6 collapsible sections: AMERICAS/EMEA/ASIA PACIFIC + RATES·US + RATES·JP + FX) |
-| `2` | NEWS | News | `news-view.tsx` — NEWSFEED / SOCIAL tabs + Polymarket right column (256px fixed) |
+| `2` | NEWS | News | `news-view.tsx` → barrel for `views/news/` — WATCHLIST (default, sector rail + per-ticker stream) / NEWSFEED / SOCIAL tabs + Polymarket right column (256px fixed; watchlist-matched markets on top of macro signals) |
 | `3` | GMOV | Market Movers | `market-movers-view.tsx` — indices table + heatmap treemap |
 | `4` | CLIP | Clippings + AI | `clippings-view.tsx` |
 | `5` | MACRO | Macro Economics | `macro-view.tsx` — 7 tabs: dashboard, yield, indicators, fed, country, compare, **signals** |
@@ -250,6 +265,9 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026
 - [ ] Seed sector data: POST /api/sectors/fetch for TH/KR/HK/EU/US
 
 ### Features
+- [x] **Company OUTLOOK (SEC EDGAR)** — guidance ที่บริษัทยื่นใน 8-K EX-99.1 + คำพูด CEO + MD&A forward-looking + งบ as-reported จาก XBRL; แท็บ OUTLOOK ใน stock-view + แถบใน NEWS — done 2026-08-15 (`plans/completed/company-outlook-edgar.md`)
+- [x] **Polymarket stock price ladders** — `/api/polymarket/stock/{sym}` แปลง touch ladder + "close above" CDF เป็น P(up)/skew/implied range; panel ใน NEWS + คอลัมน์ PM ใน MKT watchlist — done 2026-08-15 (`plans/completed/polymarket-stock-ladder.md`)
+- [x] **NEWS watchlist redesign** — ข่าวรายหุ้นจาก 7 แหล่ง (Yahoo/yfinance/Google/Bing/Seeking Alpha/Nasdaq/SEC), แบ่งกลุ่มตาม SECTOR อัตโนมัติ, ticker badge ทุกหัวข้อ, Polymarket จับคู่รายหุ้น — done 2026-08-15 (`plans/completed/news-watchlist-redesign.md`)
 - [x] **Analytics Cash Card** — CASH tile + MARKET VALUE split (excl./incl. idle cash) in ANALYTICS Capital Breakdown — done 2026-07-14 (`plans/completed/analytics-cash-card.md`)
 - [x] **Cash Transfer** — linked-pair TRANSFER entry_type in `cash_ledger` so inter-account cash moves (e.g. FINANSIA→DIME) fix per-account `invested_capital` bookkeeping with atomic insert + cascade delete — done 2026-07-14 (`plans/completed/cash-transfer-feature.md`)
 - [ ] **System Audit 2026-07 — Bug Fixes & Refactor** — 9 fix items + 6 refactor items; F01 done 2026-07-03, F06 done 2026-07-04 (via port-redesign resolver); เหลือ F02 AVCO drift 🔴, F03 async blocking 🔴, F04/F05/F07/F08/F09 + R01–R06 (`plans/system-audit-2026-07/README.md`)
@@ -261,6 +279,7 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026
 - [x] **TICK DATA Consolidation** done 2026-08-01 — เพิ่ม RATES·US (UST 11 tenor, FRED daily) + RATES·JP (JGB 1Y–40Y, MOF CSV) + FX เข้า TICK DATA panel ใน MKT, section ยุบได้; ลบ CRYP [C] + FX [E] views (backend crypto/fx router คงไว้) (`plans/completed/tickdata-rates-fx-consolidation.md`)
 - [ ] **Pane Height Persistence Fix** — pane indicator ยุบเป็น 0 ตอน rebuild (lw v5 setHeight→stretch แปลงบนฐานว่าง) + drag จับเฉพาะ teardown ทำให้ reload แล้วหาย + wrapper h=0; แผนแก้ 3 ชั้น: defer setHeight 2-frame, capturePaneDrags 4 จุดเรียก, ซ่อม height chain (`plans/pane-height-persistence-fix.md`)
 - [ ] **RSI Scale Modes** — คลิกขวาบน RSI pane เลือกสเกล 6 แบบ (standard / autofit / price projection / distance % / distance in avg moves / log RS) + modal ตั้งค่า; Step 1–2 done 2026-08-05 (`calcRSIState` export Wilder state + แก้ seed divergence 99.0099→100, `rsiInverse.ts`), Step 1–5 done 2026-08-05 — คลิกขวาบน RSI pane → เมนู 6 โหมด + เส้น projection บน price pane (Step 6 modal ยกเลิก ยุบลง context menu แทน) ยังไม่ verify ตัวเลขบนแกนด้วยตาเพราะ ModularChart ไม่วาด price series ในโปรไฟล์ที่ทดสอบ; audit: `sessions/reports/rsi-seed-divergence-risk-report.md` (`plans/rsi-scale-modes.md`)
+- [x] **Thesis System (DB) + Allocation Basis** — theses/thesis_events/thesis_links ใน SQLite + sync ผ่าน Google Drive, edit/soft-delete/restore, event log เก็บ diff, import/export .md; ALLOCATION (OPEN) ใหม่: cost vs market value, growth%, drift, share of gain, rebalance sizing (หุ้น + กำไรที่จะรับรู้) — done 2026-08-15 (`plans/completed/thesis-db-and-allocation-basis.md`)
 - [ ] Polymarket: dashboard view in frontend
 - [ ] BOT: frontend view for Bond Auction + yield trend chart
 - [ ] BOT: activate Stat-ExchangeRate → add THB FX view

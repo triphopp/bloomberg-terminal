@@ -1512,6 +1512,12 @@ def get_open_positions(
     account_id: Optional[str] = Query(None),
     base_currency: str = Query("THB"),
 ):
+    return _open_positions_enriched(account_id, base_currency)
+
+
+def _open_positions_enriched(account_id: Optional[str], base_currency: str) -> dict:
+    """Open lots + live price/FX enrichment. Shared with /allocation-detail so
+    both endpoints answer from exactly the same cost and market-value basis."""
     base_currency = report_currency(base_currency)
     where = ["win_loss = 'P'"]
     params = []
@@ -1619,6 +1625,319 @@ def get_open_positions(
         enriched.append(pos)
 
     return {"positions": enriched, "thb_per_usd": thb_per_usd}
+
+
+# ── Allocation detail: basis growth + rebalance sizing ───────────────────────
+# ALLOCATION (OPEN) in ANALYTICS used to weight sectors by COST only, which
+# cannot answer "this winner is now how big a slice of the book?" — the cost
+# weight is frozen at entry no matter how far the position ran. Everything here
+# is the same lot data as /open-positions, reported on two bases at once.
+
+def _lot_size(row: dict) -> int:
+    """Round-lot for the exchange. TH board lot is 100; US/crypto trade in 1."""
+    market = str(row.get("market") or "").upper()
+    sym = str(row.get("resolved_symbol") or row.get("symbol") or "").upper()
+    if market == "TH" or sym.endswith(".BK"):
+        return 100
+    return 1
+
+
+def _pct(part: float, whole: float) -> float:
+    return round(part / whole * 100, 2) if whole else 0.0
+
+
+@router.get("/allocation-detail")
+def get_allocation_detail(
+    account_id: Optional[str] = Query(None),
+    base_currency: str = Query("THB"),
+):
+    """Per-symbol and per-sector cost basis vs market value, with the drift and
+    the trade size that returns each slice to its target weight.
+
+    Cost is converted at the ENTRY exchange rate and market value at the LIVE
+    one (`trade_value_in_report` when=entry/live), so growth_pct on a foreign
+    holding includes the currency move exactly once — using a single rate on
+    both sides silently cancels it out.
+    """
+    base_currency = report_currency(base_currency)
+    data = _open_positions_enriched(account_id, base_currency)
+    positions = data["positions"]
+    thb_per_usd = data.get("thb_per_usd")
+
+    # Manual average-cost overrides win over the lot math, the same way the
+    # positions table renders them (OpenPositionsTab costOverrides) — otherwise
+    # growth% here would disagree with the number shown one tab over.
+    with get_db() as conn:
+        overrides = {
+            (r["account_id"], str(r["symbol"]).upper()): r["avg_cost"]
+            for r in conn.execute(
+                "SELECT account_id, symbol, avg_cost FROM position_cost_overrides"
+            ).fetchall()
+        }
+        target_rows = [
+            dict(r)
+            for r in conn.execute("SELECT * FROM allocation_targets").fetchall()
+        ]
+
+    scope_targets: dict[tuple[str, str], dict] = {}
+    for t in target_rows:
+        if account_id and account_id != "all" and t["account_id"] not in (account_id, "all"):
+            continue
+        # An account-specific target beats the "all" default for the same key.
+        key = (t["scope"], str(t["key"]).upper())
+        prev = scope_targets.get(key)
+        if prev is None or (prev["account_id"] == "all" and t["account_id"] != "all"):
+            scope_targets[key] = t
+
+    # ── Fold lots into one row per symbol ────────────────────────────────────
+    agg: dict[str, dict] = {}
+    for pos in positions:
+        sym = str(pos.get("symbol") or "").upper()
+        if not sym:
+            continue
+        vol = _to_float_or_zero(pos.get("volume"))
+        entry = _to_float_or_zero(pos.get("price_entry"))
+        cost_native = _to_float_or_zero(pos.get("amount")) or entry * vol
+        override = overrides.get((pos.get("account_id"), sym))
+        if override is not None:
+            cost_native = _to_float_or_zero(override) * vol
+        cost_base = trade_value_in_report(pos, cost_native, base_currency, when="entry")
+
+        price = pos.get("current_price")
+        mv_base = (
+            trade_value_in_report(pos, price * vol, base_currency, when="live")
+            if price
+            else None
+        )
+
+        row = agg.get(sym)
+        if row is None:
+            row = agg[sym] = {
+                "symbol": sym,
+                "sector": str(pos.get("sector") or "Other"),
+                "account_id": pos.get("account_id"),
+                "account_name": pos.get("acc_name"),
+                "currency": pos.get("pos_currency") or pos.get("currency"),
+                "market": pos.get("market"),
+                "resolved_symbol": pos.get("resolved_symbol"),
+                "price": price,
+                "volume": 0.0,
+                "cost_base": 0.0,
+                "market_value": 0.0,
+                "cost_native": 0.0,
+                "priced": True,
+                "lots": 0,
+                "has_override": override is not None,
+            }
+        row["lots"] += 1
+        row["volume"] += vol
+        row["cost_base"] += cost_base
+        row["cost_native"] += cost_native
+        if price:
+            row["price"] = price
+        if mv_base is None:
+            # One unpriced lot makes the whole symbol's market value a guess —
+            # say so rather than reporting a value short by that lot.
+            row["priced"] = False
+        else:
+            row["market_value"] += mv_base
+
+    symbols: list[dict] = []
+    for row in agg.values():
+        cost = round(row["cost_base"], 2)
+        mv = round(row["market_value"], 2) if row["priced"] else None
+        row["cost_base"] = cost
+        row["market_value"] = mv
+        row["avg_cost"] = round(row["cost_native"] / row["volume"], 4) if row["volume"] else None
+        row["unrealized"] = round(mv - cost, 2) if mv is not None else None
+        row["growth_pct"] = round((mv / cost - 1) * 100, 2) if mv is not None and cost > 0 else None
+        row.pop("cost_native", None)
+        symbols.append(row)
+
+    total_cost = round(sum(r["cost_base"] for r in symbols), 2)
+    total_mv = round(sum(r["market_value"] or r["cost_base"] for r in symbols), 2)
+    total_gain = round(total_mv - total_cost, 2)
+    gross_gain = round(sum(max(r["unrealized"] or 0, 0) for r in symbols), 2)
+
+    def _weights(row: dict) -> None:
+        mv = row["market_value"] if row.get("market_value") is not None else row["cost_base"]
+        row["weight_cost_pct"] = _pct(row["cost_base"], total_cost)
+        row["weight_mv_pct"] = _pct(mv, total_mv)
+        row["drift_pp"] = round(row["weight_mv_pct"] - row["weight_cost_pct"], 2)
+        row["contrib_growth_pct"] = _pct(row.get("unrealized") or 0, total_cost)
+        row["share_of_gain_pct"] = (
+            _pct(row["unrealized"], gross_gain)
+            if gross_gain > 0 and (row.get("unrealized") or 0) > 0
+            else 0.0
+        )
+
+    for row in symbols:
+        _weights(row)
+
+    # ── Sector rollup ────────────────────────────────────────────────────────
+    sector_map: dict[str, dict] = {}
+    for row in symbols:
+        sec = sector_map.setdefault(
+            row["sector"],
+            {
+                "sector": row["sector"],
+                "cost_base": 0.0,
+                "market_value": 0.0,
+                "unrealized": 0.0,
+                "priced": True,
+                "symbols": [],
+            },
+        )
+        sec["cost_base"] += row["cost_base"]
+        sec["market_value"] += row["market_value"] or row["cost_base"]
+        sec["unrealized"] += row["unrealized"] or 0
+        sec["priced"] = sec["priced"] and bool(row["priced"])
+        sec["symbols"].append(row)
+
+    sectors: list[dict] = []
+    for sec in sector_map.values():
+        sec["cost_base"] = round(sec["cost_base"], 2)
+        sec["market_value"] = round(sec["market_value"], 2)
+        sec["unrealized"] = round(sec["unrealized"], 2)
+        sec["growth_pct"] = (
+            round((sec["market_value"] / sec["cost_base"] - 1) * 100, 2)
+            if sec["cost_base"] > 0
+            else None
+        )
+        _weights(sec)
+        sec["symbols"].sort(key=lambda r: -(r["market_value"] or r["cost_base"]))
+        sectors.append(sec)
+    sectors.sort(key=lambda s: -s["market_value"])
+
+    # ── Rebalance sizing ─────────────────────────────────────────────────────
+    # No explicit target → the target IS the cost weight, i.e. "trim whatever the
+    # run-up inflated back to the slice you originally chose to deploy". That is
+    # the number the drift column is already showing, made actionable.
+    def _attach_rebalance(row: dict, scope: str, key: str) -> None:
+        tgt = scope_targets.get((scope, key.upper()))
+        target_pct = float(tgt["target_pct"]) if tgt else row["weight_cost_pct"]
+        band = float(tgt["band_pct"]) if tgt else 0.0
+        mv = row["market_value"] if row.get("market_value") is not None else row["cost_base"]
+        target_value = round(total_mv * target_pct / 100, 2)
+        delta_value = round(target_value - mv, 2)
+        row["target_pct"] = round(target_pct, 2)
+        row["target_source"] = "explicit" if tgt else "cost_weight"
+        row["band_pct"] = band
+        row["target_value"] = target_value
+        row["delta_value"] = delta_value
+        row["in_band"] = abs(row["weight_mv_pct"] - target_pct) <= band
+        row["action"] = "HOLD" if row["in_band"] or delta_value == 0 else (
+            "BUY" if delta_value > 0 else "SELL"
+        )
+        if scope == "symbol":
+            price = row.get("price")
+            lot = _lot_size(row)
+            if price and mv:
+                # Convert the base-currency delta into shares through the
+                # position's own base-per-share rate, so a USD holding inside a
+                # THB report sizes correctly without a second FX lookup.
+                base_per_share = mv / row["volume"] if row["volume"] else None
+                raw_shares = delta_value / base_per_share if base_per_share else 0.0
+                # Board lots round DOWN (never overshoot a 100-share step);
+                # single-share markets round to nearest, so a 99.99-share
+                # delta is the 100 shares the user actually means.
+                shares = (
+                    int(abs(raw_shares) // lot * lot) if lot > 1 else round(abs(raw_shares))
+                )
+                shares = min(shares, int(row["volume"])) if raw_shares < 0 else shares
+                row["delta_shares"] = -shares if raw_shares < 0 else shares
+                row["lot_size"] = lot
+                # Realising part of a position realises that same fraction of its
+                # unrealised P&L (average-cost method — every share carries the
+                # same book cost).
+                frac = shares / row["volume"] if row["volume"] else 0.0
+                row["est_realized"] = (
+                    round((row["unrealized"] or 0) * frac, 2) if raw_shares < 0 else None
+                )
+                row["est_value"] = round(abs(base_per_share * shares), 2) if base_per_share else None
+            else:
+                row["delta_shares"] = None
+                row["lot_size"] = lot
+                row["est_realized"] = None
+                row["est_value"] = None
+
+    for sec in sectors:
+        _attach_rebalance(sec, "sector", sec["sector"])
+        for row in sec["symbols"]:
+            _attach_rebalance(row, "symbol", row["symbol"])
+
+    top_gain = max(symbols, key=lambda r: r.get("share_of_gain_pct") or 0, default=None)
+
+    return {
+        "base_currency": base_currency,
+        "thb_per_usd": thb_per_usd,
+        "totals": {
+            "cost_base": total_cost,
+            "market_value": total_mv,
+            "unrealized": total_gain,
+            "growth_pct": round((total_mv / total_cost - 1) * 100, 2) if total_cost > 0 else None,
+            "gain_concentration_pct": (top_gain or {}).get("share_of_gain_pct") or 0.0,
+            "gain_concentration_symbol": (top_gain or {}).get("symbol"),
+            "positions": len(symbols),
+        },
+        "sectors": sectors,
+        "symbols": sorted(symbols, key=lambda r: -(r["market_value"] or r["cost_base"])),
+    }
+
+
+class AllocationTargetIn(BaseModel):
+    account_id: str = "all"
+    scope: str = "sector"      # sector | symbol
+    key: str
+    target_pct: float
+    band_pct: float = 5
+
+
+@router.get("/allocation-targets")
+def list_allocation_targets(account_id: Optional[str] = Query(None)):
+    with get_db() as conn:
+        if account_id and account_id != "all":
+            rows = conn.execute(
+                "SELECT * FROM allocation_targets WHERE account_id IN (?, 'all')", (account_id,)
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM allocation_targets").fetchall()
+    return {"targets": [dict(r) for r in rows]}
+
+
+@router.put("/allocation-targets")
+def put_allocation_targets(body: list[AllocationTargetIn]):
+    """Bulk upsert. A target of 0 removes the row — an explicit 0% target and
+    "no opinion" are different states and the caller means the latter."""
+    for scope in {t.scope for t in body}:
+        if scope not in ("sector", "symbol"):
+            raise HTTPException(status_code=400, detail="scope must be 'sector' or 'symbol'")
+    for scope in ("sector", "symbol"):
+        total = sum(t.target_pct for t in body if t.scope == scope)
+        if total > 100.0001:
+            raise HTTPException(
+                status_code=400, detail=f"{scope} targets sum to {total:.2f}% (max 100)"
+            )
+    now = _now()
+    with get_db() as conn:
+        for t in body:
+            if t.target_pct <= 0:
+                conn.execute(
+                    "DELETE FROM allocation_targets WHERE account_id = ? AND scope = ? AND key = ?",
+                    (t.account_id, t.scope, t.key),
+                )
+                continue
+            conn.execute(
+                """INSERT INTO allocation_targets (id, account_id, scope, key, target_pct, band_pct, updated_at)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(account_id, scope, key) DO UPDATE SET
+                       target_pct = excluded.target_pct,
+                       band_pct   = excluded.band_pct,
+                       updated_at = excluded.updated_at""",
+                (str(uuid.uuid4()), t.account_id, t.scope, t.key, t.target_pct, t.band_pct, now),
+            )
+        rows = [dict(r) for r in conn.execute("SELECT * FROM allocation_targets").fetchall()]
+    return {"targets": rows}
 
 
 # ── Pre-/Post-Market Session Quotes ──────────────────────────────────────────

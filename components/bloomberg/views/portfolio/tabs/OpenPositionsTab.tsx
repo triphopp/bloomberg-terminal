@@ -330,8 +330,16 @@ export function OpenPositionsTab({
   accountId,
   currency,
   colors,
-}: { accountId: string; currency: "THB" | "USD"; colors: Colors }) {
+  onOpenThesis,
+}: {
+  accountId: string;
+  currency: "THB" | "USD";
+  colors: Colors;
+  /** Jump to TOOLS → THESES for this symbol (existing thesis, or a new one). */
+  onOpenThesis?: (symbol: string) => void;
+}) {
   const [data, setData] = useState<{ positions: Trade[]; thb_per_usd: number } | null>(null);
+  const [theses, setTheses] = useState<Record<string, { count: number; status: string }>>({});
   const [loading, setLoading] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [expandedLots, setExpandedLots] = useState<Record<string, boolean>>({});
@@ -402,6 +410,19 @@ export function OpenPositionsTab({
     load(ac.signal);
     return () => ac.abort();
   }, [load]);
+
+  // Which holdings have a written thesis. One summary call for the whole book —
+  // a per-row lookup would be a request storm on a large portfolio.
+  useEffect(() => {
+    const ac = new AbortController();
+    fetch("/api/v2/theses/summary/by-symbol", { signal: ac.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d?.by_symbol && setTheses(d.by_symbol))
+      .catch((e) => {
+        if (e?.name === "AbortError") return;
+      });
+    return () => ac.abort();
+  }, []);
 
   // Fetch dynamic stop data after positions load
   useEffect(() => {
@@ -884,6 +905,29 @@ export function OpenPositionsTab({
                             <span className="font-bold" style={{ color: groupColor }}>
                               {p.symbol}
                             </span>
+                            {onOpenThesis && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenThesis(p.symbol);
+                                }}
+                                className="text-[7px] px-1 border font-mono"
+                                style={{
+                                  borderColor: theses[p.symbol.toUpperCase()]
+                                    ? "#a78bfa88"
+                                    : "#33333388",
+                                  color: theses[p.symbol.toUpperCase()] ? "#a78bfa" : "#555",
+                                }}
+                                title={
+                                  theses[p.symbol.toUpperCase()]
+                                    ? `${theses[p.symbol.toUpperCase()].count} thesis — status ${theses[p.symbol.toUpperCase()].status}`
+                                    : "No thesis yet — write one"
+                                }
+                              >
+                                {theses[p.symbol.toUpperCase()] ? "TH" : "+TH"}
+                              </button>
+                            )}
                             <span
                               className="text-[7px] px-1 border font-mono"
                               style={{
