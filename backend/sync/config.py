@@ -61,6 +61,13 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     # whichever device runs the scanner, and merging two devices' independent
     # scan cursors could double-fire or silently drop an edge transition.
     ("alert_rules",              ["id"]),
+    # Thesis system. uuid4 PKs, so ids never collide across devices.
+    # thesis_events is append-only by construction (no endpoint UPDATEs a row),
+    # which makes LWW a union rather than a race.
+    ("theses",                   ["id"]),
+    ("thesis_events",            ["id"]),
+    ("thesis_links",             ["thesis_id", "trade_id"]),   # composite PK
+    ("allocation_targets",       ["account_id", "scope", "key"]),  # UNIQUE(...)
 ]
 
 TABLE_PK: dict[str, list[str]] = {t: pk for t, pk in SYNC_TABLES}

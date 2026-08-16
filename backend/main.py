@@ -46,11 +46,18 @@ class _SuppressReloadShutdownRace(logging.Filter):
 logging.getLogger("uvicorn.error").addFilter(_SuppressReloadShutdownRace())
 
 from config import CORS_ORIGINS
-from db import init_db, init_portfolio_v2, init_sync_layer, init_alerts_schema, seed_symbol_lists
+from db import (
+    init_db,
+    init_portfolio_v2,
+    init_sync_layer,
+    init_alerts_schema,
+    init_thesis_schema,
+    seed_symbol_lists,
+)
 from analytics.regime_calibration import ensure_model_fresh
 from analytics.regime_v2 import ensure_v2_fresh
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals
+from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses
 import sync
 from sync.gate import is_synced_write, should_gate
 from alerts import scheduler as alert_scheduler
@@ -67,6 +74,7 @@ app.add_middleware(
 # ── Initialize database ───────────────────────────────────────────────────────
 init_db()
 init_portfolio_v2()
+init_thesis_schema()   # must precede init_sync_layer(): it adds updated_at + triggers
 init_sync_layer()
 init_alerts_schema()
 seed_symbol_lists()
@@ -95,6 +103,7 @@ app.include_router(options.router)
 app.include_router(pins.router)
 app.include_router(clippings.router)
 app.include_router(news.router)
+app.include_router(news_watchlist.router, tags=["News"])
 app.include_router(social.router)
 app.include_router(macro.router)
 app.include_router(global_yields.router)
@@ -108,6 +117,8 @@ app.include_router(etf.router)
 app.include_router(footprint.router)
 app.include_router(central_banks.router)
 app.include_router(polymarket.router)
+app.include_router(polymarket_stock.router, tags=["Polymarket"])
+app.include_router(company_filings.router, tags=["Company Filings"])
 app.include_router(bot.router)
 app.include_router(screener.router)
 app.include_router(config_router.router)
@@ -115,6 +126,7 @@ app.include_router(circuit_breaker.router)
 app.include_router(listing_gate.router)
 app.include_router(sectors.router)
 app.include_router(portfolio_v2.router)
+app.include_router(theses.router, tags=["Theses"])
 app.include_router(backtest_v2.router)
 app.include_router(risk.router)
 app.include_router(allocation.router)

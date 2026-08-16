@@ -174,6 +174,15 @@ export function PortfolioView() {
   const [analyticsSub, setAnalyticsSub] = useState<AnalyticsSub>("analytics");
   const [toolsSub, setToolsSub] = useState<ToolsSub>("theses");
   const [paperSub, setPaperSub] = useState<PaperSub>("dashboard");
+  // Symbol handed over when the positions table jumps to TOOLS → THESES, so the
+  // rail can preselect (or pre-fill a new thesis for) that holding.
+  const [thesisSymbol, setThesisSymbol] = useState<string | null>(null);
+
+  const openThesis = (symbol: string) => {
+    setThesisSymbol(symbol);
+    setTopTab("tools");
+    setToolsSub("theses");
+  };
 
   // New-account form state
   const [showNewForm, setShowNewForm] = useState(false);
@@ -548,7 +557,12 @@ export function PortfolioView() {
         {bootState === "ready" && (
           <>
             {topTab === "portfolio" && portfolioSub === "positions" && (
-              <OpenPositionsTab accountId={activeAccount} currency={currency} colors={colors} />
+              <OpenPositionsTab
+                accountId={activeAccount}
+                currency={currency}
+                colors={colors}
+                onOpenThesis={openThesis}
+              />
             )}
             {topTab === "portfolio" && portfolioSub === "options" && (
               <OptionsTab accountId={activeAccount} colors={colors} />
@@ -579,7 +593,14 @@ export function PortfolioView() {
               <RiskTab accountId={activeAccount} currency={currency} colors={colors} />
             )}
 
-            {topTab === "tools" && toolsSub === "theses" && <ThesesTab colors={colors} />}
+            {topTab === "tools" && toolsSub === "theses" && (
+              <ThesesTab
+                colors={colors}
+                accountId={activeAccount}
+                initialSymbol={thesisSymbol}
+                onConsumeInitialSymbol={() => setThesisSymbol(null)}
+              />
+            )}
             {topTab === "tools" && toolsSub === "import" && (
               <ImportTab colors={colors} variant="excel" />
             )}

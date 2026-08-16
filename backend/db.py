@@ -492,6 +492,86 @@ def init_portfolio_v2() -> None:
         # (POST /api/v2/portfolio/accounts).
 
 
+def init_thesis_schema() -> None:
+    """Investment thesis tables + allocation targets.
+
+    `theses` is the materialised head (one row per thesis, edited in place so the
+    existing field-level LWW merge applies), `thesis_events` is an append-only
+    audit log of how the thinking changed. Events are never UPDATEd, so two
+    devices writing history concurrently can never conflict — they just union.
+
+    All PKs are TEXT uuid4: AUTOINCREMENT ids collide across devices and would
+    have to be excluded from cloud sync (see sync/config.py).
+    """
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS theses (
+                id              TEXT PRIMARY KEY,
+                symbol          TEXT NOT NULL,
+                resolved_symbol TEXT,
+                market          TEXT,
+                account_id      TEXT,
+                sub_portfolio   TEXT,
+                title           TEXT NOT NULL DEFAULT '',
+                category        TEXT DEFAULT '',
+                strategy        TEXT DEFAULT '',
+                status          TEXT NOT NULL DEFAULT 'draft',
+                conviction      INTEGER,
+                time_horizon    TEXT DEFAULT '',
+                target_price    REAL,
+                stop_price      REAL,
+                currency        TEXT,
+                body            TEXT DEFAULT '',
+                source_file     TEXT,
+                deleted_at      TEXT,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_theses_symbol  ON theses(symbol)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_theses_status  ON theses(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_theses_account ON theses(account_id)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS thesis_events (
+                id          TEXT PRIMARY KEY,
+                thesis_id   TEXT NOT NULL,
+                event_type  TEXT NOT NULL,
+                payload     TEXT,
+                note        TEXT DEFAULT '',
+                occurred_at TEXT NOT NULL,
+                device_id   TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_thevt_thesis ON thesis_events(thesis_id, occurred_at)"
+        )
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS thesis_links (
+                thesis_id  TEXT NOT NULL,
+                trade_id   TEXT NOT NULL,
+                role       TEXT DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (thesis_id, trade_id)
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS allocation_targets (
+                id         TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL DEFAULT 'all',
+                scope      TEXT NOT NULL DEFAULT 'sector',
+                key        TEXT NOT NULL,
+                target_pct REAL NOT NULL DEFAULT 0,
+                band_pct   REAL NOT NULL DEFAULT 5,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(account_id, scope, key)
+            )
+        """)
+
+
 def init_alerts_schema() -> None:
     """Alert Rule Engine tables (memory/plans/alert-rule-engine.md §5)."""
     from alerts.schema import create_alert_tables

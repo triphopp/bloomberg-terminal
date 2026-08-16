@@ -28,7 +28,8 @@ def _device(monkeypatch, tmp_path, name):
     importlib.reload(config)
     import db
     importlib.reload(db)
-    db.init_db(); db.init_portfolio_v2(); db.init_alerts_schema(); db.init_sync_layer()
+    db.init_db(); db.init_portfolio_v2(); db.init_thesis_schema()
+    db.init_alerts_schema(); db.init_sync_layer()
     import sync.config as scfg
     importlib.reload(scfg)
     import sync.manager as mgr

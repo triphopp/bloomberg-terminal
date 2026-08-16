@@ -17,6 +17,7 @@ SYNC_GATED_PREFIXES: tuple[str, ...] = (
     "/api/pins",
     "/api/options/positions",
     "/api/options/greeks/portfolio",
+    "/api/v2/theses",
 )
 
 
