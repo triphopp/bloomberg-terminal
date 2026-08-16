@@ -281,3 +281,67 @@ Only reproduces with `uvicorn --reload`, and only reliably when `next dev` is ru
 - `staleMoveStyle()` gives WATCHLIST and TICK DATA a dimmed (0.45) change with a weekday tag (`Fri`) and a tooltip, instead of hiding the row — the last close is still the most recent fact, it just is not today's move.
 
 **Rule:** never overwrite a vendor timestamp with server time "for convenience" — it is the only evidence a consumer has about freshness.
+
+## SEC EDGAR: 403 "Undeclared Automated Tool" (learned 2026-08-15)
+
+**Symptom:** every EDGAR request returns 403 with an HTML page titled "SEC.gov | Your Request Originates from an Undeclared Automated Tool", so `feedparser`/`json` parsing silently yields zero entries.
+
+**Root cause:** EDGAR rejects browser-style agents AND any User-Agent containing a parenthesised comment. `Mozilla/5.0 (compatible; BloombergTerminal/1.0)` → 403; `BloombergTerminal/1.0 (local research; admin@localhost)` → 403 as well.
+
+**Fix:** plain `"<App>/<version> <contact-email>"` with no parentheses, plus `Accept-Encoding: gzip, deflate`:
+```python
+{"User-Agent": "BloombergTerminal/1.0 admin@localhost.com", "Accept-Encoding": "gzip, deflate"}
+```
+Used by `routers/news_watchlist.py` (`_SEC_UA`) and `routers/company_filings.py`. Stay under 10 req/s.
+
+**Related:** `data.sec.gov` calls also want `Host: data.sec.gov` when the session sets its own default headers.
+
+## Polymarket Gamma: `/markets?q=` ignores the query, `/public-search` does not (learned 2026-08-15)
+
+**Symptom:** searching the 3,000-market pool client-side to find single-name equity markets missed most of them — low-volume ticker ladders never make the first 3,000 rows.
+
+**Fix:** `https://gamma-api.polymarket.com/public-search?q=MU&limit_per_type=5` filters server-side and returns `events[]` with `closed` flags. Keep the pool scan only for the macro signal types. Match ticker/company against the event **title** — the search itself is fuzzy, and matching against `description` drags in every market whose blurb mentions a big-cap ("Costco" ↔ "…da Costa").
+
+## yfinance `market_data.get_news()` returns blank NewsItems (open, seen 2026-08-15)
+
+**Symptom:** `market_data.get_news("TSLA")` yields 5 `NewsItem(title='', url='', ...)` — every field empty, so callers drop all of them.
+
+**Cause:** newer yfinance nests the payload under `entry["content"]` (`canonicalUrl.url`, `provider.displayName`, `pubDate`); the typed wrapper still reads the flat pre-2025 shape.
+
+**Workaround in use:** `routers/news_watchlist.py::_src_yfinance` calls `yf.Search(symbol).news` first and falls back to `yf.Ticker().news` with the `content` shape. The contract wrapper in `sources/` still needs fixing.
+
+## CAPM β/α ใน PORT → ANALYTICS (2026-08-15) — engine แก้แล้ว 🟢 / benchmark ไทยยังค้าง 🟡
+
+`GET /api/v2/portfolio/risk/capm` — 3 บั๊กซ้อนกัน (`reports/capm-beta-alpha-risk-report.md`):
+1. `risk.py:355` `min_len` ตัดอนุกรมทั้งพอร์ตให้สั้นเท่าหุ้นที่ประวัติสั้นสุด — SKHU (19 แท่ง) ทำให้พอร์ต 15 ตัวเหลือ n=23 ทั้งที่ lookback=252
+2. `_fetch_returns` คืน `.values` (ทิ้ง DatetimeIndex) แล้วจับคู่ด้วย `[-n:]` = จับคู่ตามตำแหน่งแถว ไม่ใช่วันที่ — BTC-USD (365 แท่ง/ปี) vs SPY (251) ทำให้ InnovestX ได้ β = −0.269 ทั้งที่ค่าจริง +1.682
+3. weight แปลงเป็น THB แต่ **return ไม่แปลง** → พอร์ตหลายสกุลได้ β/α ที่ไม่รวมผลค่าเงิน
+
+อาการที่มองเห็น: `n_days` น้อยผิดปกติ, α เป็นหลักร้อย %, β ติดลบทั้งที่ถือ risk asset
+ก่อนเชื่อเลข CAPM ให้ดู `n_days` และ `r_squared` เสมอ — R² < 0.1 แปลว่า benchmark ผิดตลาด (Finansia vs SPY = 0.010)
+
+**แก้แล้ว 2026-08-15** (`risk.py`): `_fetch_close_frame` คืน DataFrame มี DatetimeIndex, `_aligned_returns` reindex บนปฏิทินเดียว + คัดหุ้นประวัติ <60 แท่งออก (ไม่ตัดคนอื่น) + บวก FX log-return, `_regress_capm` join ตามวันที่และปฏิเสธ ndarray, เกณฑ์ขั้นต่ำ `max(20, lookback×0.6)`. UI แสดง `β` (สกุลรายงาน) + `β USD` (สกุลเดิม) + ⚠ เมื่อ R²<0.10 (หรี่ α ทิ้ง) + รายชื่อหุ้นที่ถูกคัด
+**ยังค้าง:** benchmark ของขาไทย — `^SET.BK` บน Yahoo ค้างตั้งแต่ 2026-07-17 ต้องใช้ `THD` (หัก FX ก่อน) เป็น fallback
+
+**รอบที่ 2 (RET ANN / α)** — `port_returns = R @ w` ถ่วงน้ำหนัก **log return** ซึ่งผิด (log บวกข้ามเวลาได้ ไม่ใช่ข้ามสินทรัพย์) ทำให้ RET ANN ต่ำไป 53pp และ α ต่ำไป 16pp → แก้เป็น `log1p(expm1(R) @ w)`
+และที่ใหญ่กว่า: RET ANN/α แบบ holdings-based คือ **look-ahead** (น้ำหนักวันนี้ × ผลตอบแทนอดีต — SNDK 40.7% × +3585% ทั้งที่เพิ่งซื้อ ได้จริง +17.7%) → เพิ่ม `_realized_twr()` สร้างน้ำหนักรายวันจาก trade log (`date_entry`…`date_exit`, น้ำหนักจากราคาปิดวันก่อน, รวม closed lots, ไม่รวมเงินสด) แล้วรายงาน `beta_realized`/`alpha_realized_annual_pct`/`twr_annual_pct` แทน; **เลิกแสดง α แบบ holdings-based**
+⚠️ TWR ≠ P&L จากต้นทุน — TWR +86.6%/1Y อยู่คู่กับพอร์ต −31.5% จากต้นทุนได้ เพราะ AJ.BK ร่วงจาก ฿21 ก่อนหน้าต่าง 1 ปี (1 ปีล่าสุด +57%). "เงินเราทำได้เท่าไหร่" ให้ดู XIRR ในการ์ด RETURNS
+⚠️ ล็อตหุ้นไทยหลายตัวมี `date_entry = 2025-01-01` (placeholder ตอน import) — ถ้าวันที่แบบนี้ตกอยู่ในหน้าต่างที่วิเคราะห์ TWR จะระบุช่วงถือผิด
+
+**รอบที่ 3 (α)** — α เดิม `alpha_daily × 252` เป็น arithmetic ในหน่วย **log** แต่วางข้างคอลัมน์ผลตอบแทนแบบ geometric ใต้ป้าย `%` เดียวกัน → อ่านได้ +52.6% ทั้งที่ excess จริง +94.4% แก้เป็น `port_ann − [rf + β(bench_ann − rf)]` (geometric ทั้งสองฝั่ง) และเพิ่ม `excess_vs_benchmark_annual_pct` (ชนะดัชนีดิบ)
+เพิ่ม `alpha_t_stat` + `alpha_significant` (|t| ≥ 2) — พอร์ตกระจุกให้ α ใหญ่ที่ error bar กว้างกว่าตัวมันเอง (Dime +96.8% แต่ t=1.87, 95% CI ครอบ 0) UI หรี่ α เมื่อไม่ significant
+ตาราง CAPM ตอนนี้: `β HEDGE` (ของที่ถือวันนี้ — ใช้ sizing hedge) · `HEDGE` (β × MV = notional ดัชนีที่ต้อง short) · `β REAL` · `vs IDX` · `α CAPM` · `t` · `R²` · `N`. TWR ANN ถอดออกจากจอแล้ว (ยังคำนวณอยู่เบื้องหลังเพราะ α ต้องใช้)
+
+**รอบที่ 4 (rf)** — rf ใน CAPM ต้อง (1) **สกุลเดียวกับผลตอบแทน** และ (2) **อายุสั้นตรงกับความถี่รายวัน** ใส่ US Treasury กับอนุกรม THB = บันทึกส่วนต่างดอกเบี้ย THB–USD (1.00% vs 3.87%) เป็น α ติดลบ; ใช้ yield 10 ปีกับผลตอบแทนรายวัน = คิดค่า duration ที่พอร์ตไม่ได้ถือ
+`_risk_free()` ดึงสด: THB → BOT policy rate, USD → FRED `DGS3MO`, cache 12 ชม., ล้มเหลว → `RF_FALLBACK` และ **ระบุว่าเป็น fallback**. `rf_annual` เป็น optional param (ไม่ส่ง = auto), response มี `rf_source`/`rf_series`/`rf_as_of`/`rf_currency` และแสดงบนหัวการ์ด
+⚠️ ตาราง Damodaran ctryprem = **ERP + country default spread** สำหรับ cost-of-equity มองไปข้างหน้า **ไม่ใช่ rf** และอัปเดตปีละ 2 ครั้ง
+
+**รอบที่ 5 (2026-08-16) — ยุบเหลือ identity เดียว** `α = Rp − [rf + β(Rm − rf)]`
+`Rp` = CAGR/XIRR จาก `/returns` · `Rm` = benchmark ช่วงเดียวกันผ่าน `_index_return()` · `β` = Σwᵢβᵢ ของที่ถือวันนี้ · **ไม่มีตัวไหนใช้ `date_entry`/`date_exit` เลย**
+ลบ `_realized_twr()` และ field realized/twr/t-stat ทั้งหมดออก (~4.5k อักขระ)
+⚠️ **ต้นเหตุจริงคือข้อมูล**: 20/79 ล็อตมีวันที่ที่ราคาไม่ตรงตลาดวันนั้น (AJ.BK บันทึก 21.03 ตลาด 3.58 = ผิด 487%), closed lots 10/53 ราคาปิดไม่ตรงวันปิด → สถิติใดก็ตามที่พึ่งวันที่จะผิดเงียบ ๆ **ตรวจได้ด้วยการเทียบราคาที่บันทึกกับราคาตลาด ณ วันที่นั้น**
+⚠️ สัมประสิทธิ์ของ rf ใน α คือ **(1−β)** — β>1 การขึ้น rf ทำให้ α **สูงขึ้น** ไม่ใช่ลดลง
+
+**CAGR ใน `/api/v2/portfolio/returns` มีตัวส่วนบวม (2026-08-16)** 🟡 open — `portfolio_v2.py:2411` `a.invested += cost` บวกทุกครั้งที่ซื้อ รวมเงินที่ขายแล้วหมุนกลับมาซื้อใหม่ → บัญชีที่เทรดบ่อยถูกกดต่ำตามจำนวนรอบ (Dime ซื้อรวม 4.70M บนเงินจริง 763K = บวม 6.2 เท่า → CAGR 3.33% ขณะที่ XIRR 13.06%)
+อาการ: การ์ดบนโชว์ `Total Return +34.0%` (P&L ÷ เงินที่ใส่จริง, สะสม) แต่ CAGR โชว์ +3.3% — ตัวเลขคนละตัวส่วนคนละหน่วย
+CAPM `RET` เปลี่ยนไปใช้ **XIRR** แล้ว (กระแสเงินสดมีวันที่ เงินคืนไม่ถูกนับซ้ำ) แต่การ์ด RETURNS ยังใช้ CAGR ตัวเดิมอยู่

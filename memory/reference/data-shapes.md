@@ -104,6 +104,50 @@
   ```
   W/L classification follows the stored `win_loss` flag, not the sign of base P&L (a trade can win natively, lose in base after FX). `payoff` is `null` when there are no losses — never infinite. HIT RATE is **not** here: it mixes in live open positions, so `AnalyticsTab` computes it from `trade_stats.wins` + `/open-positions` rows with `unrealized_pnl_base > 0`.
 
+## Allocation Detail (`GET /api/v2/portfolio/allocation-detail?base_currency=THB`)
+
+Two bases at once — the ALLOCATION (OPEN) card used to weight sectors by cost alone, which is frozen at entry.
+
+```json
+{ "base_currency": "THB", "thb_per_usd": 33.09,
+  "totals": {"cost_base": 2542919.79, "market_value": 1741759.59, "unrealized": -801160.2,
+             "growth_pct": -31.51, "gain_concentration_pct": 69.08,
+             "gain_concentration_symbol": "SNDK", "positions": 15},
+  "sectors": [{"sector": "Information Technology", "cost_base": 463370, "market_value": 533529,
+               "growth_pct": 15.14, "weight_cost_pct": 18.22, "weight_mv_pct": 30.63,
+               "drift_pp": 12.41, "contrib_growth_pct": 2.76, "share_of_gain_pct": 0,
+               "target_pct": 18.22, "target_source": "cost_weight", "band_pct": 0,
+               "target_value": 317348, "delta_value": -216180, "in_band": false,
+               "action": "SELL", "priced": true, "symbols": [ /* same shape */ ]}],
+  "symbols": [{"symbol": "SNDK", "sector": "...", "volume": 7.02, "price": 54304.33,
+               "avg_cost": 46140.93, "lots": 2, "has_override": false, "priced": true,
+               "delta_shares": -3, "lot_size": 1, "est_value": 162913, "est_realized": 22733.24}]}
+```
+
+- `cost_base` uses **entry** FX, `market_value` uses **live** FX (`trade_value_in_report` when=entry/live) — one rate on both sides cancels the currency move out of `growth_pct`.
+- `drift_pp` = `weight_mv_pct − weight_cost_pct` — how far a winner grew past the slice originally deployed.
+- `share_of_gain_pct` splits the gross (positive-only) gain; losers are 0 so they cannot dilute it.
+- `market_value` is `null` and `priced:false` when any lot has no live quote — never silently short.
+- `delta_shares` rounds DOWN to the board lot (TH 100), to nearest for single-share markets, and a SELL never exceeds shares held. `est_realized` = the same fraction of unrealised P&L (average-cost method).
+- With no explicit target, `target_pct = weight_cost_pct` (`target_source: "cost_weight"`).
+
+## Thesis (`GET /api/v2/theses/{id}`)
+
+```json
+{ "thesis": {"id": "uuid", "symbol": "PLTR", "title": "...", "category": "CORE",
+             "sub_portfolio": "0153717", "strategy": "growth", "status": "active",
+             "conviction": 4, "time_horizon": "3Y+", "target_price": 45, "stop_price": 18,
+             "body": "## Claim
+…", "source_file": "PLTR-ai-thesis.md",
+             "deleted_at": null, "created_at": "...", "updated_at": "..."},
+  "events": [{"id": "uuid", "event_type": "EDITED",
+              "payload": {"title": {"from": "old", "to": "new"}},
+              "note": "sharpened it", "occurred_at": "...", "device_id": "PC"}],
+  "links":  [{"trade_id": "uuid", "role": "entry", "symbol": "PLTR", "date_entry": "2026-01-02"}] }
+```
+
+`status`: `draft|active|watch|invalidated|closed`. `event_type`: `CREATED|EDITED|STATUS_CHANGED|TARGET_CHANGED|INVALIDATED|NOTE|TRADE_LINKED|TRADE_UNLINKED|DELETED|RESTORED|EXPORTED`. `payload` is a `{field: {from, to}}` diff on edits, free JSON otherwise.
+
 ## Risk Metrics (`GET /api/v2/portfolio/risk/metrics`)
 ```json
 {
@@ -153,6 +197,85 @@
   "timestamp": "2026-06-05T10:00:00"
 }
 ```
+
+## Watchlist News (`GET /api/news/watchlist?symbols=AAPL,XOM`)
+```json
+{
+  "as_of": "2026-08-15T06:31:00Z",
+  "sources_used": ["yahoo","yfinance","google","bing","seekingalpha","nasdaq","sec"],
+  "symbols": [{ "symbol": "AAPL", "company": "Apple Inc.", "sector": "Technology",
+                "industry": "Consumer Electronics", "country": "US", "article_count": 6 }],
+  "sectors": [{ "sector": "Technology", "symbols": ["AAPL"], "article_count": 6 }],
+  "articles": [{
+    "title": "...", "url": "...", "source": "Nasdaq", "source_kind": "company",
+    "published_at": "2026-08-15T04:10:00Z", "summary": "...",
+    "symbols": ["AAPL","MSFT"], "primary_symbol": "AAPL", "sector": "Technology",
+    "company": "Apple Inc.", "sentiment": "POS|NEG|NEU", "relevance": "direct|feed"
+  }],
+  "markets": [{ "symbol": "AAPL", "sector": "Technology", "question": "...", "slug": "...",
+                "event_slug": "...", "probability": 0.14, "volume": 803010.5,
+                "end_date": "2026-12-31T00:00:00Z" }],
+  "errors": []
+}
+```
+`source_kind`: wire | aggregator | analysis | filing | company.
+`relevance`: `direct` = headline names the ticker/company · `feed` = came off that symbol's wire
+without naming it (UI default hides these). Frontend hardcodes every field name above.
+
+## Company Outlook (`GET /api/company/outlook/MU`)
+```json
+{
+  "symbol": "MU", "cik": "0000723125", "has_guidance": true,
+  "release": {
+    "filed": "2026-06-24", "period": "2026-06-24",
+    "url": "https://www.sec.gov/Archives/edgar/data/723125/.../a2026q3ex991-pressrelease.htm",
+    "index_url": "…-index.html",
+    "guidance": {
+      "heading": "Business Outlook",
+      "metrics": { "revenue": "$50.0 billion ± $1.0 billion", "gross_margin": "Approximately 86%",
+                   "operating_expenses": "$1.86 billion", "eps": "$30.73 ± $1.00" },
+      "excerpt": "Business Outlook The following table presents…"
+    },
+    "ceo_quotes": [{ "speaker": "Sanjay Mehrotra",
+                     "title": "Chairman, President and CEO of Micron Technology",
+                     "quote": "Micron's record fiscal Q3 …" }]
+  },
+  "mdna": { "form": "10-Q", "filed": "2026-06-25", "period": "2026-05-28", "url": "…",
+            "statements": ["We plan to begin construction of the second Idaho fab in 2026…"] }
+}
+```
+`GET /api/company/xbrl/MU` → `{ symbol, cik, period, tags: {metric: usGaapTag},
+series: { revenue|gross_profit|operating_income|net_income|eps_diluted|rnd|operating_cash_flow|
+capex|gross_margin|operating_margin: [{ start, end, val, form, fy, fp, filed }] } }` —
+`gross_margin`/`operating_margin` เป็น % ที่คำนวณเอง ไม่ใช่ tag ที่ยื่น.
+`GET /api/company/filings/MU` → `{ symbol, cik, filings: [{ form, filed, period, items,
+accession, url, index_url }] }`.
+
+## Stock Prediction Markets (`GET /api/polymarket/stock/MU`)
+```json
+{
+  "symbol": "MU", "spot": 971.66, "as_of": "2026-08-15T06:55:00Z",
+  "events": [{
+    "slug": "mu-above-in-august-2026", "title": "Will Micron (MU) close above ___ end of August?",
+    "type": "above", "end_date": "2026-09-01T03:59:59Z", "days_left": 16.5,
+    "volume": 8123.4, "liquidity": 4792.5, "prob_up": null,
+    "url": "https://polymarket.com/event/mu-above-in-august-2026",
+    "strikes": [{ "label": "$940", "strike": 940, "direction": "up", "prob": 0.57,
+                  "volume": 0, "slug": "mu-above-940-on-august-31-2026" }]
+  }],
+  "summary": {
+    "spot": 971.66, "prob_up": 0.69, "prob_up_source": "touch", "prob_above_spot": null,
+    "nearest_up":   { "strike": 1020, "prob": 0.69, "basis": "touch" },
+    "nearest_down": { "strike": 940,  "prob": 0.57, "basis": "close" },
+    "implied_high": 1020, "implied_low": null, "skew": 0.26, "horizon_days": 16.5,
+    "event_slug": "...", "event_title": "...", "url": "..."
+  }
+}
+```
+`type`: `ladder` (touch) · `above` (CDF) · `updown` · `earnings` · `other`.
+`basis`: `close` rungs are P(close ≥ K) — flip to `1 - prob` for a downside tail; `touch` rungs are
+P(trades through K) and below spot are often already resolved. `/api/polymarket/stocks?symbols=`
+returns `{ "summaries": { "MU": { ...summary, "event_count": 2 } }, "as_of": "…" }`.
 
 ## Polymarket Signals (`GET /api/polymarket/signals`)
 ```json

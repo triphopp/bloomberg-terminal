@@ -20,7 +20,12 @@ from pydantic import BaseModel
 
 from cache import TTLCache
 from db import get_db
-from portfolio_currency import convert_amount, report_currency, trade_currency
+from portfolio_currency import (
+    convert_amount,
+    normalize_currency,
+    report_currency,
+    trade_currency,
+)
 
 router = APIRouter(prefix="/api/v2/portfolio/risk")
 
@@ -98,18 +103,38 @@ def _position_yf_symbol(row: dict) -> Optional[str]:
     return _get_yf_symbol(str(row.get("symbol") or ""), str(row.get("account_id") or ""))
 
 
-def _fetch_returns(symbols: list[str], days: int = 252) -> dict[str, np.ndarray]:
-    """Fetch daily log-returns for symbols. Cached 5min."""
-    cache_key = f"{','.join(sorted(symbols))}_{days}"
+# Minimum price history a holding needs before it may enter a regression or a
+# covariance matrix. A freshly-listed name used to drag the WHOLE book down to
+# its own length (see `_aligned_returns`), so one 19-bar IPO reduced a 252-day
+# portfolio beta to 23 observations.
+MIN_HISTORY_DAYS = 60
+
+# Symbols that trade 7 days a week (crypto). Their weekend bars must not define
+# the trading calendar for an equity book, or every equity gets ~100 fabricated
+# zero-return days a year.
+_ALWAYS_ON_BARS_PER_YEAR = 300
+
+
+def _fetch_close_frame(symbols: list[str], days: int = 252) -> "pd.DataFrame":
+    """Adjusted closes for `symbols`, indexed by DATE. Cached 5min.
+
+    Returning the DatetimeIndex is the whole point: every consumer here pairs
+    one asset's day against another's, and the previous `.values` return threw
+    the dates away — leaving callers to line series up by ROW POSITION. A Thai
+    holiday, or crypto's weekend bars, then silently paired different dates.
+    """
+    symbols = [s for s in dict.fromkeys(symbols) if s]
+    if not symbols:
+        return pd.DataFrame()
+    cache_key = f"frame:{','.join(sorted(symbols))}_{days}"
     cached = _returns_cache.get(cache_key)
     if cached is not None:
         return cached
 
     end = datetime.utcnow()
     # 1.5x for weekends/holidays + fixed cushion so short windows (e.g. 21d ≈ 1M)
-    # still clear the >=20-observation gate below.
+    # still clear the observation gates below.
     start = end - timedelta(days=int(days * 1.5) + 14)
-
     try:
         df = yf.download(
             symbols, start=start.strftime("%Y-%m-%d"),
@@ -117,29 +142,140 @@ def _fetch_returns(symbols: list[str], days: int = 252) -> dict[str, np.ndarray]
             progress=False, auto_adjust=True, threads=True,
         )
         if df.empty:
-            return {}
-
+            return pd.DataFrame()
         close = df["Close"] if "Close" in df.columns else df
-        if hasattr(close, "columns"):
-            result = {}
-            for sym in symbols:
-                if sym in close.columns:
-                    s = close[sym].dropna()
-                    if len(s) >= 20:
-                        log_ret = np.log(s / s.shift(1)).dropna().values[-days:]
-                        result[sym] = log_ret
-            _returns_cache.set(cache_key, result)
-            return result
-        else:
-            s = close.dropna()
-            if len(s) >= 20:
-                log_ret = np.log(s / s.shift(1)).dropna().values[-days:]
-                result = {symbols[0]: log_ret}
-                _returns_cache.set(cache_key, result)
-                return result
+        if not hasattr(close, "columns"):          # single symbol → Series
+            close = close.to_frame(name=symbols[0])
+        close = close.reindex(columns=[s for s in symbols if s in close.columns])
+        _returns_cache.set(cache_key, close)
+        return close
     except Exception:
-        pass
-    return {}
+        return pd.DataFrame()
+
+
+def _fetch_returns(symbols: list[str], days: int = 252) -> dict[str, np.ndarray]:
+    """Per-symbol log-return arrays (each on its OWN calendar).
+
+    Kept for single-symbol callers (Kelly sizing) where there is nothing to
+    align against. Anything that combines two or more series must use
+    `_aligned_returns` instead — bare arrays cannot be date-matched.
+    """
+    close = _fetch_close_frame(symbols, days)
+    if close.empty:
+        return {}
+    out: dict[str, np.ndarray] = {}
+    for sym in symbols:
+        if sym not in close.columns:
+            continue
+        s = close[sym].dropna()
+        if len(s) >= 20:
+            out[sym] = np.log(s / s.shift(1)).dropna().values[-days:]
+    return out
+
+
+def _usd_leg(ccy: str, days: int) -> Optional["pd.Series"]:
+    """Close series of `ccy` per 1 USD (1.0 for USD itself)."""
+    ccy = (ccy or "USD").upper()
+    if ccy == "USD":
+        return None                     # caller treats None as the constant 1.0
+    frame = _fetch_close_frame([f"{ccy}=X"], days)
+    if frame.empty or f"{ccy}=X" not in frame.columns:
+        return None
+    return frame[f"{ccy}=X"].dropna()
+
+
+def _fx_close(from_ccy: str, to_ccy: str, days: int) -> Optional["pd.Series"]:
+    """`to_ccy` units per one `from_ccy` unit, as a dated series.
+
+    Cross rates go through USD (rate = usd_to(to) / usd_to(from)), which is how
+    both legs are quoted by the provider.
+    """
+    from_ccy, to_ccy = (from_ccy or "USD").upper(), (to_ccy or "USD").upper()
+    if from_ccy == to_ccy:
+        return None
+    to_leg, from_leg = _usd_leg(to_ccy, days), _usd_leg(from_ccy, days)
+    if to_leg is None and from_leg is None:
+        return None
+    if from_leg is None:                # from == USD
+        return to_leg
+    if to_leg is None:                  # to == USD
+        return 1.0 / from_leg
+    joined = pd.concat([to_leg.rename("t"), from_leg.rename("f")], axis=1).dropna()
+    return joined["t"] / joined["f"]
+
+
+def _aligned_returns(
+    symbols: list[str],
+    days: int,
+    ccy_map: Optional[dict[str, str]] = None,
+    base_currency: Optional[str] = None,
+    calendar: Optional["pd.DatetimeIndex"] = None,
+    min_history: int = MIN_HISTORY_DAYS,
+) -> tuple["pd.DataFrame", list[dict]]:
+    """Date-aligned log-return matrix, optionally translated to `base_currency`.
+
+    Returns `(returns_df, excluded)`. `excluded` lists symbols dropped for want
+    of history — dropping them is what keeps ONE new listing from truncating
+    every other holding's series (the old `min_len` behaviour).
+
+    Alignment: every series is reindexed onto a single trading calendar and
+    forward-filled, so a day a market was shut reads as a 0 return for that
+    market instead of shifting its whole history by one row. The calendar is
+    the union of the non-24/7 symbols' own trading days — crypto's weekend bars
+    would otherwise invent ~100 zero-return days a year for every equity.
+    """
+    close = _fetch_close_frame(symbols, days)
+    if close.empty:
+        return pd.DataFrame(), [{"symbol": s, "reason": "no data", "bars": 0} for s in symbols]
+
+    keep, excluded = [], []
+    for sym in symbols:
+        bars = int(close[sym].dropna().shape[0]) if sym in close.columns else 0
+        if bars >= max(20, min(min_history, days)):
+            keep.append(sym)
+        else:
+            excluded.append({
+                "symbol": sym,
+                "reason": "no data" if bars == 0 else "insufficient history",
+                "bars": bars,
+            })
+    if not keep:
+        return pd.DataFrame(), excluded
+
+    if calendar is None:
+        equity_like = [s for s in keep
+                       if close[s].dropna().shape[0] <= _ALWAYS_ON_BARS_PER_YEAR * days / 252]
+        idx = None
+        for sym in (equity_like or keep):
+            days_idx = close[sym].dropna().index
+            idx = days_idx if idx is None else idx.union(days_idx)
+        calendar = idx
+
+    aligned = close[keep].reindex(calendar).ffill()
+    rets = np.log(aligned / aligned.shift(1))
+
+    if base_currency and ccy_map:
+        base = report_currency(base_currency)
+        fx_cache: dict[str, Optional[pd.Series]] = {}
+        for sym in keep:
+            ccy = normalize_currency(ccy_map.get(sym) or base)
+            if ccy == base:
+                continue
+            if ccy not in fx_cache:
+                fx_cache[ccy] = _fx_close(ccy, base, days)
+            fx = fx_cache[ccy]
+            if fx is None:
+                continue
+            # An asset's return to a base-currency investor is its local return
+            # PLUS the currency's move. Converting only the position VALUE (as
+            # the weights already do) leaves the FX out of risk entirely.
+            fx_ret = np.log(fx.reindex(calendar).ffill()).diff()
+            rets[sym] = rets[sym] + fx_ret
+
+    rets = rets.dropna()
+    if len(rets) > days:
+        rets = rets.iloc[-days:]
+    return rets, excluded
 
 
 def _ledoit_wolf_shrinkage(returns: np.ndarray) -> np.ndarray:
@@ -318,6 +454,8 @@ def _compute_portfolio_risk(
     sym_volume_map: dict[str, float] = {}      # yf_sym → total shares held
     sym_to_yf: dict[str, str] = {}             # yf_sym → display name
 
+    sym_ccy_map: dict[str, str] = {}           # yf_sym → instrument currency
+
     for pos in positions:
         yf_sym = _position_yf_symbol(pos)
         if not yf_sym:
@@ -326,6 +464,7 @@ def _compute_portfolio_risk(
         vol = float(pos.get("volume", 0))
         native_val = float(price or 0) * vol
         val = convert_amount(native_val, trade_currency(pos), report_currency(base_currency))
+        sym_ccy_map.setdefault(yf_sym, trade_currency(pos))
         if val > 0:
             sym_value_map[yf_sym] = sym_value_map.get(yf_sym, 0.0) + val
             if price:
@@ -345,22 +484,34 @@ def _compute_portfolio_risk(
     total_value = sum(values)
     weights = np.array(values) / total_value
 
-    # Fetch returns
-    returns_map = _fetch_returns(symbols, lookback)
-    valid_syms = [s for s in symbols if s in returns_map]
+    # Date-aligned, base-currency return matrix. Symbols without enough history
+    # are dropped and their weight redistributed — the old code instead cut every
+    # symbol's series down to the shortest one, so a single new listing could
+    # leave a 252-day request with 23 usable days.
+    returns_df, excluded = _aligned_returns(
+        symbols, lookback, ccy_map=sym_ccy_map, base_currency=base_currency
+    )
+    valid_syms = list(returns_df.columns) if not returns_df.empty else []
     if len(valid_syms) < 1:
         return _empty_metrics()
 
-    # Align returns matrix (T x n) — one column per unique yf_sym
-    min_len = min(len(returns_map[s]) for s in valid_syms)
-    R = np.column_stack([returns_map[s][-min_len:] for s in valid_syms])
+    R = returns_df.values
     w = np.array([weights[symbols.index(s)] for s in valid_syms])
     w = w / w.sum()  # renormalize to valid symbols
 
     T, n = R.shape
 
-    # Portfolio returns series
-    port_returns = R @ w
+    # Portfolio returns series (dated — CAPM regresses this against a benchmark
+    # and must join on the date, not on the row number).
+    #
+    # Log returns add across TIME, not across ASSETS: a portfolio's return is the
+    # weighted mean of its holdings' SIMPLE returns. Weighting log returns
+    # directly (`R @ w`) understates by the Jensen gap — small per day, but it
+    # compounds: it put the annualized figure 53 percentage points low on this
+    # book, and pushed Jensen's alpha down by 16.
+    port_simple = np.expm1(R) @ w
+    port_returns = np.log1p(port_simple)
+    port_returns_dated = pd.Series(port_returns, index=returns_df.index)
 
     # Covariance (Ledoit-Wolf)
     cov = _ledoit_wolf_shrinkage(R)
@@ -489,7 +640,7 @@ def _compute_portfolio_risk(
         "portfolio_value": round(total_value, 2),
         "base_currency": report_currency(base_currency),
         "n_positions": len(valid_syms),
-        "lookback_days": min_len,
+        "lookback_days": int(T),
         "confidence": confidence,
         # VaR — legacy Gaussian (reference only)
         "var_parametric_pct": round(float(var_pct) * 100, 3),
@@ -559,8 +710,18 @@ def _compute_portfolio_risk(
         ),
         # DCC-EWMA correlation monitor
         "dcc": _dcc_ewma_correlation(R),
+        # Holdings left out of the risk math for want of price history, with
+        # their book weight — a silent exclusion is how a number lies.
+        "excluded_symbols": [
+            {**e, "weight_pct": round(
+                100 * sym_value_map.get(e["symbol"], 0.0) / total_value, 2
+            )}
+            for e in excluded
+        ],
+        "return_days": int(T),
         # Internal: popped before JSON serialization, used for backfill
         "_port_returns": port_returns,
+        "_port_returns_dated": port_returns_dated,
     }
 
 
@@ -782,6 +943,7 @@ def _empty_metrics():
         "risk_score": 0, "assets": [], "correlation_matrix": {"symbols": [], "matrix": []},
         "trim_signals": [],
         "dcc": _dcc_empty(),
+        "excluded_symbols": [], "return_days": 0,
     }
 
 
@@ -1215,8 +1377,9 @@ def get_risk_metrics(
 
     metrics = _compute_portfolio_risk(positions, lookback, confidence, base_currency)
 
-    # Pop internal numpy array before JSON serialization
+    # Pop internal numpy/pandas series before JSON serialization
     port_returns_arr = metrics.pop("_port_returns", None)
+    metrics.pop("_port_returns_dated", None)
 
     # Fetch market regime (cached 5min, thread-safe)
     regime = _get_market_regime()
@@ -1273,22 +1436,42 @@ def get_risk_metrics(
 
 # ── CAPM / Jensen's alpha ────────────────────────────────────────────────────
 
-def _regress_capm(port_returns, bench_returns, rf_annual: float) -> dict:
+def _min_regression_days(lookback: int) -> int:
+    """Observations a regression must have before its beta is worth printing.
+
+    Scales with the window so the 1M button still works, with a hard floor at
+    20. The old flat `n < 20` let a 252-day request answer from 23 days (a
+    truncation bug upstream) and print an annualized alpha of −178%.
+    """
+    return max(20, int(lookback * 0.6))
+
+
+def _regress_capm(port_returns, bench_returns, rf_annual: float, lookback: int = 252) -> dict:
     """Regress current-holdings portfolio returns on a benchmark.
-    Returns CAPM beta, annualized Jensen's alpha, R², and annualized returns.
-    port_returns / bench_returns are daily log-return arrays.
+
+    Both arguments are DATED daily log-return series (`pd.Series`). They are
+    joined on the date — a bare array cannot be, and pairing by row position is
+    what made a crypto account (365 bars/yr) regress against SPY (251 bars/yr)
+    over a different eight months and report a negative beta.
     """
     empty = {
         "beta": None, "alpha_annual_pct": None, "r_squared": None, "n_days": 0,
         "port_return_annual_pct": None, "bench_return_annual_pct": None,
+        "alpha_t_stat": None, "alpha_significant": None,
+        "excess_vs_benchmark_annual_pct": None,
     }
     if port_returns is None or bench_returns is None:
         return empty
-    n = min(len(port_returns), len(bench_returns))
-    if n < 20:  # 20 ≈ 1 trading month; below this beta is too noisy to report
+    if not isinstance(port_returns, pd.Series) or not isinstance(bench_returns, pd.Series):
+        return empty
+    joined = pd.concat(
+        [port_returns.rename("y"), bench_returns.rename("x")], axis=1, join="inner"
+    ).dropna()
+    n = len(joined)
+    if n < _min_regression_days(lookback):
         return {**empty, "n_days": int(n)}
-    y = np.asarray(port_returns[-n:], dtype=float)
-    x = np.asarray(bench_returns[-n:], dtype=float)
+    y = joined["y"].to_numpy(dtype=float)
+    x = joined["x"].to_numpy(dtype=float)
     rf_daily = rf_annual / 252.0
     ye, xe = y - rf_daily, x - rf_daily      # excess returns
     var_x = float(xe.var())
@@ -1297,15 +1480,271 @@ def _regress_capm(port_returns, bench_returns, rf_annual: float) -> dict:
     beta = float(np.cov(ye, xe, bias=True)[0, 1] / var_x)
     alpha_daily = float(ye.mean() - beta * xe.mean())
     corr = float(np.corrcoef(y, x)[0, 1])
+
+    # Annualize BOTH sides geometrically, then take alpha as the difference of
+    # annual figures. Reporting alpha as `alpha_daily * 252` (arithmetic, in log
+    # units) next to a geometric return column put two different units under the
+    # same "%" sign: it read +52.6% where the actual excess over the CAPM
+    # expectation was +94.4%.
+    port_annual = float(np.expm1(y.mean() * 252))
+    bench_annual = float(np.expm1(x.mean() * 252))
+    expected_annual = rf_annual + beta * (bench_annual - rf_annual)
+    alpha_annual = port_annual - expected_annual
+
+    # Is the alpha distinguishable from luck? A concentrated book can post a
+    # huge alpha whose standard error is wider than the alpha itself — Dime's
+    # +94% carried a 95% CI of [-4%, +109%], i.e. zero is inside it.
+    resid = ye - (alpha_daily + beta * xe)
+    se_daily = float(resid.std(ddof=2)) / np.sqrt(n) if n > 2 else float("inf")
+    t_stat = alpha_daily / se_daily if se_daily > 0 else 0.0
+
     return {
         "beta": round(beta, 3),
-        "alpha_annual_pct": round(alpha_daily * 252 * 100, 2),
+        "alpha_annual_pct": round(alpha_annual * 100, 2),
+        # Raw lead over the index, before any risk adjustment — the "did I beat
+        # the index" question, which is not the same as beating CAPM.
+        "excess_vs_benchmark_annual_pct": round((port_annual - bench_annual) * 100, 2),
+        "alpha_t_stat": round(float(t_stat), 2),
+        "alpha_significant": bool(abs(t_stat) >= 2.0),
         "r_squared": round(corr * corr, 3),
         "n_days": int(n),
         # Geometric (compounded) annualization from daily log-returns → simple % that
         # matches realized reality: exp(mean_log * 252) - 1. Arithmetic mean*252 understated it.
-        "port_return_annual_pct": round(float(np.expm1(y.mean() * 252)) * 100, 2),
-        "bench_return_annual_pct": round(float(np.expm1(x.mean() * 252)) * 100, 2),
+        "port_return_annual_pct": round(port_annual * 100, 2),
+        "bench_return_annual_pct": round(bench_annual * 100, 2),
+        "expected_return_annual_pct": round(expected_annual * 100, 2),
+    }
+
+
+# ── Risk-free rate ───────────────────────────────────────────────────────────
+# The rf in a CAPM regression has to be quoted in the SAME currency as the
+# returns being regressed, and at the SAME horizon as the return interval.
+#
+#   * Currency: these returns are translated to `base_currency`, so a THB report
+#     needs a THB risk-free rate. Plugging a US Treasury yield into a THB series
+#     silently books the whole THB–USD rate differential (≈2.5pp today) as
+#     negative alpha.
+#   * Horizon: the regression is on DAILY excess returns, so the right rate is a
+#     short one (policy / 3-month bill), not a 10-year bond yield. The 10y term
+#     premium is compensation for duration nobody in this book is holding.
+#
+# Damodaran's country-premium table is NOT this number: it publishes equity risk
+# PREMIUMS and country default spreads for forward-looking cost-of-equity work.
+# It also states an rf only as an input convention, twice a year. Realized-alpha
+# regression wants today's actual short rate — hence live FRED / BOT below.
+
+def _rf_from_fred() -> Optional[dict]:
+    """US 3-month Treasury, constant maturity. Needs FRED_API_KEY."""
+    try:
+        from routers.global_yields import _fred_fetch
+        rows = _fred_fetch("DGS3MO", limit=10)
+    except Exception:
+        return None
+    if not rows:
+        return None
+    return {
+        "rate": round(float(rows[-1]["value"]) / 100, 6),
+        "source": "FRED DGS3MO — US 3-month Treasury (constant maturity)",
+        "series": "DGS3MO",
+        "as_of": rows[-1]["date"],
+    }
+
+
+def _rf_from_yf_tbill() -> Optional[dict]:
+    """13-week T-bill yield via yfinance (`^IRX`) — no API key, so it covers the
+    case where FRED_API_KEY is unset or the FRED call fails. Quoted in percent
+    already (3.70 = 3.70%). Slightly below DGS3MO because ^IRX is the discount
+    rate rather than the bond-equivalent yield; close enough for a hurdle."""
+    frame = _fetch_close_frame(["^IRX"], 30)
+    if frame.empty or "^IRX" not in frame.columns:
+        return None
+    series = frame["^IRX"].dropna()
+    if series.empty:
+        return None
+    return {
+        "rate": round(float(series.iloc[-1]) / 100, 6),
+        "source": "^IRX (yfinance) — US 13-week T-bill yield",
+        "series": "^IRX",
+        "as_of": str(series.index[-1].date()),
+    }
+
+
+_rf_cache: TTLCache = TTLCache(ttl=43200, maxsize=8)   # 12h — these move slowly
+
+RF_FALLBACK: dict[str, float] = {"THB": 0.0175, "USD": 0.0425}
+
+
+def _risk_free(base_currency: str) -> dict:
+    """Live short-term risk-free rate for the report currency, with provenance.
+
+    Returns {rate (decimal), source, series, as_of, currency}. Every field is
+    echoed to the UI: a rate whose origin is not shown is a rate nobody can
+    check.
+    """
+    ccy = report_currency(base_currency)
+    cached = _rf_cache.get(f"rf:{ccy}")
+    if cached is not None:
+        return cached
+
+    out: Optional[dict] = None
+    if ccy == "USD":
+        for probe in (_rf_from_fred, _rf_from_yf_tbill):
+            out = probe()
+            if out:
+                break
+    elif ccy == "THB":
+        try:
+            from routers.bot import get_policy_rate
+            pol = get_policy_rate() or {}
+            rate = pol.get("rate")
+            if rate is not None:
+                out = {
+                    "rate": round(float(rate) / 100, 6),
+                    "source": "BOT policy rate (1-day repurchase)",
+                    "series": "BOT/PolicyRate",
+                    "as_of": pol.get("effective_datetime") or pol.get("announcement_date"),
+                }
+        except Exception:
+            out = None
+
+    if out is None:
+        out = {
+            "rate": RF_FALLBACK.get(ccy, 0.02),
+            "source": f"fallback constant (live {ccy} rate unavailable)",
+            "series": None,
+            "as_of": None,
+        }
+    out["currency"] = ccy
+    _rf_cache.set(f"rf:{ccy}", out)
+    return out
+
+
+@router.get("/risk-free")
+def get_risk_free(base_currency: Optional[str] = Query(None)):
+    """Live short-term risk-free rates, with provenance.
+
+    Returns every supported currency, not just the requested one, so the UI can
+    show what it is NOT using — a rate the user cannot compare is a rate they
+    cannot sanity-check.
+    """
+    rates = {ccy: _risk_free(ccy) for ccy in ("THB", "USD")}
+    # Every source that answered, not just the one that won the race — a rate
+    # the user cannot compare against an alternative is a rate they cannot
+    # sanity-check.
+    alternatives = [r for r in (_rf_from_fred(), _rf_from_yf_tbill()) if r]
+    for a in alternatives:
+        a["currency"] = "USD"
+    return {
+        "rates": rates,
+        "alternatives": alternatives,
+        "active": report_currency(base_currency) if base_currency else None,
+        "fallback": RF_FALLBACK,
+    }
+
+
+def _benchmark_currency(symbol: str) -> str:
+    """Quote currency of an index/ETF ticker. Suffix-driven, like the rest of
+    the symbol handling here — no extra network call for a single field."""
+    sym = (symbol or "").upper()
+    if sym.endswith(".BK"):
+        return "THB"
+    if sym.endswith(".T"):
+        return "JPY"
+    if sym.endswith((".L",)):
+        return "GBP"
+    if sym.endswith((".HK",)):
+        return "HKD"
+    return "USD"
+
+
+def _portfolio_return_series(
+    positions: list[dict],
+    lookback: int,
+    base_currency: str,
+    fx_adjust: bool,
+    calendar: Optional["pd.DatetimeIndex"] = None,
+) -> tuple[Optional["pd.Series"], list[dict], float]:
+    """Weighted daily log-return series for a set of open positions.
+
+    Deliberately light: CAPM needs the return series only, so this skips the
+    VaR/Monte-Carlo/bootstrap machinery in `_compute_portfolio_risk` (which
+    would otherwise run once per account on every page load).
+
+    Returns `(series, excluded, covered_weight_pct)`.
+    """
+    value_map: dict[str, float] = {}
+    ccy_map: dict[str, str] = {}
+    for pos in positions:
+        yf_sym = _position_yf_symbol(pos)
+        if not yf_sym:
+            continue
+        price = pos.get("current_price") or pos.get("price_entry", 0)
+        val = convert_amount(
+            float(price or 0) * float(pos.get("volume", 0) or 0),
+            trade_currency(pos), report_currency(base_currency),
+        )
+        if val > 0:
+            value_map[yf_sym] = value_map.get(yf_sym, 0.0) + val
+            ccy_map.setdefault(yf_sym, trade_currency(pos))
+    if not value_map:
+        return None, [], 0.0
+
+    total = sum(value_map.values())
+    symbols = list(value_map)
+    returns_df, excluded = _aligned_returns(
+        symbols, lookback, calendar=calendar,
+        ccy_map=ccy_map if fx_adjust else None,
+        base_currency=base_currency if fx_adjust else None,
+    )
+    if returns_df.empty:
+        return None, excluded, 0.0
+
+    valid = list(returns_df.columns)
+    w = np.array([value_map[s] for s in valid])
+    covered = float(w.sum() / total * 100)
+    w = w / w.sum()
+    excluded = [
+        {**e, "weight_pct": round(100 * value_map.get(e["symbol"], 0.0) / total, 2)}
+        for e in excluded
+    ]
+    return pd.Series(returns_df.values @ w, index=returns_df.index), excluded, covered
+
+
+def _index_return(symbol: str, since: Optional[str], base_currency: str) -> Optional[dict]:
+    """Benchmark total return from `since` to today, in `base_currency`.
+
+    The portfolio return this is compared against covers a specific span, so the
+    index has to cover the SAME span — an index number from a different window
+    is not a comparison, it is two unrelated facts subtracted.
+    """
+    if not since:
+        return None
+    frame = _fetch_close_frame([symbol], 900)
+    if frame.empty or symbol not in frame.columns:
+        return None
+    px = frame[symbol].dropna()
+    if len(px) < 2:
+        return None
+    base = report_currency(base_currency)
+    ccy = _benchmark_currency(symbol)
+    if ccy != base:
+        fx = _fx_close(ccy, base, 900)
+        if fx is not None:
+            px = (px * fx.reindex(px.index).ffill().bfill()).dropna()
+    try:
+        window = px[px.index >= pd.to_datetime(since)]
+    except Exception:
+        return None
+    if len(window) < 2:
+        return None
+    days = max((window.index[-1] - window.index[0]).days, 1)
+    cum = float(window.iloc[-1] / window.iloc[0] - 1)
+    return {
+        "cumulative_pct": round(cum * 100, 2),
+        "annual_pct": round(((1 + cum) ** (365 / days) - 1) * 100, 2),
+        "from": str(window.index[0].date()),
+        "to": str(window.index[-1].date()),
+        "days": days,
     }
 
 
@@ -1314,26 +1753,48 @@ def get_capm(
     account_id: Optional[str] = Query(None),
     lookback: int = Query(252),
     benchmark: str = Query("SPY"),
-    rf_annual: float = Query(0.02),
+    rf_annual: Optional[float] = Query(
+        None, description="Override the risk-free rate (decimal). Omit to use the live "
+                          "short rate for base_currency."
+    ),
+    base_currency: str = Query("THB"),
 ):
     """CAPM beta + Jensen's alpha for the open portfolio, regressed on `benchmark`.
-    Beta is computed on the current book held constant over the lookback window
-    (holdings-based). Per-account breakdown returned when account_id is omitted/all.
+
+    Alpha is the plain CAPM identity on numbers that can be checked by hand:
+
+        alpha = Rp - [rf + beta x (Rm - rf)]
+
+    `Rp` comes from the RETURNS card (cost-based CAGR / XIRR over the account's
+    own holding span), `Rm` is the benchmark over that SAME span, and `beta` is
+    the book held today. None of the three needs the trade log's DATES — which
+    matters, because 20 of 79 lots carry a bulk-import placeholder date whose
+    recorded price is up to 487% away from the market on that day. The previous
+    version rebuilt daily weights from those dates and reported +96% alpha for
+    an account that actually returned 3.3%/yr.
     """
-    where = ["win_loss = 'P'"]
+    where_open = ["win_loss = 'P'"]
     params: list = []
     if account_id and account_id != "all":
-        where.append("account_id = ?")
+        where_open.append("account_id = ?")
         params.append(account_id)
 
     with get_db() as conn:
         rows = conn.execute(
             "SELECT t.*, a.currency acc_currency, a.name acc_name "
             "FROM trades t JOIN portfolio_accounts a ON t.account_id = a.id "
-            f"WHERE {' AND '.join(where)} ORDER BY t.date_entry DESC",
+            f"WHERE {' AND '.join(where_open)} ORDER BY t.date_entry DESC",
             params,
         ).fetchall()
     positions = [dict(r) for r in rows]
+
+    # Realized return comes from the RETURNS endpoint (cost-based CAGR/XIRR over
+    # each account's own span) rather than being rebuilt here.
+    from routers.portfolio_v2 import get_portfolio_returns
+    try:
+        returns = get_portfolio_returns(account_id, base_currency)
+    except Exception:
+        returns = {}
 
     # Enrich with live prices (same shape handling as /metrics)
     try:
@@ -1352,27 +1813,140 @@ def get_capm(
     except Exception:
         pass
 
-    bench_map = _fetch_returns([benchmark], lookback)
-    bench = bench_map.get(benchmark)
+    base = report_currency(base_currency)
+    bench_ccy = _benchmark_currency(benchmark)
 
-    def _capm_for(pos_list: list[dict]) -> dict:
-        m = _compute_portfolio_risk(pos_list, lookback, 0.95)
-        return _regress_capm(m.get("_port_returns"), bench, rf_annual)
+    # rf must be in the report currency — see _risk_free().
+    if rf_annual is None:
+        rf_info = _risk_free(base)
+        rf_annual = float(rf_info["rate"])
+    else:
+        rf_info = {
+            "rate": float(rf_annual), "source": "manual override",
+            "series": None, "as_of": None, "currency": base,
+        }
+
+    # The benchmark's own trading days ARE the regression calendar: every
+    # holding is reindexed onto it, so a Thai holiday reads as a flat day for
+    # that holding instead of shifting its entire history by a row.
+    bench_close = _fetch_close_frame([benchmark], lookback)
+    bench_local = bench_dated = None
+    bench_last_date = None
+    if not bench_close.empty and benchmark in bench_close.columns:
+        series = bench_close[benchmark].dropna()
+        if len(series) >= 20:
+            bench_last_date = str(series.index[-1].date())
+            bench_local = np.log(series / series.shift(1)).dropna()
+            if bench_ccy == base:
+                bench_dated = bench_local
+            else:
+                fx = _fx_close(bench_ccy, base, lookback)
+                if fx is None:
+                    bench_dated = bench_local
+                else:
+                    fx_ret = np.log(fx.reindex(bench_local.index).ffill()).diff()
+                    bench_dated = (bench_local + fx_ret).dropna()
+
+    calendar = bench_local.index if bench_local is not None else None
+
+    def _capm_for(pos_list: list[dict], ret: Optional[dict]) -> dict:
+        # Beta of the book held today. Needs prices only — no trade dates.
+        port_base, excluded, covered = _portfolio_return_series(
+            pos_list, lookback, base, fx_adjust=True, calendar=calendar
+        )
+        row = _regress_capm(port_base, bench_dated, rf_annual, lookback)
+        port_local, _, _ = _portfolio_return_series(
+            pos_list, lookback, base, fx_adjust=False, calendar=calendar
+        )
+        local = _regress_capm(port_local, bench_local, rf_annual, lookback)
+
+        # What a hedge needs: beta x market value = the index notional to short.
+        market_value = sum(
+            convert_amount(
+                float(p.get("current_price") or p.get("price_entry") or 0)
+                * float(p.get("volume") or 0),
+                trade_currency(p), base,
+            )
+            for p in pos_list
+        )
+        beta = row.get("beta")
+        hedge_notional = round(market_value * beta, 2) if beta is not None else None
+
+        # ── The alpha ────────────────────────────────────────────────────────
+        idx = _index_return(benchmark, (ret or {}).get("first_date"), base)
+        # XIRR, not CAGR: `/returns` divides by the SUM OF EVERY BUY, so an
+        # account that recycles capital is measured against a denominator it
+        # never had. Dime bought 4.70M worth over time on 763k of contributed
+        # capital — its CAGR is diluted 6.2x (3.3% where XIRR says 13.1%).
+        # XIRR discounts the actual dated cashflows, so returned capital does
+        # not double-count.
+        rp_xirr = (ret or {}).get("xirr_pct")
+        rp_cagr = (ret or {}).get("cagr_pct")
+        expected = alpha_xirr = alpha_cagr = None
+        if idx and beta is not None:
+            rf_pct = rf_annual * 100
+            expected = round(rf_pct + beta * (idx["annual_pct"] - rf_pct), 2)
+            if rp_xirr is not None:
+                alpha_xirr = round(rp_xirr - expected, 2)
+            if rp_cagr is not None:
+                alpha_cagr = round(rp_cagr - expected, 2)
+
+        return {
+            **row,
+            "market_value": round(market_value, 2),
+            "hedge_notional": hedge_notional,
+            "beta_local": local["beta"],
+            # Performance side — cost-based, from the RETURNS card.
+            "return_annual_pct": rp_xirr,          # headline: money-weighted
+            "return_cagr_pct": rp_cagr,            # cost-based, turnover-diluted
+            "invested_gross": (ret or {}).get("invested"),
+            "holding_days": (ret or {}).get("holding_days"),
+            "first_date": (ret or {}).get("first_date"),
+            "index_annual_pct": (idx or {}).get("annual_pct"),
+            "index_cumulative_pct": (idx or {}).get("cumulative_pct"),
+            "expected_annual_pct": expected,
+            "alpha_annual_pct": alpha_xirr,
+            "alpha_cagr_annual_pct": alpha_cagr,
+            "excess_vs_index_pct": (
+                round(rp_xirr - idx["annual_pct"], 2)
+                if idx and rp_xirr is not None else None
+            ),
+            "excluded_symbols": excluded,
+            "covered_weight_pct": round(covered, 2),
+            # R² this low means the benchmark is not the market this book trades
+            # in — beta is then a number without a meaning, and so is the alpha
+            # built on top of it.
+            "benchmark_fit": (
+                "WEAK" if (row.get("r_squared") or 0) < 0.10
+                else "MODERATE" if (row.get("r_squared") or 0) < 0.30
+                else "OK"
+            ),
+        }
 
     result: dict = {
         "benchmark": benchmark,
+        "benchmark_currency": bench_ccy,
+        "benchmark_last_date": bench_last_date,
+        "base_currency": base,
         "lookback": lookback,
+        "min_days_required": _min_regression_days(lookback),
+        "min_history_days": MIN_HISTORY_DAYS,
         "rf_annual": rf_annual,
-        "benchmark_available": bench is not None,
-        "portfolio": _capm_for(positions),
+        "rf_source": rf_info["source"],
+        "rf_series": rf_info["series"],
+        "rf_as_of": rf_info["as_of"],
+        "rf_currency": rf_info["currency"],
+        "benchmark_available": bench_dated is not None,
+        "portfolio": _capm_for(positions, (returns or {}).get("total")),
     }
 
     if not account_id or account_id == "all":
         groups: dict[str, list[dict]] = {}
         for pos in positions:
             groups.setdefault(pos["account_id"], []).append(pos)
+        per_acc = (returns or {}).get("accounts") or {}
         result["accounts"] = {
-            aid: {**_capm_for(g), "name": g[0].get("acc_name") or aid}
+            aid: {**_capm_for(g, per_acc.get(aid)), "name": g[0].get("acc_name") or aid}
             for aid, g in groups.items()
         }
 
@@ -1527,15 +2101,17 @@ def get_risk_parity_allocation(
     total = sum(values)
     current_w = np.array(values) / total
 
-    # Fetch returns & compute covariance
-    returns_map = _fetch_returns(symbols, lookback)
-    valid_idx = [i for i, s in enumerate(symbols) if s in returns_map]
+    # Date-aligned covariance — same reason as the risk path: pairing two
+    # markets' returns by row position mixes different dates, and one short
+    # history must not truncate every other holding's.
+    returns_df, _ = _aligned_returns(symbols, lookback)
+    valid_syms = list(returns_df.columns) if not returns_df.empty else []
+    valid_idx = [i for i, s in enumerate(symbols) if s in valid_syms]
     if len(valid_idx) < 2:
         return {"current_weights": [], "optimal_weights": [], "rebalance_actions": []}
 
     valid_syms = [symbols[i] for i in valid_idx]
-    min_len = min(len(returns_map[s]) for s in valid_syms)
-    R = np.column_stack([returns_map[s][-min_len:] for s in valid_syms])
+    R = returns_df[valid_syms].values
 
     cov = _ledoit_wolf_shrinkage(R)
     optimal_w = _risk_parity_weights(cov)

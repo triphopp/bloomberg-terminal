@@ -54,6 +54,49 @@
 
 ## News (`routers/news.py`)
 - `GET /api/news/facebook` — posts from Facebook pages (RSSHub or Graph API)
+- `GET /api/news/feed?topics=&limit=` — topic newswire (yfinance Search + 5 curated RSS)
+
+## Watchlist News (`routers/news_watchlist.py`)
+- `GET /api/news/watchlist?symbols=&per_symbol=6&per_source=6&sources=all&polymarket=1`
+  - per-symbol headlines from 7 free sources: `yahoo` (ticker RSS) · `yfinance` (yf.Search) ·
+    `google` (News RSS) · `bing` (News RSS) · `seekingalpha` · `nasdaq` · `sec` (EDGAR 8-K atom)
+  - sector/company resolved from SQLite `sector_classifications` → yfinance info (24h cache;
+    unresolved retried after 10 min). Crypto/FX → "Crypto / FX", `^` → "Index", else "Unclassified"
+  - keyword sources are filtered to headlines that actually name the ticker/company;
+    every article carries `relevance: direct|feed` so the UI can hide wire noise
+  - cross-tags other watchlist names found in a headline (`symbols[]`), keyword sentiment,
+    plus Polymarket markets matched on the **question text only** (word-boundary)
+  - caches: meta 24h · per-symbol news 5 min · polymarket match 15 min
+- `GET /api/news/sources` — source registry (id/label/kind) for the UI toggles
+
+## Polymarket — single-name equity markets (`routers/polymarket_stock.py`)
+- `GET /api/polymarket/stock/{symbol}?company=` — live price ladders for one ticker
+  - discovery via Gamma **`/public-search?q=`** (真 server-side search; `/markets?q=` still ignores params)
+  - keeps only `closed=false && endDate>now` events whose **title contains the ticker**
+  - event types: `ladder` (touch: "What will MU hit in August") · `above` (CDF: "close above ___")
+    · `updown` (daily) · `earnings` · `other`
+  - summary: `prob_up` (updown → CDF interpolation at spot → nearest up rung), `prob_above_spot`,
+    `nearest_up`/`nearest_down` (each tagged `basis: close|touch`), `implied_high`/`implied_low`,
+    `skew`, `horizon_days`
+  - caches: events 90s (prices move) · spot 60s · **miss 15 min** (most tickers have no markets)
+- `GET /api/polymarket/stocks?symbols=A,B` — summary-only per symbol (MKT watchlist PM column)
+
+## Company filings — SEC EDGAR (`routers/company_filings.py`)
+US listings only (EDGAR ไม่มี `.BK`/`.KS` → ใช้ `routers/sec_v2.py` + `SEC_*` key แทน). ไม่ต้องมี key
+แต่ต้องส่ง UA แบบ `App/1.0 email` (มีวงเล็บ = 403) และไม่เกิน 10 req/s
+- `GET /api/company/filings/{symbol}?forms=10-K,10-Q,8-K&limit=20` — จาก `data.sec.gov/submissions/CIK…json`
+- `GET /api/company/outlook/{symbol}` — **guidance + วิสัยทัศน์ CEO**
+  - หา 8-K item **2.02** ล่าสุด → เลือกไฟล์ใน folder ที่ "อ่านแล้วเหมือน press release" ที่สุด
+    (ชื่อไฟล์ต่างกันทุกบริษัท: `a2026q3ex991-pressrelease.htm`, `q1fy27pr.htm`) ด้วย `_release_score`
+  - `guidance.metrics` = revenue / gross_margin / operating_expenses / eps / operating_margin
+    (flatten ตาราง HTML ก่อน regex; heading เข้ม "Business Outlook" ก่อน ไม่งั้นไปแมตช์ประโยค CEO)
+  - `ceo_quotes[]` = คำพูดที่ attribute ถึง CEO ทั้งสองรูปแบบประโยค
+  - `mdna.statements[]` = ประโยค forward-looking จาก 10-Q/10-K (ตัด safe-harbour + ASU/FASB ทิ้ง)
+- `GET /api/company/xbrl/{symbol}?period=quarterly|annual&limit=12` — as-reported จาก
+  `data.sec.gov/api/xbrl/companyconcept`; margin คำนวณเอง; กรองช่วงเวลา 3 เดือน/12 เดือน
+  (cash-flow tag บางบริษัทเป็น YTD → บางไตรมาสจะว่าง)
+- cache: CIK map 24h · filings 6h · outlook 6h · xbrl 24h
+- Next proxy: `app/api/company/[...path]/route.ts` (allowlist: outlook/filings/xbrl)
 
 ## Macro (`routers/macro.py`)
 - `GET /api/macro` — FRED series (GDP, CPI, unemployment, yields, etc.) + AV fallback
@@ -104,15 +147,35 @@
 - `POST /api/v2/portfolio/cash` — add manual cash entry (`entry_type` defaults `'CASH'`)
 - `PUT /api/v2/portfolio/cash/{id}` — edit cash entry
 - `DELETE /api/v2/portfolio/cash/{id}` — delete cash entry; if `entry_type='TRANSFER'`, cascades to delete the linked pair (matched by `linked_id`)
+- `GET /api/v2/portfolio/allocation-detail?account_id&base_currency` — ALLOCATION (OPEN) on two bases: per symbol + per sector `cost_base` (entry FX) vs `market_value` (live FX), `growth_pct`, `unrealized`, `weight_cost_pct`/`weight_mv_pct`/`drift_pp`, `contrib_growth_pct`, `share_of_gain_pct`, plus rebalance sizing (`target_pct`, `target_source` explicit|cost_weight, `delta_value`, `delta_shares` lot-rounded TH=100/US=1, `est_value`, `est_realized`, `in_band`, `action`). Applies `position_cost_overrides` so growth matches the positions table. Reuses `_open_positions_enriched()` (shared with `/open-positions`)
+- `GET /api/v2/portfolio/allocation-targets?account_id` — target weights (account-specific row beats the `all` default)
+- `PUT /api/v2/portfolio/allocation-targets` — bulk upsert `[{account_id, scope sector|symbol, key, target_pct, band_pct}]`; `target_pct<=0` deletes the row; 400 if a scope's targets sum >100
 - `POST /api/v2/portfolio/cash/transfer` — atomic linked-pair transfer between own accounts: inserts 2 `TRANSFER` rows (source `investment=-amount`, dest `investment=+amount`), nets to 0 on `account_id='all'`, fixes per-account `invested_capital` without touching NAV (`plans/completed/cash-transfer-feature.md`)
+
+## Theses (`routers/theses.py`) — prefix `/api/v2/theses`
+DB-backed investment theses. `theses` = materialised head (field-level LWW merge); `thesis_events` = append-only history (never UPDATEd → no merge conflicts). Cloud-synced via `SYNC_TABLES`.
+- `GET /api/v2/theses?symbol&category&status&account_id&include_deleted` — list + `event_count`
+- `GET /api/v2/theses/{id}` — `{thesis, events, links}` (links join `trades`)
+- `GET /api/v2/theses/by-symbol/{symbol}` — theses for one ticker
+- `GET /api/v2/theses/summary/by-symbol` — `{by_symbol: {SYM: {count, status, conviction, id}}}`, one query for the whole book (positions-table badge)
+- `POST /api/v2/theses` — create → event `CREATED`
+- `PATCH /api/v2/theses/{id}` — update; diffs first, logs `EDITED`/`STATUS_CHANGED`/`TARGET_CHANGED`/`INVALIDATED` with `{field:{from,to}}`; body-only `note` logs `NOTE` without touching the head
+- `DELETE /api/v2/theses/{id}?purge=false&note=` — soft delete (UPDATE → **no tombstone**, restorable on both devices); `purge=true` is the real DELETE and does emit one
+- `POST /api/v2/theses/{id}/restore`
+- `GET|POST /api/v2/theses/{id}/events` — timeline; POST adds a manual `NOTE` (`occurred_at` may be back-dated)
+- `DELETE /api/v2/theses/{id}/events/{event_id}` — NOTE events only (400 otherwise — edits are the record)
+- `POST /api/v2/theses/{id}/links` / `DELETE .../links/{trade_id}` — link a thesis to a trade
+- `POST /api/v2/theses/import-md?dry_run` — import `THESES_DIR/*.md`; keyed on `source_file` so re-running never duplicates
+- `POST /api/v2/theses/{id}/export-md` — write markdown back to `THESES_DIR` (Obsidian); DB stays authoritative
 
 ## Portfolio Risk (`routers/risk.py`)
 - `GET /api/v2/portfolio/risk/metrics` — VaR/CVaR 1D–6M with √T scaling (Basel)
-- `GET /api/v2/portfolio/risk/capm` — CAPM β + Jensen's α (annualized) vs benchmark (default SPY); holdings-based, per-account breakdown when account_id omitted. `RET ANN` = geometric annualized market return (`expm1(mean_log*252)`), NOT cost-based. `lookback` accepts 21/63/126/252 (1M/3M/6M/1Y); frontend has window buttons. Regression guard = n<20. Params: `benchmark`, `lookback`, `rf_annual`, `account_id`
+- `GET /api/v2/portfolio/risk/capm` — `α = Rp − [rf + β(Rm − rf)]` โดย `Rp` = CAGR/XIRR จาก `/returns` (ช่วงของบัญชีเอง), `Rm` = benchmark ช่วงเดียวกัน (`_index_return`, แปลงเป็นสกุลรายงาน), `β` = Σwᵢβᵢ ของที่ถือวันนี้ — **ไม่มีตัวไหนอ่าน `date_entry`/`date_exit`**. Fields: `beta`/`beta_local`/`hedge_notional`/`market_value` · `return_annual_pct`/`return_xirr_pct`/`holding_days`/`first_date` · `index_annual_pct`/`index_cumulative_pct` · `expected_annual_pct` · `alpha_annual_pct`/`alpha_xirr_annual_pct`/`excess_vs_index_pct` · `r_squared`/`benchmark_fit` (WEAK เมื่อ R²<0.10) · `excluded_symbols` (ประวัติ <60 แท่ง). Params: `benchmark`, `lookback`, `account_id`, `base_currency`, `rf_annual` (optional — ไม่ส่ง = ดึงสด: THB → BOT policy rate, USD → FRED `DGS3MO`, cache 12 ชม.; response มี `rf_source`/`rf_series`/`rf_as_of`/`rf_currency`).
 - `GET /api/v2/portfolio/risk/correlation` — correlation matrix (Ledoit-Wolf shrinkage)
 - `GET /api/v2/portfolio/risk/stress` — stress test scenarios
 - `GET /api/v2/portfolio/risk/position-size` — Kelly criterion position sizing
 - `GET /api/v2/portfolio/risk/parity` — Equal Risk Contribution (ERC) rebalance actions
+- `GET /api/v2/portfolio/risk/risk-free?base_currency=` — อัตรา risk-free สดของทุกสกุลที่รองรับ (THB → BOT policy rate; USD → FRED `DGS3MO` แล้ว fallback `^IRX` ผ่าน yfinance ซึ่งไม่ต้องใช้ API key) + `alternatives[]` คืนทุกแหล่งที่ตอบเพื่อให้เทียบกันได้ พร้อม `source`/`series`/`as_of` + `fallback`; ใช้ป้อนแผงตั้งค่า rf ใน ANALYTICS (override เก็บที่ `localStorage["bloomberg_capm_rf"]` แยกตามสกุล)
 - `DELETE /api/v2/portfolio/risk/cache` — clear caches
 
 ## Rates (`routers/rates.py`)
@@ -401,6 +464,8 @@ app/api/
 ├── v2/portfolio/trades/[id] + bulk-patch-sector
 ├── v2/portfolio/dividends + [id]
 ├── v2/portfolio/import
+├── v2/portfolio/allocation-detail (GET) + allocation-targets (GET, PUT)
+├── v2/theses/[[...path]]/route.ts — one catch-all for the whole thesis CRUD surface (GET/POST/PATCH/DELETE)
 ├── v2/portfolio/risk/metrics|correlation|stress|position-size|parity
 ├── pins/groups + [id]
 ├── pins/assets + [id] + [id]/tags/[tagId]

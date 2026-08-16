@@ -9,18 +9,16 @@ import {
   CartesianGrid,
   Cell,
   Line,
-  Pie,
-  PieChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { ALLOC_COLORS } from "../constants";
 import { type Colors, fmtK, pnlColor } from "../helpers";
 import type { Dividend, Summary, Trade } from "../types";
 import { AccBadge } from "../ui/AccBadge";
+import { AllocationBasisCard } from "../ui/AllocationBasisCard";
 
 interface CapmRow {
   beta: number | null;
@@ -30,13 +28,61 @@ interface CapmRow {
   port_return_annual_pct: number | null;
   bench_return_annual_pct: number | null;
   name?: string;
+  // Native-currency pair (both sides unconverted) — comparable to a published
+  // beta. The primary fields above are translated to the report currency.
+  beta_local?: number | null;
+  alpha_local_annual_pct?: number | null;
+  r_squared_local?: number | null;
+  benchmark_fit?: "WEAK" | "MODERATE" | "OK";
+  // Performance side — cost-based returns over the account's own span, from the
+  // RETURNS card. No trade DATES involved: the log's dates cannot be trusted
+  // (bulk-import placeholders), and everything here is checkable by hand.
+  return_annual_pct?: number | null; // XIRR — money-weighted
+  return_cagr_pct?: number | null; // cost-based; denominator counts every buy
+  invested_gross?: number | null;
+  alpha_cagr_annual_pct?: number | null;
+  holding_days?: number | null;
+  first_date?: string | null;
+  index_annual_pct?: number | null;
+  index_cumulative_pct?: number | null;
+  expected_annual_pct?: number | null;
+  excess_vs_index_pct?: number | null;
+  market_value?: number;
+  hedge_notional?: number | null;
+  covered_weight_pct?: number;
+  excluded_symbols?: { symbol: string; reason: string; bars: number; weight_pct: number }[];
 }
 interface CapmResponse {
   benchmark: string;
+  benchmark_currency?: string;
+  benchmark_last_date?: string | null;
+  base_currency?: string;
+  lookback?: number;
+  min_days_required?: number;
+  rf_annual?: number;
+  rf_source?: string;
+  rf_series?: string | null;
+  rf_as_of?: string | null;
+  rf_currency?: string;
   benchmark_available: boolean;
   portfolio: CapmRow;
   accounts?: Record<string, CapmRow>;
 }
+interface RfRate {
+  rate: number;
+  source: string;
+  series: string | null;
+  as_of: string | null;
+  currency: string;
+}
+interface RfResponse {
+  rates: Record<string, RfRate>;
+  alternatives?: RfRate[];
+  fallback?: Record<string, number>;
+}
+
+const RF_KEY = "bloomberg_capm_rf";
+
 interface ReturnsRow {
   cagr_pct: number | null;
   xirr_pct: number | null;
@@ -98,6 +144,38 @@ export function AnalyticsTab({
   const [rets, setRets] = useState<ReturnsResponse | null>(null);
   const [benchmark, setBenchmark] = useState<"SPY" | "QQQ" | "ACWI">("SPY");
   const [lookback, setLookback] = useState<number>(252);
+  const [rfRates, setRfRates] = useState<RfResponse | null>(null);
+  const [rfPanel, setRfPanel] = useState(false);
+  // Manual rf per report currency. Read in the initializer — an effect fires
+  // after the first fetch and would send the live rate once before the override.
+  const [rfOverride, setRfOverride] = useState<Record<string, number | null>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = localStorage.getItem(RF_KEY);
+      if (raw) return JSON.parse(raw) as Record<string, number | null>;
+    } catch {
+      /* ignore */
+    }
+    return {};
+  });
+  const [rfDraft, setRfDraft] = useState("");
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(RF_KEY, JSON.stringify(rfOverride));
+    } catch {
+      /* ignore */
+    }
+  }, [rfOverride]);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    fetch("/api/v2/portfolio/risk/risk-free", { signal: ac.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d?.rates && setRfRates(d))
+      .catch(() => {});
+    return () => ac.abort();
+  }, []);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(
@@ -151,14 +229,20 @@ export function AnalyticsTab({
   // other five endpoints above.
   useEffect(() => {
     const ac = new AbortController();
-    const capmQs = new URLSearchParams({ benchmark, lookback: String(lookback) });
+    const capmQs = new URLSearchParams({
+      benchmark,
+      lookback: String(lookback),
+      base_currency: currency,
+    });
+    const manualRf = rfOverride[currency];
+    if (manualRf != null) capmQs.set("rf_annual", String(manualRf));
     if (accountId !== "all") capmQs.set("account_id", accountId);
     fetch(`/api/v2/portfolio/risk/capm?${capmQs}`, { signal: ac.signal })
       .then((r) => (r.ok ? r.json() : null))
       .then((cp) => setCapm(cp && !cp.error ? cp : null))
       .catch(() => {});
     return () => ac.abort();
-  }, [accountId, benchmark, lookback]);
+  }, [accountId, benchmark, lookback, currency, rfOverride]);
 
   const thb_per_usd = summary?.thb_per_usd ?? 33.5;
   const sym = currency === "THB" ? "฿" : "$";
@@ -218,9 +302,6 @@ export function AnalyticsTab({
       .sort()
       .map(([label, total]) => ({ month: label, total }));
   }, [dividends, divPeriod]);
-
-  const allocationData = analytics?.open_by_sector ?? [];
-  const [selectedSector, setSelectedSector] = useState<string | null>(null);
 
   const accStats = summary?.accounts ?? [];
   const filteredStats =
@@ -809,8 +890,35 @@ export function AnalyticsTab({
             <div className="text-[9px] font-bold tracking-widest" style={{ color: colors.accent }}>
               RISK-ADJUSTED (CAPM)
               <span className="ml-1 text-[7px]" style={{ color: "#555" }}>
-                current-holdings β · Jensen α ann · vs {capm.benchmark}
+                β for hedging · α = return − CAPM expectation · vs {capm.benchmark}
               </span>
+              {capm.rf_annual != null && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRfDraft(
+                      rfOverride[currency] != null
+                        ? String((rfOverride[currency] as number) * 100)
+                        : ((capm.rf_annual ?? 0) * 100).toFixed(2)
+                    );
+                    setRfPanel((v) => !v);
+                  }}
+                  className="ml-1 text-[7px] underline decoration-dotted"
+                  style={{
+                    color: rfOverride[currency] != null ? colors.accent : colors.textSecondary,
+                  }}
+                  title={`Risk-free rate used in the CAPM expectation. Quoted in ${
+                    capm.rf_currency ?? "the report currency"
+                  } to match the returns, and at a short horizon to match the daily interval. Source: ${
+                    capm.rf_source ?? "—"
+                  }${capm.rf_as_of ? ` · as of ${capm.rf_as_of}` : ""}. Click to override.`}
+                >
+                  {" "}
+                  · rf {(capm.rf_annual * 100).toFixed(2)}% {capm.rf_currency ?? ""} (
+                  {capm.rf_series ?? capm.rf_source ?? "—"}
+                  {capm.rf_as_of ? `, ${String(capm.rf_as_of).slice(0, 10)}` : ""}) ✎
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <div className="flex gap-1">
@@ -856,6 +964,104 @@ export function AnalyticsTab({
               </div>
             </div>
           </div>
+          {rfPanel && (
+            <div
+              className="mb-2 border p-2 text-[8px]"
+              style={{ borderColor: colors.accent, background: "#0a0a0a" }}
+            >
+              <div className="font-bold tracking-widest mb-1" style={{ color: colors.accent }}>
+                RISK-FREE RATE — {currency}
+              </div>
+              <div className="mb-2" style={{ color: colors.textSecondary }}>
+                Must be quoted in the currency the returns are in, at a short horizon to match the
+                daily interval. A US Treasury yield against a THB series books the THB–USD rate
+                differential as negative alpha; a 10-year yield charges the book for duration it
+                does not hold.
+              </div>
+              <div className="grid gap-px mb-2" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                {Object.entries(rfRates?.rates ?? {}).map(([ccy, r]) => (
+                  <div
+                    key={ccy}
+                    className="px-1.5 py-1"
+                    style={{
+                      background: "#050505",
+                      border: `1px solid ${ccy === currency ? colors.accent : "transparent"}`,
+                    }}
+                  >
+                    <div style={{ color: ccy === currency ? colors.accent : colors.textSecondary }}>
+                      {ccy} {ccy === currency ? "(active)" : "(reference)"}
+                    </div>
+                    <div className="font-bold font-mono" style={{ color: colors.text }}>
+                      {(r.rate * 100).toFixed(2)}%
+                    </div>
+                    <div style={{ color: "#555" }}>
+                      {r.source}
+                      {r.as_of ? ` · ${String(r.as_of).slice(0, 10)}` : ""}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {(rfRates?.alternatives ?? []).length > 1 && (
+                <div className="mb-2" style={{ color: colors.textSecondary }}>
+                  other sources for USD:{" "}
+                  {(rfRates?.alternatives ?? []).map((a) => (
+                    <button
+                      type="button"
+                      key={a.series ?? a.source}
+                      onClick={() => setRfDraft((a.rate * 100).toFixed(2))}
+                      className="mr-2 underline decoration-dotted"
+                      style={{ color: colors.accent }}
+                      title={`${a.source}${a.as_of ? ` · ${a.as_of}` : ""} — click to load into the override box`}
+                    >
+                      {a.series ?? a.source} {(a.rate * 100).toFixed(2)}%
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center gap-1">
+                <span style={{ color: colors.textSecondary }}>Override {currency} rf:</span>
+                <input
+                  value={rfDraft}
+                  onChange={(e) => setRfDraft(e.target.value)}
+                  placeholder={((rfRates?.rates?.[currency]?.rate ?? 0) * 100).toFixed(2)}
+                  className="w-14 border px-1 py-0.5 text-right font-mono outline-none"
+                  style={{ borderColor: colors.border, color: colors.text, background: "#050505" }}
+                />
+                <span style={{ color: colors.textSecondary }}>% / yr</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const v = Number.parseFloat(rfDraft);
+                    if (!Number.isFinite(v)) return;
+                    setRfOverride((o) => ({ ...o, [currency]: v / 100 }));
+                    setRfPanel(false);
+                  }}
+                  className="px-1.5 py-0.5 border font-bold"
+                  style={{ borderColor: colors.accent, color: colors.accent }}
+                >
+                  APPLY
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRfOverride((o) => ({ ...o, [currency]: null }));
+                    setRfPanel(false);
+                  }}
+                  className="px-1.5 py-0.5 border font-bold"
+                  style={{ borderColor: colors.border, color: colors.textSecondary }}
+                  title="Go back to the live rate for this currency"
+                >
+                  USE LIVE
+                </button>
+                {rfOverride[currency] != null && (
+                  <span style={{ color: colors.accent }}>
+                    manual override active — live is{" "}
+                    {((rfRates?.rates?.[currency]?.rate ?? 0) * 100).toFixed(2)}%
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
           {!capm.benchmark_available ? (
             <div className="text-[8px] py-2 text-center" style={{ color: colors.textSecondary }}>
               Benchmark data unavailable
@@ -864,20 +1070,45 @@ export function AnalyticsTab({
             <table className="w-full text-[9px] font-mono">
               <thead>
                 <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  {["PORT", "β", "α ANN", "R²", "RET ANN", "N"].map((h, i) => (
+                  {[
+                    ["PORT", "left", ""],
+                    [
+                      "β HEDGE",
+                      "right",
+                      `Beta of the book you hold TODAY — the one to size a hedge with. Both sides in ${currency}, so a foreign holding's currency move counts as risk (β ${capm.benchmark_currency ?? "LOC"} in the tooltip leaves them native)`,
+                    ],
+                    [
+                      "HEDGE",
+                      "right",
+                      `Index notional that offsets the book: β × market value. Short this much ${capm.benchmark} to run market-neutral`,
+                    ],
+                    [
+                      "RET",
+                      "right",
+                      "Money-weighted annualized return (XIRR) over this account's own span — the rate your actual cashflows earned. Hover for the cost-based CAGR, which divides by every buy ever made and so understates any account that recycles capital",
+                    ],
+                    [
+                      "IDX",
+                      "right",
+                      `${capm.benchmark} annualized over the SAME span — an index number from a different window is not a comparison`,
+                    ],
+                    [
+                      "EXPECT",
+                      "right",
+                      "What CAPM says the risk taken should have paid: rf + β × (IDX − rf). α is simply RET − EXPECT, so the row checks by hand",
+                    ],
+                    ["α", "right", "RET − EXPECT: return beyond what the risk was owed"],
+                    [
+                      "R²",
+                      "right",
+                      "Share of the book's variance the benchmark explains. Below 0.10 the benchmark is the wrong market and β — so also α — means nothing",
+                    ],
+                  ].map(([h, align, tip]) => (
                     <th
                       key={h}
-                      className={`py-0.5 ${i === 0 ? "text-left" : "text-right"}`}
+                      className={`py-0.5 text-${align}`}
                       style={{ color: colors.textSecondary }}
-                      title={
-                        h === "β"
-                          ? "CAPM beta vs benchmark"
-                          : h === "α ANN"
-                            ? "Jensen's alpha, annualized (excess vs CAPM-expected)"
-                            : h === "R²"
-                              ? "Fit quality of the regression"
-                              : undefined
-                      }
+                      title={tip || undefined}
                     >
                       {h}
                     </th>
@@ -904,50 +1135,128 @@ export function AnalyticsTab({
                     >
                       {label}
                     </td>
-                    <td className="text-right py-0.5" style={{ color: colors.text }}>
+                    <td
+                      className="text-right py-0.5 font-bold"
+                      style={{ color: colors.text }}
+                      title={
+                        row.beta_local == null
+                          ? undefined
+                          : `β ${capm.benchmark_currency ?? "LOC"} (both sides native): ${row.beta_local.toFixed(2)}`
+                      }
+                    >
                       {row.beta == null ? "—" : row.beta.toFixed(2)}
                     </td>
                     <td
-                      className="text-right py-0.5 font-bold"
-                      style={{
-                        color:
-                          row.alpha_annual_pct == null ? "#555" : pnlColor(row.alpha_annual_pct),
-                      }}
+                      className="text-right py-0.5"
+                      style={{ color: colors.textSecondary }}
+                      title={
+                        row.market_value
+                          ? `${sym}${fmtK(row.market_value)} market value × β`
+                          : undefined
+                      }
                     >
-                      {row.alpha_annual_pct == null
-                        ? "—"
-                        : `${row.alpha_annual_pct >= 0 ? "+" : ""}${row.alpha_annual_pct.toFixed(1)}%`}
-                    </td>
-                    <td className="text-right py-0.5" style={{ color: colors.textSecondary }}>
-                      {row.r_squared == null ? "—" : row.r_squared.toFixed(2)}
+                      {row.hedge_notional == null ? "—" : `${sym}${fmtK(row.hedge_notional)}`}
                     </td>
                     <td
                       className="text-right py-0.5"
                       style={{
                         color:
-                          row.port_return_annual_pct == null
-                            ? "#555"
-                            : pnlColor(row.port_return_annual_pct),
+                          row.return_annual_pct == null ? "#555" : pnlColor(row.return_annual_pct),
                       }}
+                      title={`XIRR (shown) over ${row.holding_days ?? "—"}d from ${
+                        row.first_date ?? "—"
+                      }. Cost-based CAGR: ${row.return_cagr_pct ?? "—"}% — that one divides by ${
+                        row.invested_gross
+                          ? `${sym}${fmtK(row.invested_gross)} of gross buys`
+                          : "every buy ever made"
+                      }, so it understates an account that recycles capital.`}
                     >
-                      {row.port_return_annual_pct == null
+                      {row.return_annual_pct == null
                         ? "—"
-                        : `${row.port_return_annual_pct >= 0 ? "+" : ""}${row.port_return_annual_pct.toFixed(1)}%`}
+                        : `${row.return_annual_pct >= 0 ? "+" : ""}${row.return_annual_pct.toFixed(1)}%`}
                     </td>
-                    <td className="text-right py-0.5" style={{ color: "#555" }}>
-                      {row.n_days || "—"}
+                    <td
+                      className="text-right py-0.5"
+                      style={{ color: colors.textSecondary }}
+                      title={
+                        row.index_cumulative_pct == null
+                          ? undefined
+                          : `${capm.benchmark} cumulative over the same span: ${row.index_cumulative_pct}%`
+                      }
+                    >
+                      {row.index_annual_pct == null
+                        ? "—"
+                        : `${row.index_annual_pct >= 0 ? "+" : ""}${row.index_annual_pct.toFixed(1)}%`}
+                    </td>
+                    <td className="text-right py-0.5" style={{ color: colors.textSecondary }}>
+                      {row.expected_annual_pct == null
+                        ? "—"
+                        : `${row.expected_annual_pct >= 0 ? "+" : ""}${row.expected_annual_pct.toFixed(1)}%`}
+                    </td>
+                    <td
+                      className="text-right py-0.5 font-bold"
+                      style={{
+                        color:
+                          row.alpha_annual_pct == null
+                            ? "#555"
+                            : row.benchmark_fit === "WEAK"
+                              ? "#555"
+                              : pnlColor(row.alpha_annual_pct),
+                      }}
+                      title={
+                        row.benchmark_fit === "WEAK"
+                          ? "Greyed out: with R² this low, beta collapses toward 0 and everything above the risk-free rate lands in alpha. Not a measurement."
+                          : `${row.return_annual_pct ?? "—"}% − ${row.expected_annual_pct ?? "—"}% = ${row.alpha_annual_pct}%. On the cost-based CAGR instead: ${row.alpha_cagr_annual_pct ?? "—"}%`
+                      }
+                    >
+                      {row.alpha_annual_pct == null
+                        ? "—"
+                        : `${row.alpha_annual_pct >= 0 ? "+" : ""}${row.alpha_annual_pct.toFixed(1)}%`}
+                    </td>
+                    <td
+                      className="text-right py-0.5"
+                      style={{
+                        color: row.benchmark_fit === "WEAK" ? "#f87171" : colors.textSecondary,
+                      }}
+                      title={
+                        row.benchmark_fit === "WEAK"
+                          ? `${capm.benchmark} explains almost none of this book's moves — β and α here are artefacts, not measurements. Use a benchmark from the market it trades in.`
+                          : undefined
+                      }
+                    >
+                      {row.r_squared == null ? "—" : row.r_squared.toFixed(2)}
+                      {row.benchmark_fit === "WEAK" && " ⚠"}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
+          {(() => {
+            const dropped = new Map<string, { bars: number; weight_pct: number }>();
+            for (const r of [capm.portfolio, ...Object.values(capm.accounts ?? {})])
+              for (const e of r.excluded_symbols ?? []) dropped.set(e.symbol, e);
+            if (dropped.size === 0) return null;
+            return (
+              <div className="text-[7px] mt-1" style={{ color: "#ff9900" }}>
+                Excluded (too little price history to regress, weight redistributed):{" "}
+                {[...dropped.entries()].map(([sym, e]) => `${sym} (${e.bars}d)`).join(", ")}
+              </div>
+            );
+          })()}
           <div className="text-[7px] mt-1" style={{ color: "#444" }}>
-            β/α from current book held constant over{" "}
-            {lookback === 21 ? "1M" : lookback === 63 ? "3M" : lookback === 126 ? "6M" : "1Y"}{" "}
-            window (holdings-based). RET ANN = geometric annualized (compounded). α &gt; 0 =
-            outperformed CAPM expectation. Low R² = returns weakly explained by {capm.benchmark}.
-            Short windows = noisier β.
+            <b>α = RET − EXPECT</b> where EXPECT = rf + β × (IDX − rf) — every number on the row is
+            on screen, so the arithmetic checks by hand. RET is the money-weighted XIRR over each
+            account&apos;s own span and IDX covers that same span (hover for XIRR and the cumulative
+            index move). β is the book held today, in {currency}, which is also what sizes the HEDGE
+            column: β × market value = the {capm.benchmark} notional that offsets the book. Nothing
+            here reads the trade log&apos;s DATES — they carry bulk-import placeholders, and a
+            date-driven version of this table reported +96% alpha for an account that returned
+            3.3%/yr. Greyed α = R² &lt; 0.10 ⚠, i.e. the wrong benchmark for this book, not low
+            risk. rf = {capm.rf_source ?? "—"}
+            {capm.rf_as_of ? ` (${String(capm.rf_as_of).slice(0, 10)})` : ""}, quoted in{" "}
+            {capm.rf_currency ?? "the report currency"} to match the returns. Benchmark data through{" "}
+            {capm.benchmark_last_date ?? "—"}.
           </div>
         </div>
       )}
@@ -1258,142 +1567,9 @@ export function AnalyticsTab({
             </ResponsiveContainer>
           </div>
         )}
-        {allocationData.length > 0 &&
-          (() => {
-            // biome-ignore lint/suspicious/noExplicitAny: untyped API response
-            const total = allocationData.reduce((s: number, d: any) => s + d.value, 0);
-            const sel = selectedSector
-              ? // biome-ignore lint/suspicious/noExplicitAny: untyped API response
-                allocationData.find((d: any) => d.sector === selectedSector)
-              : null;
-            const selTotal = sel?.value ?? 0;
-            return (
-              <div className="border p-2" style={{ borderColor: colors.border }}>
-                <div
-                  className="text-[9px] font-bold tracking-widest mb-2"
-                  style={{ color: colors.accent }}
-                >
-                  ALLOCATION (OPEN)
-                </div>
-                <div className="flex gap-3">
-                  <div className="flex-shrink-0" style={{ width: 130, height: 130 }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={allocationData}
-                          dataKey="value"
-                          nameKey="sector"
-                          cx="50%"
-                          cy="50%"
-                          innerRadius="42%"
-                          outerRadius="72%"
-                          paddingAngle={0}
-                          stroke="#0a0a0a"
-                          strokeWidth={1}
-                          // biome-ignore lint/suspicious/noExplicitAny: recharts event payload
-                          onClick={(d: any) =>
-                            setSelectedSector((s) => (s === d.sector ? null : d.sector))
-                          }
-                          style={{ cursor: "pointer" }}
-                        >
-                          {/* biome-ignore lint/suspicious/noExplicitAny: untyped API response */}
-                          {allocationData.map((d: any, i: number) => (
-                            <Cell
-                              key={d.sector ?? i}
-                              fill={ALLOC_COLORS[i % ALLOC_COLORS.length]}
-                              opacity={selectedSector && selectedSector !== d.sector ? 0.25 : 1}
-                            />
-                          ))}
-                        </Pie>
-                        <Tooltip
-                          contentStyle={{ ...tooltipContentStyle, fontSize: 9 }}
-                          labelStyle={tooltipLabelStyle}
-                          itemStyle={tooltipItemStyle}
-                          // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
-                          formatter={(v: any, _: any, p: any) => [
-                            `${sym}${fmtK(v)} (${total > 0 ? ((v / total) * 100).toFixed(1) : 0}%)`,
-                            p.payload.sector,
-                          ]}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="space-y-0.5 mb-1">
-                      {/* biome-ignore lint/suspicious/noExplicitAny: untyped API response */}
-                      {allocationData.map((d: any, i: number) => {
-                        const isSelected = selectedSector === d.sector;
-                        return (
-                          <button
-                            type="button"
-                            key={d.sector}
-                            onClick={() =>
-                              setSelectedSector((s) => (s === d.sector ? null : d.sector))
-                            }
-                            className="w-full flex items-center gap-1.5 text-[8px] font-mono px-1 py-0.5 rounded hover:opacity-90 transition-opacity"
-                            style={{
-                              background: isSelected
-                                ? `${ALLOC_COLORS[i % ALLOC_COLORS.length]}22`
-                                : "transparent",
-                              border: `1px solid ${isSelected ? `${ALLOC_COLORS[i % ALLOC_COLORS.length]}66` : "transparent"}`,
-                            }}
-                          >
-                            <span
-                              className="w-2 h-2 rounded-sm flex-shrink-0"
-                              style={{ background: ALLOC_COLORS[i % ALLOC_COLORS.length] }}
-                            />
-                            <span
-                              className="truncate"
-                              style={{ color: isSelected ? colors.text : colors.textSecondary }}
-                            >
-                              {d.sector}
-                            </span>
-                            <span
-                              className="ml-auto flex-shrink-0 font-bold"
-                              style={{ color: ALLOC_COLORS[i % ALLOC_COLORS.length] }}
-                            >
-                              {total > 0 ? ((d.value / total) * 100).toFixed(1) : 0}%
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-                {sel && (
-                  <div className="mt-2 pt-2 border-t" style={{ borderColor: colors.border }}>
-                    <div
-                      className="text-[8px] font-bold tracking-widest mb-1"
-                      style={{ color: colors.accent }}
-                    >
-                      {sel.sector} — {((sel.value / total) * 100).toFixed(1)}% of port
-                    </div>
-                    <div
-                      className="grid gap-px"
-                      style={{ gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))" }}
-                    >
-                      {/* biome-ignore lint/suspicious/noExplicitAny: untyped API response */}
-                      {(sel.symbols ?? []).map((s: any) => (
-                        <div
-                          key={s.symbol}
-                          className="flex items-center justify-between px-1.5 py-0.5 text-[8px] font-mono"
-                          style={{ background: "#0a0a0a" }}
-                        >
-                          <span className="font-bold" style={{ color: colors.accent }}>
-                            {s.symbol}
-                          </span>
-                          <span style={{ color: colors.textSecondary }}>
-                            {selTotal > 0 ? ((s.value / selTotal) * 100).toFixed(0) : 0}%
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
       </div>
+
+      <AllocationBasisCard accountId={accountId} currency={currency} colors={colors} />
 
       <div className="grid gap-2 p-2" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
         {(analytics?.by_sector ?? []).length > 0 && (
