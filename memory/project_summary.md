@@ -151,7 +151,7 @@ OPENAI_API_KEY      — optional
 | `alerts.py` | `/api/alerts` | stoploss + regime + SQLite (60s cache) |
 | `alert_rules.py` | `/api/alerts/rules*` (CRUD, preview, scan, events) | SQLite + boolean-AST engine |
 | `ticker.py` | `/api/ticker` (crawl-strip items + alerts) | reuses existing caches, TTL 60s |
-| `tail_risk.py` | `/api/tail-risk/{signals,vix-term}` | yfinance |
+| `tail_risk.py` | `/api/tail-risk/{signals,vix-term}` | **v2 (2026-08-16)**: `vol_indices.py` (CBOE CSV) + yfinance SPY/AGG/DCC + in-process calls to crisis/fear_greed/ticker. 6 risk dimensions, tri-state signals |
 | `analytics.py` | `/api/analytics/{corr,beta,vol,return,drawdown,sharpe,zscore,rsi,compare,rank}` | yfinance + TTLCache 300s |
 | `paper_trading.py` | `/api/paper/*` (accounts, orders, positions, fills, equity-curve) | yfinance + SQLite |
 | `providers.py` | `/api/providers` (list+health), `/api/providers/active` (switch), `/api/providers/auto-failover` | quote registry |
@@ -254,7 +254,8 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026
 12. **Options Greeks Q3 bug**: Fixed 2026-06-03 — was using d₂ instead of d₁, overestimating ~50-100%.
 13. **`npm run dev:all` Ctrl+C traceback**: Fixed 2026-08-01 — cosmetic only (every process always exited 0 and freed its port). `uvicorn --reload`'s supervisor SIGTERMs the worker mid-shutdown; `main.py` now filters that one benign `KeyboardInterrupt`/`CancelledError` record. Details in `reference/gotchas.md`.
 14. **Pane indicator heights don't persist** 🔴 open — dragging an RSI/MACD pane is lost on reload and panes can collapse to 0px on rebuild. Root-caused 2026-08-01 (lightweight-charts v5 converts `setHeight` px → stretch factor against a stale total). Plan: `plans/pane-height-persistence-fix.md`.
-15. **Volume Profile unavailable on rates/FX/VIX**: `^TNX`, `*=X`, `^VIX`, `^OVX` report `volume: 0` from Yahoo (calculated indices and yields have nothing trading behind them), so the VP button renders disabled with a tooltip. Cash indices (`^GSPC`/`^DJI`) DO carry volume — the gate is data-driven, not symbol-class-driven.
+15. **TAIL Layer-A z-score has a units mismatch** 🟡 open — `layer_a_bearish` compares a **20-day cumulative** SPY−AGG return against the mean/std of **daily** SPY−AGG returns, inflating |z| by roughly √20 (live reading 6.39). Threshold −0.5 is therefore far looser than it looks, which matches the backtest verdict SENSITIVE (fires 49% of days IS). Left as-is deliberately in tail-risk v2: changing the formula would invalidate the 2026-06-07 backtest it was measured with. Fix = rescale + re-backtest together.
+16. **Volume Profile unavailable on rates/FX/VIX**: `^TNX`, `*=X`, `^VIX`, `^OVX` report `volume: 0` from Yahoo (calculated indices and yields have nothing trading behind them), so the VP button renders disabled with a tooltip. Cash indices (`^GSPC`/`^DJI`) DO carry volume — the gate is data-driven, not symbol-class-driven.
 
 ---
 
@@ -265,6 +266,7 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026
 - [ ] Seed sector data: POST /api/sectors/fetch for TH/KR/HK/EU/US
 
 ### Features
+- [x] **TAIL Risk Monitor v2** — CBOE vol data (VIX/VIX9D/VIX3M/VIX6M/VVIX/SKEW/OVX/GVZ/VXN) แทน yfinance ที่ค้าง 28 วัน, tri-state signals, 6 risk dimensions, composite นับมิติไม่ใช่นับ signal — done 2026-08-16 (`plans/completed/tail-risk-v2.md`)
 - [x] **Company OUTLOOK (SEC EDGAR)** — guidance ที่บริษัทยื่นใน 8-K EX-99.1 + คำพูด CEO + MD&A forward-looking + งบ as-reported จาก XBRL; แท็บ OUTLOOK ใน stock-view + แถบใน NEWS — done 2026-08-15 (`plans/completed/company-outlook-edgar.md`)
 - [x] **Polymarket stock price ladders** — `/api/polymarket/stock/{sym}` แปลง touch ladder + "close above" CDF เป็น P(up)/skew/implied range; panel ใน NEWS + คอลัมน์ PM ใน MKT watchlist — done 2026-08-15 (`plans/completed/polymarket-stock-ladder.md`)
 - [x] **NEWS watchlist redesign** — ข่าวรายหุ้นจาก 7 แหล่ง (Yahoo/yfinance/Google/Bing/Seeking Alpha/Nasdaq/SEC), แบ่งกลุ่มตาม SECTOR อัตโนมัติ, ticker badge ทุกหัวข้อ, Polymarket จับคู่รายหุ้น — done 2026-08-15 (`plans/completed/news-watchlist-redesign.md`)

@@ -362,6 +362,24 @@ Auth: static token in `Authorization` header (no "Bearer" prefix — IBM API Con
   - Downloads: `^VIX`, `SPY`, `TLT`, `HYG`, `LQD`, `RSP` from yfinance
 - **Next.js proxy:** `app/api/fear-greed/route.ts` + `app/api/fear-greed/history/route.ts`
 
+## Tail Risk Monitor v2 (`routers/tail_risk.py`) — prefix `/api/tail-risk`
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /signals` | 6 risk dimensions + tri-state signals + vol board + 90d history + `data_health` |
+| `GET /vix-term` | VIX9D / VIX / VIX3M / VIX6M + backwardation flags + freshness |
+
+**Data sources (v2, 2026-08-16):**
+- Vol indices → `backend/vol_indices.py`, **CBOE daily CSVs** (`cdn.cboe.com/api/global/us_indices/daily_prices/{NAME}_History.csv`, keyless): VIX, VIX9D, VIX3M, VIX6M, VVIX, SKEW, OVX, GVZ, VXN. yfinance is a fallback for the five non-term-structure names only — its term-structure feed froze on 2026-07-17 and is what v1 was silently reading.
+- SPY/AGG (2y) + 7 DCC assets (600d) → yfinance
+- Credit / sentiment / regime → **in-process calls** to `crisis.get_crisis()`, `fear_greed.get_current()`, `ticker.get_ticker()` — no self-HTTP (v1 looped back through localhost:8000 and timed out on cold caches)
+
+**Contracts worth knowing:**
+- Every signal is `state: "on" | "off" | "unknown"`. `unknown` carries `reason` and must never be rendered as safe.
+- A vol series lagging VIX by > `MAX_STALE_DAYS` (4) is unusable — `VolFrame.value()` returns `None` rather than the last good print.
+- Risk level counts **dimensions in ALERT**, not signals: ≥3 → HIGH, ≥2 → ELEVATED, ≥1 alert or ≥2 watch → CAUTION.
+- Failure returns `{ok: false, error, detail, signals: [], ...}` — never a bare `{}` (that used to crash the view).
+
 ## Alert Ticker (`routers/alerts.py`)
 - `GET /api/alerts?account_id=all` — all active alerts (stop loss + regime change), 60s cache
   - Stop loss: persistent, state-based — fires when `current_price < stop_dynamic`

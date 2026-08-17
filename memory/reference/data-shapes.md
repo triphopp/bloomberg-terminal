@@ -417,6 +417,53 @@ Flags: `TREND_UP`/`TREND_DOWN`, `GOLDEN_CROSS`/`DEATH_CROSS`, `RSI_OVERBOUGHT`/`
 
 ---
 
+## Tail Risk Signals (`GET /api/tail-risk/signals`)
+
+```json
+{
+  "ok": true,
+  "data_date": "2026-08-14",
+  "risk_level": "NORMAL",
+  "alert_dimensions": [], "watch_dimensions": ["tail_pricing"],
+  "dimensions": [
+    { "id": "equity_vol", "label": "EQUITY VOL", "question": "Is equity volatility abnormal right now?",
+      "status": "NORMAL", "on_count": 0, "total": 3, "unknown_count": 0, "degraded": false,
+      "active_signals": [], "unknown_signals": [] }
+  ],
+  "signals": [
+    { "id": "vix_term_inversion", "label": "VIX Term Inversion", "dimension": "equity_vol",
+      "rule": "VIX9D > VIX (front) or VIX > VIX3M (back)", "why": "...",
+      "state": "off", "active": false, "value": null,
+      "detail": "9D 10.61 / 30D 14.25 / 3M 18.46", "reason": null,
+      "validated": true, "verdict": "USEFUL",
+      "stats": { "prec_is": 0.168, "rec_is": 0.875, "fires_is": 0.254, "fires_oos": 0.278,
+                 "prec_oos": null, "prec_fwd": null, "edge_fwd_pp": null, "note": null } }
+  ],
+  "vol_table": [
+    { "name": "VIX", "description": "S&P 500 30d implied vol", "value": 14.25, "change_1d": -0.38,
+      "z63": -1.65, "pctile_1y": 2.4, "ok": true, "last_date": "2026-08-14", "source": "cboe", "reason": null }
+  ],
+  "vix_term": { "vix9d": 10.61, "vix": 14.25, "vix3m": 18.46, "vix6m": 20.8,
+                "backwardation_front": false, "backwardation_back": false },
+  "fear_greed": 65.0, "spy_rsi": 65.8, "sector_regime": "DIVERGENT", "sector_corr": 0.283,
+  "crisis_level": 0, "dcc_v1_signal": "NORMAL", "dcc_v3_signal": "NORMAL",
+  "history": [ { "date": "2026-08-14", "signals_on": 1, "alert_dimensions": 0 } ],
+  "data_health": {
+    "ok": true, "reference_date": "2026-08-14", "degraded": [], "degraded_count": 0,
+    "unknown_signals": [],
+    "indices": [ { "name": "VIX9D", "ok": true, "source": "cboe", "last_date": "2026-08-14",
+                   "stale_days": 0, "reason": null } ],
+    "sources": { "cboe_vol_indices": true, "crisis_router": true, "fear_greed_router": true,
+                 "ticker_router": true, "spy_agg_prices": true, "dcc_assets": true }
+  }
+}
+```
+
+⚠️ `state` is **tri-state**. `"unknown"` means the input could not be verified — render it as NO DATA, not as
+"off". `value`/`z63`/`pctile_1y` are `null` for any index whose `ok` is false; the last good print is
+deliberately withheld so it cannot be compared against a current one.
+`verdict` is `"UNVALIDATED"` for the VVIX/SKEW/OVX/GVZ/VXN signals — they have no backtest, and `stats` is `null`.
+
 ## TypeScript Interfaces (key frontend types)
 
 ### `portfolio/types.ts`
