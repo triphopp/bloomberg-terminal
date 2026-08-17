@@ -38,6 +38,11 @@ import {
 } from "../atoms";
 import { SessionGlyph, extendedSessionMove, staleMoveStyle } from "../core/market-session";
 import {
+  type PredictionSummary,
+  probColor,
+  useStockPredictionSummaries,
+} from "../hooks/useStockPredictions";
+import {
   type TrendState,
   type WatchlistSignal,
   useWatchlistSignals,
@@ -313,6 +318,67 @@ function VolumeBar({
         {ratio.toFixed(1)}x
       </span>
     </div>
+  );
+}
+
+// ── Polymarket implied direction ─────────────────────────────────────────────
+
+/**
+ * P(up) from Polymarket's single-name equity markets, with the horizon it applies
+ * to — "62% 17d" reads as "the market charges 62c for this finishing higher inside
+ * 17 days". Blank when no live market exists for the symbol, which is most of them.
+ */
+function PredictionCell({
+  summary,
+  colors,
+}: {
+  summary: PredictionSummary | undefined;
+  colors: typeof bloombergColors.dark;
+}) {
+  if (!summary || summary.prob_up == null)
+    return (
+      <span className="text-[9px] font-mono" style={{ color: "#222" }}>
+        —
+      </span>
+    );
+
+  const prob = summary.prob_up;
+  const clr = probColor(prob);
+  const horizon = summary.horizon_days;
+  const basis =
+    summary.prob_up_source === "updown"
+      ? "closes up today"
+      : summary.prob_up_source === "cdf"
+        ? "closes above spot"
+        : summary.nearest_up
+          ? `trades ${summary.nearest_up.strike}`
+          : "implied up";
+
+  const body = (
+    <div className="flex items-center gap-1 justify-end">
+      <span className="text-[9px] font-mono font-bold" style={{ color: clr }}>
+        {Math.round(prob * 100)}%
+      </span>
+      {horizon != null && (
+        <span className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
+          {Math.round(horizon)}d
+        </span>
+      )}
+    </div>
+  );
+
+  const title = `Polymarket: ${Math.round(prob * 100)}% ${basis}${
+    horizon != null ? ` · ${horizon}d left` : ""
+  }${summary.skew != null ? ` · skew ${(summary.skew * 100).toFixed(0)}pp` : ""}${
+    summary.event_title ? `\n${summary.event_title}` : ""
+  }`;
+
+  return summary.url ? (
+    <a href={summary.url} target="_blank" rel="noopener noreferrer" title={title}>
+      {body}
+    </a>
+  ) : (
+    <span title={title}>{body}</span>
   );
 }
 
@@ -1161,6 +1227,16 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
   const signalSymbols = useMemo(() => [...new Set(pins.map((p) => p.symbol))], [pins]);
   const { signals, isLoading: signalsLoading } = useWatchlistSignals(signalSymbols);
 
+  // ── Polymarket implied direction (PM column) ─────────────────────────────
+  // Only plain US listings are worth asking about — Polymarket runs single-name
+  // equity ladders for those alone, never for indices (^VIX), FX, crypto pairs or
+  // foreign lines (.BK / .KS), so those are filtered out instead of round-tripping.
+  const predictionSymbols = useMemo(
+    () => signalSymbols.filter((s) => /^[A-Z][A-Z.\-]{0,5}$/.test(s) && !s.includes(".")),
+    [signalSymbols]
+  );
+  const { summaries: pmSummaries } = useStockPredictionSummaries(predictionSymbols);
+
   // ── CRUD Handlers ─────────────────────────────────────────────────────────
 
   const handleAddGroup = async (g: PinGroup) => {
@@ -1370,6 +1446,8 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
             : -99;
         case "rvol":
           return s?.rvol ?? -1;
+        case "pm":
+          return pmSummaries[pin.symbol]?.prob_up ?? -1;
         case "atr":
           return s?.atrPct ?? -1;
         case "sincePin": {
@@ -1382,7 +1460,7 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
           return 0;
       }
     },
-    [quotes, signals]
+    [quotes, signals, pmSummaries]
   );
 
   // ── Derived ─────────────────────────────────────────────────────────────
@@ -2101,6 +2179,8 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
                           </div>
                         </th>
                         <SortTh label="VOLUME" sortId="rvol" />
+                        {/* Polymarket implied P(up) over that market's own horizon */}
+                        <SortTh label="PM" sortId="pm" />
                         <th className="px-1 py-0.5 text-right whitespace-nowrap">
                           <span
                             className="text-[9px] font-bold tracking-wider"
@@ -2354,6 +2434,9 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
                                 />
                               </td>
                               <td className="px-1 py-0.5 text-right">
+                                <PredictionCell summary={pmSummaries[pin.symbol]} colors={colors} />
+                              </td>
+                              <td className="px-1 py-0.5 text-right">
                                 <div className="flex items-center justify-end gap-1">
                                   {pin.buyTarget != null ? (
                                     <span
@@ -2522,8 +2605,8 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
                               <span />
                             </div>
                           </td>
-                          {/* VOLUME · BUY/SELL */}
-                          <td colSpan={2} />
+                          {/* VOLUME · PM · BUY/SELL */}
+                          <td colSpan={3} />
                           <td className="px-1 py-0.5 text-right text-[9px]">
                             {(() => {
                               const rets = filteredPins
