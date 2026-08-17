@@ -40,6 +40,10 @@ backend/routers/__pycache__/
 
 # backend — cached external data + trained models (regenerated at runtime)
 backend/*_cache.json
+# FRED series cache — rewritten on every backend run, so tracking it turned
+# each session into a hundreds-of-lines diff on files nobody reads. The
+# backend refetches whatever is missing.
+backend/cache/
 backend/macro_series.json
 backend/credit_series.json
 backend/**/*.pkl
