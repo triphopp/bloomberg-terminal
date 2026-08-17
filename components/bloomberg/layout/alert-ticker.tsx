@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
+import { useMemo } from "react";
 import { tickerEnabledAtom } from "../atoms";
 import { useAlertNotifications } from "../hooks/useAlertNotifications";
 import { type AlertEvent, ruleDisplayName } from "../hooks/useAlertRules";
@@ -188,13 +189,83 @@ function ItemSegment({ item }: { item: TickerItem }) {
   );
 }
 
-/** Alert-rule event pill (backend/alerts) — cyan, so it reads as distinct
- *  from the stoploss/regime/DCC alerts that share this ticker. */
-function RuleEventSegment({ event }: { event: AlertEvent }) {
-  const values = Object.entries(event.snapshot)
-    .filter(([key]) => !key.startsWith("const:"))
-    .map(([, v]) => (typeof v === "number" ? v.toFixed(2) : "--"));
+// ── Rule-event grouping ───────────────────────────────────────────────────────
 
+/** One rule currently in breach for a symbol, carrying its latest reading. */
+interface RuleCondition {
+  ruleId: string;
+  label: string;
+  values: string;
+  /** How many times this rule has fired while unacked — `level` triggers
+   *  re-fire every bar, so the count is the only thing that was changing. */
+  count: number;
+  latestId: number;
+}
+
+interface SymbolAlertGroup {
+  symbol: string;
+  conditions: RuleCondition[];
+  latestId: number;
+}
+
+function snapshotValues(event: AlertEvent): string {
+  return Object.entries(event.snapshot)
+    .filter(([key]) => !key.startsWith("const:"))
+    .map(([, v]) => (typeof v === "number" ? v.toFixed(2) : "--"))
+    .join(" / ");
+}
+
+/**
+ * Collapse the raw event feed into one entry per symbol.
+ *
+ * The feed is append-only: a `level` rule re-fires on every bar it stays true,
+ * so a single standing condition arrives as N events with identical text and a
+ * drifting number. Rendering them one-per-pill made the ticker grow without
+ * bound. Keep only the newest event per (symbol, rule) — that's the current
+ * reading — and group those under the symbol.
+ */
+function groupRuleEvents(events: AlertEvent[]): SymbolAlertGroup[] {
+  const bySymbol = new Map<string, Map<string, RuleCondition>>();
+
+  for (const event of events) {
+    let rules = bySymbol.get(event.symbol);
+    if (!rules) {
+      rules = new Map();
+      bySymbol.set(event.symbol, rules);
+    }
+    // Events for a deleted rule have no name; fall back to the id so two
+    // different deleted rules don't merge into one line.
+    const key = event.ruleId || `#${event.id}`;
+    const prev = rules.get(key);
+    if (prev && prev.latestId >= event.id) {
+      prev.count += 1;
+      continue;
+    }
+    rules.set(key, {
+      ruleId: key,
+      label: ruleDisplayName(event.ruleName, event.symbol),
+      values: snapshotValues(event),
+      count: (prev?.count ?? 0) + 1,
+      latestId: event.id,
+    });
+  }
+
+  return [...bySymbol.entries()]
+    .map(([symbol, rules]) => {
+      const conditions = [...rules.values()].sort((a, b) => b.latestId - a.latestId);
+      return {
+        symbol,
+        conditions,
+        latestId: conditions.reduce((m, c) => Math.max(m, c.latestId), 0),
+      };
+    })
+    .sort((a, b) => b.latestId - a.latestId);
+}
+
+/** Alert-rule pill (backend/alerts) — cyan, so it reads as distinct from the
+ *  stoploss/regime/DCC alerts that share this ticker. One pill per symbol,
+ *  listing every condition that symbol currently satisfies. */
+function RuleEventSegment({ group }: { group: SymbolAlertGroup }) {
   return (
     <span
       className="inline-flex items-center gap-1.5 font-bold tracking-wide"
@@ -207,9 +278,27 @@ function RuleEventSegment({ event }: { event: AlertEvent }) {
     >
       <span style={{ fontSize: 10 }}>🔔</span>
       <span style={{ fontSize: 8, opacity: 0.75 }}>ALERT</span>
-      <span>{event.symbol}</span>
-      <span style={{ opacity: 0.85 }}>{ruleDisplayName(event.ruleName, event.symbol)}</span>
-      {values.length > 0 && <span style={{ opacity: 0.7 }}>{values.join(" / ")}</span>}
+      <span>{group.symbol}</span>
+      {group.conditions.length > 1 && (
+        <span
+          style={{
+            fontSize: 8,
+            opacity: 0.9,
+            backgroundColor: "#33DDFF",
+            color: "#003844",
+            padding: "0 3px",
+          }}
+        >
+          {group.conditions.length}
+        </span>
+      )}
+      {group.conditions.map((c, i) => (
+        <span key={c.ruleId} className="inline-flex items-center gap-1">
+          {i > 0 && <span style={{ opacity: 0.4 }}>·</span>}
+          <span style={{ opacity: 0.85 }}>{c.label}</span>
+          {c.values && <span style={{ opacity: 0.6 }}>{c.values}</span>}
+        </span>
+      ))}
     </span>
   );
 }
@@ -293,6 +382,7 @@ export function AlertTicker() {
   // Also the app's single mount point for toast/sound delivery — the ticker
   // is always mounted, so the hook doesn't need a component of its own.
   const { tickerEvents } = useAlertNotifications();
+  const ruleGroups = useMemo(() => groupRuleEvents(tickerEvents), [tickerEvents]);
 
   if (!enabled) return null;
 
@@ -306,9 +396,9 @@ export function AlertTicker() {
 
     // Rule events lead: they're the ones the user explicitly asked to be told
     // about, unlike the standing stoploss/regime watches behind them.
-    for (const event of tickerEvents) {
-      parts.push(<RuleEventSegment key={`re${event.id}`} event={event} />);
-      parts.push(<span key={`res${event.id}`}>{SEP}</span>);
+    for (const group of ruleGroups) {
+      parts.push(<RuleEventSegment key={`re${group.symbol}`} group={group} />);
+      parts.push(<span key={`res${group.symbol}`}>{SEP}</span>);
     }
 
     for (let i = 0; i < alerts.length; i++) {
@@ -339,7 +429,7 @@ export function AlertTicker() {
   }
 
   // Duration: ~4s per item, min 30s
-  const durationSec = Math.max(30, items.length * 4 + alerts.length * 6 + tickerEvents.length * 6);
+  const durationSec = Math.max(30, items.length * 4 + alerts.length * 6 + ruleGroups.length * 6);
 
   return (
     <div
