@@ -50,6 +50,7 @@ import type { IndicatorRegistryEntry, OhlcvBar } from "../chart";
 import { FearGreedPane } from "../chart/FearGreedPane";
 import { PEPane } from "../chart/PEPane";
 import { BloombergButton } from "../core/bloomberg-button";
+import { CompanyOutlookPanel } from "../core/company-outlook-panel";
 import { ExtendedHoursPrice, MarketSessionBadge } from "../core/market-session";
 import { useStockQuality } from "../hooks/useMarketQuality";
 import {
@@ -145,6 +146,7 @@ type FinancialMetric = "revenue" | "netIncome" | "eps" | "freeCashFlow" | "gross
 type PeriodMode = "annual" | "quarterly";
 type AnalysisTab =
   | "financials"
+  | "outlook"
   | "keymetrics"
   | "quantitative"
   | "options"
@@ -5220,6 +5222,7 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
             {(
               [
                 { id: "financials", label: "FINANCIALS" },
+                { id: "outlook", label: "OUTLOOK" },
                 { id: "keymetrics", label: "KEY METRICS" },
                 { id: "analyst", label: "ANALYST" },
                 { id: "estimates", label: "ESTIMATES" },
@@ -5256,6 +5259,9 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
               activeSymbol={activeSymbol}
               colors={colors}
             />
+          )}
+          {analysisTab === "outlook" && activeSymbol && (
+            <CompanyOutlookPanel symbol={activeSymbol} colors={colors} />
           )}
           {analysisTab === "keymetrics" && <KeyMetricsTab quote={quote} colors={colors} />}
           {analysisTab === "quantitative" && (

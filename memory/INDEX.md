@@ -238,3 +238,4 @@ memory/
 4. **View ใหม่** → atom → `useTerminalUI.ts` → `bloomberg-terminal.tsx` → `terminal-header.tsx`
 5. **ห้าม rename** Jotai atom values · cache file names · env var names (cascade breakage)
 6. **ห้ามเปลี่ยน API response shape** — frontend จะพัง
+- [TAIL Risk Monitor v2](plans/completed/tail-risk-v2.md) — CBOE vol data + 6 risk dimensions + tri-state signals (done 2026-08-16); debt report: `reports/tail-risk-debt-report.md`

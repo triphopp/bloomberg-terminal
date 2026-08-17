@@ -307,7 +307,7 @@ function BloombergTerminal() {
       case "portfolio":
         return <MemoPortfolio />;
       case "tail":
-        return <MemoTailRisk onBack={handleBack} />;
+        return <MemoTailRisk />;
       default:
         return <MarketView isDarkMode={isDarkMode} />;
     }

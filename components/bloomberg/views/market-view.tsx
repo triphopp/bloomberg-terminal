@@ -59,6 +59,7 @@ import type { BarInterval, IndicatorRegistryEntry, OhlcvBar, TimePeriod } from "
 import { FearGreedPane } from "../chart/FearGreedPane";
 import { PEPane } from "../chart/PEPane";
 import { ExtendedHoursPrice, MarketSessionBadge, staleMoveStyle } from "../core/market-session";
+import { UsMarketClock } from "../core/us-market-clock";
 import { type FxPair, useFxTicks } from "../hooks/useFxTicks";
 import { useMarketDataQuery } from "../hooks/useMarketDataQuery";
 import { type RateRowData, useRatesCurve } from "../hooks/useRatesCurve";
@@ -1638,6 +1639,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
             </button>
           </div>
         </div>
+        <UsMarketClock colors={colors} />
         <div className="flex-1 overflow-y-auto overflow-x-hidden" style={SCROLLBAR_THIN_LIGHTER}>
           {
             <table className="w-full text-[10px] font-mono" style={{ borderCollapse: "collapse" }}>
