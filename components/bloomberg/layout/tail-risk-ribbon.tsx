@@ -1,189 +1,190 @@
 "use client";
 
+/**
+ * Always-on TAIL strip. Shows the six risk dimensions rather than individual
+ * signal names: at 18px tall there is no room for a signal list, and "which
+ * kind of risk is lit" is the question a glance can actually answer.
+ *
+ * A dimension whose data could not be verified reads NO DATA, never NORMAL —
+ * the previous strip could print "ALL CLEAR" while its inputs were offline.
+ */
+
 import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
 import { currentViewAtom } from "../atoms";
 
-interface TailSummary {
-  composite_active:        boolean;
-  validated_active_count:  number;
-  validated_active_signals: string[];
+type DimensionStatus = "ALERT" | "WATCH" | "NORMAL" | "UNKNOWN";
+type RiskLevel = "HIGH" | "ELEVATED" | "CAUTION" | "NORMAL";
+
+interface Dimension {
+  id: string;
+  label: string;
+  status: DimensionStatus;
+  on_count: number;
+  total: number;
+  unknown_count: number;
+}
+
+interface RibbonData {
+  ok: boolean;
+  risk_level: RiskLevel;
+  dimensions: Dimension[];
+  alert_dimensions: string[];
+  watch_dimensions: string[];
   vix_term?: {
-    vix:                  number | null;
-    backwardation_front:  boolean;
-    backwardation_back:   boolean;
+    vix: number | null;
+    backwardation_front: boolean | null;
+    backwardation_back: boolean | null;
   };
-  fg_synthetic?: number | null;
-  dcc_v1_signal?: string;  // NORMAL | CAUTION | SPIKE | EXTREME
+  vol_table?: { name: string; value: number | null; z63: number | null; ok: boolean }[];
+  fear_greed?: number | null;
+  dcc_v1_signal?: string;
   dcc_v3_signal?: string;
+  data_health?: { degraded_count?: number };
 }
 
-const SIGNAL_SHORT: Record<string, string> = {
-  "g1_vix_backwardation": "VIX BKWD",
-  "g1_vix_spike":         "VIX SPIKE",
-  "g1_vix_momentum":      "VIX MOM",
-  "g5_fg_extreme_fear":   "F&G FEAR",
-  "g6_sector_convergent": "SECT CORR",
-  "g7_rsi_oversold":      "RSI<35",
-  "g8_layer_a_bearish":   "LAYER-A",
-  "g10_volume_surge":     "VOL SURGE",
-  "g12_composite":        "COMPOSITE",
-  "g13_dcc_v1":           "DCC-V1",
-  "g14_dcc_hmm":          "DCC-HMM",
+/** Short tags — the full dimension labels don't fit an 18px strip. */
+const SHORT: Record<string, string> = {
+  equity_vol: "EQ-VOL",
+  tail_pricing: "TAIL",
+  cross_asset_vol: "X-ASSET",
+  credit_stress: "CREDIT",
+  flow_positioning: "FLOW",
+  correlation: "CORR",
 };
 
-const DCC_LEVEL_COLOR: Record<string, string> = {
-  EXTREME: "#FF3333",
-  SPIKE:   "#FF8800",
-  CAUTION: "#CCAA00",
-  NORMAL:  "#336633",
+const STATUS_COLOR: Record<DimensionStatus, { fg: string; bg: string; border: string }> = {
+  ALERT: { fg: "#FF3333", bg: "#260000", border: "#5a0000" },
+  WATCH: { fg: "#FFAA00", bg: "#1a1200", border: "#4a3200" },
+  NORMAL: { fg: "#3a6b48", bg: "#050a06", border: "#16241a" },
+  UNKNOWN: { fg: "#8a6a3a", bg: "#0f0900", border: "#2a1a00" },
 };
 
-function ribbonColor(count: number, composite: boolean): { bg: string; border: string; text: string } {
-  if (composite && count >= 3) return { bg: "#1a0000", border: "#440000", text: "#FF3333" };
-  if (count >= 2)              return { bg: "#0f0800", border: "#332000", text: "#FF8800" };
-  if (count >= 1)              return { bg: "#0a0a00", border: "#2a2a00", text: "#CCAA00" };
-  return                              { bg: "#000000", border: "#111111", text: "#336633" };
-}
+const RISK_BADGE: Record<RiskLevel, { bg: string; border: string; fg: string }> = {
+  HIGH: { bg: "#AA0000", border: "#550000", fg: "#FFDDDD" },
+  ELEVATED: { bg: "#994400", border: "#552200", fg: "#FFEEDD" },
+  CAUTION: { bg: "#665500", border: "#332a00", fg: "#FFF3CC" },
+  NORMAL: { bg: "#141414", border: "#242424", fg: "#4a4a4a" },
+};
 
 export function TailRiskRibbon() {
   const [currentView, setCurrentView] = useAtom(currentViewAtom);
 
-  const { data } = useQuery<TailSummary>({
-    queryKey:        ["tail-risk-signals"],
-    queryFn:         () => fetch("/api/tail-risk/signals").then(r => r.json()),
-    staleTime:       240_000,
+  const { data } = useQuery<RibbonData>({
+    queryKey: ["tail-risk-signals"],
+    queryFn: () => fetch("/api/tail-risk/signals").then((r) => r.json()),
+    staleTime: 240_000,
     refetchInterval: 300_000,
   });
 
-  const count     = data?.validated_active_count ?? 0;
-  const composite = data?.composite_active       ?? false;
-  const active    = data?.validated_active_signals ?? [];
-  const vix       = data?.vix_term?.vix;
-  const bkwd      = data?.vix_term?.backwardation_front || data?.vix_term?.backwardation_back;
-  const fg        = data?.fg_synthetic;
-  const dccV1     = data?.dcc_v1_signal ?? "NORMAL";
-  const dccV3     = data?.dcc_v3_signal ?? "NORMAL";
-
-  const colors = ribbonColor(count, composite);
   const isActive = currentView === "tail";
+  const level: RiskLevel = data?.risk_level ?? "NORMAL";
+  const badge = RISK_BADGE[level] ?? RISK_BADGE.NORMAL;
+  const dims = data?.dimensions ?? [];
+  const degraded = data?.data_health?.degraded_count ?? 0;
+  const failed = data != null && data.ok === false;
+
+  const vix = data?.vix_term?.vix;
+  const inverted =
+    data?.vix_term?.backwardation_front === true || data?.vix_term?.backwardation_back === true;
+  const byName = new Map((data?.vol_table ?? []).map((r) => [r.name, r]));
+
+  /** VVIX and SKEW ride along in the strip: they move on different information
+   *  than VIX and are the cheapest early read on tail demand. */
+  const extras = ["VVIX", "SKEW"]
+    .map((n) => byName.get(n))
+    .filter((r): r is NonNullable<typeof r> => !!r && r.ok && r.value != null);
 
   return (
-    <div
-      className="shrink-0 flex items-center gap-0 border-t cursor-pointer select-none font-mono"
+    // A real <button>: the strip toggles a view, so it should be reachable and
+    // activatable by keyboard without reimplementing what the element already does.
+    <button
+      type="button"
+      className="shrink-0 w-full flex items-center gap-0 border-t cursor-pointer select-none font-mono text-left"
       style={{
-        height:          18,
-        backgroundColor: isActive ? "#0a0500" : colors.bg,
-        borderColor:     isActive ? "#FF6600" : colors.border,
+        height: 18,
+        backgroundColor: isActive ? "#0a0500" : level === "NORMAL" ? "#000000" : `${badge.bg}22`,
+        borderColor: isActive ? "#FF6600" : level === "NORMAL" ? "#111111" : badge.border,
       }}
+      aria-label={isActive ? "Leave tail risk view" : "Open tail risk view"}
       onClick={() => setCurrentView(isActive ? "market" : "tail")}
     >
-      {/* Label */}
       <span
         className="shrink-0 flex items-center justify-center h-full px-2 border-r font-bold tracking-widest"
         style={{
-          backgroundColor: composite ? "#880000" : count >= 1 ? "#664400" : "#1a1a1a",
-          borderColor:     composite ? "#440000" : "#2a2a2a",
-          color:           composite ? "#FF6666" : count >= 1 ? "#FFAA44" : "#444444",
-          fontSize:        7.5,
-          minWidth:        38,
+          backgroundColor: badge.bg,
+          borderColor: badge.border,
+          color: badge.fg,
+          fontSize: 7.5,
+          minWidth: 38,
         }}
       >
         TAIL
       </span>
 
-      {/* Signal pills */}
       <div className="flex items-center gap-1 px-2 h-full overflow-hidden">
-        {count === 0 && dccV1 === "NORMAL" && dccV3 === "NORMAL" ? (
-          <span style={{ color: "#336633", fontSize: 7.5 }}>ALL CLEAR — 0 SIGNALS ACTIVE</span>
+        {failed ? (
+          <span style={{ color: "#FF4444", fontSize: 7.5 }}>TAIL DATA UNAVAILABLE</span>
+        ) : dims.length === 0 ? (
+          <span style={{ color: "#333", fontSize: 7.5 }}>LOADING RISK DIMENSIONS...</span>
         ) : (
           <>
-            {count > 0 && (
-              <span style={{ color: colors.text, fontSize: 7.5, fontWeight: "bold" }}>
-                {count} ACTIVE:
-              </span>
-            )}
-            {active.map(sid => {
-              // DCC pills show their level (SPIKE/EXTREME) inline for clarity
-              let label = SIGNAL_SHORT[sid] ?? sid.replace(/g\d+_/, "").toUpperCase();
-              let pillColor = composite ? "#FF8888" : "#FF9933";
-              let pillBg    = composite ? "#330000" : "#1a0f00";
-              let pillBorder = composite ? "#550000" : "#3a2000";
-
-              if (sid === "g13_dcc_v1" && dccV1 !== "NORMAL") {
-                label = `DCC:${dccV1 === "EXTREME" ? "EXT" : dccV1}`;
-                pillColor  = DCC_LEVEL_COLOR[dccV1] ?? pillColor;
-                pillBg     = dccV1 === "EXTREME" ? "#200000" : "#1a0800";
-                pillBorder = dccV1 === "EXTREME" ? "#550000" : "#3a1800";
-              } else if (sid === "g14_dcc_hmm" && dccV3 !== "NORMAL") {
-                label = `HMM:${dccV3 === "EXTREME" ? "EXT" : dccV3}`;
-                pillColor  = DCC_LEVEL_COLOR[dccV3] ?? pillColor;
-                pillBg     = dccV3 === "EXTREME" ? "#200010" : "#0e0a1a";
-                pillBorder = dccV3 === "EXTREME" ? "#550033" : "#281844";
-              }
-
+            <span style={{ color: badge.fg, fontSize: 7.5, fontWeight: "bold" }}>{level}</span>
+            {dims.map((d) => {
+              const c = STATUS_COLOR[d.status];
+              const muted = d.status === "NORMAL";
               return (
                 <span
-                  key={sid}
-                  className="px-1 py-0"
+                  key={d.id}
+                  className="px-1"
                   style={{
-                    backgroundColor: pillBg,
-                    color:           pillColor,
-                    fontSize:        7,
-                    border:          `1px solid ${pillBorder}`,
-                    letterSpacing:   "0.05em",
+                    color: c.fg,
+                    backgroundColor: c.bg,
+                    border: `1px solid ${c.border}`,
+                    fontSize: 6.5,
+                    letterSpacing: "0.05em",
+                    opacity: muted ? 0.55 : 1,
+                    fontWeight: muted ? "normal" : "bold",
                   }}
+                  title={`${d.label}: ${d.status} — ${d.on_count}/${d.total} signals on${
+                    d.unknown_count ? `, ${d.unknown_count} without data` : ""
+                  }`}
                 >
-                  {label}
+                  {SHORT[d.id] ?? d.label}
+                  {d.status === "UNKNOWN" ? "?" : d.on_count > 0 ? ` ${d.on_count}` : ""}
                 </span>
               );
             })}
-            {composite && (
-              <span style={{ color: "#FF4444", fontSize: 7, fontWeight: "bold" }}>
-                ● COMPOSITE
-              </span>
-            )}
           </>
         )}
       </div>
 
-      {/* Right: DCC status + VIX + F&G */}
       <div className="ml-auto flex items-center gap-2 px-2 shrink-0">
-        {/* DCC compact status — always shown, color-coded by level */}
-        <span
-          style={{
-            color:       DCC_LEVEL_COLOR[dccV1] ?? "#444",
-            fontSize:    7,
-            fontWeight:  dccV1 !== "NORMAL" ? "bold" : "normal",
-            opacity:     dccV1 === "NORMAL" ? 0.4 : 1,
-          }}
-        >
-          DCC:{dccV1 === "NORMAL" ? "OK" : dccV1 === "EXTREME" ? "EXT" : dccV1}
-        </span>
-        <span
-          style={{
-            color:       DCC_LEVEL_COLOR[dccV3] ?? "#444",
-            fontSize:    7,
-            fontWeight:  dccV3 !== "NORMAL" ? "bold" : "normal",
-            opacity:     dccV3 === "NORMAL" ? 0.4 : 1,
-          }}
-        >
-          HMM:{dccV3 === "NORMAL" ? "OK" : dccV3 === "EXTREME" ? "EXT" : dccV3}
-        </span>
+        {extras.map((r) => (
+          <span
+            key={r.name}
+            style={{
+              color: r.z63 != null && r.z63 > 1.5 ? "#FF8800" : "#444",
+              fontSize: 7,
+            }}
+            title={`${r.name} z63 ${r.z63 ?? "--"}`}
+          >
+            {r.name} {r.value?.toFixed(r.name === "SKEW" ? 0 : 1)}
+          </span>
+        ))}
         {vix != null && (
-          <span style={{ color: bkwd ? "#FF4444" : "#444", fontSize: 7.5 }}>
-            VIX {vix.toFixed(1)}{bkwd ? " BKWD" : ""}
+          <span style={{ color: inverted ? "#FF4444" : "#555", fontSize: 7.5 }}>
+            VIX {vix.toFixed(1)}
+            {inverted ? " INV" : ""}
           </span>
         )}
-        {fg != null && (
-          <span style={{ color: fg < 25 ? "#FF6600" : "#444", fontSize: 7.5 }}>
-            F&G {fg.toFixed(0)}
+        {degraded > 0 && (
+          <span style={{ color: "#B06000", fontSize: 7 }} title="Signals with unverifiable data">
+            ⚠ {degraded} NO DATA
           </span>
         )}
-        <span style={{ color: "#222", fontSize: 7 }}>
-          {isActive ? "v" : "^"} TAIL
-        </span>
+        <span style={{ color: "#222", fontSize: 7 }}>{isActive ? "v" : "^"} TAIL</span>
       </div>
-    </div>
+    </button>
   );
 }
