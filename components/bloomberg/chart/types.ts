@@ -96,7 +96,90 @@ export interface HistogramDataPoint {
   color?: string;
 }
 
-export type IndicatorSeriesType = "line" | "histogram" | "area";
+export type IndicatorSeriesType = "line" | "histogram" | "area" | "heatmap";
+
+/**
+ * One column of a heatmap pane: a bar time plus one value per row.
+ *
+ * `values[i]` belongs to `rows[i]` of the owning output — the renderer never
+ * infers row order, so a column with the wrong length is dropped rather than
+ * silently mis-stacked.
+ */
+export interface HeatmapColumn {
+  time: string | number;
+  values: (number | null)[];
+  /** Row index to outline as "this is where price actually is/landed". */
+  markRow?: number | null;
+  /**
+   * Per-row text drawn inside the cell when it is wide enough, bottom row first.
+   * Carried on the column rather than derived from `values` because the useful
+   * label is often NOT the plotted number — an SD heatmap cell is coloured by an
+   * occupancy frequency but reads best labelled with the price at that sigma.
+   */
+  cellLabels?: (string | null)[];
+}
+
+/**
+ * Fixed strip down the right edge of a heatmap pane, one entry per row.
+ *
+ * The cells themselves are only as wide as a bar, so on a young series (a
+ * handful of columns) or a zoomed-out chart there is nowhere to print the price
+ * and probability each row stands for. The rail always has room, and it does not
+ * scroll away with the data.
+ */
+export interface HeatmapRail {
+  /** Primary line per row, bottom row first — e.g. the price at that sigma. */
+  rows: string[];
+  /** Optional second line per row, e.g. the probability of reaching it. */
+  subRows?: (string | null)[];
+  /** Heading drawn above the strip. */
+  title?: string;
+}
+
+/** Maps a cell value to a fill. Returning null leaves the cell unpainted. */
+export type HeatmapColorScale = (value: number, rowIndex: number) => string | null;
+
+/**
+ * What a row stands for, drawn in the pane's left gutter.
+ *
+ * Two fields rather than one string so they can be typeset apart — the level is
+ * the primary reading and the odds are context beside it, which a single
+ * pre-joined label cannot express.
+ */
+export interface HeatmapRowLabel {
+  /** Primary: which row this is, e.g. "+1σ". */
+  level: string;
+  /** Secondary: the odds of that outcome, e.g. "15.9%". */
+  odds?: string;
+  /** Overrides the level's colour — e.g. tinting upside rows differently. */
+  color?: string;
+}
+
+export interface HeatmapSpec {
+  /** Row labels, bottom row first — matching each column's `values` order. */
+  rows: (string | HeatmapRowLabel)[];
+  columns: HeatmapColumn[];
+  colorScale: HeatmapColorScale;
+  /** Outline color for `markRow`. */
+  markColor?: string;
+  /** Formats a cell value when the column supplies no `cellLabels`. */
+  formatValue?: (value: number) => string;
+  /**
+   * Right-edge strip of per-row reference values, used ONLY as a fallback: when
+   * the cells are wide enough to print their own values the rail would just
+   * repeat them, so it is dropped and its width returned to the plot.
+   */
+  rail?: HeatmapRail;
+  /**
+   * Drawn in the middle of the pane when there is nothing to plot.
+   *
+   * A heatmap with no columns is otherwise indistinguishable from a broken one:
+   * the pane still exists (it is created from the indicator, not from the data),
+   * so without this the user gets an empty box and no way to tell whether the
+   * indicator is loading, starved of data, or simply not working.
+   */
+  emptyMessage?: string;
+}
 
 export interface IndicatorSeriesOutput {
   id: string;
@@ -107,6 +190,13 @@ export interface IndicatorSeriesOutput {
   lineWidth?: number;
   priceScaleId?: string; // separate scale for pane indicators
   opacity?: number;
+  /**
+   * Required when `type === "heatmap"`, ignored otherwise. Heatmap cells are not
+   * expressible as a lightweight-charts series, so the pane hosts an invisible
+   * anchor series and the cells are painted by a canvas primitive attached to
+   * it (see chart/heatmap-overlay.ts). `data` stays empty for these.
+   */
+  heatmap?: HeatmapSpec;
 }
 
 // ── Indicator Plugin Interface ───────────────────────────────────────────────
@@ -168,6 +258,12 @@ export interface IndicatorRegistryEntry {
    * durations — standard deviations, thresholds, ratios must never be scaled.
    */
   timeScalableParams?: string[];
+  /**
+   * Auto-layout height in px for this indicator's pane, when the default is too
+   * small to be legible. Only a ceiling request — the layout still caps it at the
+   * space actually available, and a user drag still wins.
+   */
+  preferredPaneHeight?: number;
   /** Values this indicator exposes for use as an alert Operand (plan §2). */
   outputs?: IndicatorOutput[];
   /** Named predicate templates for the alert rule builder (plan §2, §8.5). */

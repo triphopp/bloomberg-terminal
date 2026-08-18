@@ -36,6 +36,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { chartPaneHeightsAtom, chartRsiScaleAtom } from "../atoms";
 import { createEventRailOverlay } from "./event-rail-overlay";
 import { placeEvents } from "./event-reaction";
+import { createHeatmapOverlay } from "./heatmap-overlay";
+import { getIndicatorEntry } from "./indicators";
 import { calcRSIState } from "./indicators/rsi";
 import { priceForRsi } from "./indicators/rsiInverse";
 import {
@@ -230,10 +232,24 @@ export function ModularChart({
   }, [data, rsiIndicator, rsiPeriod, rsiScale.basis]);
   const overlayIndicators = indicators.filter((i) => i.type === "overlay");
   const paneKeys = paneIndicators.map((i) => paneKey(i.id));
+  // Height preferences are looked up from the registry rather than carried on the
+  // instance: they are a property of the indicator's shape (how many rows it
+  // stacks), not of the params the user picked.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the id list, not the instances — params must not re-run this
+  const preferredHeights = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const indicator of paneIndicators) {
+      const entry = getIndicatorEntry(indicator.id);
+      if (entry?.preferredPaneHeight) out[paneKey(indicator.id)] = entry.preferredPaneHeight;
+    }
+    return out;
+  }, [paneIndicators.map((i) => i.id).join(",")]);
+
   const { chartHeight, heightFor } = computePaneLayout(
     availableHeight > 0 ? availableHeight : height,
     paneKeys,
-    paneHeights
+    paneHeights,
+    preferredHeights
   );
   // Serialised layout — the effect must rebuild when a restored height changes,
   // and `heightFor` is a fresh closure every render so it cannot be a dep itself.
@@ -356,6 +372,45 @@ export function ModularChart({
 
       for (const output of outputs) {
         const isVolume = output.priceScaleId === "vol";
+
+        if (output.type === "heatmap") {
+          if (!output.heatmap) continue;
+          // The cells are painted by a primitive, but a primitive has to hang off
+          // a series and a pane needs a series to size itself — hence a fully
+          // transparent anchor series holding one point per column. Its price
+          // range is pinned so lightweight-charts cannot autoscale to a single
+          // value and collapse the pane.
+          const anchor = subPane.addSeries(LineSeries, {
+            color: "transparent",
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+            autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 1 } }),
+          });
+          // Anchor points. When the heatmap has no columns (its data has not
+          // accumulated yet) the series is seeded from the chart's own bars
+          // instead: a series with no data at all is not rendered, and the
+          // primitive would go down with it — taking the "why am I empty"
+          // message with it, which is exactly when that message is needed.
+          const anchorPoints = output.heatmap.columns.length
+            ? output.heatmap.columns.map((c) => ({ time: c.time, value: 0.5 }))
+            : // One bar means first and last are the same time, and duplicate
+              // times are rejected outright.
+              [...new Set([data[0].time, data[data.length - 1].time])].map((time) => ({
+                time,
+                value: 0.5,
+              }));
+          // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
+          anchor.setData(anchorPoints as any[]);
+          const primitive = new OverlayPrimitive(
+            createHeatmapOverlay(output.heatmap),
+            data,
+            isDarkSurface(container, isDark)
+          );
+          anchor.attachPrimitive(primitive);
+          continue;
+        }
 
         if (output.type === "histogram") {
           const series = subPane.addSeries(HistogramSeries, {

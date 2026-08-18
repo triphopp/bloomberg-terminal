@@ -77,10 +77,21 @@ export interface PaneLayout {
   heightFor: (key: string) => number;
 }
 
+/**
+ * Auto-size a pane, honouring what the indicator says it needs.
+ *
+ * `SUB_PANE_MAX` (80px) suits a single line or histogram, but a pane that stacks
+ * rows divides that height among them: the SD heatmap's five σ rows got ~9px
+ * each, which is less than its own 9px type, so every label collapsed into an
+ * unreadable pile. An indicator that needs more room now says so
+ * (`IndicatorRegistryEntry.preferredPaneHeight`) instead of every pane being
+ * sized for the simplest case.
+ */
 export function computePaneLayout(
   available: number,
   paneKeys: string[],
-  overrides: Record<string, number>
+  overrides: Record<string, number>,
+  preferred: Record<string, number> = {}
 ): PaneLayout {
   const paneCount = paneKeys.length;
   if (paneCount === 0) {
@@ -92,18 +103,25 @@ export function computePaneLayout(
   const autoCount = paneCount - custom.length;
   const customTotal = custom.reduce((sum, k) => sum + clampPaneHeight(overrides[k]), 0);
 
-  const subPaneHeight =
-    autoCount > 0
-      ? Math.max(
-          SUB_PANE_MIN,
-          Math.min(SUB_PANE_MAX, Math.floor((available - MAIN_PANE_MIN - customTotal) / autoCount))
-        )
-      : 0;
+  const autoKeys = paneKeys.filter((k) => overrides[k] == null);
+  const share =
+    autoCount > 0 ? Math.floor((available - MAIN_PANE_MIN - customTotal) / autoCount) : 0;
+
+  // Each auto pane gets its own ceiling: its preferred height when it declares
+  // one, the shared default otherwise. The share of available space is still the
+  // limit — a preference asks for room, it does not seize it.
+  const autoHeight = (key: string) =>
+    Math.max(SUB_PANE_MIN, Math.min(preferred[key] ?? SUB_PANE_MAX, share));
+
+  // Reported for callers that want "the" sub-pane height; with mixed preferences
+  // there is no single answer, so this is the plain default-capped one.
+  const subPaneHeight = autoCount > 0 ? Math.max(SUB_PANE_MIN, Math.min(SUB_PANE_MAX, share)) : 0;
 
   const heightFor = (key: string) =>
-    overrides[key] != null ? clampPaneHeight(overrides[key]) : subPaneHeight;
+    overrides[key] != null ? clampPaneHeight(overrides[key]) : autoHeight(key);
 
   // Below this the panes would have to shrink past their minimum, so scroll instead.
-  const needed = MAIN_PANE_MIN + customTotal + autoCount * subPaneHeight;
+  const autoTotal = autoKeys.reduce((sum, k) => sum + autoHeight(k), 0);
+  const needed = MAIN_PANE_MIN + customTotal + autoTotal;
   return { chartHeight: Math.max(available, needed), subPaneHeight, heightFor };
 }

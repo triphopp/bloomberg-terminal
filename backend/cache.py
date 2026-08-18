@@ -120,6 +120,20 @@ class TTLCache:
         with self._lock:
             self._store.pop(key, None)
 
+    def delete_prefix(self, prefix: str) -> int:
+        """Remove every key starting with `prefix`. Returns how many went.
+
+        For invalidating a whole family of entries at once when the underlying
+        data changes — a cache key that encodes its query parameters (symbol,
+        period, mode…) fans out into many keys per subject, and forgetting to
+        drop them all means a write is invisible until the TTL expires.
+        """
+        with self._lock:
+            doomed = [k for k in self._store if k.startswith(prefix)]
+            for k in doomed:
+                del self._store[k]
+            return len(doomed)
+
     def clear(self) -> None:
         """Remove all entries."""
         with self._lock:

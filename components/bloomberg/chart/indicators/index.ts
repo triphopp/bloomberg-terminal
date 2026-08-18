@@ -23,6 +23,13 @@ export { createRealizedVol } from "./realized-vol";
 export { createRVRank } from "./rv-rank";
 export { createRVRatio } from "./rv-ratio";
 export {
+  createSdHeatmap,
+  cheapnessColor,
+  occupancyColor,
+  SD_HEATMAP_MODES,
+} from "./sd-heatmap";
+export type { SdBandRow, SdBandsPayload } from "./sd-heatmap";
+export {
   calcRealizedVol,
   inferPeriodsPerYear,
   rollingPercentRank,
@@ -68,6 +75,7 @@ import { RV_ESTIMATOR_OPTIONS } from "./rv-core";
 import { createRVRank } from "./rv-rank";
 import { createRVRatio } from "./rv-ratio";
 import { createRVOL } from "./rvol";
+import { SD_HEATMAP_MODES, createSdHeatmap } from "./sd-heatmap";
 import { createSMA } from "./sma";
 import { createStochastic } from "./stochastic";
 import { createVolume } from "./volume";
@@ -307,6 +315,58 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     // Thresholds are ratios, not durations — only the two windows rescale.
     timeScalableParams: ["fast", "slow"],
     factory: createRVRatio,
+  },
+  {
+    id: "sd-heatmap",
+    name: "IV SD Heatmap",
+    category: "volatility",
+    type: "pane",
+    description:
+      "BS σ-bands from ATM IV mid — 5 buckets (−2σ…+2σ) by realized occupancy or IV-vs-RV cheapness",
+    defaultParams: [
+      {
+        key: "mode",
+        label: "Mode",
+        type: "select",
+        default: "cheapness",
+        options: [...SD_HEATMAP_MODES],
+      },
+      {
+        key: "horizonDays",
+        label: "Horizon (cal. days)",
+        type: "number",
+        default: 30,
+        min: 1,
+        max: 365,
+        step: 1,
+      },
+      {
+        key: "rvWindow",
+        label: "RV window",
+        type: "number",
+        default: 21,
+        min: 5,
+        max: 252,
+        step: 1,
+      },
+      {
+        key: "occWindow",
+        label: "Occupancy window",
+        type: "number",
+        default: 63,
+        min: 5,
+        max: 500,
+        step: 1,
+      },
+    ],
+    // Nothing here is measured in bars: the horizon is CALENDAR days (it has to
+    // be, to match `T = D/365` in the pricing), and the two windows are counted
+    // in daily IV snapshots regardless of the interval on screen.
+    factory: createSdHeatmap,
+    // Five stacked rows whose entire purpose is the numbers in them. At 190px a
+    // row is 38px, which carries 14px type comfortably; the 80px default gave
+    // 16px rows, and the 44px floor 9px — smaller than the text itself.
+    preferredPaneHeight: 190,
   },
 
   // ─── Volume ───

@@ -134,6 +134,7 @@
 | `FACEBOOK_ACCESS_TOKEN` | FB social feed falls back to RSSHub (may be rate-limited) |
 | `CLIPPINGS_DIR` | Clippings view empty (default: `./data/clippings`) |
 | `SYNC_DIR` (unset/unreachable) | Cloud sync silent no-op — app runs local-only (fail-soft, never blocks startup); SYNC chip shows OFFLINE |
+| `IV_SNAPSHOT_INTERVAL=0` | ATM IV recorder off → SD heatmap stops gaining columns. **The gap is permanent**: the provider exposes only the CURRENT IV of a chain, so a day nobody recorded can never be back-filled |
 
 ## Anti-pattern: SQLite `.db` on a cloud drive
 
@@ -348,3 +349,166 @@ Used by `routers/news_watchlist.py` (`_SEC_UA`) and `routers/company_filings.py`
 **CAGR ใน `/api/v2/portfolio/returns` มีตัวส่วนบวม (2026-08-16)** 🟡 open — `portfolio_v2.py:2411` `a.invested += cost` บวกทุกครั้งที่ซื้อ รวมเงินที่ขายแล้วหมุนกลับมาซื้อใหม่ → บัญชีที่เทรดบ่อยถูกกดต่ำตามจำนวนรอบ (Dime ซื้อรวม 4.70M บนเงินจริง 763K = บวม 6.2 เท่า → CAGR 3.33% ขณะที่ XIRR 13.06%)
 อาการ: การ์ดบนโชว์ `Total Return +34.0%` (P&L ÷ เงินที่ใส่จริง, สะสม) แต่ CAGR โชว์ +3.3% — ตัวเลขคนละตัวส่วนคนละหน่วย
 CAPM `RET` เปลี่ยนไปใช้ **XIRR** แล้ว (กระแสเงินสดมีวันที่ เงินคืนไม่ถูกนับซ้ำ) แต่การ์ด RETURNS ยังใช้ CAGR ตัวเดิมอยู่
+
+## Bug: `events.filter is not a function` — white screen เมื่อ backend สะดุด (open, พบ 2026-08-17)
+
+**Symptom:** panel ที่ไม่เกี่ยวกันหายไปทั้งแถบ + console `TypeError: events.filter is not a function` หลัง `502 (Bad Gateway)`
+
+**Cause:** `useAlertEvents` ([useAlertRules.ts:166](../../components/bloomberg/hooks/useAlertRules.ts)) ใช้ `.then(r => r.json())` โดยไม่เช็ค `r.ok`. Next proxy ตอบ `{ "error": "..." }` เมื่อ backend timeout → React Query เก็บ **object** เป็น success data → `query.data ?? []` ไม่ช่วย (object เป็น truthy) → `events.filter(...)` throw ที่ระดับ layout ซึ่งไม่มี error boundary
+
+**Pattern ที่ต้องระวังทั่วโปรเจกต์:** ทุก `queryFn` ที่เขียน `.then((r) => r.json())` แล้วผู้เรียกคาดว่าได้ array — `?? []` กันได้แค่ `undefined` ไม่ได้กัน error object. ต้อง `if (!res.ok) throw` + `Array.isArray(data) ? data : []`
+
+ไม่ต้องดับ backend ก็เกิดได้ — endpoint ที่ 502/503 เป็นช่วง (yfinance rate limit) พอแล้ว
+รายละเอียด + จุดที่ throw ทั้งหมด: `reports/alert-events-shape-risk-report.md`
+
+## ATM IV: `expirations[0]` มักเป็น 0DTE และ mid ของมันไม่มีความหมาย (แก้แล้ว 2026-08-17)
+
+**Symptom:** `σ_mid = (IV_call + IV_put)/2` ได้ค่าเพี้ยน — วัดสดวันที่ 17 ส.ค. 2026 ได้
+SPY call 12.3% / put 15.8%, AMD call 19.5% / **put 59.7%** (ต่างกัน 40 vol points)
+
+**Cause:** `ticker.options[0]` = expiry ที่ใกล้สุด ซึ่งบนดัชนี/หุ้นใหญ่มี expiry รายวัน/รายสัปดาห์
+→ ได้ 0DTE ที่ ATM IV สะท้อน pin risk + gamma ไม่ใช่มุมมองต่อ vol 30 วัน
+call กับ put ฝั่งเดียวกันจึงแยกกันคนละทาง และ mid ไม่มีความหมาย
+
+**Fix:** `routers/options.py::pick_snapshot_expiry()` — เลือก expiry ที่ `|dte − target|` น้อยสุด
+โดยตัด `dte < IV_SNAPSHOT_MIN_DTE` (7) ออกก่อน, tie แตกไปทาง expiry ยาวกว่า
+`/sd-bands` ก็เลือกด้วย `MIN(ABS(dte − horizon_days))` ต่อวัน (ไม่ใช่ `MIN(dte)`) + กรอง `dte >= 7`
+
+**หลังแก้:** SPY 13.3/12.3, AMD 53.4/54.1 — call/put ตรงกันแล้ว
+
+**ใช้ซ้ำได้:** ทุกที่ที่จะอ่าน IV/Greeks จาก chain ต้องเลือก expiry ตามเทเนอร์ที่ต้องการ
+ห้ามหยิบ `expirations[0]` — เว้นแต่ต้องการ 0DTE จริงๆ
+
+## FastAPI: เรียก endpoint coroutine ตรงๆ จาก background job = `Query` object หลุดเข้าโค้ด (แก้แล้ว 2026-08-18)
+
+**Symptom:** `TypeError: unsupported operand type(s) for -: 'int' and 'Query'` — และเพราะ caller
+จับ exception ต่อ symbol แล้ว log เป็น "failed" เฉยๆ จึงเงียบสนิท: scheduler รันทุกรอบ
+บันทึกไม่สำเร็จสักตัว โดยไม่มีอะไรพัง
+
+**Cause:** default ของพารามิเตอร์ FastAPI (`target_dte: int = Query(30, ...)`) เป็น **marker object**
+จะกลายเป็นค่าจริงก็ต่อเมื่อ framework resolve ให้ตอนมี HTTP request. background thread ที่เรียก
+`await endpoint(symbol)` ตรงๆ จึงได้ `Query` แทน `int`
+
+**Fix:** แยก core ออกเป็นฟังก์ชันธรรมดา (`record_snapshot_now`) แล้วให้ endpoint เป็น wrapper บางๆ
+background job เรียก core ตรง
+
+**ทำไมเทสต์ไม่จับ:** เทสต์ scheduler ทั้งหมด mock ตัว recorder ทิ้ง → ทดสอบ "loop เรียกอะไรบ้าง"
+ไม่ได้ทดสอบ "เรียกแล้วทำงานไหม". เพิ่ม `test_the_whole_path_records_with_the_provider_stubbed`
+ที่ stub เฉพาะ provider แล้วปล่อยให้ผ่าน recorder จริง + guard ว่า default ไม่ใช่ Query
+
+**Pattern:** ทุกครั้งที่ logic ถูกเรียกทั้งจาก HTTP และจาก job/CLI — core ต้องเป็นฟังก์ชันธรรมดา
+และต้องมีเทสต์อย่างน้อย 1 ตัวที่วิ่งผ่าน seam จริงไม่ใช่ mock
+
+## ATM IV ต่ำผิดปกติ (<3%) = chain ไม่มี quote จริง ไม่ใช่ vol ต่ำ (แก้แล้ว 2026-08-18)
+
+**Symptom:** SKHY บันทึกได้ `iv_mid = 1.56%` เทียบ realized vol 111% → σ-band กว้าง ±0.45%
+→ heatmap ขึ้น tail "ถูกสุดขีด" (+0.488/+0.362) ทั้งที่เป็นขยะ
+
+**Cause:** chain บาง (ADR/GDR, IPO ใหม่) ตั้งราคา option ที่ intrinsic เพราะไม่มีคนเสนอราคา
+→ solve implied vol ย้อนกลับได้ค่าใกล้ 0 ซึ่งไม่ใช่ vol
+
+**Fix:** `IV_SANITY_MIN = 0.03` / `IV_SANITY_MAX = 5.0` ใน `routers/options.py` — ปฏิเสธตั้งแต่ตอนเขียน
+และกรองตอนอ่านด้วย (แถวเก่าที่บันทึกไว้ก่อนมีเกณฑ์จะได้ไม่ทำ pane เพี้ยนตลอดไป)
+เกณฑ์ล่างต่ำกว่า vol จริงของ bond ETF (~10%) มาก จึงไม่ตัดของจริง
+
+## snapshot ที่ตกวันไม่มีแท่งราคา (วันหยุด) ทำ pane ว่างทั้งอัน (แก้แล้ว 2026-08-18)
+
+**Symptom:** `snapshotCount: 1` แต่ `series: []` — และ `sigmaRv: null`
+
+**Cause:** `/sd-bands` หา anchor ด้วย **exact date match** กับ price history. snapshot ที่บันทึกวันหยุด
+(หรือก่อนตลาดเปิด) ไม่มีแท่งของตัวเอง → ไม่มี realized vol → cheapness mode `continue` ทิ้งทั้งแถว
+ตัวอย่างจริง: 2026-08-17 ตลาดสหรัฐปิด (history ข้าม 08-14 → 08-18)
+
+**Fix:** ใช้ `_bar_at_or_before()` (bisect) แทน exact match — ทั้ง anchor spot และ RV
+และ **stamp คอลัมน์ที่แท่งจริง** (`row["time"] = dates[anchor_idx]`, เก็บ `snapshotDate` ไว้ต่างหาก)
+เพราะ frontend จับคู่คอลัมน์กับแท่งด้วยวันที่ — คอลัมน์ที่ stamp วันไม่มีแท่งจะถูก renderer ทิ้งเงียบๆ
+แม้ backend คำนวณถูกทุกอย่าง
+
+## Pane indicator ที่ซ้อนหลายแถว: 80px default เตี้ยเกินไป (แก้แล้ว 2026-08-18)
+
+**Symptom:** ตัวเลขใน SD heatmap ไปกองซ้อนกันที่มุมขวา อ่านไม่ออก
+
+**Cause:** `computePaneLayout` cap ทุก sub-pane ที่ `SUB_PANE_MAX = 80` (floor 44) ซึ่งพอดีสำหรับ
+เส้นเดียว/histogram แต่ pane ที่ซ้อน N แถวต้องหารความสูงนั้น — heatmap 5 แถวได้แถวละ **9–16px**
+ซึ่งเท่าหรือน้อยกว่าขนาดตัวอักษร 9px เอง → ข้อความจากแถวติดกันทับกันหมด
+
+**Fix 2 ชั้น:**
+1. `IndicatorRegistryEntry.preferredPaneHeight` (optional) — indicator บอกความสูงที่ต้องการเอง
+   (`sd-heatmap: 130` → แถวละ 26px). เป็นเพดานที่ "ขอ" ไม่ใช่ "ยึด": layout ยังจำกัดด้วยพื้นที่จริง
+   และ user drag ยังชนะเสมอ
+2. overlay ลดระดับการแสดงผลตามความสูง **ก่อน** ที่ตัวอักษรจะทับกัน — ไม่ใช่ปล่อยให้ทับ:
+   `rowH < 13` ไม่แสดง rail เลย · `< 18` แสดงเฉพาะ ±2σ กับ 0 · `< 22` ตัดบรรทัด prob · `< 26` ตัด title
+
+**บทเรียนสำหรับ pane indicator ใหม่:** ถ้าจะซ้อนแถว ให้คำนวณ `paneHeight / rowCount` เทียบกับ
+font size ก่อน แล้วประกาศ `preferredPaneHeight` — และ **font ต้อง scale ตาม rowH** ไม่ใช่ fix
+
+**⚠️ กับดักตอนแก้: "ซ่อนเมื่อที่ไม่พอ" ทำให้กลายเป็นจอว่าง**
+รอบแรกผมแก้ด้วยการซ่อนข้อความเมื่อ `rowH` ต่ำกว่าเกณฑ์ → ผู้ใช้รายงานทันทีว่า "ไม่ขึ้นอะไรเลย"
+ซึ่งแย่กว่าตัวเลขทับกัน. หลักที่ถูก: **ย่อก่อน ซ่อนทีหลัง** และสิ่งที่เป็นแก่นของ pane
+(ในที่นี้คือราคา) ต้องไม่ถูกซ่อนเลย — ให้เล็กลงถึงพื้น 6px แทน
+
+## Heatmap cell ผูกความกว้างกับ `barSpacing` = ซีรีส์สั้นมองไม่เห็น (แก้แล้ว 2026-08-18)
+
+**Symptom:** heatmap "ไม่ขึ้นอะไรเลย" ทั้งที่ endpoint คืนข้อมูลถูกต้อง
+
+**Cause:** `cellW = barSpacing * 0.9` เหมาะกับ heatmap หนาแน่น แต่พังกับซีรีส์ที่เพิ่งเริ่ม —
+2 คอลัมน์บนชาร์ต 1 ปี ห่างกัน ~250 แท่ง → `barSpacing ≈ 2px` → กล่องกว้าง **1.8px**
+มองแทบไม่เห็นบนจอ และไม่มีทางใส่ตัวเลขลงไปได้เลย
+
+**Fix:** ความกว้างมาจาก **ระยะห่างระหว่างคอลัมน์จริง** ไม่ใช่ bar pitch:
+`cellW = clamp(max(barSpacing*0.9, 52), 1, minGap*0.95)` — ซีรีส์สั้นได้กล่องกว้าง 52px อ่านออก,
+ซีรีส์หนาแน่นยังชิดแท่งเป๊ะเหมือนเดิม (เพราะ `minGap` เป็นเพดาน)
+ข้อความที่กว้างเกินกล่องถูก **ข้าม** ไม่ใช่ล้น — ล้นแล้วจะอ่านเป็นค่าของคอลัมน์ข้างๆ
+
+**ใช้ซ้ำได้:** overlay ใดๆ ที่วาดเป็น "บล็อกต่อจุดข้อมูล" ต้องคิดความกว้างจากความหนาแน่นของ
+*ข้อมูลตัวเอง* ไม่ใช่ของ price series ที่มันวางทับอยู่
+
+**เทสต์ที่ควรมี:** stub 2D context ต้องบันทึก `textBaseline` + font size ด้วย ไม่ใช่แค่ `y` —
+ไม่งั้นเทสต์ overlap จะ false positive (baseline `bottom` กับ `top` ที่ y ห่างกัน 1 ไม่ได้ทับกันจริง)
+ดู `__tests__/heatmap-overlay.test.ts::textBox`
+
+## SD band: สูตร BS ถูก แต่ input มีข้อจำกัด 3 ข้อ (ตรวจแล้ว 2026-08-18)
+
+**ตรวจอะไรไปบ้าง** (`tests/test_sd_bands.py`): `P(S_T ≥ K)` ของเราตรงกับ `N(d2)` ถึงหลัก 12,
+bucket probs ตรงกับ Monte Carlo 2 ล้าน path (z < 1), martingale `E[S_T] = forward` ผ่าน,
+cross-sigma (cheapness) ก็ตรงกับ MC → **สูตรไม่มีปัญหา**
+
+**ข้อจำกัดอยู่ที่ input ไม่ใช่สูตร:**
+
+| # | สมมติฐาน | ขนาดความคลาดเคลื่อน (AMD 30d) |
+|---|---|---|
+| 1 | ใช้ ATM IV ตัวเดียวทั้ง band | 🔴 **~3%** ที่หาง — market IV ที่ ±2σ = 60% เทียบ ATM 54.6% → **band แคบเกินจริง** |
+| 2 | `q = 0` (ไม่คิดปันผล) | <0.1% ที่ 30 วัน (สำคัญที่ horizon 1 ปี) |
+| 3 | σ จาก expiry 32 วัน แต่ T = 30 วัน | ~1% |
+
+ข้อ 1 สำคัญสุดและมีทิศทางชัด: **ประเมินความเสี่ยงหางต่ำกว่าจริง** ไม่ใช่สูงเกิน
+แก้ให้ถูกต้องต้องเก็บ smile ทั้งเส้น (ไม่ใช่ค่าเดียว) แล้ว solve แต่ละ level ด้วย IV ของ strike ตัวเอง
+
+**บทเรียนทั่วไป:** เวลาตรวจโมเดลการเงิน ให้แยก "สูตรถูกไหม" (cross-check กับ closed form + MC)
+ออกจาก "input สมเหตุผลไหม" (เทียบกับราคาตลาดจริง) — ผ่านข้อแรกไม่ได้แปลว่าผ่านข้อสอง
+
+## Yahoo `impliedVolatility` มาจากไหน และเชื่อได้แค่ไหน (ตรวจ 2026-08-18)
+
+**สายข้อมูล:** `yf.Ticker().option_chain(exp).calls/.puts` → คอลัมน์ `impliedVolatility` —
+**เราไม่ได้ solve เอง** รับค่าที่ Yahoo คำนวณมาแล้ว
+
+**ตรวจแล้วว่า Yahoo ใช้ mid ของ bid/ask ไม่ใช่ lastPrice** (SNDK 2026-09-18, solve เองด้วย BS):
+- `IV(mid)` ที่ solve เอง = yahooIV ของ call เป๊ะทุก strike (92.0 vs 92.0, 92.9 vs 93.0…)
+- `IV(last)` เพี้ยนหนัก (116%, 155%) เพราะ last stale/thin → **อย่าใช้ lastPrice คำนวณ IV เอง**
+
+**แต่ Yahoo คำนวณเทียบ SPOT และสมมติ q=0** ไม่ได้ปรับเป็น forward:
+- SNDK put-call parity ให้ implied forward 1639.20 ขณะที่ spot 1619.33 (+1.23% ใน 31 วัน)
+  → implied carry **q = −10.5%/ปี** = hard-to-borrow (ยืมหุ้นชอร์ตแพง)
+- ผลคือ call IV (89%) กับ put IV (81%) **ห่างกัน 8pp ทั้งที่ vol เดียวกัน**
+- solve ใหม่เทียบ forward จริง (Black-76): gap เหลือ **−0.9pp** → ยืนยันว่า 8pp นั้นคือ carry ไม่ใช่ vol
+
+**เหตุผลที่ `σ_mid = (IV_call + IV_put)/2` เป็นสูตรที่ดีกว่าที่คิด:** carry ดัน call IV ขึ้นและ put IV
+ลงในปริมาณใกล้เคียงกัน การเฉลี่ยจึงตัดกันเอง —
+`σ_mid` = 84.8% เทียบ forward-implied จริง 86.0% ต่างแค่ **1.4%** สำหรับหุ้นที่ carry เพี้ยนถึง −10.5%
+(หุ้นปกติที่ carry ≈ 0 จะไม่ต่างเลย). ไม่ใช่การเฉลี่ยมั่ว แต่ชดเชย bias ได้เกือบหมด
+
+**ถ้าจะให้แม่นกว่านี้:** solve IV เองด้วย Black-76 เทียบ forward ที่ได้จาก put-call parity
+(bid/ask มีอยู่ใน chain แล้ว) — ได้ความแม่นเพิ่ม ~1.4% เฉพาะกรณี hard-to-borrow
+
+**ตรวจ carry ผิดปกติได้เร็วๆ:** `C_mid − P_mid` ที่ ATM ควรใกล้ `S − K·e^{−rT}`
+ถ้าห่างมากแปลว่ามี q/borrow cost ที่โมเดลไม่รู้

@@ -61,6 +61,7 @@ from routers import market, stock, options, pins, clippings, news, news_watchlis
 import sync
 from sync.gate import is_synced_write, should_gate
 from alerts import scheduler as alert_scheduler
+import iv_scheduler
 
 app = FastAPI(title="Market Data API")
 
@@ -95,6 +96,12 @@ ensure_calibrated(triggered_by="startup")
 
 # ── Alert rules: periodic scan (no-ops while no rule is enabled) ──────────────
 alert_scheduler.start_background_scan()
+
+# ── ATM IV snapshots: daily recorder (no-ops once the day is covered) ─────────
+# The provider exposes no IV history, so a day nobody records is a permanent hole
+# in the SD-band series — this is the only writer that does not depend on the user
+# happening to open the right screen. See iv_scheduler for the gating rules.
+iv_scheduler.start_background_recorder()
 
 # ── Mount routers ─────────────────────────────────────────────────────────────
 app.include_router(market.router)

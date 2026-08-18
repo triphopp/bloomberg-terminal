@@ -1,10 +1,23 @@
+import math
 import uuid
-from typing import Any
+from bisect import bisect_left, bisect_right
+from datetime import date, datetime, timedelta
+from typing import Any, Optional, Sequence
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from analytics.sd_bands import (
+    BUCKET_PROBS,
+    LEVEL_EXCEED_PROBS,
+    SD_LEVELS,
+    atm_iv_pair,
+    bucket_of,
+    bucket_probs_under,
+    realized_vol_series,
+    sd_band,
+)
 from cache import TTLCache
 from db import get_db
 from greeks import compute_greeks, estimate_moments
@@ -16,6 +29,7 @@ router = APIRouter()
 
 _options_chain_cache = TTLCache(ttl=300, maxsize=100)
 _options_surface_cache = TTLCache(ttl=600, maxsize=100)
+_sd_bands_cache = TTLCache(ttl=600, maxsize=60)
 
 # Swap provider here — nothing else changes
 _provider = YahooOptionsProvider()
@@ -78,15 +92,18 @@ async def get_options_chain(symbol: str, expiry: str | None = Query(None)):
         put_volume = sum(p.get("volume", 0) for p in puts)
         pc_ratio = round(put_oi / call_oi, 4) if call_oi > 0 else 0.0
 
-        if spot > 0:
-            atm_calls = [
-                c["impliedVolatility"] for c in calls
-                if abs(c.get("strike", 0) - spot) / spot <= 0.03
-                and c.get("impliedVolatility", 0) > 0
-            ]
-            iv_current = round(float(pd.Series(atm_calls).median()), 4) if atm_calls else 0.0
-        else:
-            iv_current = 0.0
+        iv_call, iv_put, iv_mid, atm_strike = atm_iv_pair(calls, puts, spot)
+        # `ivCurrent` predates the put side and is call-only by definition —
+        # existing callers read it as "ATM call IV", so it keeps that meaning
+        # and the mid is exposed alongside rather than replacing it.
+        iv_current = round(iv_call, 4) if iv_call is not None else 0.0
+
+        # Accumulating the IV history is a side effect of normal chain use: the
+        # provider has no IV history to back-fill from, so a series only exists
+        # if snapshots are written as they pass through.
+        _record_iv_snapshot(
+            symbol, target_expiry, spot, atm_strike, iv_call, iv_put, iv_mid
+        )
 
         freshness = _provider.make_freshness().__dict__
 
@@ -98,6 +115,10 @@ async def get_options_chain(symbol: str, expiry: str | None = Query(None)):
             "calls": calls,
             "puts": puts,
             "ivCurrent": iv_current,
+            "ivCall": round(iv_call, 4) if iv_call is not None else None,
+            "ivPut": round(iv_put, 4) if iv_put is not None else None,
+            "ivMid": round(iv_mid, 4) if iv_mid is not None else None,
+            "atmStrike": atm_strike,
             "pcRatio": pc_ratio,
             "callOI": call_oi,
             "putOI": put_oi,
@@ -175,6 +196,536 @@ async def get_options_surface(symbol: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch volatility surface: {str(e)}")
+
+
+# ── IV snapshots + SD bands ───────────────────────────────────────────────────
+
+def _dte(expiry: str) -> int:
+    """Calendar days to expiry, floored at 0. -1 signals an unparseable date."""
+    try:
+        exp = datetime.strptime(expiry, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return -1
+    return max((exp - date.today()).days, 0)
+
+
+#: Expiries this close in are excluded from the σ-band snapshot. Near-dated ATM
+#: options are dominated by pin risk and gamma, not by any view on 30-day vol:
+#: measured live on 2026-08-17 the 0DTE ATM pair came out at 12.3% call / 15.8%
+#: put on SPY and 19.5% / 59.7% on AMD, so the "mid" of the two was meaningless.
+IV_SNAPSHOT_MIN_DTE = 7
+
+#: Horizon the snapshot is meant to describe, so the term structure is sampled
+#: near the tenor the heatmap projects over rather than at whatever expires next.
+IV_SNAPSHOT_TARGET_DTE = 30
+
+#: Sanity band for a stored ATM implied vol, as a decimal.
+#:
+#: A thin chain quotes options at (or near) intrinsic value because nothing is
+#: actually bid — solving that back out produces an "implied vol" of a percent or
+#: two, which is not a vol at all. Observed live: SK hynix's ADR came back at
+#: 1.56% ATM against 111% realized, which drew a σ-band ±0.45% wide and lit the
+#: tails as maximally cheap. That is a data artefact presented as a signal, so it
+#: is refused at the door rather than filtered downstream.
+#:
+#: The floor sits well under any real equity or ETF 30-day vol (a quiet bond ETF
+#: still prints ~10%); the ceiling is above even a squeezing meme name.
+IV_SANITY_MIN = 0.03
+IV_SANITY_MAX = 5.0
+
+
+def pick_snapshot_expiry(
+    expirations: Sequence[str],
+    target_dte: int = IV_SNAPSHOT_TARGET_DTE,
+    min_dte: int = IV_SNAPSHOT_MIN_DTE,
+) -> Optional[str]:
+    """The expiry whose DTE sits closest to `target_dte`, ignoring the front week.
+
+    `expirations[0]` — the obvious choice — is wrong here: on any Friday (or an
+    index with daily expiries) that is a 0DTE contract whose ATM IV says nothing
+    about a 30-day move. Ties break toward the LONGER expiry, which is the calmer
+    of the two.
+
+    Falls back to the longest expiry available when everything is inside
+    `min_dte`, and returns None only for an empty chain.
+    """
+    dated = [(e, _dte(e)) for e in expirations]
+    dated = [(e, d) for e, d in dated if d >= 0]
+    if not dated:
+        return None
+
+    eligible = [(e, d) for e, d in dated if d >= min_dte]
+    if not eligible:
+        return max(dated, key=lambda pair: pair[1])[0]
+
+    return min(eligible, key=lambda pair: (abs(pair[1] - target_dte), -pair[1]))[0]
+
+
+def _record_iv_snapshot(
+    symbol: str,
+    expiry: str,
+    spot: float,
+    atm_strike: Optional[float],
+    iv_call: Optional[float],
+    iv_put: Optional[float],
+    iv_mid: Optional[float],
+) -> bool:
+    """Upsert today's ATM IV for (symbol, expiry). Never raises.
+
+    Called from the chain endpoint, so a schema problem or a locked DB must not
+    take the chain down with it — the snapshot is a side effect, not the answer.
+    Re-fetching the same day overwrites: the later read is the fresher one.
+    """
+    if iv_mid is None or spot <= 0:
+        return False
+    if not (IV_SANITY_MIN <= iv_mid <= IV_SANITY_MAX):
+        return False
+    dte = _dte(expiry)
+    if dte < 0:
+        return False
+
+    try:
+        with get_db() as conn:
+            conn.execute(
+                """
+                INSERT INTO iv_snapshots
+                    (symbol, snapshot_date, expiry, dte, spot, atm_strike,
+                     iv_call, iv_put, iv_mid, source)
+                VALUES (?,?,?,?,?,?,?,?,?,'yfinance')
+                ON CONFLICT(symbol, snapshot_date, expiry) DO UPDATE SET
+                    dte        = excluded.dte,
+                    spot       = excluded.spot,
+                    atm_strike = excluded.atm_strike,
+                    iv_call    = excluded.iv_call,
+                    iv_put     = excluded.iv_put,
+                    iv_mid     = excluded.iv_mid,
+                    created_at = datetime('now')
+                """,
+                (
+                    symbol.upper(),
+                    date.today().isoformat(),
+                    expiry,
+                    dte,
+                    float(spot),
+                    float(atm_strike) if atm_strike else None,
+                    float(iv_call) if iv_call is not None else None,
+                    float(iv_put) if iv_put is not None else None,
+                    float(iv_mid),
+                ),
+            )
+        # The σ-band answer is derived from exactly the rows just changed, and its
+        # key fans out over period/mode/horizon/windows — so every variant for this
+        # symbol has to go. Without this, recording a snapshot stays invisible for
+        # the full 600s TTL and the pane keeps insisting there is no IV history,
+        # which is precisely the moment the user is looking at it.
+        _sd_bands_cache.delete_prefix(f"sd:{symbol.upper()}:")
+        return True
+    except Exception:
+        return False
+
+
+def _risk_free_rate() -> float:
+    """US short rate for the risk-neutral drift, with a static fallback.
+
+    Imported lazily: routers.risk pulls in the whole risk stack, which this
+    module has no other reason to load.
+    """
+    try:
+        from routers.risk import _risk_free
+        return float(_risk_free("USD")["rate"])
+    except Exception:
+        return 0.0425
+
+
+def _finite_or_none(x: float) -> Optional[float]:
+    """JSON has no infinity — the two open bucket edges serialise as null."""
+    return None if math.isinf(x) or math.isnan(x) else round(x, 4)
+
+
+def record_snapshot_now(
+    symbol: str,
+    expiry: str | None = None,
+    target_dte: int = IV_SNAPSHOT_TARGET_DTE,
+) -> dict[str, Any]:
+    """Fetch and store today's ATM IV. Plain function, callable off the web path.
+
+    Split out from the endpoint on purpose: FastAPI parameter defaults are
+    `Query(...)` marker objects, which only become real values when the framework
+    resolves them. The background recorder called the endpoint coroutine directly
+    and got `Query` where it expected an int, so every scheduled snapshot died in
+    `pick_snapshot_expiry` with "unsupported operand type(s) for -: 'int' and
+    'Query'" — silently, since the caller logs failures per symbol.
+
+    Raises HTTPException so both callers report the same statuses (404 no chain,
+    422 nothing usable).
+    """
+    symbol = symbol.upper()
+    try:
+        ticker = market_data.get_ticker(symbol)
+        expirations = ticker.options
+        if not expirations:
+            raise HTTPException(status_code=404, detail=f"No options available for {symbol}")
+
+        target_expiry = (
+            expiry
+            if expiry and expiry in expirations
+            else pick_snapshot_expiry(expirations, target_dte)
+        )
+        if not target_expiry:
+            raise HTTPException(status_code=404, detail=f"No usable expiry for {symbol}")
+
+        chain = ticker.option_chain(target_expiry)
+        spot = ticker.info.get("regularMarketPrice") or ticker.info.get("currentPrice") or 0
+
+        calls = clean_df(chain.calls)
+        puts = clean_df(chain.puts)
+        iv_call, iv_put, iv_mid, atm_strike = atm_iv_pair(calls, puts, spot)
+
+        stored = _record_iv_snapshot(
+            symbol, target_expiry, spot, atm_strike, iv_call, iv_put, iv_mid
+        )
+        if not stored:
+            raise HTTPException(
+                status_code=422,
+                detail=f"No usable ATM implied vol for {symbol} {target_expiry}",
+            )
+
+        return {
+            "symbol": symbol,
+            "snapshotDate": date.today().isoformat(),
+            "expiry": target_expiry,
+            "dte": _dte(target_expiry),
+            "spot": spot,
+            "atmStrike": atm_strike,
+            "ivCall": iv_call,
+            "ivPut": iv_put,
+            "ivMid": iv_mid,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to record IV snapshot: {str(e)}")
+
+
+@router.post("/api/options/{symbol}/iv-snapshot")
+async def record_iv_snapshot(
+    symbol: str,
+    expiry: str | None = Query(None),
+    target_dte: int = Query(IV_SNAPSHOT_TARGET_DTE, ge=1, le=365, alias="targetDte"),
+):
+    """Record today's ATM IV for `symbol` explicitly (for a daily cron).
+
+    Unlike the chain endpoint — which snapshots whatever expiry the user is
+    looking at — this picks the expiry nearest `targetDte` and skips the front
+    week (see `pick_snapshot_expiry`), so the stored series is a term-consistent
+    ~30-day vol rather than whatever happens to expire next.
+    """
+    return record_snapshot_now(symbol, expiry, target_dte)
+
+
+@router.get("/api/options/{symbol}/sd-bands")
+async def get_sd_bands(
+    symbol: str,
+    period: str = Query("1y", description="Price history window (yfinance period)"),
+    mode: str = Query("occupancy", description="occupancy | cheapness"),
+    horizon_days: int = Query(30, ge=1, le=365, alias="horizonDays"),
+    rv_window: int = Query(21, ge=5, le=252, alias="rvWindow"),
+    occ_window: int = Query(63, ge=5, le=500, alias="occWindow"),
+):
+    """Black-Scholes lognormal sd bands from stored ATM IV, one column per day.
+
+    The bands come from `σ_mid = (IV_call + IV_put)/2` under
+    `ln(S_T/S_0) ~ N((r − q − σ²/2)T, σ²T)`, projected onto the five sd buckets
+    (see analytics/sd_bands.py for why the rows are buckets and not points).
+
+    Two things worth knowing about the numbers:
+
+    - The sigma is the nearest-expiry ATM IV, applied over `horizonDays`
+      regardless of that expiry's own DTE. That is a flat term-structure
+      assumption; `dteAtSnapshot` is returned per column so the stretch is
+      visible rather than hidden.
+    - History depth is bounded by how long `iv_snapshots` has been accumulating,
+      not by `period` — the provider has no IV history to back-fill from. A
+      fresh install returns `snapshotCount: 1` and an empty `series`.
+
+    `mode=occupancy` ends `horizonDays` before today (the newest columns have no
+    terminal bar yet); `current` carries the still-open projection so the live
+    forecast is available regardless.
+    """
+    symbol = symbol.upper()
+    if mode not in ("occupancy", "cheapness"):
+        raise HTTPException(status_code=400, detail="mode must be 'occupancy' or 'cheapness'")
+
+    cache_key = f"sd:{symbol}:{period}:{mode}:{horizon_days}:{rv_window}:{occ_window}"
+    cached = _sd_bands_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        with get_db() as conn:
+            snap_rows = conn.execute(
+                """
+                -- One row per day: the expiry whose DTE sits closest to the
+                -- horizon being projected — NOT the nearest expiry. The nearest
+                -- is often 0DTE, whose ATM IV is pin risk rather than a view on
+                -- a 30-day move, and whose call/put gap can exceed 40 vol points.
+                -- The front week is excluded outright for the same reason.
+                --
+                -- The bare columns come from the MIN(...) row (SQLite's documented
+                -- min/max-aggregate behaviour), so `expiry`/`spot`/`iv_mid` all
+                -- belong to the same contract as the `dte`.
+                SELECT snapshot_date, expiry, dte, spot, iv_call, iv_put, iv_mid,
+                       MIN(ABS(dte - ?)) AS dte_gap
+                FROM iv_snapshots
+                WHERE symbol = ? AND iv_mid BETWEEN ? AND ? AND dte >= ?
+                GROUP BY snapshot_date
+                ORDER BY snapshot_date
+                """,
+                (horizon_days, symbol, IV_SANITY_MIN, IV_SANITY_MAX, IV_SNAPSHOT_MIN_DTE),
+            ).fetchall()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read IV snapshots: {str(e)}")
+
+    snapshots = [dict(r) for r in snap_rows]
+
+    r_rate = _risk_free_rate()
+    levels = list(SD_LEVELS)
+    ref_probs = [round(p, 6) for p in BUCKET_PROBS]
+    exceed_probs = [round(p, 6) for p in LEVEL_EXCEED_PROBS]
+
+    base: dict[str, Any] = {
+        "symbol": symbol,
+        "mode": mode,
+        "horizonDays": horizon_days,
+        "rvWindow": rv_window,
+        "occWindow": occ_window,
+        "r": round(r_rate, 6),
+        "levels": levels,
+        "refProbs": ref_probs,
+        "exceedProbs": exceed_probs,
+        "snapshotCount": len(snapshots),
+        "series": [],
+        "current": None,
+    }
+
+    if not snapshots:
+        # Distinguish "nothing recorded" from "everything recorded is unusable":
+        # a chain opened on an expiry Friday stores a 0DTE row, which the query
+        # above excludes, and reporting that as "no snapshots" would send the user
+        # to do the one thing that already failed.
+        try:
+            with get_db() as conn:
+                raw = conn.execute(
+                    "SELECT COUNT(*) FROM iv_snapshots WHERE symbol = ? AND iv_mid > 0",
+                    (symbol,),  # raw count, deliberately unfiltered
+                ).fetchone()[0]
+        except Exception:
+            raw = 0
+
+        base["rawSnapshotCount"] = raw
+        base["note"] = (
+            f"{raw} IV snapshot(s) recorded but all inside the front week "
+            f"(<{IV_SNAPSHOT_MIN_DTE} DTE), which is excluded — near-dated ATM IV is "
+            f"pin risk, not a {horizon_days}-day view. POST "
+            f"/api/options/{symbol}/iv-snapshot records a ~{horizon_days}-day expiry."
+            if raw
+            else "No IV snapshots yet — open the options chain for this symbol, or POST "
+            f"/api/options/{symbol}/iv-snapshot, to start accumulating history "
+            "(one column per day)."
+        )
+        _sd_bands_cache.set(cache_key, base)
+        return base
+
+    # ── Price history ──
+    try:
+        frame = market_data.get_history(symbol, period=period, interval="1d")
+        df = frame.df
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch price history: {str(e)}")
+
+    if df is None or df.empty or "Close" not in df.columns:
+        raise HTTPException(status_code=404, detail=f"No price history for {symbol}")
+
+    closes_s = pd.to_numeric(df["Close"], errors="coerce").dropna()
+    dates = [d.date() for d in pd.to_datetime(closes_s.index)]
+    closes = [float(v) for v in closes_s.tolist()]
+    idx_by_date = {d.isoformat(): i for i, d in enumerate(dates)}
+
+    rv = realized_vol_series(closes, rv_window)
+
+    def _bar_at_or_before(target: date) -> Optional[int]:
+        """Last bar on or before `target` — the bar a snapshot is anchored to.
+
+        Snapshot dates and trading days do not line up: holidays, and any
+        recording made outside a session, produce a date with no bar of its own.
+        """
+        i = bisect_right(dates, target) - 1
+        return i if i >= 0 else None
+
+    def _bar_at_or_after(target: date) -> Optional[int]:
+        """First bar on or after `target` — the terminal bar of a projection.
+
+        `dates` is ascending, so this is a bisect; a linear scan per snapshot
+        would make the whole endpoint quadratic in history length.
+        """
+        i = bisect_left(dates, target)
+        return i if i < len(dates) else None
+
+    series: list[dict[str, Any]] = []
+    # occupancy: chronological bucket hits, for the rolling frequency. Anchors are
+    # spaced a day apart while the horizon is ~30, so consecutive hits share most
+    # of their path and are NOT independent draws — the frequency is a
+    # description of the window, not a sample with 63 degrees of freedom.
+    hits: list[int] = []
+    # Terminal bar index → position in `series`. Two anchors whose horizons end
+    # on a weekend or holiday resolve to the SAME first trading bar, and the
+    # chart's anchor series requires strictly ascending unique times, so the
+    # later (fresher) projection replaces the earlier one for that column.
+    col_at: dict[int, int] = {}
+
+    for snap in snapshots:
+        snap_date_str = str(snap["snapshot_date"])
+        try:
+            snap_date = datetime.strptime(snap_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+
+        sigma_iv = float(snap["iv_mid"])
+        # The LAST BAR ON OR BEFORE the snapshot date, not an exact date match.
+        # A snapshot can legitimately land on a day with no bar — a market
+        # holiday, or a recording made before the session opened — and demanding
+        # an exact match threw the whole row away: no bar meant no realized vol,
+        # and cheapness mode skips any row without it. That is how a US holiday
+        # emptied the pane on a symbol that had a perfectly good IV reading.
+        anchor_idx = _bar_at_or_before(snap_date)
+        # Snapshot spot is the price at the moment IV was read; the bar close is
+        # what the realized path is measured on. Anchoring on the close keeps
+        # both ends of the return on one consistent series.
+        anchor_spot = closes[anchor_idx] if anchor_idx is not None else float(snap["spot"])
+        if anchor_spot <= 0:
+            continue
+
+        T = horizon_days / 365.0
+        band = sd_band(anchor_spot, sigma_iv, T, r_rate)
+        if band is None:
+            continue
+
+        prices = [round(p, 4) for p in band.levels]
+        edges = [_finite_or_none(e) for e in band.edges]
+        sigma_rv = rv[anchor_idx] if anchor_idx is not None else None
+
+        # Stamp the column on the BAR it is anchored to, not on the raw snapshot
+        # date. The chart matches columns to bars by date, so a snapshot taken on
+        # a day with no bar (a holiday) would be silently dropped by the renderer
+        # even after the backend had computed it perfectly.
+        row_time = dates[anchor_idx].isoformat() if anchor_idx is not None else snap_date_str
+
+        row: dict[str, Any] = {
+            "time": row_time,
+            "snapshotDate": snap_date_str,
+            "spot": round(anchor_spot, 4),
+            "sigmaIv": round(sigma_iv, 6),
+            "sigmaRv": round(sigma_rv, 6) if sigma_rv else None,
+            "dteAtSnapshot": int(snap["dte"]),
+            "T": round(T, 6),
+            "prices": prices,
+            "edges": edges,
+            "cells": None,
+            "hitRow": None,
+            "hitZ": None,
+        }
+
+        if mode == "cheapness":
+            # Same price edges, re-scored under realized vol. Needs no terminal
+            # bar, so this mode runs right up to the newest snapshot.
+            if sigma_rv is None:
+                continue
+            rv_probs = bucket_probs_under(anchor_spot, sigma_rv, T, band.edges, r_rate)
+            if rv_probs is None:
+                continue
+            row["cells"] = [round(rv_probs[k] - BUCKET_PROBS[k], 6) for k in range(len(levels))]
+            row["rvProbs"] = [round(p, 6) for p in rv_probs]
+            # Consecutive holidays anchor several snapshots to the SAME bar, and
+            # the chart's anchor series rejects duplicate times outright. The
+            # later snapshot wins, as it does in occupancy mode.
+            key = anchor_idx if anchor_idx is not None else -1
+            existing = col_at.get(key)
+            if existing is None:
+                col_at[key] = len(series)
+                series.append(row)
+            else:
+                series[existing] = row
+            continue
+
+        # occupancy — where price actually landed `horizon_days` later.
+        term_idx = _bar_at_or_after(snap_date + timedelta(days=horizon_days))
+        if term_idx is None or (anchor_idx is not None and term_idx <= anchor_idx):
+            continue
+
+        terminal = closes[term_idx]
+        hit = bucket_of(terminal, band.edges)
+        if hit is None:
+            continue
+
+        hits.append(hit)
+        recent = hits[-occ_window:]
+        freq = [recent.count(k) / len(recent) for k in range(len(levels))]
+
+        row["time"] = dates[term_idx].isoformat()
+        row["anchorTime"] = snap_date_str
+        row["terminal"] = round(terminal, 4)
+        row["hitRow"] = hit
+        row["hitZ"] = round((math.log(terminal / anchor_spot) - band.m) / band.s, 4)
+        row["cells"] = [round(f, 6) for f in freq]
+        row["sampleSize"] = len(recent)
+
+        existing = col_at.get(term_idx)
+        if existing is None:
+            col_at[term_idx] = len(series)
+            series.append(row)
+        else:
+            series[existing] = row
+
+    # ── The still-open projection from the newest snapshot ──
+    newest = snapshots[-1]
+    newest_sigma = float(newest["iv_mid"])
+    newest_date_str = str(newest["snapshot_date"])
+    newest_idx = idx_by_date.get(newest_date_str)
+    newest_spot = closes[newest_idx] if newest_idx is not None else float(newest["spot"])
+    open_band = sd_band(newest_spot, newest_sigma, horizon_days / 365.0, r_rate)
+    if open_band is not None:
+        try:
+            target = (
+                datetime.strptime(newest_date_str, "%Y-%m-%d").date()
+                + timedelta(days=horizon_days)
+            ).isoformat()
+        except ValueError:
+            target = None
+        base["current"] = {
+            "time": newest_date_str,
+            "targetDate": target,
+            "spot": round(newest_spot, 4),
+            "sigmaIv": round(newest_sigma, 6),
+            "sigmaRv": round(rv[newest_idx], 6) if newest_idx is not None and rv[newest_idx] else None,
+            "dteAtSnapshot": int(newest["dte"]),
+            "T": round(horizon_days / 365.0, 6),
+            "prices": [round(p, 4) for p in open_band.levels],
+            "edges": [_finite_or_none(e) for e in open_band.edges],
+        }
+
+    base["series"] = series
+    if not series:
+        base["note"] = (
+            f"{len(snapshots)} IV snapshot(s) stored, but none has a terminal bar "
+            f"{horizon_days} calendar days later yet — the heatmap fills in as the "
+            "history grows."
+            if mode == "occupancy"
+            else f"{len(snapshots)} IV snapshot(s) stored, but none has {rv_window} "
+            "bars of realized vol to compare against yet."
+        )
+
+    _sd_bands_cache.set(cache_key, base)
+    return base
 
 
 # ── Option Positions CRUD ─────────────────────────────────────────────────────

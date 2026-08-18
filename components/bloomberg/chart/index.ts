@@ -28,6 +28,8 @@ export { IndicatorPicker } from "./IndicatorPicker";
 // Hooks
 export { useChartIndicators } from "./useChartIndicators";
 export type { SelectedChartEvent } from "./useChartIndicators";
+export { useSdBands } from "./useSdBands";
+export type { UseSdBandsOptions } from "./useSdBands";
 export { useChartTimeframe } from "./useChartTimeframe";
 export type { ChartTimeframeOptions } from "./useChartTimeframe";
 export {
@@ -58,7 +60,12 @@ export type {
   IndicatorRegistryEntry,
   IndicatorParam,
   IndicatorSeriesOutput,
+  HeatmapColumn,
+  HeatmapColorScale,
+  HeatmapSpec,
 } from "./types";
+
+export type { SdBandRow, SdBandsPayload } from "./indicators/sd-heatmap";
 
 export {
   INTERVAL_VALID_RANGES,

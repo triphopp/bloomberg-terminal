@@ -85,6 +85,16 @@ SYNC_PUSH_INTERVAL  — background push cadence sec (default 60)
 SYNC_PULL_INTERVAL  — manifest peer-change check sec (default 20) → auto-pull
 SYNC_PUSH_DEBOUNCE  — sec to coalesce writes before pushing (default 2)
 
+# ATM IV snapshot recorder — backend/iv_scheduler.py (feeds the SD heatmap)
+IV_SNAPSHOT_INTERVAL — pass cadence sec (default 10800 = 3h; 0 disables entirely).
+                       Sub-daily on purpose: a pass is free once the day is covered,
+                       and several chances a day is what lets the series survive a
+                       machine that is only on for part of it.
+IV_SNAPSHOT_SYMBOLS  — comma list overriding the universe. Default = pinned_assets
+                       ∪ symbols that already have iv_snapshots rows (a series must
+                       not stop just because a symbol left the watchlist — the gap
+                       cannot be back-filled).
+
 # SEC Thailand — OLD portal (expires 2026-06-30)
 SEC_COMMON_PRIMARY / SEC_FUND_FACTSHEET_PRIMARY / SEC_FUND_DAILY_PRIMARY
 SEC_BOND_PRIMARY (dead) / SEC_DIGITAL_ASSET_PRIMARY / SEC_ONE_REPORT_PRIMARY
@@ -186,6 +196,12 @@ sector_classifications (id, symbol, country, exchange, sector_gics, industry_gic
                         last_fetched, fetch_error, created_at, updated_at) UNIQUE(symbol, country)
 option_positions    (id, account_id, underlying, expiry, strike, option_type call|put,
                      quantity, entry_price, entry_date, status open|closed|expired, notes)
+iv_snapshots        (symbol, snapshot_date, expiry, dte, spot, atm_strike, iv_call, iv_put,
+                     iv_mid, source, created_at) PK(symbol, snapshot_date, expiry)
+-- 2026-08-17 (IV SD heatmap): ATM implied-vol history. Yahoo reports only the CURRENT
+--   IV of a chain, so this can never be back-filled — only ACCUMULATED. Written as a
+--   side effect of GET /api/options/{symbol} (and by POST .../iv-snapshot for a cron).
+--   One row per (symbol, day, expiry); /sd-bands picks MIN(dte) per day.
 pm_signals          (signal_type, probability, timestamp)  -- Polymarket history for Δ24h
 allocation_signals  (id, equity_score, bond_score, recommendation, timestamp)
 country_rotation_scores (id, ticker, score, rank, timestamp)
@@ -266,6 +282,7 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026
 - [ ] Seed sector data: POST /api/sectors/fetch for TH/KR/HK/EU/US
 
 ### Features
+- [ ] **IV SD Heatmap** — BS lognormal σ-band pane (5 buckets −2σ…+2σ) จาก `σ_mid=(IV_call+IV_put)/2`; 2 โหมด occupancy/cheapness, ตาราง `iv_snapshots` สะสม IV เอง, `/api/options/{sym}/sd-bands`; ยัง verify pixel ไม่ได้ (`plans/iv-sd-heatmap.md`)
 - [x] **TAIL Risk Monitor v2** — CBOE vol data (VIX/VIX9D/VIX3M/VIX6M/VVIX/SKEW/OVX/GVZ/VXN) แทน yfinance ที่ค้าง 28 วัน, tri-state signals, 6 risk dimensions, composite นับมิติไม่ใช่นับ signal — done 2026-08-16 (`plans/completed/tail-risk-v2.md`)
 - [x] **Company OUTLOOK (SEC EDGAR)** — guidance ที่บริษัทยื่นใน 8-K EX-99.1 + คำพูด CEO + MD&A forward-looking + งบ as-reported จาก XBRL; แท็บ OUTLOOK ใน stock-view + แถบใน NEWS — done 2026-08-15 (`plans/completed/company-outlook-edgar.md`)
 - [x] **Polymarket stock price ladders** — `/api/polymarket/stock/{sym}` แปลง touch ladder + "close above" CDF เป็น P(up)/skew/implied range; panel ใน NEWS + คอลัมน์ PM ใน MKT watchlist — done 2026-08-15 (`plans/completed/polymarket-stock-ladder.md`)

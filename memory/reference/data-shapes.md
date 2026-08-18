@@ -58,6 +58,42 @@
 }
 ```
 
+## SD Bands (`GET /api/options/{sym}/sd-bands?mode=occupancy&horizonDays=30`)
+```json
+{
+  "symbol": "SPY", "mode": "occupancy",
+  "horizonDays": 30, "rvWindow": 21, "occWindow": 63,
+  "r": 0.0387,
+  "levels": [-2, -1, 0, 1, 2],
+  "refProbs": [0.066807, 0.24173, 0.382925, 0.24173, 0.066807],
+  "exceedProbs": [0.97725, 0.84134, 0.5, 0.15866, 0.02275],
+  "snapshotCount": 357,
+  "series": [{
+    "time": "2026-08-17", "anchorTime": "2026-07-18",
+    "spot": 762.1, "terminal": 775.51,
+    "sigmaIv": 0.1938, "sigmaRv": 0.1304, "dteAtSnapshot": 30, "T": 0.082192,
+    "prices": [694.1, 727.6, 762.6, 799.3, 837.8],
+    "edges": [null, 710.6, 744.8, 780.6, 818.1, null],
+    "cells": [0.0, 0.015873, 0.666667, 0.31746, 0.0],
+    "hitRow": 3, "hitZ": 0.8, "sampleSize": 63
+  }],
+  "current": { "time": "2026-08-17", "targetDate": "2026-09-16", "spot": 775.51,
+               "sigmaIv": 0.164, "sigmaRv": 0.1304, "dteAtSnapshot": 30, "T": 0.082192,
+               "prices": [707.4, 741.4, 777.1, 814.5, 853.7],
+               "edges": [null, 724.2, 759.1, 795.6, 833.9, null] },
+  "note": "present ONLY when series is empty — never an error"
+}
+```
+⚠️ Field notes the frontend depends on:
+- `levels`/`refProbs`/`cells`/`prices` are aligned, index 0 = **−2σ = bottom row** of the pane
+- `edges` has **6** entries; the two open ends are `null` (JSON has no infinity), not 0
+- `exceedProbs[k]` = `P(S_T ≥ prices[k])` = `1 − Φ(k)` — a DIFFERENT question from `refProbs`: the odds of finishing at or above that line (15.9% at +1σ) vs the odds of finishing inside that band (24.2%). Both are constants in z; the pane prints them, never colours by them
+- `refProbs` are CONSTANTS (6.7/24.2/38.3/24.2/6.7%) — the reference the colors are measured against, never the colors themselves
+- `prices[2]` is the lognormal **median**, below the forward by `exp(σ²T/2)` — not spot, not the forward
+- `cells` meaning switches with `mode`: occupancy = trailing bucket frequency (sums to 1); cheapness = `P_rv − P_iv` (sums to 0, and adds a `rvProbs` field)
+- every column is stamped on a **real bar**, never on the raw snapshot date (`snapshotDate` keeps that) — a snapshot taken on a holiday anchors to the last bar on or before it, because the chart matches columns to bars by date
+- occupancy columns are stamped at the TERMINAL bar and deduped (weekend gaps collapse several anchors onto one bar); `current` holds the still-open projection
+
 ## Options Greeks (`GET /api/options/positions/{id}/greeks`)
 ```json
 {

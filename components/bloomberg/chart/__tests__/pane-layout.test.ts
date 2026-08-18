@@ -160,3 +160,51 @@ test("a pane count that disagrees with the keys is refused", () => {
   assert.equal(subPaneKeyAtOffset(400, [348, 80], KEYS), null);
   assert.equal(subPaneKeyAtOffset(400, [348, 80, 80, 80], KEYS), null);
 });
+
+// ── Per-indicator preferred heights ──────────────────────────────────────────
+//
+// The default 80px ceiling suits a single line; a pane that stacks rows divides
+// it among them. The SD heatmap's five σ rows got ~9px each — under its own 9px
+// type — and every label piled up illegibly.
+
+test("a pane with a preference gets it when the space is there", () => {
+  const { heightFor } = computePaneLayout(600, ["sd-heatmap"], {}, { "sd-heatmap": 130 });
+  assert.equal(heightFor("sd-heatmap"), 130);
+});
+
+test("a preference is a ceiling, not a claim on space that isn't there", () => {
+  // Room for ~60px after the main pane's minimum — the preference cannot conjure
+  // the rest, and must not squeeze the main pane below MAIN_PANE_MIN.
+  const { heightFor } = computePaneLayout(200, ["sd-heatmap"], {}, { "sd-heatmap": 130 });
+  assert.ok(heightFor("sd-heatmap") <= 60);
+  assert.ok(heightFor("sd-heatmap") >= SUB_PANE_MIN);
+});
+
+test("panes without a preference keep the default ceiling", () => {
+  const { heightFor } = computePaneLayout(600, ["rsi", "sd-heatmap"], {}, { "sd-heatmap": 130 });
+  assert.equal(heightFor("rsi"), SUB_PANE_MAX);
+  assert.equal(heightFor("sd-heatmap"), 130);
+});
+
+test("a user drag still beats the preference", () => {
+  const { heightFor } = computePaneLayout(
+    600,
+    ["sd-heatmap"],
+    { "sd-heatmap": 200 },
+    { "sd-heatmap": 130 }
+  );
+  assert.equal(heightFor("sd-heatmap"), 200);
+});
+
+test("chartHeight accounts for the taller pane so it is never clipped", () => {
+  const { chartHeight } = computePaneLayout(220, ["sd-heatmap"], {}, { "sd-heatmap": 130 });
+  // 140 main + whatever the pane got; the chart scrolls rather than truncating.
+  assert.ok(chartHeight >= 220);
+});
+
+test("omitting preferences entirely behaves exactly as before", () => {
+  const withArg = computePaneLayout(600, ["rsi", "macd"], {}, {});
+  const without = computePaneLayout(600, ["rsi", "macd"], {});
+  assert.equal(withArg.chartHeight, without.chartHeight);
+  assert.equal(withArg.heightFor("rsi"), without.heightFor("rsi"));
+});

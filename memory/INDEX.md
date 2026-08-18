@@ -64,6 +64,7 @@ memory/
 | วิธีเพิ่ม view / endpoint ใหม่ | `reference/architecture.md` → "Navigation" + "Backend layout" |
 | Known bugs / limitations | `project_summary.md` → "Known Issues" |
 | อะไร reintroduce ไม่ได้ (CPU/RAM) | `project_summary.md` → "CPU/RAM History" |
+| **IV SD Heatmap** (BS lognormal σ-band pane −2σ…+2σ จาก ATM IV mid; occupancy / cheapness; `iv_snapshots` สะสมเอง) 🔄 code done, pixel verify ค้าง | `plans/iv-sd-heatmap.md` |
 | **Thesis System (DB) + Allocation Basis** (thesis เก็บใน SQLite + sync Drive + event log; ALLOCATION (OPEN) cost-vs-market + rebalance sizing) ✅ done 2026-08-15 | `plans/completed/thesis-db-and-allocation-basis.md` |
 | **Company OUTLOOK จาก SEC EDGAR** (guidance + คำพูด CEO + งบ as-reported XBRL) ✅ done 2026-08-15 | `plans/completed/company-outlook-edgar.md` |
 | **Polymarket stock price ladders** (P(up)/skew รายหุ้น ใน NEWS + คอลัมน์ PM ใน MKT) ✅ done 2026-08-15 | `plans/completed/polymarket-stock-ladder.md` |

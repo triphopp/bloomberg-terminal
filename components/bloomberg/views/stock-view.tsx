@@ -49,6 +49,7 @@ import {
 import type { IndicatorRegistryEntry, OhlcvBar } from "../chart";
 import { FearGreedPane } from "../chart/FearGreedPane";
 import { PEPane } from "../chart/PEPane";
+import { useSdBands } from "../chart/useSdBands";
 import { BloombergButton } from "../core/bloomberg-button";
 import { CompanyOutlookPanel } from "../core/company-outlook-panel";
 import { ExtendedHoursPrice, MarketSessionBadge } from "../core/market-session";
@@ -4376,6 +4377,17 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
       updateIndicatorConfig("fear-greed", { preloadedData: fearGreedQuery.data.history });
     }
   }, [fearGreedActive, fearGreedQuery.data, updateIndicatorConfig]);
+
+  // ── IV SD Heatmap ──────────────────────────────────────────────────────────
+  // Fetch + self-heal live in useSdBands: the bands are computed backend-side
+  // (it owns the IV snapshot history, the realized-vol series and the risk-free
+  // rate), and a symbol with no IV on file gets one recorded on the spot.
+  useSdBands({
+    indicators: chartIndicators,
+    symbol: activeSymbol,
+    period: timePeriod,
+    updateIndicatorConfig,
+  });
 
   const [analysisTab, setAnalysisTab] = useState<AnalysisTab>("financials");
   const [searchQuery, setSearchQuery] = useState("");
