@@ -84,104 +84,90 @@ const SEP = (
   </span>
 );
 
-const REGIME_COLORS: Record<string, { bg: string; text: string; label: string }> = {
-  CRISIS: { bg: "#DD0000", text: "#ffffff", label: "#ffcccc" },
-  "RISK-OFF": { bg: "#CC6600", text: "#000000", label: "#331a00" },
-  TRENDING: { bg: "#CCAA00", text: "#000000", label: "#332b00" },
-  DIVERGENT: { bg: "#00AA66", text: "#000000", label: "#002b1a" },
+/**
+ * One palette for the whole crawl. Every segment — quote, ALERT, REGIME, F&G —
+ * uses these three roles and nothing else, so a signal is distinguished by what
+ * it says, not by a colour of its own.
+ */
+const C = {
+  tag: "#999999", // small left-hand label
+  value: "#FFD700", // the reading itself
+  detail: "#777777", // trailing context, no direction
+  up: "#22DD66",
+  down: "#FF5555",
 };
 
-const FG_ZONE_COLORS: Record<string, { bg: string; text: string }> = {
-  extreme_fear: { bg: "#CC2200", text: "#ffffff" },
-  fear: { bg: "#CC6600", text: "#000000" },
-  neutral: { bg: "#888800", text: "#000000" },
-  greed: { bg: "#00AA44", text: "#000000" },
-  extreme_greed: { bg: "#007733", text: "#ffffff" },
+/**
+ * Backend regime labels are quant shorthand ("DIVERGENT" = low average
+ * cross-sector correlation). On a one-line crawl nobody decodes that, so the
+ * ticker shows the plain-language reading from `regime_v2.LABEL_INFO` instead.
+ * The backend label is unchanged — this is display only.
+ */
+const REGIME_DISPLAY: Record<string, string> = {
+  CRISIS: "SEVERE STRESS",
+  "RISK-OFF": "UNDER STRESS",
+  TRENDING: "ONE-WAY TREND",
+  DIVERGENT: "CALM",
+  MIXED: "MIXED",
+  CORRELATED: "MOVING AS ONE",
 };
 
-const VIX_LEVEL_COLORS: Record<string, { bg: string; text: string }> = {
-  low: { bg: "#007733", text: "#ffffff" },
-  normal: { bg: "#005522", text: "#ccffcc" },
-  elevated: { bg: "#886600", text: "#000000" },
-  high: { bg: "#CC6600", text: "#000000" },
-  extreme: { bg: "#CC2200", text: "#ffffff" },
-};
+/**
+ * Every non-quote segment (ALERT / REGIME / F&G / stop / corr-spike) renders
+ * through here, with the same three slots and the same type scale as a quote:
+ * 9px grey tag, gold value at the bar's base size, 9px trailing detail.
+ */
+function SignalPill({
+  tag,
+  value,
+  children,
+}: {
+  tag: string;
+  value?: string | null;
+  children?: React.ReactNode;
+}) {
+  return (
+    <span className="inline-flex items-baseline gap-1">
+      <span style={{ color: C.tag, fontSize: 9 }}>{tag}</span>
+      {value != null && <span style={{ color: C.value, letterSpacing: "0.02em" }}>{value}</span>}
+      {children != null && (
+        <span className="inline-flex items-baseline gap-1" style={{ color: C.detail, fontSize: 9 }}>
+          {children}
+        </span>
+      )}
+    </span>
+  );
+}
 
 function ItemSegment({ item }: { item: TickerItem }) {
-  // ── Regime pill — always highlighted ───────────────────────────────────────
+  // ── Regime ────────────────────────────────────────────────────────────────
   if (item.type === "regime" && item.regime_label) {
-    const c = REGIME_COLORS[item.regime_label] ?? { bg: "#444", text: "#fff", label: "#fff" };
+    const word = REGIME_DISPLAY[item.regime_label] ?? item.regime_label;
     return (
-      <span
-        className="inline-flex items-center gap-1 font-bold tracking-wider"
-        style={{
-          backgroundColor: c.bg,
-          color: c.text,
-          fontSize: 9.5,
-          padding: "1px 7px",
-        }}
-      >
-        <span style={{ color: c.label, fontSize: 8, opacity: 0.8 }}>REGIME</span>
-        {item.regime_label}
-      </span>
+      <SignalPill tag="REGIME" value={word}>
+        {item.regime_score != null && <span>CORR {item.regime_score.toFixed(2)}</span>}
+      </SignalPill>
     );
   }
 
-  // ── Fear & Greed pill — always highlighted ──────────────────────────────────
+  // ── Fear & Greed ──────────────────────────────────────────────────────────
   if (item.type === "fear_greed" && item.fear_greed_zone) {
-    const c = FG_ZONE_COLORS[item.fear_greed_zone] ?? { bg: "#444", text: "#fff" };
-    const val = item.fear_greed_value != null ? Math.round(item.fear_greed_value) : "--";
+    const val = item.fear_greed_value != null ? String(Math.round(item.fear_greed_value)) : "--";
     return (
-      <span
-        className="inline-flex items-center gap-1 font-bold tracking-wider"
-        style={{
-          backgroundColor: c.bg,
-          color: c.text,
-          fontSize: 9.5,
-          padding: "1px 7px",
-        }}
-      >
-        <span style={{ fontSize: 8, opacity: 0.75 }}>F&G</span>
-        <span>{val}</span>
-        <span style={{ fontSize: 7.5, opacity: 0.8 }}>{item.fear_greed_label ?? ""}</span>
-      </span>
+      <SignalPill tag="F&G" value={val}>
+        <span>{item.fear_greed_label ?? ""}</span>
+      </SignalPill>
     );
   }
 
-  // ── VIX pill — prominent when elevated/high/extreme ────────────────────────
-  if (
-    item.label === "VIX" &&
-    item.vix_level &&
-    item.vix_level !== "normal" &&
-    item.vix_level !== "low"
-  ) {
-    const c = VIX_LEVEL_COLORS[item.vix_level] ?? { bg: "#444", text: "#fff" };
-    const pctStr = item.pct != null ? `${item.pct >= 0 ? "+" : ""}${item.pct.toFixed(1)}%` : null;
-    return (
-      <span
-        className="inline-flex items-center gap-1 font-bold tracking-wider"
-        style={{
-          backgroundColor: c.bg,
-          color: c.text,
-          fontSize: 9.5,
-          padding: "1px 7px",
-        }}
-      >
-        <span style={{ fontSize: 8, opacity: 0.8 }}>VIX</span>
-        <span>{item.value != null ? item.value.toFixed(1) : "--"}</span>
-        {pctStr && <span style={{ fontSize: 8, opacity: 0.85 }}>{pctStr}</span>}
-      </span>
-    );
-  }
-
-  // ── Normal market data ──────────────────────────────────────────────────────
+  // ── Quotes — VIX included; its level is already legible from the number ────
   const { text, positive } = fmtChange(item.change, item.pct, item.type);
-  const changeColor = positive === null ? "#777" : positive ? "#22DD66" : "#FF5555";
+  const changeColor = positive === null ? C.detail : positive ? C.up : C.down;
 
   return (
     <span className="inline-flex items-baseline gap-1">
-      <span style={{ color: "#999999", fontSize: 9 }}>{item.label}</span>
-      <span style={{ color: "#FFD700", letterSpacing: "0.02em" }}>
+      <span style={{ color: C.tag, fontSize: 9 }}>{item.label}</span>
+      <span style={{ color: C.value, letterSpacing: "0.02em" }}>
         {fmtValue(item.value, item.type)}
       </span>
       {text && <span style={{ color: changeColor, fontSize: 9 }}>{text}</span>}
@@ -235,7 +221,10 @@ function groupRuleEvents(events: AlertEvent[]): SymbolAlertGroup[] {
     }
     // Events for a deleted rule have no name; fall back to the id so two
     // different deleted rules don't merge into one line.
-    const key = event.ruleId || `#${event.id}`;
+    // Key on the *displayed* rule name, not the rule id: a symbol watched by
+    // two rules that render the same headline (e.g. the same condition cloned
+    // per timeframe) otherwise renders the identical text twice in one pill.
+    const key = ruleDisplayName(event.ruleName, event.symbol) || `#${event.id}`;
     const prev = rules.get(key);
     if (prev && prev.latestId >= event.id) {
       prev.count += 1;
@@ -267,105 +256,47 @@ function groupRuleEvents(events: AlertEvent[]): SymbolAlertGroup[] {
  *  listing every condition that symbol currently satisfies. */
 function RuleEventSegment({ group }: { group: SymbolAlertGroup }) {
   return (
-    <span
-      className="inline-flex items-center gap-1.5 font-bold tracking-wide"
-      style={{
-        backgroundColor: "#003844",
-        color: "#33DDFF",
-        fontSize: 9.5,
-        padding: "1px 7px",
-      }}
-    >
-      <span style={{ fontSize: 10 }}>🔔</span>
-      <span style={{ fontSize: 8, opacity: 0.75 }}>ALERT</span>
-      <span>{group.symbol}</span>
-      {group.conditions.length > 1 && (
-        <span
-          style={{
-            fontSize: 8,
-            opacity: 0.9,
-            backgroundColor: "#33DDFF",
-            color: "#003844",
-            padding: "0 3px",
-          }}
-        >
-          {group.conditions.length}
-        </span>
-      )}
+    <SignalPill tag="ALERT" value={group.symbol}>
+      {group.conditions.length > 1 && <span>×{group.conditions.length}</span>}
       {group.conditions.map((c, i) => (
         <span key={c.ruleId} className="inline-flex items-center gap-1">
           {i > 0 && <span style={{ opacity: 0.4 }}>·</span>}
-          <span style={{ opacity: 0.85 }}>{c.label}</span>
-          {c.values && <span style={{ opacity: 0.6 }}>{c.values}</span>}
+          <span>{c.label}</span>
+          {c.values && <span>{c.values}</span>}
         </span>
       ))}
-    </span>
+    </SignalPill>
   );
 }
 
 function AlertSegment({ alert }: { alert: TickerAlert }) {
-  // ── Stop loss — red pill ──────────────────────────────────────────────────
+  // ── Stop loss ─────────────────────────────────────────────────────────────
   if (alert.type === "stoploss" && alert.current_price != null && alert.stop_price != null) {
     const distPct = (((alert.stop_price - alert.current_price) / alert.stop_price) * 100).toFixed(
       2
     );
     return (
-      <span
-        className="inline-flex items-center gap-1.5 font-bold tracking-wide"
-        style={{
-          backgroundColor: "#CC0000",
-          color: "#ffffff",
-          fontSize: 9.5,
-          padding: "1px 7px",
-        }}
-      >
-        <span style={{ fontSize: 10 }}>⚑</span>
-        <span style={{ fontSize: 8, opacity: 0.85 }}>STOP BREACH</span>
-        <span>{alert.symbol}</span>
-        <span style={{ opacity: 0.85 }}>CUR {alert.current_price.toFixed(2)}</span>
-        <span style={{ opacity: 0.7 }}>SL {alert.stop_price.toFixed(2)}</span>
-        <span>−{distPct}%</span>
-      </span>
+      <SignalPill tag="STOP BREACH" value={alert.symbol}>
+        <span>CUR {alert.current_price.toFixed(2)}</span>
+        <span>SL {alert.stop_price.toFixed(2)}</span>
+        <span style={{ color: C.down }}>▼{distPct}%</span>
+      </SignalPill>
     );
   }
 
-  // ── DCC correlation spike — purple/red pill ───────────────────────────────
+  // ── DCC correlation spike ─────────────────────────────────────────────────
   if (alert.type === "dcc") {
-    const isCritical = alert.severity === "critical";
-    return (
-      <span
-        className="inline-flex items-center gap-1.5 font-bold tracking-wide"
-        style={{
-          backgroundColor: isCritical ? "#660033" : "#441100",
-          color: isCritical ? "#FF88CC" : "#FF9944",
-          fontSize: 9.5,
-          padding: "1px 7px",
-        }}
-      >
-        <span style={{ fontSize: 8, opacity: 0.8 }}>CORR-SPIKE</span>
-        <span>{alert.message}</span>
-      </span>
-    );
+    return <SignalPill tag="CORR-SPIKE" value={alert.message} />;
   }
 
-  // ── Regime change event — amber pill ─────────────────────────────────────
+  // ── Regime change event ───────────────────────────────────────────────────
   const m = alert.message.match(/REGIME:\s+(.+?)\s+[->]+\s+(.+)/);
-  const label = m ? `${m[1]} -> ${m[2]}` : alert.message.replace(/^[🔴🟡⚠]\s*/u, "");
+  const plain = (w: string) => REGIME_DISPLAY[w.trim().toUpperCase()] ?? w.trim();
+  const label = m
+    ? `${plain(m[1])} → ${plain(m[2])}`
+    : alert.message.replace(/^[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]\s*/u, "");
 
-  return (
-    <span
-      className="inline-flex items-center gap-1.5 font-bold tracking-wide"
-      style={{
-        backgroundColor: "#CC6600",
-        color: "#000000",
-        fontSize: 9.5,
-        padding: "1px 7px",
-      }}
-    >
-      <span style={{ fontSize: 8, opacity: 0.7 }}>REGIME CHG</span>
-      <span>{label}</span>
-    </span>
-  );
+  return <SignalPill tag="REGIME CHG" value={label} />;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -457,17 +388,26 @@ export function AlertTicker() {
 
       {/* Scrolling content — content duplicated for seamless loop via translateX(-50%) */}
       <div className="flex-1 overflow-hidden h-full flex items-center pl-2">
+        {/* Two identical halves; the keyframe translates exactly -50%, so the
+            second half lands where the first started — no visible seam.
+            `shrink-0 w-max` is load-bearing: as a flex child this div would
+            otherwise shrink to the viewport width, making -50% half a *screen*
+            instead of half the *content* and cutting the crawl off mid-way.
+            `minWidth: 200%` covers the opposite case — content narrower than
+            the bar, where each half still fills it so the loop never trails a
+            blank gap. */}
         <div
-          className="inline-flex items-baseline whitespace-nowrap"
+          className="inline-flex items-baseline whitespace-nowrap shrink-0 w-max"
           style={{
+            minWidth: "200%",
             animationName: "ticker-scroll",
             animationDuration: `${durationSec}s`,
             animationTimingFunction: "linear",
             animationIterationCount: "infinite",
           }}
         >
-          <span className="inline-flex items-baseline gap-0 pr-12">{content}</span>
-          <span className="inline-flex items-baseline gap-0 pr-12">{content}</span>
+          <span className="inline-flex items-baseline gap-0 pr-12 flex-1 shrink-0">{content}</span>
+          <span className="inline-flex items-baseline gap-0 pr-12 flex-1 shrink-0">{content}</span>
         </div>
       </div>
     </div>
