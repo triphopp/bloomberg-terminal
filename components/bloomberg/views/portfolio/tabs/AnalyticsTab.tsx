@@ -99,6 +99,20 @@ interface ReturnsResponse {
   accounts?: Record<string, ReturnsRow>;
 }
 
+type VolRegime = "CALM" | "ELEVATED" | "STRESSED" | "UNKNOWN";
+
+interface VolMetrics {
+  volatility_daily_pct: number;
+  volatility_annual_pct: number;
+  lookback_days: number;
+  n_positions: number;
+  vol_regime: VolRegime;
+  account_breakdown?: Record<
+    string,
+    { volatility_daily_pct: number; volatility_annual_pct: number; vol_regime: VolRegime }
+  >;
+}
+
 interface TradeStats {
   closed: number;
   wins: number;
@@ -159,6 +173,7 @@ export function AnalyticsTab({
     return {};
   });
   const [rfDraft, setRfDraft] = useState("");
+  const [vol, setVol] = useState<VolMetrics | null>(null);
 
   useEffect(() => {
     try {
@@ -167,6 +182,24 @@ export function AnalyticsTab({
       /* ignore */
     }
   }, [rfOverride]);
+
+  // Daily/annualized sigma of the open book's realized returns — same endpoint
+  // RISK's header badge reads, fetched separately so switching CAPM benchmark
+  // or lookback doesn't refire it and account/currency changes don't refire CAPM.
+  useEffect(() => {
+    const ac = new AbortController();
+    const qs = new URLSearchParams({
+      confidence: "0.95",
+      lookback: "252",
+      base_currency: currency,
+    });
+    if (accountId !== "all") qs.set("account_id", accountId);
+    fetch(`/api/v2/portfolio/risk/metrics?${qs}`, { signal: ac.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((m) => setVol(m && !m.error ? m : null))
+      .catch(() => {});
+    return () => ac.abort();
+  }, [accountId, currency]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -375,6 +408,23 @@ export function AnalyticsTab({
   // THB base → active display currency
   const toDisp = (thb: number) => (currency === "USD" ? thb / thb_per_usd : thb);
 
+  // Per-account sigma. `/risk/metrics` returns account_breakdown only when
+  // fetched unfiltered ("all"); when a single account is selected the top-level
+  // figure already IS that account's, so fall back to it instead of showing
+  // blank on a single-account view.
+  const acctVol = (accountId2: string) => {
+    if (!vol) return null;
+    if (vol.account_breakdown?.[accountId2]) return vol.account_breakdown[accountId2];
+    if (accountId === accountId2) {
+      return {
+        volatility_daily_pct: vol.volatility_daily_pct,
+        volatility_annual_pct: vol.volatility_annual_pct,
+        vol_regime: vol.vol_regime,
+      };
+    }
+    return null;
+  };
+
   const navData = navHistory.map((r) => ({
     date: typeof r.snapshot_date === "string" ? r.snapshot_date.slice(5) : r.snapshot_date,
     value: toDisp(r.total_value ?? 0),
@@ -575,6 +625,34 @@ export function AnalyticsTab({
                       {rr.xirr_pct == null
                         ? "—"
                         : `${rr.xirr_pct >= 0 ? "+" : ""}${rr.xirr_pct.toFixed(1)}%`}
+                    </span>
+                  </>
+                );
+              })()}
+              {(() => {
+                const av = acctVol(s.account.id);
+                if (!av) return null;
+                const regimeColor =
+                  av.vol_regime === "STRESSED"
+                    ? "#f87171"
+                    : av.vol_regime === "ELEVATED"
+                      ? "#fbbf24"
+                      : av.vol_regime === "CALM"
+                        ? "#4ade80"
+                        : "#555";
+                return (
+                  <>
+                    <span
+                      style={{ color: colors.textSecondary }}
+                      title="Standard deviation of daily log returns, 252d lookback"
+                    >
+                      σ daily / ann
+                    </span>
+                    <span className="font-bold" style={{ color: colors.text }}>
+                      {av.volatility_daily_pct.toFixed(2)}% / {av.volatility_annual_pct.toFixed(1)}%
+                      {av.vol_regime !== "UNKNOWN" && (
+                        <span style={{ color: regimeColor }}> {av.vol_regime}</span>
+                      )}
                     </span>
                   </>
                 );
