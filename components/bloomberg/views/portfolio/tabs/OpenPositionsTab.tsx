@@ -563,16 +563,56 @@ export function OpenPositionsTab({
     if (posCcy(p) === "USD" || posCcy(p) === "USDT") return a + (p.unrealized_pnl ?? 0);
     return a + (p.unrealized_pnl ?? 0) / thb_per_usd;
   }, 0);
-  const totalDayPnl = positions.reduce((a, p) => {
-    if (p.day_pnl_base != null) return a + p.day_pnl_base;
-    if (currency === "THB") return a + (p.day_pnl_thb ?? 0);
-    if (posCcy(p) === "USD" || posCcy(p) === "USDT") return a + (p.day_pnl ?? 0);
-    return a + (p.day_pnl ?? 0) / thb_per_usd;
-  }, 0);
+  /** Today's P&L for one position in the display currency, or null when its
+   *  market has printed no regular-session move yet. */
+  const dayPnlOf = (p: Trade): number | null => {
+    if (p.day_pnl_base != null) return p.day_pnl_base;
+    if (currency === "THB") return p.day_pnl_thb ?? null;
+    if (p.day_pnl == null) return null;
+    if (posCcy(p) === "USD" || posCcy(p) === "USDT") return p.day_pnl;
+    return p.day_pnl / thb_per_usd;
+  };
+  const marketValueOf = (p: Trade): number => {
+    if (p.market_value_base != null) return p.market_value_base;
+    const cost = p.cost_basis_base ?? toBase(p.price_entry * p.volume, posCcy(p));
+    const unreal =
+      p.unrealized_pnl_base ??
+      (currency === "THB"
+        ? (p.unrealized_pnl_thb ?? 0)
+        : posCcy(p) === "USD" || posCcy(p) === "USDT"
+          ? (p.unrealized_pnl ?? 0)
+          : (p.unrealized_pnl ?? 0) / thb_per_usd);
+    return cost + unreal;
+  };
+  const totalDayPnl = positions.reduce((a, p) => a + (dayPnlOf(p) ?? 0), 0);
   const hasDayData = positions.some((p) => p.day_pnl != null);
   // Positions whose market has not traded today. Their day P&L is deliberately
   // absent, so the "Today" total covers only part of the book — say how much.
   const stalePositions = positions.filter((p) => p.day_stale).length;
+
+  /**
+   * Today's return for the book as a whole.
+   *
+   * Denominator is the value the book STARTED the day at — market value now
+   * minus what today moved it — not cost basis. Dividing a day's move by what
+   * a position cost years ago answers a different question entirely.
+   *
+   * Only positions that actually reported a day move are counted, on both
+   * sides. A market that has not opened contributes nothing to the numerator,
+   * so leaving its value in the denominator would quietly dilute the figure.
+   */
+  const dayReturnPct = (() => {
+    let pnl = 0;
+    let mv = 0;
+    for (const p of positions) {
+      const d = dayPnlOf(p);
+      if (d == null) continue;
+      pnl += d;
+      mv += marketValueOf(p);
+    }
+    const prior = mv - pnl;
+    return prior > 0 ? (pnl / prior) * 100 : null;
+  })();
   const totalCost = positions.reduce((a, p) => {
     if (p.cost_basis_base != null) return a + p.cost_basis_base;
     return a + toBase(p.price_entry * p.volume, posCcy(p));
@@ -616,6 +656,16 @@ export function OpenPositionsTab({
                 {csym}
                 {fmtK(Math.abs(totalDayPnl))}
               </span>
+              {dayReturnPct != null && (
+                <span
+                  className="font-bold ml-1"
+                  style={{ color: pnlColor(totalDayPnl) }}
+                  title="Daily return = today's P&L ÷ the market value the book started the day at (market value now − today's P&L). Covers only the positions whose market has moved today. Positions opened today are measured from the previous close, which is not a price you paid."
+                >
+                  ({dayReturnPct >= 0 ? "+" : ""}
+                  {dayReturnPct.toFixed(2)}%)
+                </span>
+              )}
               {stalePositions > 0 && (
                 <span
                   className="text-[8px] ml-0.5"
