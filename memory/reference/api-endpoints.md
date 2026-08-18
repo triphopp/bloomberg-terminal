@@ -19,8 +19,10 @@
 - `GET /api/stock/pe-history/{symbol}` — trailing (TTM) P/E weekly series (adj-EPS) + percentile stats + earnings list; cache 1h. Next.js proxy: `type=pe-history`
 
 ## Options (`routers/options.py`)
-- `GET /api/options` — options chain (calls + puts)
+- `GET /api/options` — options chain (calls + puts). Also returns `ivCall`/`ivPut`/`ivMid`/`atmStrike` (median ATM IV within 3% of spot, per side) and **upserts today's `iv_snapshots` row as a side effect** — `ivCurrent` stays call-only for back-compat
 - `GET /api/options/surface` — implied volatility surface
+- `POST /api/options/{symbol}/iv-snapshot?expiry=&targetDte=30` — record today's ATM IV explicitly (for a daily cron; the chain endpoint already does it on read). Picks the expiry nearest `targetDte` and **skips anything under 7 DTE** — `expirations[0]` is often 0DTE, whose ATM call/put pair can disagree by 40 vol points (see gotchas). 422 if no usable ATM IV
+- `GET /api/options/{symbol}/sd-bands?period=&mode=&horizonDays=&rvWindow=&occWindow=` — Black-Scholes lognormal σ-bands per day for the SD heatmap pane. `mode=occupancy` (default) = realized bucket frequency vs the band projected `horizonDays` earlier; `mode=cheapness` = `P_rv − P_iv` on the same price edges. History depth is bounded by `iv_snapshots`, NOT by `period` — a fresh symbol returns `snapshotCount: 0` + a `note`, never an error (plus `rawSnapshotCount` when rows exist but are all under 7 DTE and therefore excluded). Per day it picks the expiry closest to `horizonDays`, not the nearest one. **`cheapness` works from the FIRST snapshot** (realized vol comes from price history); `occupancy` cannot draw until outcomes exist ~`horizonDays` later — hence `cheapness` is the default mode. Math: `backend/analytics/sd_bands.py`
 - `GET /api/options/positions/list` — list option positions
 - `POST /api/options/positions` — add position (underlying, expiry, strike, type, qty, entry_price)
 - `POST /api/options/positions/seed-demo` — insert 6 demo positions
@@ -462,7 +464,8 @@ app/api/
 ├── news/facebook/route.ts
 ├── clippings/route.ts / content / ai / ai/models
 ├── heatmap/route.ts
-├── options/route.ts / surface
+├── options/route.ts / surface / sd-bands (?symbol= + period/mode/horizonDays/rvWindow/occWindow)
+├── options/iv-snapshot/route.ts (POST ?symbol=&targetDte= — passes 404/422 through so the caller can tell "never will work" from "retry")
 ├── options/positions/route.ts (POST)
 ├── options/positions/list/route.ts
 ├── options/positions/seed-demo/route.ts

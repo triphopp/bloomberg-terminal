@@ -164,6 +164,32 @@ def init_db() -> None:
             ON sector_classifications(country, market_cap)
         """)
 
+        # ── ATM implied-vol snapshots ─────────────────────────────────────
+        # Yahoo only ever reports the CURRENT implied vol of a chain, so an IV
+        # time series cannot be back-filled from anywhere — it can only be
+        # accumulated. One row per (symbol, day, expiry); the SD-band heatmap
+        # reads this as its sigma history and shows how many days it has.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS iv_snapshots (
+                symbol        TEXT NOT NULL,
+                snapshot_date TEXT NOT NULL,
+                expiry        TEXT NOT NULL,
+                dte           INTEGER NOT NULL,
+                spot          REAL NOT NULL,
+                atm_strike    REAL,
+                iv_call       REAL,
+                iv_put        REAL,
+                iv_mid        REAL NOT NULL,
+                source        TEXT NOT NULL DEFAULT 'yfinance',
+                created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (symbol, snapshot_date, expiry)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ivsnap_sym_date "
+            "ON iv_snapshots(symbol, snapshot_date)"
+        )
+
 
 def init_portfolio_v2() -> None:
     """Create portfolio v2 tables (multi-account, trade log, cash, dividends)."""

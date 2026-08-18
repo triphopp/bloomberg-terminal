@@ -58,6 +58,7 @@ import {
 import type { BarInterval, IndicatorRegistryEntry, OhlcvBar, TimePeriod } from "../chart";
 import { FearGreedPane } from "../chart/FearGreedPane";
 import { PEPane } from "../chart/PEPane";
+import { useSdBands } from "../chart/useSdBands";
 import { ExtendedHoursPrice, MarketSessionBadge, staleMoveStyle } from "../core/market-session";
 import { UsMarketClock } from "../core/us-market-clock";
 import { type FxPair, useFxTicks } from "../hooks/useFxTicks";
@@ -1258,6 +1259,16 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
       updateHeatmapIndicatorConfig("fear-greed", { preloadedData: fearGreedMktQuery.data.history });
     }
   }, [fearGreedActiveInMkt, fearGreedMktQuery.data, updateHeatmapIndicatorConfig]);
+
+  // ── IV SD Heatmap ──────────────────────────────────────────────────────────
+  // Same hook the stock-view chart uses — fetch, self-heal on an unrecorded
+  // symbol, and inject the payload into the indicator's config.
+  useSdBands({
+    indicators: heatmapIndicators,
+    symbol: selectedSymbol,
+    period: "1y",
+    updateIndicatorConfig: updateHeatmapIndicatorConfig,
+  });
 
   const setCurrentView = useSetAtom(currentViewAtom);
   const setStockSymbol = useSetAtom(stockSearchSymbolAtom);

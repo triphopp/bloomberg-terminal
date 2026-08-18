@@ -68,6 +68,17 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     ("thesis_events",            ["id"]),
     ("thesis_links",             ["thesis_id", "trade_id"]),   # composite PK
     ("allocation_targets",       ["account_id", "scope", "key"]),  # UNIQUE(...)
+    # ATM implied-vol history. Market data, which normally stays local (see
+    # fx_rates, deliberately absent) — but this series is the one kind that
+    # CANNOT be re-derived later: the provider publishes only the CURRENT IV of a
+    # chain, so a day nobody recorded is a permanent hole. Syncing means whichever
+    # machine was running that day fills it for both.
+    #
+    # The composite PK is a natural key (no auto-increment id to collide), and
+    # rows are immutable facts about one (symbol, day, expiry), so LWW is a union
+    # in practice: two devices recording the same day agree, and different days
+    # never contend.
+    ("iv_snapshots",             ["symbol", "snapshot_date", "expiry"]),
 ]
 
 TABLE_PK: dict[str, list[str]] = {t: pk for t, pk in SYNC_TABLES}
