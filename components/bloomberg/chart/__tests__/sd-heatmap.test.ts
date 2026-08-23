@@ -228,16 +228,20 @@ test("occupancy mode scores each row against its own reference", () => {
   const spec = heat(build(payload({ mode: "occupancy" }), ["2026-01-02"]));
   // 30% in the +1 row is above its 24.2% reference → warm; the same 30% in the
   // 0 row would be well below 38.3% → cool. Same number, opposite reading.
-  const warm = spec.colorScale(0.3, 3);
-  const cool = spec.colorScale(0.3, 2);
-  assert.ok(warm?.startsWith("rgba(234, 88, 12"), warm ?? "null");
-  assert.ok(cool?.startsWith("rgba(37, 99, 235"), cool ?? "null");
+  // Asserted on the hue's DIRECTION, not on an exact triple: the ramps move
+  // colour with magnitude, so pinning one rgb would pin the scale's shape too.
+  const warm = rgbOf(spec.colorScale(0.3, 3));
+  const cool = rgbOf(spec.colorScale(0.3, 2));
+  assert.ok(warm[0] > warm[2], `warm ${warm}`);
+  assert.ok(cool[2] > cool[0], `cool ${cool}`);
 });
 
 test("cheapness mode reads the sign, not the reference", () => {
   const spec = heat(build(payload({ mode: "cheapness" }), ["2026-01-02"]));
-  assert.ok(spec.colorScale(-0.05, 0)?.startsWith("rgba(220, 38, 38"));
-  assert.ok(spec.colorScale(0.05, 0)?.startsWith("rgba(22, 163, 74"));
+  const rich = rgbOf(spec.colorScale(-0.05, 0));
+  const cheap = rgbOf(spec.colorScale(0.05, 0));
+  assert.ok(rich[0] > rich[1], `rich ${rich}`);
+  assert.ok(cheap[1] > cheap[0], `cheap ${cheap}`);
 });
 
 test("output label names the active mode", () => {
@@ -253,13 +257,26 @@ test("heatmap outputs carry no series data", () => {
 
 // ── Colour scales ────────────────────────────────────────────────────────────
 
+/** The rgb triple of an `rgba()` fill, for asserting hue direction. */
+function rgbOf(fill: string | null): [number, number, number] {
+  const parts =
+    /rgba?\(([^)]+)\)/
+      .exec(fill ?? "")?.[1]
+      .split(",")
+      .map(Number) ?? [];
+  return [parts[0], parts[1], parts[2]];
+}
+
+/** The wash a reading sitting exactly at its reference gets. */
+const NEUTRAL_FILL = "rgba(130, 135, 145, 0.14)";
+
 test("occupancy grows with the ratio away from the reference", () => {
   const alpha = (c: string | null) => Number(/([\d.]+)\)$/.exec(c ?? "")?.[1] ?? -1);
   const atRef = alpha(occupancyColor(0.0701, 0.066807)); // just outside the neutral band
   const double = alpha(occupancyColor(0.1336, 0.066807));
   const quadruple = alpha(occupancyColor(0.2672, 0.066807));
   assert.ok(atRef < double && double < quadruple, `${atRef} ${double} ${quadruple}`);
-  assert.ok(quadruple <= 0.72 + 1e-9, "saturates rather than exceeding full alpha");
+  assert.ok(quadruple <= 0.95 + 1e-9, "saturates rather than exceeding full alpha");
 });
 
 test("occupancy tails read hotter than the centre for the same overshoot", () => {
@@ -274,25 +291,142 @@ test("occupancy with a zero reference paints nothing rather than dividing by zer
 });
 
 test("a reading at the reference looks like nothing, not a faint wash", () => {
-  assert.equal(cheapnessColor(0.0005), "rgba(120,120,130,0.05)");
-  assert.equal(cheapnessColor(-0.0005), "rgba(120,120,130,0.05)");
-  assert.equal(occupancyColor(0.2417, 0.24173), "rgba(120,120,130,0.05)");
+  assert.equal(cheapnessColor(0.0005), NEUTRAL_FILL);
+  assert.equal(cheapnessColor(-0.0005), NEUTRAL_FILL);
+  assert.equal(occupancyColor(0.2417, 0.24173), NEUTRAL_FILL);
 });
 
 test("intensity is sqrt-shaped so mid-range readings are still separable", () => {
   const alpha = (c: string | null) => Number(/([\d.]+)\)$/.exec(c ?? "")?.[1] ?? -1);
   // A quarter of the way up the range should already be half the contrast; a
   // linear ramp would leave the common middle looking uniformly washed out.
-  const quarter = alpha(cheapnessColor(0.02));
-  const full = alpha(cheapnessColor(0.08));
-  assert.ok(quarter > 0.06 + (full - 0.06) * 0.45, `${quarter} vs ${full}`);
+  const quarter = alpha(cheapnessColor(0.015));
+  const full = alpha(cheapnessColor(0.06));
+  assert.ok(quarter > 0.1 + (full - 0.1) * 0.45, `${quarter} vs ${full}`);
 });
 
 test("colour saturates below opaque so the cell's number stays legible", () => {
   const alpha = (c: string | null) => Number(/([\d.]+)\)$/.exec(c ?? "")?.[1] ?? -1);
-  assert.ok(alpha(cheapnessColor(-0.9)) <= 0.72 + 1e-9);
-  assert.ok(alpha(cheapnessColor(0.9)) <= 0.72 + 1e-9);
-  assert.ok(alpha(occupancyColor(0.9, 0.0668)) <= 0.72 + 1e-9);
+  assert.ok(alpha(cheapnessColor(-0.9)) <= 0.95 + 1e-9);
+  assert.ok(alpha(cheapnessColor(0.9)) <= 0.95 + 1e-9);
+  assert.ok(alpha(occupancyColor(0.9, 0.0668)) <= 0.95 + 1e-9);
+});
+
+// ── Caption: how big a sigma actually is ─────────────────────────────────────
+
+const capOf = (out: ReturnType<typeof build>) => heat(out).caption ?? [];
+
+test("the caption leads with the sigma move over the horizon", () => {
+  // Newest row: σ=0.21, T=0.0822 → σ√T = 6.0%; on a spot of 101, ≈ ±6.08.
+  const cap = capOf(build(payload(), ["2026-01-05"]));
+  assert.ok(cap[0].startsWith("1σ/30d ±6.0%"), cap[0]);
+  assert.ok(cap[0].includes("±6.081"), cap[0]);
+});
+
+test("the caption quotes annualised IV and RV, and the ratio between them", () => {
+  const cap = capOf(build(payload(), ["2026-01-05"]));
+  assert.ok(cap.includes("IV 21.0%"), cap.join("|"));
+  assert.ok(cap.includes("RV 19.0%"), cap.join("|"));
+  assert.ok(cap.includes("IV/RV 1.11"), cap.join("|"));
+});
+
+test("the caption reads the still-open projection when there is one", () => {
+  const p = payload({
+    current: {
+      time: "2026-01-06",
+      spot: 100,
+      sigmaIv: 0.4,
+      sigmaRv: null,
+      dteAtSnapshot: 30,
+      T: 0.0822,
+      prices: [80, 90, 100, 110, 120],
+      edges: [null, 85, 95, 105, 115, null],
+      targetDate: "2026-02-05",
+    },
+  });
+  const cap = capOf(build(p, ["2026-01-05"]));
+  assert.ok(cap[0].includes("±11.5%"), cap[0]);
+  // No RV on this snapshot: the pair is dropped, not printed as NaN.
+  assert.ok(!cap.some((c) => c.includes("RV")), cap.join("|"));
+});
+
+test("the caption survives an empty grid — sigma is known before outcomes are", () => {
+  const p = payload({ series: [] });
+  p.current = {
+    time: "2026-01-06",
+    spot: 100,
+    sigmaIv: 0.2,
+    sigmaRv: null,
+    dteAtSnapshot: 30,
+    T: 0.0822,
+    prices: [90, 95, 100, 105, 110],
+    edges: [null, 92, 97, 103, 108, null],
+    targetDate: "2026-02-05",
+  };
+  const spec = heat(build(p, ["2026-01-02"]));
+  assert.equal(spec.columns.length, 0);
+  assert.ok(spec.caption?.[0].startsWith("1σ/30d"), String(spec.caption));
+});
+
+test("a payload with no usable sigma gets no caption rather than a NaN one", () => {
+  const p = payload({ series: [] });
+  p.current = null;
+  assert.equal(heat(build(p, ["2026-01-02"])).caption, undefined);
+});
+
+test("the caption carries no target-date pointer", () => {
+  // Dropped on request: the horizon is already named in the sigma segment, and
+  // an arrow to a date is a second way of saying it.
+  const p = payload({
+    current: {
+      time: "2026-01-06",
+      spot: 100,
+      sigmaIv: 0.2,
+      sigmaRv: 0.18,
+      dteAtSnapshot: 30,
+      T: 0.0822,
+      prices: [90, 95, 100, 105, 110],
+      edges: [null, 92, 97, 103, 108, null],
+      targetDate: "2026-02-05",
+    },
+  });
+  const cap = capOf(build(p, ["2026-01-05"]));
+  assert.ok(!cap.some((c) => c.includes("→") || c.includes("2026-02-05")), cap.join("|"));
+});
+
+// ── Sigma basis ──────────────────────────────────────────────────────────────
+
+const capWith = (basis: string) => {
+  const indicator = createSdHeatmap({ mode: "occupancy", sigmaBasis: basis });
+  indicator.config.preloadedData = payload();
+  const out = indicator.compute(bars(["2026-01-05"]), indicator.config);
+  return (out[0].heatmap as HeatmapSpec).caption ?? [];
+};
+
+test("daily basis quotes one session, not the horizon", () => {
+  // σ=0.21 over 252 sessions → 1.32% a day, against 6.0% over the 30d horizon.
+  const cap = capWith("daily");
+  assert.ok(cap[0].startsWith("1σ/1d ±1.32%"), cap[0]);
+  assert.ok(!cap.some((c) => c.includes("/30d")), cap.join("|"));
+});
+
+test("a sub-2% sigma keeps a second decimal — 1.3% and 1.32% are different days", () => {
+  assert.ok(capWith("daily")[0].includes("1.32%"), capWith("daily")[0]);
+  assert.ok(capWith("horizon")[0].includes("6.0%"), capWith("horizon")[0]);
+});
+
+test("both bases lead with the horizon, which is what the grid is drawn at", () => {
+  const cap = capWith("both");
+  assert.ok(cap[0].includes("/30d"), cap[0]);
+  assert.ok(cap[1].includes("/1d"), cap[1]);
+});
+
+test("an unknown basis falls back to the horizon rather than dropping the line", () => {
+  assert.ok(capWith("nonsense")[0].includes("/30d"));
+});
+
+test("the basis defaults to the horizon", () => {
+  assert.equal(createSdHeatmap().config.sigmaBasis, "horizon");
 });
 
 // ── Registry contract ────────────────────────────────────────────────────────
@@ -328,6 +462,37 @@ test("the outer rows read as open-ended, not as a fake bound", () => {
   assert.ok(labels[4]?.startsWith(">"), String(labels[4]));
 });
 
+test("each cell also carries THAT DAY's price in a compact form", () => {
+  // What makes the trend visible: on a dense chart the range does not fit, and
+  // the compact edge is the same price in half the width.
+  const spec = heat(build(payload(), ["2026-01-02"]));
+  assert.deepEqual(spec.columns[0].cellLabelsCompact, [
+    "<92.00",
+    "92.00+",
+    "97.00+",
+    "103.0+",
+    "108.0+",
+  ]);
+});
+
+test("compact cell prices come from the column's own day, not the newest one", () => {
+  const spec = heat(build(payload(), ["2026-01-02", "2026-01-05"]));
+  assert.notDeepEqual(spec.columns[0].cellLabelsCompact, spec.columns[1].cellLabelsCompact);
+});
+
+test("compact cell prices fall back to centre prices when a row has no edges", () => {
+  const p = payload();
+  p.series[0].edges = [];
+  const spec = heat(build(p, ["2026-01-02"]));
+  assert.deepEqual(spec.columns[0].cellLabelsCompact, [
+    "90.00",
+    "95.00",
+    "100.0",
+    "105.0",
+    "110.0",
+  ]);
+});
+
 test("a row with no edges leaves the cells unlabelled rather than guessing", () => {
   const p = payload();
   p.series[0].edges = [null, 1];
@@ -349,31 +514,30 @@ test("fmtBand handles both open ends and rejects a fully open row", () => {
   assert.equal(fmtBand(null, null), null);
 });
 
-// ── Reference rail ───────────────────────────────────────────────────────────
+// ── Row values in the gutter ─────────────────────────────────────────────────
 
-test("rail carries bucket EDGES, which are unambiguous alone", () => {
-  // The rail is too narrow for a full range, and an edge needs no second number:
-  // the next row starts exactly where this one ends.
+const valuesOf = (spec: HeatmapSpec) =>
+  spec.rows.map((r) => (typeof r === "string" ? undefined : r.value));
+
+test("the gutter carries bucket EDGES, which are unambiguous alone", () => {
+  // An edge needs no second number: the next row starts exactly where this one
+  // ends. That is what lets it fit beside the level and the odds.
   const p = payload();
   p.series = [p.series[0]];
   const spec = heat(build(p, ["2026-01-02"]));
-  assert.ok(spec.rail);
-  assert.deepEqual(spec.rail?.rows, ["<92.00", "92.00+", "97.00+", "103.0+", "108.0+"]);
-  assert.deepEqual(spec.rail?.subRows, ["≥ 98%", "≥ 84%", "≥ 50%", "≥ 16%", "≥ 2.3%"]);
+  assert.deepEqual(valuesOf(spec), ["<92.00", "92.00+", "97.00+", "103.0+", "108.0+"]);
 });
 
-test("rail reports the NEWEST reading even when that column is off-screen", () => {
-  // The rail is a reference for "where things stand now", not an annotation of
-  // the visible columns — a timeframe that hides the newest snapshot must not
-  // silently roll the quoted prices back to an older band.
+test("gutter values report the NEWEST reading even when that column is off-screen", () => {
+  // The gutter is a reference for "where things stand now", not an annotation of
+  // the visible columns.
   const spec = heat(build(payload(), ["2026-01-02"]));
-  assert.deepEqual(spec.rail?.rows, ["<93.00", "93.00+", "98.00+", "104.0+", "109.0+"]);
+  assert.deepEqual(valuesOf(spec), ["<93.00", "93.00+", "98.00+", "104.0+", "109.0+"]);
 });
 
-test("rail prefers the still-open projection over the last plotted column", () => {
-  // (edges omitted below on purpose — the centre-price fallback is asserted.)
-  // In occupancy mode the last column is horizonDays old by construction; the
-  // number a reader is deciding against is today's forward band.
+test("gutter prefers the still-open projection over the last plotted column", () => {
+  // In occupancy mode the newest column is horizonDays old by construction; the
+  // number a reader decides against is today's forward band.
   const p = payload({
     current: {
       time: "2026-01-06",
@@ -388,24 +552,22 @@ test("rail prefers the still-open projection over the last plotted column", () =
     },
   });
   const spec = heat(build(p, ["2026-01-02"]));
-  assert.deepEqual(spec.rail?.rows, ["<202.0", "202.0+", "207.0+", "212.0+", "217.0+"]);
-  assert.equal(spec.rail?.title, "→ 02-05");
+  assert.deepEqual(valuesOf(spec), ["<202.0", "202.0+", "207.0+", "212.0+", "217.0+"]);
 });
 
-test("rail falls back to the newest column when there is no open projection", () => {
-  const spec = heat(build(payload({ current: null }), ["2026-01-02", "2026-01-05"]));
-  assert.deepEqual(spec.rail?.rows, ["<93.00", "93.00+", "98.00+", "104.0+", "109.0+"]);
-});
-
-test("rail falls back to centre prices when a payload carries no edges", () => {
+test("gutter falls back to centre prices when a payload carries no edges", () => {
   const p = payload({ current: null });
   p.series = [{ ...p.series[1], edges: [] }];
   const spec = heat(build(p, ["2026-01-05"]));
-  assert.deepEqual(spec.rail?.rows, ["91.00", "96.00", "101.0", "106.0", "111.0"]);
+  assert.deepEqual(valuesOf(spec), ["91.00", "96.00", "101.0", "106.0", "111.0"]);
 });
 
-test("rail omits the odds when the payload predates exceedProbs", () => {
+test("gutter omits the odds when the payload predates exceedProbs", () => {
   const spec = heat(build(payload({ exceedProbs: undefined }), ["2026-01-02"]));
-  assert.deepEqual(spec.rail?.subRows, [null, null, null, null, null]);
-  assert.equal(spec.rail?.rows.length, 5);
+  assert.deepEqual(
+    rowsOf(spec).map((r) => r.odds),
+    [undefined, undefined, undefined, undefined, undefined]
+  );
+  // The value column is independent of the odds and must survive.
+  assert.ok(valuesOf(spec).every(Boolean));
 });

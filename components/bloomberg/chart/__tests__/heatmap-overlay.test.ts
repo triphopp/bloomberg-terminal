@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import type { IChartApi, ISeriesApi, SeriesType } from "lightweight-charts";
 
-import { createHeatmapOverlay } from "../heatmap-overlay.ts";
+import { createHeatmapOverlay, inkFor } from "../heatmap-overlay.ts";
 import type { HeatmapSpec, OhlcvBar } from "../types.ts";
 
 // The overlay is pure geometry over a 2D context, so it can be checked without a
@@ -25,6 +25,8 @@ interface PaintedText {
   /** Needed to turn `y` into a real box — `y` alone means different things per baseline. */
   baseline: string;
   fontPx: number;
+  /** The ink it was drawn with — cell text picks it from the cell's own fill. */
+  fill: string;
 }
 
 interface Painted {
@@ -71,6 +73,7 @@ function stubCtx(painted: Painted) {
         y,
         baseline: String(this.textBaseline),
         fontPx: Number(/(\d+)px/.exec(String(this.font))?.[1] ?? 10),
+        fill: fillStyle,
       });
     },
     measureText(text: string) {
@@ -324,9 +327,12 @@ test("row labels are drawn once each, bottom row lowest on screen", () => {
   assert.ok(minusTwo && plusTwo && minusTwo.y > plusTwo.y);
 });
 
-test("row labels are dropped when rows get too thin for them", () => {
+test("row labels survive even an 8px row — they shrink instead", () => {
+  // Height must never remove a label. It removed them until 2026-08-18, which
+  // is how a three-sub-pane chart ended up with an unlabelled heatmap.
   const p = paint(spec(), { height: 40 }); // 8px rows
-  assert.equal(p.texts.filter((t) => ROWS.includes(t.text)).length, 0);
+  assert.equal(p.texts.filter((t) => ROWS.includes(t.text)).length, 5);
+  assert.ok(p.texts.every((t) => t.fontPx >= 7));
 });
 
 test("a value too wide for its cell is skipped, never spilled", () => {
@@ -415,161 +421,261 @@ test("a null cell label falls back to formatValue for that row only", () => {
   assert.ok(p.texts.some((x) => x.text === "fb"));
 });
 
-// ── Reference rail ───────────────────────────────────────────────────────────
-
-const RAIL = {
-  rows: ["90", "95", "100", "105", "110"],
-  subRows: ["≥98%", "≥84%", "≥50%", "≥16%", "≥2%"],
-  title: "→ 09-16",
-};
-
-test("rail prints one entry per row, bottom row lowest", () => {
-  const p = paint(spec({ rail: RAIL }), { width: 500, height: 120 });
-  const rows = p.texts.filter((x) => RAIL.rows.includes(x.text));
-  assert.equal(rows.length, 5);
-  const bottom = rows.find((x) => x.text === "90");
-  const top = rows.find((x) => x.text === "110");
-  assert.ok(bottom && top && bottom.y > top.y);
+test("a cell too narrow for the range falls back to the compact price", () => {
+  // The regression this locks down: on a year of daily columns the cells are a
+  // fraction of the ~90px a price RANGE needs, so every cell printed nothing —
+  // on exactly the chart where the drift of the bands is the whole point.
+  const narrow = { a: 200, b: 230 } as Record<string, number>;
+  const p = paint(
+    spec({
+      columns: (["a", "b"] as const).map((time) => ({
+        time,
+        values: [1, 2, 3, 4, 5],
+        cellLabels: Array.from({ length: 5 }, () => "438-513"),
+        cellLabelsCompact: Array.from({ length: 5 }, () => "438+"),
+      })),
+    }),
+    { xOf: (t) => narrow[t as string] ?? null, height: 100 }
+  );
+  const texts = p.texts.map((x) => x.text);
+  assert.ok(texts.includes("438+"), "compact label missing");
+  assert.ok(!texts.includes("438-513"), "range should not fit this cell");
 });
 
-test("rail entries sit inside the reserved strip, not over the plot", () => {
-  const p = paint(spec({ rail: RAIL }), { width: 500, height: 120 });
-  for (const t of p.texts.filter((x) => RAIL.rows.includes(x.text))) {
-    assert.ok(t.x > 500 - 74, `${t.text} at ${t.x} is outside the rail`);
+test("the full range wins whenever the cell can hold it", () => {
+  const p = paint(
+    spec({
+      columns: [
+        {
+          time: "t",
+          values: [1, 2, 3, 4, 5],
+          cellLabels: Array.from({ length: 5 }, () => "438-513"),
+          cellLabelsCompact: Array.from({ length: 5 }, () => "438+"),
+        },
+      ],
+    }),
+    { height: 100 }
+  );
+  const texts = p.texts.map((x) => x.text);
+  assert.ok(texts.includes("438-513"));
+  assert.ok(!texts.includes("438+"));
+});
+
+test("compact labels alone are enough to turn cell text on", () => {
+  const p = paint(
+    spec({
+      columns: [
+        { time: "t", values: [1, 2, 3, 4, 5], cellLabelsCompact: ["a", "b", "c", "d", "e"] },
+      ],
+    }),
+    { height: 100 }
+  );
+  assert.equal(p.texts.filter((x) => ["a", "b", "c", "d", "e"].includes(x.text)).length, 5);
+});
+
+// ── Caption ──────────────────────────────────────────────────────────────────
+
+const CAPTION = ["1σ/30d ±8.2%", "IV 24.3%", "RV 18.1%", "IV/RV 1.34"];
+
+test("the caption is drawn top-left, clear of the newest column", () => {
+  const p = paint(spec({ caption: CAPTION }), { height: 100, width: 500 });
+  const cap = p.texts.find((t) => t.text.startsWith("1σ"));
+  assert.ok(cap, "caption missing");
+  assert.ok(textBox(cap)[1] <= 20, `caption at y=${cap.y} is not at the top`);
+  assert.ok(cap.x < 500 / 2, `caption at x=${cap.x} is not on the left`);
+});
+
+test("a narrow pane drops whole trailing segments, never a clipped word", () => {
+  // measureText in this stub is 5px per character.
+  const p = paint(spec({ caption: CAPTION }), { height: 100, width: 260 });
+  const cap = p.texts.find((t) => t.text.startsWith("1σ"));
+  assert.ok(cap, "the leading segment must survive");
+  assert.ok(!cap.text.includes("IV/RV"), `kept too much: ${cap.text}`);
+  // Whatever it kept, it kept whole.
+  for (const seg of cap.text.split("  ·  ")) assert.ok(CAPTION.includes(seg), seg);
+});
+
+test("a pane too short for a caption row drops it rather than overlapping", () => {
+  const p = paint(spec({ caption: CAPTION }), { height: 40 });
+  assert.ok(!p.texts.some((t) => t.text.startsWith("1σ")));
+});
+
+test("no caption, no plate — the pane is unchanged", () => {
+  const withCap = paint(spec({ caption: CAPTION }), { height: 100 });
+  const without = paint(spec(), { height: 100 });
+  assert.ok(withCap.fills.length > without.fills.length);
+});
+
+// ── Ink on a cell ────────────────────────────────────────────────────────────
+
+test("cell text takes its ink from the cell's own fill, not the theme", () => {
+  // A ramp that runs from near-transparent to nearly opaque cannot be read with
+  // one fixed ink: white type vanishes on the pale end of a light pane, black
+  // type on the deep end.
+  const deep = paint(
+    spec({ colorScale: () => "rgba(185, 28, 28, 0.95)", formatValue: () => "x" }),
+    {
+      isDark: false,
+    }
+  );
+  const pale = paint(
+    spec({ colorScale: () => "rgba(252, 165, 165, 0.12)", formatValue: () => "x" }),
+    {
+      isDark: false,
+    }
+  );
+  const inkOf = (p: Painted) => p.texts.find((t) => t.text === "x")?.fill;
+  assert.equal(inkOf(deep), "rgba(255,255,255,0.95)", "deep cell needs light type");
+  assert.equal(inkOf(pale), "rgba(0,0,0,0.88)", "pale cell on a light pane needs dark type");
+});
+
+test("inkFor falls back to the theme ink when the fill is not rgb", () => {
+  assert.equal(inkFor("#123456", true), "rgba(255,255,255,0.92)");
+  assert.equal(inkFor("nonsense", false), "rgba(0,0,0,0.88)");
+});
+
+// ── Reference rail ───────────────────────────────────────────────────────────
+
+// ── The gutter carries the reference, and nothing sits over the plot ─────────
+//
+// The bug this locks down: a right-hand strip held the per-row values, and the
+// newest column sits at the right edge by definition. The strip clipped that
+// column to zero width — the pane drew its labels over a heatmap with NO CELLS.
+
+const LABELLED = [
+  { level: "-2σ", odds: "98%", value: "<373.9" },
+  { level: "-1σ", odds: "84%", value: "373.9+" },
+  { level: "0σ", odds: "50%", value: "437.2+" },
+  { level: "+1σ", odds: "16%", value: "511.3+" },
+  { level: "+2σ", odds: "2.3%", value: "597.9+" },
+];
+
+/** The live case: daily columns bunched at the right edge of a 1-year chart. */
+function paintNewest(over: Partial<HeatmapSpec> = {}, height = 190, width = 820) {
+  const xs: Record<string, number> = { a: width - 40, b: width - 37, c: width - 34 };
+  return paint(
+    spec({
+      rows: LABELLED,
+      columns: ["a", "b", "c"].map((time) => ({
+        time,
+        values: [0.12, -0.03, -0.13, -0.05, 0.08],
+        markRow: 2,
+      })),
+      ...over,
+    }),
+    { width, height, barSpacing: 3.2, xOf: (t) => xs[t as string] }
+  );
+}
+
+test("the newest column is still painted when it sits at the right edge", () => {
+  const p = paintNewest();
+  assert.equal(cells(p).length, 15, "3 columns x 5 rows");
+});
+
+test("nothing is drawn to the right of the plot", () => {
+  const p = paintNewest();
+  const rightmost = Math.max(...cells(p).map((c) => c.x + c.w));
+  assert.ok(rightmost <= 820, `cell reaches ${rightmost}`);
+  // Every label lives in the gutter, left of every cell.
+  const leftmostCell = Math.min(...cells(p).map((c) => c.x));
+  for (const label of p.texts) {
+    assert.ok(label.x <= leftmostCell + 1, `${label.text} at x=${label.x} is over the plot`);
   }
 });
 
-test("cells are clipped at the rail edge so they never run under it", () => {
-  const p = paint(spec({ rail: RAIL }), { width: 500, xOf: () => 600 });
-  assert.equal(cells(p).length, 0);
-  const q = paint(spec({ rail: RAIL }), { width: 500, xOf: () => 200 });
-  assert.equal(cells(q).length, 5);
-  for (const c of cells(q)) assert.ok(c.x + c.w <= 500 - 72 + 0.001);
-});
-
-test("cells never paint over the gutter", () => {
-  const p = paint(spec(), { width: 500, xOf: () => 0 });
-  for (const c of cells(p)) assert.ok(c.x >= 0);
-});
-
-test("row separators stop at the rail", () => {
-  // No cellLabels/formatValue here, so the cells cannot label themselves and the
-  // fallback rail is shown.
-  const p = paint(spec({ rail: RAIL }), { width: 500, height: 120 });
-  const rows = hLines(p);
-  assert.equal(rows.length, 4);
-  for (const line of rows) assert.equal(line.to[0], 500 - 72);
-});
-
-test("the probability sub-line is dropped when rows get thin", () => {
-  const roomy = paint(spec({ rail: RAIL }), { width: 500, height: 150 });
-  assert.ok(roomy.texts.some((x) => x.text === "≥50%"));
-
-  const thin = paint(spec({ rail: RAIL }), { width: 500, height: 80 });
-  assert.ok(!thin.texts.some((x) => x.text === "≥50%"));
-  // The price itself survives — it is the more important half.
-  assert.ok(thin.texts.some((x) => x.text === "100"));
-});
-
-test("the rail is dropped entirely when it would crowd out the plot", () => {
-  const p = paint(spec({ rail: RAIL }), { width: 150, height: 120 });
-  assert.ok(!p.texts.some((x) => RAIL.rows.includes(x.text)));
-  // And the plot gets the full width back.
-  for (const line of hLines(p)) assert.equal(line.to[0], 150);
-});
-
-test("no rail means the plot runs to the right edge", () => {
-  const p = paint(spec(), { width: 500, height: 120 });
-  const rows = hLines(p);
-  assert.equal(rows.length, 4);
-  for (const line of rows) assert.equal(line.to[0], 500);
-});
-
-test("the rail is dropped when the cells can label themselves", () => {
-  // Duplication, not information: the rail would repeat what is already in every
-  // cell, and the plot wants that width back.
-  const p = paint(
-    spec({
-      rail: RAIL,
-      columns: [{ time: "t", values: [1, 2, 3, 4, 5], cellLabels: ["a", "b", "c", "d", "e"] }],
-    }),
-    { width: 500, height: 190, barSpacing: 2 }
-  );
-  assert.ok(!p.texts.some((x) => RAIL.rows.includes(x.text)));
-  for (const line of hLines(p)) assert.equal(line.to[0], 500);
-});
-
-// ── Rail legibility at small pane heights ────────────────────────────────────
-//
-// The bug this guards: a sub-pane defaults to 44–80px, which over five rows is
-// 9–16px each — at or below the 9px type size. The rail drew all five prices
-// regardless, so they overlapped into an unreadable pile at the right edge.
-// Text is now dropped or thinned before it is ever allowed to collide.
-
-test("rail prices survive every pane height — they shrink, they do not vanish", () => {
-  // Hiding them below a height threshold turned a cramped pane into an empty
-  // one, which is a worse answer than small type.
-  for (const height of [40, 50, 60, 80, 100, 130]) {
-    const p = paint(spec({ rail: RAIL }), { width: 500, height });
-    assert.equal(
-      p.texts.filter((x) => RAIL.rows.includes(x.text)).length,
-      5,
-      `height ${height} dropped rail prices`
+test("the gutter shows level, odds and value on one row", () => {
+  const p = paintNewest();
+  for (const l of LABELLED) {
+    assert.ok(
+      p.texts.some((x) => x.text === l.level),
+      l.level
+    );
+    assert.ok(
+      p.texts.some((x) => x.text === l.odds),
+      l.odds
+    );
+    assert.ok(
+      p.texts.some((x) => x.text === l.value),
+      l.value
     );
   }
 });
 
-test("rail type shrinks with the row", () => {
-  const small = paint(spec({ rail: RAIL }), { width: 500, height: 50 });
-  const large = paint(spec({ rail: RAIL }), { width: 500, height: 130 });
-  const px = (p: Painted) => p.texts.find((x) => x.text === "100")?.fontPx ?? 0;
-  assert.ok(px(small) < px(large), `${px(small)} !< ${px(large)}`);
-  assert.ok(px(small) >= 6, "never smaller than 6px");
+test("the three gutter columns never overlap horizontally", () => {
+  const p = paintNewest();
+  const row = (lvl: string, odds: string, val: string) => {
+    const L = p.texts.find((x) => x.text === lvl);
+    const O = p.texts.find((x) => x.text === odds);
+    const V = p.texts.find((x) => x.text === val);
+    assert.ok(L && O && V);
+    // level is left-aligned, odds and value right-aligned; ordering must hold.
+    assert.ok(L.x < O.x, `${lvl} at ${L.x} not left of odds at ${O.x}`);
+    assert.ok(O.x <= V.x, `odds at ${O.x} not left of value at ${V.x}`);
+  };
+  row("+2σ", "2.3%", "597.9+");
+  row("0σ", "50%", "437.2+");
 });
 
-test("the preferred pane height prints every row", () => {
-  const p = paint(spec({ rail: RAIL }), { width: 500, height: 130 }); // 26px rows
-  const shown = p.texts.filter((x) => RAIL.rows.includes(x.text));
-  assert.equal(shown.length, 5);
-});
-
-test("rail entries never overlap vertically", () => {
-  for (const height of [60, 70, 80, 100, 130, 200]) {
-    const p = paint(spec({ rail: RAIL }), { width: 500, height });
-    const boxes = p.texts
-      .filter((x) => RAIL.rows.includes(x.text) || RAIL.subRows.includes(x.text))
-      .map(textBox)
-      .sort((a, b) => a[0] - b[0]);
-    for (let i = 1; i < boxes.length; i++) {
-      assert.ok(
-        boxes[i][0] >= boxes[i - 1][1],
-        `height ${height}: ${boxes[i - 1]} and ${boxes[i]} overlap`
-      );
-    }
+test("a short pane shrinks the type — it never drops the numbers", () => {
+  // The regression this locks down: hiding the value below a 20px row height
+  // silently emptied the gutter on any chart carrying three sub-panes.
+  for (const height of [190, 130, 87, 60, 44]) {
+    const p = paintNewest({}, height);
+    assert.ok(
+      p.texts.some((x) => x.text === "0σ"),
+      `level at ${height}px`
+    );
+    assert.ok(
+      p.texts.some((x) => x.text === "437.2+"),
+      `value at ${height}px`
+    );
+    assert.ok(
+      p.texts.some((x) => x.text === "50%"),
+      `odds at ${height}px`
+    );
   }
 });
 
-test("cell labels never overlap their row separators either", () => {
-  const p = paint(
-    spec({
-      columns: [{ time: "t", values: [1, 2, 3, 4, 5], cellLabels: ["a", "b", "c", "d", "e"] }],
-    }),
-    { barSpacing: 40, height: 130 }
+test("type scales down with the row and stops at a floor", () => {
+  const px = (p: Painted) => p.texts.find((x) => x.text === "0σ")?.fontPx ?? 0;
+  assert.ok(px(paintNewest({}, 190)) > px(paintNewest({}, 87)));
+  assert.ok(px(paintNewest({}, 44)) >= 7, "never below 7px");
+});
+
+test("a narrow pane drops odds before the value", () => {
+  // Priority: which row this is > what it is worth > a constant you learn once.
+  const mid = paintNewest({}, 130, 250);
+  assert.ok(mid.texts.some((x) => x.text === "0σ"));
+  assert.ok(
+    mid.texts.some((x) => x.text === "437.2+"),
+    "value outranks odds"
   );
-  const seps = p.lines.filter((l) => l.from[1] === l.to[1]).map((l) => l.from[1]);
-  for (const box of p.texts.filter((x) => "abcde".includes(x.text)).map(textBox)) {
-    for (const y of seps) {
-      assert.ok(y <= box[0] || y >= box[1], `separator ${y} cuts through ${box}`);
-    }
+
+  const tight = paintNewest({}, 130, 160);
+  assert.ok(
+    tight.texts.some((x) => x.text === "0σ"),
+    "the level always survives"
+  );
+  assert.ok(!tight.texts.some((x) => x.text === "50%"), "odds gone first");
+});
+
+test("the plot always keeps a usable width", () => {
+  for (const width of [820, 300, 220, 160, 120]) {
+    const p = paintNewest({}, 130, width);
+    const labels = p.texts.map((x) => x.x);
+    const gutterEdge = labels.length ? Math.max(...labels) : 0;
+    assert.ok(width - gutterEdge >= 60, `plot squeezed to ${width - gutterEdge} at ${width}px`);
   }
 });
 
-test("the title is withheld until it clears the top row", () => {
-  const cramped = paint(spec({ rail: RAIL }), { width: 500, height: 100 }); // 20px rows
-  assert.ok(!cramped.texts.some((x) => x.text === RAIL.title));
-
-  const roomy = paint(spec({ rail: RAIL }), { width: 500, height: 150 }); // 30px rows
-  const title = roomy.texts.find((x) => x.text === RAIL.title);
-  const topRow = roomy.texts.find((x) => x.text === "110");
-  assert.ok(title && topRow && topRow.y - title.y >= 8);
+test("cells never paint over the gutter even when a column lands on it", () => {
+  const xs: Record<string, number> = { a: 5 };
+  const p = paint(spec({ rows: LABELLED, columns: [{ time: "a", values: [1, 2, 3, 4, 5] }] }), {
+    width: 820,
+    height: 190,
+    barSpacing: 3.2,
+    xOf: () => xs.a,
+  });
+  const gutterEnd = Math.max(...p.texts.map((x) => x.x));
+  for (const c of cells(p)) assert.ok(c.x >= gutterEnd - 40, `cell at ${c.x} under the gutter`);
 });

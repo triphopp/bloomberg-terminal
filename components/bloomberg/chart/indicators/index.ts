@@ -75,7 +75,12 @@ import { RV_ESTIMATOR_OPTIONS } from "./rv-core";
 import { createRVRank } from "./rv-rank";
 import { createRVRatio } from "./rv-ratio";
 import { createRVOL } from "./rvol";
-import { SD_HEATMAP_MODES, createSdHeatmap } from "./sd-heatmap";
+import {
+  SD_HEATMAP_MODES,
+  SD_SIGMA_BASES,
+  SD_SIGMA_BASIS_DEFAULT,
+  createSdHeatmap,
+} from "./sd-heatmap";
 import { createSMA } from "./sma";
 import { createStochastic } from "./stochastic";
 import { createVolume } from "./volume";
@@ -330,6 +335,13 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
         type: "select",
         default: "cheapness",
         options: [...SD_HEATMAP_MODES],
+      },
+      {
+        key: "sigmaBasis",
+        label: "Sigma quoted per",
+        type: "select",
+        default: SD_SIGMA_BASIS_DEFAULT,
+        options: [...SD_SIGMA_BASES],
       },
       {
         key: "horizonDays",

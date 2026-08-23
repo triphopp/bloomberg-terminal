@@ -62,6 +62,7 @@ export type {
   IndicatorSeriesOutput,
   HeatmapColumn,
   HeatmapColorScale,
+  HeatmapRowLabel,
   HeatmapSpec,
 } from "./types";
 
