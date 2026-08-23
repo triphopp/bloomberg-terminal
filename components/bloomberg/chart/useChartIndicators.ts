@@ -41,7 +41,7 @@ import type {
   IndicatorRegistryEntry,
 } from "./types";
 import type { OhlcvBar } from "./types";
-import { type WindowUnit, scaleParamsToBars } from "./windowUnits";
+import { type WindowUnit, scaleParamsToBars, specParamsKey } from "./windowUnits";
 
 export interface PeHistoryResponse {
   history: Array<{ time: string; pe: number | null; eps?: number; close?: number }>;
@@ -272,14 +272,37 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
         if (entry.type === "pane" && entry.id !== "volume") {
           const idx = prev.findIndex((s) => s.id === entry.id);
           if (idx >= 0) {
-            if (specInstanceId(prev[idx], windowCtx) === newId) return prev; // identical — nothing to do
+            // Compared on SETTINGS, not on the derived id — see specParamsKey.
+            if (
+              specParamsKey(prev[idx], entry, windowCtx) ===
+              specParamsKey(newSpec, entry, windowCtx)
+            ) {
+              return prev; // identical — nothing to do
+            }
             const next = [...prev];
             next[idx] = newSpec;
             return next;
           }
         }
-        // Overlays stack: SMA 20 + SMA 50 on one chart is a normal setup.
-        if (prev.some((s) => specInstanceId(s, windowCtx) === newId)) return prev;
+        // Overlays stack: SMA 20 + SMA 50 on one chart is a normal setup — those
+        // are two different derived ids, so they append.
+        //
+        // One that lands on the SAME derived id is a re-edit of what is already
+        // there, not a second copy: VWAP's id carries no params at all, so
+        // changing its bands was swallowed exactly the way the pane indicators'
+        // settings were. Same id + different settings REPLACES.
+        const sameId = prev.findIndex((s) => specInstanceId(s, windowCtx) === newId);
+        if (sameId >= 0) {
+          if (
+            specParamsKey(prev[sameId], entry, windowCtx) ===
+            specParamsKey(newSpec, entry, windowCtx)
+          ) {
+            return prev;
+          }
+          const next = [...prev];
+          next[sameId] = newSpec;
+          return next;
+        }
         return [...prev, newSpec];
       });
     },
