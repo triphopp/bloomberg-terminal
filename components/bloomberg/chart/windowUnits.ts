@@ -17,7 +17,7 @@
  * bar count as close-enough rather than exact.
  */
 
-import type { BarInterval, IndicatorParam } from "./types";
+import type { BarInterval, IndicatorParam, IndicatorRegistryEntry } from "./types";
 
 /** Minutes of market time each interval covers. Daily/weekly resolve per-session. */
 const INTRADAY_MINUTES: Partial<Record<BarInterval, number>> = {
@@ -86,4 +86,57 @@ export function scaleParamsToBars(
     changed = true;
   }
   return changed ? out : params;
+}
+
+// ── Comparing two specs by what they are set to ──────────────────────────────
+
+/**
+ * The part of an indicator spec this comparison reads.
+ *
+ * Structural, not an import of the stored `IndicatorSpec`: that type lives with
+ * the Jotai atoms, and pulling it in would drag a React-runtime module into a
+ * file that is otherwise pure arithmetic (and directly testable because of it).
+ */
+export interface SpecParams {
+  params?: Record<string, number | boolean | string>;
+}
+
+/** Everything needed to turn a stored window number into a bar count. */
+export interface SpecCtx {
+  unit: WindowUnit;
+  interval: BarInterval;
+  isCrypto: boolean;
+}
+
+/**
+ * Canonical key for a spec's SETTINGS, independent of key order and of whether
+ * a value was stored explicitly or left to the default.
+ *
+ * Replacement of an active pane cannot be decided on the instance id: an id is
+ * only as specific as its factory chooses to make it. "rsi-30" encodes its
+ * period, but `sd-heatmap` is a constant — so an id comparison declared every
+ * settings change on it identical to what was already mounted, and the picker's
+ * mode / horizon / sigma-basis controls did nothing at all once the indicator
+ * was on the chart.
+ */
+export function specParamsKey(
+  spec: SpecParams,
+  entry: IndicatorRegistryEntry,
+  ctx: SpecCtx
+): string {
+  const scaled =
+    scaleParamsToBars(
+      spec.params,
+      entry.timeScalableParams,
+      entry.defaultParams,
+      ctx.unit,
+      ctx.interval,
+      ctx.isCrypto
+    ) ?? {};
+  // Defaults are folded in so an omitted param and an explicitly-default one
+  // compare equal — the picker always submits the full set, stored specs may not.
+  const resolved: Record<string, unknown> = {};
+  for (const p of entry.defaultParams) resolved[p.key] = p.default;
+  for (const [k, v] of Object.entries(scaled)) resolved[k] = v;
+  return JSON.stringify(Object.entries(resolved).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }

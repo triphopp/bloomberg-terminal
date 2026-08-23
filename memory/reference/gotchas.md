@@ -13,6 +13,7 @@
 |---------|-----------|-----|
 | localStorage setting not saved after refresh | `useEffect([dep])` fires on mount → overwrites loaded value with DEFAULT | Read in `useState` initializer, write in `useEffect([val])`. See pattern in CLAUDE.md |
 | Portfolio COST column (per-row) doesn't sum to the COST badge/ANALYTICS total for accounts holding non-THB positions bought a while ago | `OpenPositionsTab.tsx` row-level `costVal` computed `entryNative × volume` using `toBase()` = **today's live FX**, while backend `cost_basis_base` (used by the badge + ANALYTICS OPEN COST BASIS) uses **entry-date FX** — the two diverge as USD/THB moves after purchase | **FIXED 2026-07-14** — row `costVal` now prefers `p.cost_basis_base` (entry-date FX), only falls back to live-FX `entryNative × volume` when backend didn't supply it or a manual cost override is set. See `sessions/2026-07-14-cash-transfer-followup.md` |
+| Changing an indicator's params in IndicatorPicker does nothing (pane keeps the old numbers) | `useChartIndicators.toggleIndicator` decided "is this the same pane?" from the **instance id the factory returns**. Ids are only as specific as the factory makes them — `rsi-30` encodes its period, but `createSdHeatmap` returns a constant `"sd-heatmap"`, so every settings change compared equal to what was mounted and hit `return prev` | **FIXED 2026-08-23** — compare `specParamsKey(spec, entry, ctx)` (`chart/windowUnits.ts`): sorted keys + defaults merged + compared AFTER the days→bars conversion. Both branches of `addIndicator` were affected — panes (sd-heatmap, and `hotThreshold` on flow-toxicity) and overlays (VWAP's `bands`; its id carries no params either). Overlays still STACK when the derived id differs (sma-20 + sma-50), and now REPLACE when it matches but the settings differ. Note the picker also needs the indicator name clicked again to confirm a dropdown change |
 | Polymarket URL → "Page not found" | Using market `slug` (has trailing `-789-924-249`) instead of `event_slug` | Use `events[0].slug` from Gamma API pool → stored as `event_slug` in signal |
 | Section content clipped, can't scroll | Root div missing `h-full` → `overflow-hidden` on parent clips content | Root: `flex flex-col h-full`, header: `shrink-0`, scroll zone: `flex-1 overflow-y-auto` |
 | Jotai `atomWithStorage` wrong default on load | Next.js SSR hydrates with server value (undefined window) before client localStorage read | Use `useState` initializer with `typeof window === "undefined"` guard instead |
@@ -512,3 +513,50 @@ cross-sigma (cheapness) ก็ตรงกับ MC → **สูตรไม่�
 
 **ตรวจ carry ผิดปกติได้เร็วๆ:** `C_mid − P_mid` ที่ ATM ควรใกล้ `S − K·e^{−rT}`
 ถ้าห่างมากแปลว่ามี q/borrow cost ที่โมเดลไม่รู้
+
+## Overlay strip ที่ขอบขวา = บังคอลัมน์ล่าสุดเสมอ (แก้แล้ว 2026-08-18)
+
+**Symptom:** heatmap "ไม่ขึ้นอะไรเลย" — ป้ายกำกับซ้าย/ขวายังวาด แต่ **กล่องสีหายทั้งหมด**
+(diagnostic: `cells painted: 0` ขณะที่ `gutter labels: 5, rail entries: 9`)
+
+**Cause:** เคยมี rail กว้าง 72px ตรึงขอบขวาเพื่อแสดงราคาต่อแถว → `plotR = width − 72`
+แต่ข้อมูลใหม่สุดอยู่ **ขอบขวาของชาร์ตเสมอโดยนิยาม** → คอลัมน์ล่าสุดถูก clip จนกว้างติดลบ →
+`drawR <= drawL` → `continue` → ไม่วาดสักกล่อง
+
+**Fix:** ย้าย reference ทั้งหมดไป gutter ซ้าย (level + odds + value 3 คอลัมน์ในแถวเดียว)
+plot กินพื้นที่ถึงขอบขวาเต็ม ไม่มีอะไรทับคอลัมน์ล่าสุด
+
+**หลักทั่วไป:** chrome ที่ตรึงตำแหน่งใน time-series pane **ต้องอยู่ซ้าย** — ขวาคือที่อยู่ของ
+ข้อมูลล่าสุดซึ่งเป็นสิ่งที่ผู้ใช้มองก่อนเสมอ (price axis ของ lightweight-charts อยู่ขวาได้เพราะ
+chart reserve พื้นที่ให้จริง; overlay ทำแบบนั้นไม่ได้ มันวาดทับบนพื้นที่ที่ chart แจกไปแล้ว)
+
+**วิธีจับบั๊กแบบนี้:** นับสิ่งที่วาดจริง ไม่ใช่ดูว่ามีข้อความไหม —
+`cells painted: 0` คือคำตอบทันที ส่วน "ตัวอักษรหาย" เป็นอาการที่ทำให้เข้าใจผิด
+
+## "ย่อก่อน ซ่อนทีหลัง" — ผมพลาดซ้ำแม้บันทึกไว้แล้ว (2026-08-18)
+
+บันทึกหลักนี้ไว้ตอนแก้ rail แล้วเขียน `showValue = rowH >= 20` ในรอบถัดมา ซึ่งเป็นความผิดเดิม:
+**ซ่อนข้อมูลเมื่อพื้นที่ไม่พอ** ผลคือราคาหายทั้งคอลัมน์บนชาร์ตที่มี 3 sub-panes
+(400px chart → sd-heatmap ได้ 87px → rowH 17.4 → ต่ำกว่าเกณฑ์ 20)
+
+**กฎที่ถูก แยก 2 มิติ:**
+- **ความสูงไม่พอ → ย่อ font** (7–14px) ไม่เคยลบอะไรทิ้ง
+- **ความกว้างไม่พอ → ตัดคอลัมน์ตามลำดับความสำคัญย้อนกลับ**
+  (`level` > `value` > `odds` — odds เป็นค่าคงที่ที่จำได้ครั้งเดียว ตัดก่อน)
+
+**เทสต์ที่กันการถอยหลัง:** วนทุกความสูง `[190,130,87,60,44]` แล้ว assert ว่าทั้ง 3 ค่ายังอยู่ครบ
+ไม่ใช่เทสต์ที่ความสูงเดียว
+
+## ตัวเลขในกล่อง heatmap ขึ้นกับ timeframe ไม่ใช่บั๊ก
+
+กล่องกว้างเท่าระยะห่างระหว่างคอลัมน์ ซึ่ง snapshot รายวัน = **1 แท่ง** เสมอ:
+
+| timeframe | barSpacing | cellW | ตัวเลขในกล่อง |
+|---|---|---|---|
+| 5D | 148px | 133px | ✓ |
+| 1M | 34px | 32px | ✓ |
+| 3M | 12px | 11px | ✗ |
+| 1Y | 3px | 3px | ✗ |
+
+ต้องเห็น ≤ ~27 แท่งบนจอถึงจะใส่ตัวเลขลงกล่องได้ (ต้องการ `cellW >= 26px`)
+บน timeframe ยาว ราคาอ่านจาก **gutter ซ้าย** แทน ซึ่งแสดงเสมอทุกความกว้าง/ความสูง

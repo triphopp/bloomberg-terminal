@@ -35,7 +35,6 @@
 import type {
   ChartIndicator,
   HeatmapColumn,
-  HeatmapRail,
   HeatmapRowLabel,
   IndicatorFactory,
   IndicatorSeriesOutput,
@@ -80,8 +79,11 @@ export interface SdBandsPayload {
   series: SdBandRow[];
   /**
    * The still-open projection from the newest snapshot: today's band looking
-   * `horizonDays` forward. `targetDate` is when that horizon lands, which is what
-   * the rail's prices and odds are quoted for.
+   * `horizonDays` forward — the band the GUTTER prices are quoted for.
+   *
+   * `targetDate` is when that horizon lands. Nothing renders it: the horizon is
+   * already named in the caption's sigma segment, and a second pointer to the
+   * same fact was noise.
    */
   current: (Omit<SdBandRow, "cells" | "hitRow" | "hitZ"> & { targetDate?: string | null }) | null;
   note?: string;
@@ -100,38 +102,97 @@ export const SD_HEATMAP_MODES = [
 
 export const SD_HEATMAP_DEFAULT_MODE = "cheapness";
 
+/**
+ * Which sigma the caption quotes.
+ *
+ * The horizon figure is what the GRID is drawn at, so it stays the default —
+ * the rows only mean anything against it. The daily figure is the one a trader
+ * carries around ("this thing moves about 1.3% a day"), and is the honest way to
+ * compare two symbols whose snapshots sit at different DTEs.
+ */
+export const SD_SIGMA_BASES = [
+  { value: "horizon", label: "Horizon (matches the grid)" },
+  { value: "daily", label: "Daily (per session)" },
+  { value: "both", label: "Both" },
+] as const;
+
+export const SD_SIGMA_BASIS_DEFAULT = "horizon";
+
+/**
+ * Sessions per year, for turning annualised vol into a per-DAY move.
+ *
+ * 252, not the 365 the pricing uses: `T` is calendar time because an option
+ * decays over weekends, but a "daily move" is a move over a SESSION — quoting it
+ * per calendar day would understate it by ~17% and describe a day that does not
+ * trade.
+ */
+const SESSIONS_PER_YEAR = 252;
+
 // ── Color scales ──────────────────────────────────────────────────────────────
 
 /**
- * Intensity ramp shared by both scales.
+ * Colour ramp shared by both scales.
  *
- * `sqrt` rather than linear: most readings cluster near the middle of their
- * range, and a linear ramp leaves them all looking equally washed out while
- * spending its contrast on outliers nobody needs help spotting.
+ * Two channels move together with magnitude, not one: the hue walks a pale →
+ * vivid → deep ramp AND the alpha climbs. Alpha alone (the earlier design) was
+ * the problem the pane was hard to read for — every reading rendered as the same
+ * hue at a slightly different wash, so a column that was mildly rich and one that
+ * was extremely rich looked near-identical and no trend came off the grid.
  *
- * The floor is genuinely transparent — a value at the reference should look like
- * nothing, not like a faint wash — and the ceiling stops well short of opaque so
- * the number printed inside the cell stays legible against it.
+ * Alpha still does the salience work because it is the only channel that behaves
+ * the same in both themes: near-transparent = "nothing here" against a light and
+ * a dark pane alike, where a fixed pale colour would mean "loud" on one and
+ * "invisible" on the other. The ramp end-points therefore stay mid-lightness —
+ * deep enough to read as intense, never so dark they sink into a dark pane.
+ *
+ * `t` is gamma-compressed (sqrt): most readings cluster low in their range, and a
+ * linear ramp spends all its contrast on outliers nobody needs help spotting.
  */
-const ALPHA_FLOOR = 0.06;
-const ALPHA_CEIL = 0.72;
+const ALPHA_FLOOR = 0.1;
+const ALPHA_CEIL = 0.95;
+const GAMMA = 0.5; // sqrt
 
-function intensity(t: number): number {
+type Rgb = readonly [number, number, number];
+
+/** Pale → vivid → deep, one ramp per direction of each scale. */
+const RAMP_COOL: readonly Rgb[] = [
+  [147, 197, 253],
+  [59, 130, 246],
+  [29, 78, 216],
+];
+const RAMP_WARM: readonly Rgb[] = [
+  [253, 186, 116],
+  [249, 115, 22],
+  [194, 65, 12],
+];
+const RAMP_CHEAP: readonly Rgb[] = [
+  [134, 239, 172],
+  [34, 197, 94],
+  [21, 128, 61],
+];
+const RAMP_RICH: readonly Rgb[] = [
+  [252, 165, 165],
+  [239, 68, 68],
+  [185, 28, 28],
+];
+
+/** Position on a multi-stop ramp, `t` in [0,1], returned as an `rgba()` string. */
+export function rampColor(stops: readonly Rgb[], t: number): string {
   const clamped = Math.max(0, Math.min(1, t));
-  return ALPHA_FLOOR + (ALPHA_CEIL - ALPHA_FLOOR) * Math.sqrt(clamped);
+  const eased = clamped ** GAMMA;
+  const span = stops.length - 1;
+  const pos = eased * span;
+  const i = Math.min(span - 1, Math.floor(pos));
+  const f = pos - i;
+  const [r0, g0, b0] = stops[i];
+  const [r1, g1, b1] = stops[i + 1];
+  const mix = (a: number, b: number) => Math.round(a + (b - a) * f);
+  const alpha = ALPHA_FLOOR + (ALPHA_CEIL - ALPHA_FLOOR) * eased;
+  return `rgba(${mix(r0, r1)}, ${mix(g0, g1)}, ${mix(b0, b1)}, ${alpha.toFixed(3)})`;
 }
 
 /** Neutral wash for "this is right where it should be". */
-const NEUTRAL = "rgba(120,120,130,0.05)";
-
-//: Cool = under-visited / cheap, warm = over-visited / expensive. Chosen for
-//: separation under both themes and for red-green colour blindness: the blue and
-//: the amber differ in lightness as well as hue, so the pane still reads if the
-//: red/green pair does not.
-const COOL = "37, 99, 235"; // blue
-const WARM = "234, 88, 12"; // amber-red
-const CHEAP = "22, 163, 74"; // green
-const RICH = "220, 38, 38"; // red
+const NEUTRAL = "rgba(130, 135, 145, 0.14)";
 
 /**
  * Occupancy: ratio of observed frequency to the normal-distribution reference.
@@ -139,27 +200,34 @@ const RICH = "220, 38, 38"; // red
  * A ratio, not a difference, because the reference itself spans 6.7% to 38.3% —
  * a 5-point overshoot is unremarkable in the centre row and a near-doubling in
  * the tails, and the eye should see the latter as the bigger deal.
+ *
+ * Cool = under-visited, warm = over-visited. The pair is chosen for separation
+ * under red-green colour blindness too: blue and amber differ in lightness as
+ * well as hue, so the pane still reads if the red/green pair does not.
  */
 export function occupancyColor(freq: number, refProb: number): string | null {
   if (refProb <= 0) return null;
   const ratio = freq / refProb;
   if (Math.abs(ratio - 1) < 0.05) return NEUTRAL;
-  // Saturates at 2.5× the expected rate, and at 0.4× on the way down.
+  // Saturates at ~2.2x the expected rate, and at ~0.45x on the way down.
   return ratio > 1
-    ? `rgba(${WARM}, ${intensity((ratio - 1) / 1.5)})`
-    : `rgba(${COOL}, ${intensity((1 - ratio) / 0.6)})`;
+    ? rampColor(RAMP_WARM, (ratio - 1) / 1.2)
+    : rampColor(RAMP_COOL, (1 - ratio) / 0.55);
 }
 
 /**
- * Cheapness: `P_rv − P_iv`, a probability difference in [−1, 1].
+ * Cheapness: `P_rv - P_iv`, a probability difference in [-1, 1].
  *
  * Red = IV assigns more mass here than realized vol does, i.e. this row is
- * expensive. Saturates at 8 percentage points, already a wide gap for one bucket.
+ * expensive. Saturates at 6 percentage points — already a wide gap for a single
+ * bucket, and low enough that ordinary days land somewhere with visible colour
+ * rather than all bunching at the transparent end.
  */
 export function cheapnessColor(delta: number): string | null {
   if (Math.abs(delta) < 0.004) return NEUTRAL;
-  const a = intensity(Math.abs(delta) / 0.08);
-  return delta < 0 ? `rgba(${RICH}, ${a})` : `rgba(${CHEAP}, ${a})`;
+  return delta < 0
+    ? rampColor(RAMP_RICH, Math.abs(delta) / 0.06)
+    : rampColor(RAMP_CHEAP, delta / 0.06);
 }
 
 function fmtPct(p: number): string {
@@ -184,6 +252,19 @@ export function fmtBand(lo: number | null, hi: number | null): string | null {
   return `${fmtPrice(lo)}-${fmtPrice(hi)}`;
 }
 
+/**
+ * A bucket named by its LOWER edge alone — the compact form of `fmtBand`.
+ *
+ * Unambiguous without the upper bound because the row above starts exactly where
+ * this one ends, and it fits roughly half the width, which is what lets a cell on
+ * a dense chart still carry that day's price.
+ */
+export function fmtEdge(lo: number | null, hi: number | null): string | null {
+  if (lo == null && hi == null) return null;
+  if (lo == null) return `<${fmtPrice(hi as number)}`;
+  return `${fmtPrice(lo)}+`;
+}
+
 /** Tint for the sigma level itself: upside rows warm, downside cool. */
 function levelColor(level: number, isUpside: boolean): string | undefined {
   if (level === 0) return undefined;
@@ -200,13 +281,97 @@ function levelColor(level: number, isUpside: boolean): string | undefined {
  * number. Bucket probability stays available in the payload for anyone
  * comparing occupancy against its reference.
  */
-function rowLabel(level: number, exceedProb: number | undefined): HeatmapRowLabel {
+function rowLabel(
+  level: number,
+  exceedProb: number | undefined,
+  value: string | undefined
+): HeatmapRowLabel {
   const sign = level > 0 ? `+${level}` : `${level}`;
   return {
     level: `${sign}σ`,
     odds: exceedProb == null ? undefined : fmtPct(exceedProb),
+    value,
     color: levelColor(level, level > 0),
   };
+}
+
+/**
+ * Per-row current value for the gutter: the price each bucket STARTS at.
+ *
+ * A lower edge needs no second number to be unambiguous — the next row up begins
+ * exactly where this one ends — so it fits the gutter where a full range would
+ * not. Taken from `current` (the still-open projection) rather than the last
+ * plotted column, because that is the band a reader is deciding against; in
+ * occupancy mode the newest column is `horizonDays` old by construction.
+ */
+function rowValues(payload: SdBandsPayload, rowCount: number): (string | undefined)[] {
+  const source = payload.current ?? payload.series[payload.series.length - 1];
+  const edges = source?.edges;
+  if (edges?.length === rowCount + 1) {
+    return Array.from({ length: rowCount }, (_, i) =>
+      edges[i] == null ? `<${fmtPrice(edges[i + 1] as number)}` : `${fmtPrice(edges[i] as number)}+`
+    );
+  }
+  const prices = source?.prices;
+  if (prices?.length === rowCount) return prices.map(fmtPrice);
+  return Array.from({ length: rowCount }, () => undefined);
+}
+
+/** Vol quoted the way a chain quotes it: annualised, one decimal. */
+function fmtVol(sigma: number): string {
+  return `${(sigma * 100).toFixed(1)}%`;
+}
+
+/**
+ * The header line: how big a sigma actually IS for this symbol.
+ *
+ * The grid can say where price sat relative to ±1σ but never how much a sigma is
+ * worth, and that number is what makes the pane assessable — ±1.2% and ±9% are
+ * the same picture here and completely different trades. Quoted twice, because
+ * both readings are used: annualised vol (comparable across symbols and against
+ * the chain) and the move over THIS horizon in percent and in currency.
+ *
+ * The currency figure is the linear `S·σ√t`, not the lognormal band edge, so it
+ * reads symmetrically; the exact, asymmetric edges are in the gutter and in the
+ * cells. Segments are ordered most important first — a narrow pane drops the
+ * tail.
+ *
+ * `basis` picks the span the sigma is quoted over — see `SD_SIGMA_BASES`.
+ */
+export function buildCaption(
+  payload: SdBandsPayload,
+  basis: string = SD_SIGMA_BASIS_DEFAULT
+): string[] | undefined {
+  const source = payload.current ?? payload.series[payload.series.length - 1];
+  if (!source || !Number.isFinite(source.sigmaIv) || !(source.T > 0)) return undefined;
+
+  const segments: string[] = [];
+
+  /** One sigma over `label`'s span, in percent and — when spot is known — in currency. */
+  const sigmaSegment = (label: string, sigma: number) => {
+    const move = Number.isFinite(source.spot) ? ` ≈ ±${fmtPrice(source.spot * sigma)}` : "";
+    return `1σ/${label} ±${(sigma * 100).toFixed(sigma < 0.02 ? 2 : 1)}%${move}`;
+  };
+
+  const days = Math.max(1, Math.round(source.T * 365));
+  const horizon = () => sigmaSegment(`${days}d`, source.sigmaIv * Math.sqrt(source.T));
+  const daily = () => sigmaSegment("1d", source.sigmaIv / Math.sqrt(SESSIONS_PER_YEAR));
+
+  // Order matters — a narrow pane keeps the head and drops the tail, so whichever
+  // basis was asked for leads.
+  if (basis === "daily") segments.push(daily());
+  else if (basis === "both") segments.push(horizon(), daily());
+  else segments.push(horizon());
+
+  segments.push(`IV ${fmtVol(source.sigmaIv)}`);
+
+  const rv = source.sigmaRv;
+  if (rv != null && Number.isFinite(rv) && rv > 0) {
+    segments.push(`RV ${fmtVol(rv)}`);
+    segments.push(`IV/RV ${(source.sigmaIv / rv).toFixed(2)}`);
+  }
+
+  return segments;
 }
 
 /** Normalise a bar time to YYYY-MM-DD for matching against daily payload rows. */
@@ -254,7 +419,8 @@ export function emptyReason(payload: SdBandsPayload): string {
 function emptyOutput(
   mode: string,
   message: string,
-  rows: HeatmapRowLabel[] = []
+  rows: HeatmapRowLabel[] = [],
+  caption?: string[]
 ): IndicatorSeriesOutput {
   return {
     id: "sd-heatmap",
@@ -266,6 +432,7 @@ function emptyOutput(
       columns: [],
       colorScale: () => null,
       emptyMessage: message,
+      caption,
     },
   };
 }
@@ -285,43 +452,6 @@ function fmtPrice(price: number): string {
   return price.toFixed(3);
 }
 
-/**
- * The right-edge strip: what price each sigma sits at, and the odds of getting
- * there, taken from the most recent projection available.
- *
- * `current` is preferred over the last plotted column because it is the OPEN
- * projection — the band from today's IV looking `horizonDays` forward, which is
- * the one a reader is actually deciding against. In occupancy mode the last
- * column is by construction `horizonDays` old.
- */
-function buildRail(payload: SdBandsPayload): HeatmapRail | undefined {
-  const source = payload.current ?? payload.series[payload.series.length - 1];
-  const prices = source?.prices;
-  if (!prices?.length) return undefined;
-
-  const edges = source?.edges;
-  const exceed = payload.exceedProbs ?? [];
-  const asOf = payload.current?.targetDate ?? source?.time ?? "";
-
-  // Bucket LOWER edges, not centre prices: an edge is unambiguous on its own
-  // (the next row starts exactly where this one ends), and the rail is too
-  // narrow for a full range. Falls back to centres if edges are missing.
-  const rows =
-    edges?.length === prices.length + 1
-      ? prices.map((p, i) =>
-          edges[i] == null
-            ? `<${fmtPrice(edges[i + 1] as number)}`
-            : `${fmtPrice(edges[i] as number)}+`
-        )
-      : prices.map(fmtPrice);
-
-  return {
-    rows,
-    subRows: prices.map((_, i) => (exceed[i] == null ? null : `≥ ${fmtPct(exceed[i])}`)),
-    title: asOf ? `→ ${asOf.slice(5)}` : undefined,
-  };
-}
-
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 export const createSdHeatmap: IndicatorFactory = (overrides = {}) => {
@@ -336,6 +466,7 @@ export const createSdHeatmap: IndicatorFactory = (overrides = {}) => {
     params: [],
     config: {
       mode: SD_HEATMAP_DEFAULT_MODE,
+      sigmaBasis: SD_SIGMA_BASIS_DEFAULT,
       horizonDays: 30,
       rvWindow: 21,
       occWindow: 63,
@@ -360,11 +491,22 @@ export const createSdHeatmap: IndicatorFactory = (overrides = {}) => {
         ];
       }
 
-      const rows = payload.levels.map((level, i) => rowLabel(level, payload.exceedProbs?.[i]));
-      const rowCount = rows.length;
+      const rowCount = payload.levels.length;
+      const values = rowValues(payload, rowCount);
+      const rows = payload.levels.map((level, i) =>
+        rowLabel(level, payload.exceedProbs?.[i], values[i])
+      );
+
+      // The caption survives an empty grid on purpose: `current` is today's
+      // projection, so how big a sigma is for this symbol is known from the very
+      // first snapshot — long before there are outcomes to colour a cell with.
+      const caption = buildCaption(
+        payload,
+        (config.sigmaBasis as string) ?? SD_SIGMA_BASIS_DEFAULT
+      );
 
       if (!payload.series?.length) {
-        return [emptyOutput(mode, emptyReason(payload), rows)];
+        return [emptyOutput(mode, emptyReason(payload), rows, caption)];
       }
 
       // Payload rows are daily; the chart may be on any interval. Matching by
@@ -394,6 +536,16 @@ export const createSdHeatmap: IndicatorFactory = (overrides = {}) => {
             row.edges?.length === rowCount + 1
               ? Array.from({ length: rowCount }, (_, i) => fmtBand(row.edges[i], row.edges[i + 1]))
               : undefined,
+          // Same price, one number instead of two, for the cells a dense chart
+          // leaves too narrow for the full range. Without it a year of daily
+          // columns printed nothing at all, which is where the drift of the
+          // bands over time is the whole point.
+          cellLabelsCompact:
+            row.edges?.length === rowCount + 1
+              ? Array.from({ length: rowCount }, (_, i) => fmtEdge(row.edges[i], row.edges[i + 1]))
+              : row.prices?.length === rowCount
+                ? row.prices.map(fmtPrice)
+                : undefined,
         });
       }
 
@@ -404,7 +556,12 @@ export const createSdHeatmap: IndicatorFactory = (overrides = {}) => {
         const first = payload.series[0]?.time?.slice(0, 10) ?? "?";
         const last = payload.series[payload.series.length - 1]?.time?.slice(0, 10) ?? "?";
         return [
-          emptyOutput(mode, `σ-bands cover ${first} … ${last} — outside this timeframe`, rows),
+          emptyOutput(
+            mode,
+            `σ-bands cover ${first} … ${last} — outside this timeframe`,
+            rows,
+            caption
+          ),
         ];
       }
 
@@ -424,7 +581,7 @@ export const createSdHeatmap: IndicatorFactory = (overrides = {}) => {
               isOccupancy ? occupancyColor(value, refProbs[rowIndex] ?? 0) : cheapnessColor(value),
             formatValue: (value) =>
               isOccupancy ? `${(value * 100).toFixed(0)}%` : `${(value * 100).toFixed(1)}`,
-            rail: buildRail(payload),
+            caption,
           },
         },
       ];

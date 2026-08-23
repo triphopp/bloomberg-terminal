@@ -117,23 +117,16 @@ export interface HeatmapColumn {
    * occupancy frequency but reads best labelled with the price at that sigma.
    */
   cellLabels?: (string | null)[];
-}
-
-/**
- * Fixed strip down the right edge of a heatmap pane, one entry per row.
- *
- * The cells themselves are only as wide as a bar, so on a young series (a
- * handful of columns) or a zoomed-out chart there is nowhere to print the price
- * and probability each row stands for. The rail always has room, and it does not
- * scroll away with the data.
- */
-export interface HeatmapRail {
-  /** Primary line per row, bottom row first — e.g. the price at that sigma. */
-  rows: string[];
-  /** Optional second line per row, e.g. the probability of reaching it. */
-  subRows?: (string | null)[];
-  /** Heading drawn above the strip. */
-  title?: string;
+  /**
+   * Shorter stand-in for `cellLabels`, used when the cell is too narrow for the
+   * primary text but wide enough for something.
+   *
+   * A bucket's full price RANGE ("438-513") is the unambiguous label but needs
+   * ~90px; on a year of daily columns a cell is a fraction of that, and the
+   * choice was previously "the range or nothing" — which meant nothing, on
+   * exactly the dense chart where the per-day price is what shows the trend.
+   */
+  cellLabelsCompact?: (string | null)[];
 }
 
 /** Maps a cell value to a fill. Returning null leaves the cell unpainted. */
@@ -151,12 +144,21 @@ export interface HeatmapRowLabel {
   level: string;
   /** Secondary: the odds of that outcome, e.g. "15.9%". */
   odds?: string;
+  /** Current reference value for the row, e.g. the price it starts at. */
+  value?: string;
   /** Overrides the level's colour — e.g. tinting upside rows differently. */
   color?: string;
 }
 
 export interface HeatmapSpec {
-  /** Row labels, bottom row first — matching each column's `values` order. */
+  /**
+   * Row labels, bottom row first — matching each column's `values` order.
+   *
+   * Everything the reader needs as REFERENCE lives here, in the left gutter.
+   * An earlier design put the per-row values in a strip down the RIGHT edge,
+   * which is precisely where the newest column sits: the strip clipped the most
+   * important cell out of existence on every chart wide enough to need it.
+   */
   rows: (string | HeatmapRowLabel)[];
   columns: HeatmapColumn[];
   colorScale: HeatmapColorScale;
@@ -165,11 +167,13 @@ export interface HeatmapSpec {
   /** Formats a cell value when the column supplies no `cellLabels`. */
   formatValue?: (value: number) => string;
   /**
-   * Right-edge strip of per-row reference values, used ONLY as a fallback: when
-   * the cells are wide enough to print their own values the rail would just
-   * repeat them, so it is dropped and its width returned to the plot.
+   * Header segments drawn top-left of the plot, most important first.
+   *
+   * Segments rather than one string so a narrow pane can drop the tail instead
+   * of clipping mid-word. This is for the SCALE of the pane — the one fact the
+   * grid itself cannot state, e.g. how big a sigma actually is for this symbol.
    */
-  rail?: HeatmapRail;
+  caption?: string[];
   /**
    * Drawn in the middle of the pane when there is nothing to plot.
    *
