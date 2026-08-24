@@ -53,6 +53,7 @@ from db import (
     init_alerts_schema,
     init_thesis_schema,
     seed_symbol_lists,
+    sync_symbol_lists,
 )
 from analytics.regime_calibration import ensure_model_fresh
 from analytics.regime_v2 import ensure_v2_fresh
@@ -79,6 +80,7 @@ init_thesis_schema()   # must precede init_sync_layer(): it adds updated_at + tr
 init_sync_layer()
 init_alerts_schema()
 seed_symbol_lists()
+sync_symbol_lists()
 
 # ── Cloud sync: pull latest from G: (read cloud first), then start pusher ──────
 # Runs on a worker thread. Doing it inline blocked the uvicorn port bind for as

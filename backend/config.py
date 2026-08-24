@@ -34,6 +34,43 @@ INDICES = [
     {"region": "asiaPacific", "id": "KOSPI",         "symbol": "^KS11",     "num": "36)"},
 ]
 
+# ── Volatility / "fear" indices ───────────────────────────────────────────────
+# The TICK DATA board's VOLATILITY section. Grouped by what the index is priced
+# off, because that is how they are read: the S&P term structure first (its
+# shape IS the signal — 9D over 3M means front-loaded fear), then the vol-of-vol
+# and skew gauges, then one index per market whose own vol is worth watching.
+#
+# Every symbol here was checked against the live quote feed. ^RVX (Russell 2000)
+# is deliberately absent — Yahoo lists it but returns no price — and ^MOVE is
+# absent because that ticker resolves to a Northern Trust ETF, not the ICE MOVE
+# bond-vol index.
+VOL_INDICES = [
+    # S&P 500 term structure — shortest to longest
+    {"id": "VIX 1D",       "symbol": "^VIX1D", "num": "v1)", "group": "S&P TERM"},
+    {"id": "VIX 9D",       "symbol": "^VIX9D", "num": "v2)", "group": "S&P TERM"},
+    {"id": "VIX",          "symbol": "^VIX",   "num": "v3)", "group": "S&P TERM"},
+    {"id": "VIX 3M",       "symbol": "^VIX3M", "num": "v4)", "group": "S&P TERM"},
+    {"id": "VIX 6M",       "symbol": "^VIX6M", "num": "v5)", "group": "S&P TERM"},
+    # Second-order gauges
+    {"id": "VVIX",         "symbol": "^VVIX",  "num": "v6)", "group": "VOL OF VOL"},
+    {"id": "SKEW",         "symbol": "^SKEW",  "num": "v7)", "group": "VOL OF VOL"},
+    # Equity indices / sectors
+    {"id": "VXN NASDAQ",   "symbol": "^VXN",   "num": "v8)", "group": "EQUITY"},
+    {"id": "VXD DOW",      "symbol": "^VXD",   "num": "v9)", "group": "EQUITY"},
+    {"id": "VXSMH SEMIS",  "symbol": "^VXSMH", "num": "v10)", "group": "EQUITY"},
+    {"id": "VXAPL AAPL",   "symbol": "^VXAPL", "num": "v11)", "group": "EQUITY"},
+    # Non-US equity
+    {"id": "VXEEM EM",     "symbol": "^VXEEM", "num": "v12)", "group": "GLOBAL"},
+    {"id": "VXFXI CHINA",  "symbol": "^VXFXI", "num": "v13)", "group": "GLOBAL"},
+    {"id": "VXEWZ BRAZIL", "symbol": "^VXEWZ", "num": "v14)", "group": "GLOBAL"},
+    # Commodities and rates
+    {"id": "OVX OIL",      "symbol": "^OVX",   "num": "v15)", "group": "COMMOD/RATES"},
+    {"id": "GVZ GOLD",     "symbol": "^GVZ",   "num": "v16)", "group": "COMMOD/RATES"},
+    {"id": "VXSLV SILVER", "symbol": "^VXSLV", "num": "v17)", "group": "COMMOD/RATES"},
+    {"id": "VXGDX MINERS", "symbol": "^VXGDX", "num": "v18)", "group": "COMMOD/RATES"},
+    {"id": "VXTLT 20Y UST","symbol": "^VXTLT", "num": "v19)", "group": "COMMOD/RATES"},
+]
+
 # ── Heatmap groups ────────────────────────────────────────��───────────────────
 HEATMAP_GROUPS: dict[str, list[dict]] = {
     "sectors": [

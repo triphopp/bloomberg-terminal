@@ -21,6 +21,7 @@ import {
   openConfirmModalAtom,
 } from "../atoms/terminal-ui";
 import { resetFiltersAtom } from "../atoms/terminal-ui";
+import { ChartWindowLayer } from "../chart/ChartWindowLayer";
 import { ConfirmationModal } from "../core/confirmation-modal";
 import { ShortcutsHelp } from "../core/keyboard-shortcuts";
 import { ViewSkeleton } from "../core/view-skeleton";
@@ -321,6 +322,7 @@ function BloombergTerminal() {
       </div>
       <TailRiskRibbon />
       <AlertTicker />
+      <ChartWindowLayer />
       {modals}
     </TerminalLayout>
   );
