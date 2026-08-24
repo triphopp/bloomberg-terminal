@@ -23,6 +23,7 @@ router = APIRouter()
 # ── Module-level caches ───────────────────────────────────────────────────────
 _cache = TTLCache(ttl=CACHE_TTL, maxsize=1)
 _heatmap_cache = TTLCache(ttl=CACHE_TTL, maxsize=20)
+_vol_cache = TTLCache(ttl=CACHE_TTL, maxsize=1)
 _ytd_cache = TTLCache(ttl=YTD_CACHE_TTL, maxsize=200)
 _etf_size_cache = TTLCache(ttl=ETF_SIZE_CACHE_TTL, maxsize=100)
 
@@ -187,6 +188,41 @@ def build_market_data() -> dict:
 
     return {
         **regions,
+        "lastUpdated": datetime.utcnow().isoformat() + "Z",
+        "dataSource": "yfinance",
+    }
+
+
+def build_volatility_data() -> dict:
+    """The VOLATILITY section of the TICK DATA board.
+
+    Same row shape as the regional index sections so the UI can reuse TickRow,
+    with the config's `group` carried through for the sub-headers (S&P term
+    structure, vol-of-vol, equity, global, commodities/rates).
+
+    These are calculated indices: no volume, no market cap, and YTD on a vol
+    index is a real number but a meaningless one to rank by — the fields exist
+    because the row component expects them, not because they mean anything here.
+    """
+    defs = get_symbol_list("volatility")
+    if not defs:
+        return {"items": [], "lastUpdated": datetime.utcnow().isoformat() + "Z"}
+
+    items: list[dict] = []
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        future_to_cfg = {pool.submit(fetch_one, cfg): cfg for cfg in defs}
+        for future in as_completed(future_to_cfg):
+            cfg = future_to_cfg[future]
+            result = future.result()
+            if result:
+                result["group"] = cfg.get("group") or "VOLATILITY"
+                items.append(result)
+
+    order = {cfg["id"]: i for i, cfg in enumerate(defs)}
+    items.sort(key=lambda x: order.get(x["id"], 999))
+
+    return {
+        "items": items,
         "lastUpdated": datetime.utcnow().isoformat() + "Z",
         "dataSource": "yfinance",
     }
@@ -400,6 +436,12 @@ def get_market_data():
     # get_or_set coalesces concurrent misses → only ONE thread hits yfinance,
     # the rest wait and share the result (prevents thundering-herd refetch).
     return _cache.get_or_set("market_data", build_market_data)
+
+
+@router.get("/api/volatility")
+def get_volatility():
+    """VIX-family "fear" indices for the TICK DATA board."""
+    return _vol_cache.get_or_set("volatility", build_volatility_data)
 
 
 @router.get("/api/heatmap")

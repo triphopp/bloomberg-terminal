@@ -560,3 +560,94 @@ chart reserve พื้นที่ให้จริง; overlay ทำแบ�
 
 ต้องเห็น ≤ ~27 แท่งบนจอถึงจะใส่ตัวเลขลงกล่องได้ (ต้องการ `cellW >= 26px`)
 บน timeframe ยาว ราคาอ่านจาก **gutter ซ้าย** แทน ซึ่งแสดงเสมอทุกความกว้าง/ความสูง
+
+## ModularChart สร้างใหม่ทั้ง instance เมื่อความสูงเปลี่ยน — ต้อง freeze ระหว่างลาก resize
+
+`ModularChart` มี effect ที่ dep `chartHeight` (ความสูงที่วัดได้ quantize ทีละ 8px) และ teardown เรียก
+`chart.remove()` แล้วสร้างใหม่ทั้งหมด ดังนั้น**ทุกครั้งที่ container สูงเปลี่ยน = รื้อ chart ใหม่ 1 รอบ**
+
+ลากย่อ/ขยาย floating chart window 8 ก้าว = canvas ถูกถอด **18 ครั้ง** (วัดด้วย MutationObserver)
+
+**วิธีแก้ (ใช้ใน `FloatingChartWindow.tsx`):** ระหว่าง gesture ตรึงความสูงของ div ที่ครอบ chart ไว้ที่ค่าตอน
+เริ่มลาก (`frozenBodyHeight`) ให้กล่องนอกโตตามเมาส์แต่ chart ไม่รู้ตัว แล้วปล่อยให้วัดใหม่ครั้งเดียวตอน pointerup
+→ 0 rebuild ระหว่างลาก
+
+การ**ลากย้ายตำแหน่ง** ไม่เกิดปัญหานี้ (0 rebuild) เพราะความสูงไม่เปลี่ยน — props อื่น (`data`/`indicators`/
+`overlays`) memo ไว้แล้ว
+
+## ref guard ต่อ instance ยิง POST ซ้ำเมื่อมี chart หลายตัวบน symbol เดียวกัน
+
+`useSdBands` เดิมกัน self-heal POST (`/api/options/iv-snapshot`) ด้วย `useRef(new Set())` = กันได้แค่ภายใน
+instance เดียว พอมี MKT chart + floating window บน symbol เดียวกัน ต่างคนต่าง POST
+
+**กฎ:** guard ที่ต้อง "ครั้งเดียวต่อ symbol ทั้งแอป" ต้องเป็น **module-level Set** ไม่ใช่ `useRef`
+React Query dedupe ให้เฉพาะ `useQuery` ตาม queryKey — **mutation ไม่ถูก dedupe**
+
+## `geometry` object ใหม่ทุก render = effect ผูก/ถอด listener ทุก render
+
+`useWindowDrag({ geometry: { x: win.x, ... } })` — caller สร้าง object ใหม่ทุกครั้ง ถ้า effect dep เป็น object นั้น
+listener ระดับ `window` จะถูก add/remove ทุก quote tick
+
+**วิธีแก้:** เก็บ object ลง ref (`geometryRef.current = geometry`) แล้วให้ effect dep เป็น `[]` หรือ boolean
+(`gesturing`) — handler อ่านค่าจาก ref
+
+## clamp ต้องเป็น "display-only" ห้ามเขียนทับค่าที่ผู้ใช้ตั้งไว้
+
+เดิม `useWindowDrag` เรียก `clampWindow` ตอน mount + ทุก `resize` event แล้ว **commit ค่าที่ clamp แล้วกลับเข้า store**
+ผลคือย่อหน้าต่างเบราว์เซอร์ / ลากเบราว์เซอร์ข้ามจอ (คนละความละเอียด) = ตำแหน่ง/ขนาดที่ผู้ใช้จัดไว้ถูกเขียนทับถาวร
+ผู้ใช้เห็นเป็น "popup reset ตำแหน่งเอง"
+
+**กฎ:** เก็บ **intent** (ค่าที่ผู้ใช้ตั้ง) ไว้เสมอ → clamp เฉพาะตอน render
+```
+const current = live ?? clampWindow(geometry, viewport);   // viewport = state, update ตอน resize
+```
+ย่อจอ = หน้าต่างขยับเข้ามาในจอชั่วคราว, ขยายจอกลับ = กลับไปตำแหน่งเดิมเป๊ะ
+
+## `window.open` — ชื่อหน้าต่างซ้ำ = Chrome จำ geometry เดิม (รวม maximized)
+
+Chrome จำขนาด/ตำแหน่งของ popup **ตามชื่อ (`windowName`)** และ restore ทับ feature string
+ถ้าครั้งก่อนถูก maximize ไว้ → เปิดใหม่ maximize เสมอ และ **`resizeTo()/moveTo()` บนหน้าต่าง maximized ถูก ignore ทั้งหมด**
+
+**วิธีแก้ (ใช้ใน `DetachedChartWindow.tsx`):**
+1. ตั้งชื่อหน้าต่าง **unique ต่อการ detach** (`chart-${win.id}`) ไม่ใช่ `chart-${symbol}`
+2. `popup=yes` ใน features (Chrome จะสน left/top เฉพาะโหมด popup)
+3. ยิง `resizeTo + moveTo` ซ้ำที่ 0/60/300/800/1500ms — popup ที่เพิ่งเปิดยัง ignore resize จนกว่าจะ settle
+   (แต่ละครั้ง no-op ถ้าขนาดตรงแล้ว)
+
+อีกข้อ: `window.open` ต้องมี **transient user activation** → detach ต้องมาจาก click เท่านั้น
+reload หน้าแล้วเปิดหน้าต่างเดิมอัตโนมัติไม่ได้ — ต้อง dock กลับเป็น in-page popup แล้วให้ผู้ใช้กด detach เอง
+
+## `seed_symbol_lists()` รันแค่ตอนตารางว่าง — เพิ่ม symbol ใน config.py แล้วของเก่าไม่เห็น
+
+`backend/db.py:seed_symbol_lists()` มี guard `if count > 0: return` → เครื่องที่ seed ไปแล้ว **ไม่มีวันได้ symbol ใหม่**
+KOSPI อยู่ใน `config.INDICES` มานานแต่ไม่เคยขึ้นบน ASIA PACIFIC ด้วยเหตุนี้ (API คืนแค่ 5 ตัว)
+
+**วิธีแก้:** `sync_symbol_lists()` (db.py) รันทุก startup — insert เฉพาะ symbol ที่ขาด key ด้วย `(list_id, symbol)`
+ต่อท้าย `sort_order` เดิม ไม่ยุ่งกับแถวที่ user ปิด/เรียงเอง
+
+**เพิ่ม symbol ใหม่ใน config.py ต้องเช็ค:** ถ้าไม่ได้อยู่ในลิสต์ที่ `sync_symbol_lists()` รู้จัก (`indices`, `volatility`)
+ต้องเพิ่ม list นั้นเข้าไปใน `groups` ของฟังก์ชันด้วย ไม่งั้นเงียบเหมือนเดิม
+
+## symbol volatility ที่ Yahoo คืนค่าผิด/ไม่มีค่า
+
+เช็คแล้ว 2026-08-24 ก่อนใส่ `config.VOL_INDICES`:
+- `^RVX` (Russell 2000 vol) — Yahoo มี ticker แต่ **ไม่คืนราคา** → ตัดออก
+- `^MOVE` — resolve ไปเป็น "Northern Trust iBoxx 5-Year Target ETF" **ไม่ใช่ ICE MOVE index** → ตัดออก
+- `^VXXLE` — ไม่มีข้อมูล
+ที่ใช้ได้: `^VIX1D ^VIX9D ^VIX ^VIX3M ^VIX6M ^VVIX ^SKEW ^VXN ^VXD ^VXSMH ^VXAPL ^VXEEM ^VXFXI ^VXEWZ ^OVX ^GVZ ^VXSLV ^VXGDX ^VXTLT`
+
+## lightweight-charts: `minBarSpacing` 0.5 = เพดานซูมออก ~1,000 แท่ง
+
+ค่า default คือ 0.5px ต่อแท่ง → chart กว้าง 500px ซูมออกได้มากสุด ~1,000 แท่ง
+กราฟ 5Y daily (~1,250 แท่ง) จึงหมุนล้อแล้ว **ไม่มีอะไรเกิดขึ้น** และ `getVisibleLogicalRange().from` ค้างอยู่ที่เลขบวก
+ทำให้ตรรกะที่รอ "ขอบซ้ายถึงแท่งแรก" (auto-extend history) ไม่มีวันทำงาน
+
+**แก้:** `timeScale: { minBarSpacing: 0.05 }` ใน `ModularChart.tsx`
+อาการที่ควรสงสัยข้อนี้: ซูมออกแล้วนิ่งสนิท ไม่ใช่ event ไม่ยิง — subscription ยิงปกติแต่ range ค่าเดิม
+
+## chart rebuild ทำให้ canvas เดิมหลุด DOM — event ที่ยิงใส่ element เก่าเงียบหาย
+
+`ModularChart` สร้าง chart ใหม่ทั้งก้อนเมื่อ `data` เปลี่ยน (canvas ชุดเก่าถูกทิ้ง)
+โค้ดทดสอบ/automation ที่เก็บ `canvas` ไว้ในตัวแปรแล้วยิง wheel/pointer ซ้ำหลัง data เปลี่ยน จะยิงใส่ element ที่ detach แล้ว — ดูเหมือนฟีเจอร์พัง ทั้งที่ปกติ
+**ต้อง query element ใหม่ทุกครั้งหลังข้อมูลเปลี่ยน**
+

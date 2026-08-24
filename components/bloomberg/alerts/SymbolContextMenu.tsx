@@ -20,7 +20,9 @@ import {
   ContextMenuShortcut,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { useAtomValue, useSetAtom } from "jotai";
 import { useState } from "react";
+import { MAX_CHART_WINDOWS, chartWindowsAtom, openChartWindowAtom } from "../atoms/chart-windows";
 import { rulesForSymbol, useAlertRules } from "../hooks/useAlertRules";
 import type { bloombergColors } from "../lib/theme-config";
 import { AlertPickerDialog } from "./AlertPickerDialog";
@@ -60,6 +62,12 @@ export function SymbolContextMenu({
   const { rules } = useAlertRules();
   const symbolRules = rulesForSymbol(rules, symbol);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const openChartWindow = useSetAtom(openChartWindowAtom);
+  const chartWindows = useAtomValue(chartWindowsAtom);
+  // Re-opening a symbol that already has a window just focuses it, so the cap
+  // only blocks genuinely new windows.
+  const popBlocked =
+    chartWindows.length >= MAX_CHART_WINDOWS && !chartWindows.some((w) => w.symbol === symbol);
 
   return (
     <>
@@ -73,6 +81,18 @@ export function SymbolContextMenu({
           >
             Open in STOCK VIEW
             <ContextMenuShortcut className="text-[9px]">↵</ContextMenuShortcut>
+          </ContextMenuItem>
+
+          <ContextMenuItem
+            className={menuItemClass}
+            style={{ color: colors.text }}
+            disabled={popBlocked}
+            onSelect={() => openChartWindow({ symbol })}
+          >
+            ⧉ Pop out chart
+            <ContextMenuShortcut className="text-[9px]">
+              {popBlocked ? `max ${MAX_CHART_WINDOWS}` : "float"}
+            </ContextMenuShortcut>
           </ContextMenuItem>
 
           <ContextMenuSeparator style={{ background: colors.border }} />

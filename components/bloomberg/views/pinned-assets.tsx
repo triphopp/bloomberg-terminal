@@ -36,6 +36,7 @@ import {
   pinnedAssetsAtom,
   stockSearchSymbolAtom,
 } from "../atoms";
+import { openChartWindowAtom } from "../atoms/chart-windows";
 import { SessionGlyph, extendedSessionMove, staleMoveStyle } from "../core/market-session";
 import {
   type PredictionSummary,
@@ -991,6 +992,7 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
   const [tags, setTags] = useAtom(pinTagsAtom);
   const setCurrentView = useSetAtom(currentViewAtom);
   const setStockSymbol = useSetAtom(stockSearchSymbolAtom);
+  const openChartWindow = useSetAtom(openChartWindowAtom);
 
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [loadingQuotes, setLoadingQuotes] = useState(false);
@@ -1356,7 +1358,17 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
     }
   };
 
-  const handleSymbolClick = (symbol: string) => {
+  /**
+   * Shift+click pops the symbol into a floating chart window instead of
+   * navigating. Kept here rather than threaded through a prop because every
+   * caller of this component wants the same behaviour, and the row click
+   * handlers below have several call sites.
+   */
+  const handleSymbolClick = (symbol: string, e?: { shiftKey?: boolean }) => {
+    if (e?.shiftKey) {
+      openChartWindow({ symbol });
+      return;
+    }
     if (onSymbolClick) {
       onSymbolClick(symbol);
     } else {
@@ -1843,7 +1855,7 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          handleSymbolClick(pin.symbol);
+                          handleSymbolClick(pin.symbol, e);
                         }
                       }}
                       draggable
@@ -1867,7 +1879,7 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
                         borderTop: isDragOver ? "2px solid #00FFFF" : `2px solid ${dotColor}`,
                         opacity: dragIdx === visualIdx ? 0.4 : 1,
                       }}
-                      onClick={() => handleSymbolClick(pin.symbol)}
+                      onClick={(e) => handleSymbolClick(pin.symbol, e)}
                     >
                       {/* Top row: symbol + alert + action icons */}
                       <div className="flex items-start justify-between gap-0.5 mb-0.5">
@@ -2294,7 +2306,7 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
                                     type="button"
                                     className="font-bold hover:opacity-70 flex items-center gap-0.5 shrink-0"
                                     style={{ color: colors.accent }}
-                                    onClick={() => handleSymbolClick(pin.symbol)}
+                                    onClick={(e) => handleSymbolClick(pin.symbol, e)}
                                   >
                                     {pin.symbol}
                                     <ExternalLink className="h-2 w-2 opacity-0 group-hover/row:opacity-50" />

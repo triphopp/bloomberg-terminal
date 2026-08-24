@@ -822,6 +822,54 @@ def seed_symbol_lists() -> None:
             sort += 1
 
 
+def sync_symbol_lists() -> None:
+    """Add symbols that config.py has gained since the tables were first seeded.
+
+    `seed_symbol_lists` only ever runs against an empty table, so anything added
+    to config.py afterwards never reached an existing install — KOSPI sat in
+    INDICES for months while every running terminal showed five Asian indices.
+    This runs on every startup and inserts only what is missing, keyed on
+    (list_id, symbol), so a user's own edits (disabled rows, re-ordering,
+    symbols they added themselves) are left alone.
+    """
+    from config import INDICES, VOL_INDICES
+
+    groups: list[tuple[str, list[dict]]] = [("indices", INDICES), ("volatility", VOL_INDICES)]
+
+    with get_db() as conn:
+        for list_id, defaults in groups:
+            existing = {
+                r["symbol"]
+                for r in conn.execute(
+                    "SELECT symbol FROM symbol_lists WHERE list_id = ?", (list_id,)
+                ).fetchall()
+            }
+            # New rows go after everything already there, so an existing board
+            # does not reshuffle under the user.
+            next_sort = conn.execute(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM symbol_lists WHERE list_id = ?",
+                (list_id,),
+            ).fetchone()[0]
+
+            for cfg in defaults:
+                if cfg["symbol"] in existing:
+                    continue
+                meta = {k: v for k, v in cfg.items() if k not in ("symbol", "id", "region")}
+                conn.execute(
+                    "INSERT INTO symbol_lists (list_id, symbol, label, region, meta, sort_order) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        list_id,
+                        cfg["symbol"],
+                        cfg["id"],
+                        cfg.get("region"),
+                        json.dumps(meta) if meta else None,
+                        next_sort,
+                    ),
+                )
+                next_sort += 1
+
+
 def get_symbol_list(list_id: str) -> list[dict]:
     """Return enabled symbols for a list, formatted like the old config lists."""
     with get_db() as conn:

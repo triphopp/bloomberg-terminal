@@ -25,6 +25,15 @@ export type { EventChipStyle } from "./event-rail-overlay";
 // Indicator picker UI
 export { IndicatorPicker } from "./IndicatorPicker";
 
+// Floating chart windows (multi-chart popups)
+export { ChartPanel } from "./ChartPanel";
+export type { ChartPanelProps } from "./ChartPanel";
+export { ChartWindowLayer } from "./ChartWindowLayer";
+export { DetachedChartWindow } from "./DetachedChartWindow";
+export { FloatingChartWindow } from "./FloatingChartWindow";
+export { useWindowDrag } from "./useWindowDrag";
+export type { UseWindowDragOptions, WindowGeometry } from "./useWindowDrag";
+
 // Hooks
 export { useChartIndicators } from "./useChartIndicators";
 export type { SelectedChartEvent } from "./useChartIndicators";
@@ -38,11 +47,18 @@ export {
   PERIOD_LABEL,
   INTERVAL_LABEL,
   PERIOD_TO_YF,
+  applyPeriod,
+  applyInterval,
 } from "./useChartTimeframe";
 
 // Timeframe bar component
 export { ChartTimeframeBar } from "./ChartTimeframeBar";
 export type { ChartTimeframeBarProps } from "./ChartTimeframeBar";
+
+// Timeframe row shared by the MKT panel and the chart windows
+export { IntervalPicker, TimeframeRow } from "./TimeframeRow";
+export type { TimeframeRowProps } from "./TimeframeRow";
+export { useAnchoredPanel } from "./useAnchoredPanel";
 
 // Types
 export type {
