@@ -16,7 +16,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 
 import { SD_HEATMAP_DEFAULT_MODE, type SdBandsPayload } from "./indicators/sd-heatmap";
 import type { ChartIndicator } from "./types";
@@ -32,6 +32,9 @@ export interface UseSdBandsOptions {
 }
 
 const INDICATOR_ID = "sd-heatmap";
+
+/** Symbols the snapshot self-heal has already POSTed for, app-wide. */
+const attemptedSnapshots = new Set<string>();
 
 export function useSdBands({
   indicators,
@@ -66,8 +69,10 @@ export function useSdBands({
   // Symbols already attempted this session. Without it a symbol with no options
   // chain (an index, most ETFs) would be retried on every render forever, since
   // its snapshot count stays 0 no matter how often the POST 404s.
-  const attempted = useRef<Set<string>>(new Set());
-
+  //
+  // Module-level rather than per-hook: several charts can be mounted on the same
+  // symbol at once (the MKT panel plus any number of floating chart windows),
+  // and a per-instance guard let each of them fire its own POST for it.
   const record = useMutation({
     mutationFn: (sym: string) =>
       fetch(`/api/options/iv-snapshot?symbol=${encodeURIComponent(sym)}&targetDte=${horizonDays}`, {
@@ -80,12 +85,12 @@ export function useSdBands({
     },
   });
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `record` is a fresh object each render; the ref guard is what makes this fire once per symbol
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `record` is a fresh object each render; the module-level guard is what makes this fire once per symbol
   useEffect(() => {
     if (!active || !symbol) return;
     if (query.data?.snapshotCount !== 0) return;
-    if (attempted.current.has(symbol)) return;
-    attempted.current.add(symbol);
+    if (attemptedSnapshots.has(symbol)) return;
+    attemptedSnapshots.add(symbol);
     record.mutate(symbol);
   }, [active, symbol, query.data?.snapshotCount]);
 

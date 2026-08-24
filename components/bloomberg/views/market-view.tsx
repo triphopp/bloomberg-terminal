@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useAtom, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   Activity,
   BarChart2,
@@ -12,6 +12,7 @@ import {
   GripVertical,
   LineChart,
   Loader2,
+  PictureInPicture2,
   RefreshCw,
   RotateCcw,
   Save,
@@ -42,6 +43,7 @@ import {
   showHeatmapSettingsAtom,
   stockSearchSymbolAtom,
 } from "../atoms";
+import { MAX_CHART_WINDOWS, chartWindowsAtom, openChartWindowAtom } from "../atoms/chart-windows";
 import {
   BAR_INTERVALS,
   EventDetailPopover,
@@ -49,9 +51,12 @@ import {
   INTERVAL_LABEL,
   INTERVAL_VALID_RANGES,
   IndicatorPicker,
+  IntervalPicker,
   ModularChart,
   PERIOD_LABEL,
   TIME_PERIODS,
+  TimeframeRow,
+  useAnchoredPanel,
   useChartIndicators,
   useChartTimeframe,
 } from "../chart";
@@ -118,7 +123,14 @@ function loadLayout(): LayoutSettings {
 
 const LS_TICK_SECTIONS = "bloomberg_tickdata_sections";
 
-type TickSection = "americas" | "emea" | "asiaPacific" | "ratesUS" | "ratesJP" | "fx";
+type TickSection =
+  | "americas"
+  | "emea"
+  | "asiaPacific"
+  | "ratesUS"
+  | "ratesJP"
+  | "volatility"
+  | "fx";
 
 const TICK_SECTIONS: TickSection[] = [
   "americas",
@@ -126,6 +138,7 @@ const TICK_SECTIONS: TickSection[] = [
   "asiaPacific",
   "ratesUS",
   "ratesJP",
+  "volatility",
   "fx",
 ];
 
@@ -277,6 +290,17 @@ function calcMACD(
   });
 }
 
+/**
+ * One VOLATILITY row — a MarketItem plus the sub-group it belongs to.
+ *
+ * The group is what turns nineteen vol indices into something scannable: the
+ * S&P term structure read in order is itself the signal, and OVX sitting next
+ * to VIX would say nothing.
+ */
+interface VolatilityItem extends MarketItem {
+  group?: string;
+}
+
 // ── Tick Data Row ─────────────────────────────────────────────────────────────
 
 function TickRow({
@@ -365,6 +389,32 @@ function MiniSparkline({ data, color }: { data: number[]; color: string }) {
     <svg width={w} height={h} className="block">
       <polyline fill="none" stroke={color} strokeWidth="1" points={points} />
     </svg>
+  );
+}
+
+/**
+ * A quieter header for a run of rows inside a section.
+ *
+ * Deliberately not a RegionHeader: those are accent-coloured and collapsible,
+ * and a second one nested inside a section reads as a section of its own.
+ */
+function SubGroupHeader({
+  label,
+  colors,
+}: {
+  label: string;
+  colors: typeof bloombergColors.dark;
+}) {
+  return (
+    <tr>
+      <td
+        colSpan={6}
+        className="px-1 py-0 text-[8px] font-bold tracking-widest"
+        style={{ background: "#080808", color: `${colors.textSecondary}cc` }}
+      >
+        <span className="pl-3">{label}</span>
+      </td>
+    </tr>
   );
 }
 
@@ -680,141 +730,6 @@ function FieldChip({ field, colors }: { field: QuoteField; colors: typeof bloomb
   );
 }
 
-/**
- * Open/close state plus fixed-viewport coordinates for a dropdown panel.
- *
- * The toolbar rows clip their overflow so they can never grow a second line,
- * which would also clip an absolutely-positioned panel inside them. Positioning
- * the panel `fixed` against the trigger's measured rect escapes that clip —
- * fixed elements are laid out against the viewport, not the scroll ancestor.
- */
-function useAnchoredPanel() {
-  const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-
-  const place = useCallback(() => {
-    const r = triggerRef.current?.getBoundingClientRect();
-    if (r) setPos({ left: r.left, top: r.bottom + 2 });
-  }, []);
-
-  const toggle = useCallback(() => {
-    setOpen((v) => {
-      if (!v) place();
-      return !v;
-    });
-  }, [place]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    // Re-measure rather than close: clicking the trigger can itself scroll an
-    // ancestor (the browser scrolls a partly-hidden button into view), and
-    // closing on that would shut the panel the same tick it opened.
-    document.addEventListener("mousedown", onDown);
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
-    };
-  }, [open, place]);
-
-  return { open, setOpen, toggle, pos, wrapRef, triggerRef };
-}
-
-/**
- * Bar interval as a dropdown rather than nine inline buttons.
- *
- * Intervals that don't cover the selected period are still listed, marked with
- * the range they'd switch to — picking one is legal (handleIntervalChange moves
- * the period to a valid one), so hiding them would obscure a working path.
- */
-function IntervalPicker({
-  colors,
-  barInterval,
-  timePeriod,
-  onChange,
-}: {
-  colors: typeof bloombergColors.dark;
-  barInterval: BarInterval;
-  timePeriod: TimePeriod;
-  onChange: (iv: BarInterval) => void;
-}) {
-  const { open, setOpen, toggle, pos, wrapRef, triggerRef } = useAnchoredPanel();
-
-  return (
-    <div
-      className="shrink-0 ml-2 pl-2 flex items-center gap-1"
-      style={{ borderLeft: `1px solid ${colors.border}` }}
-      ref={wrapRef}
-    >
-      <span className="text-[9px] font-mono" style={{ color: colors.textSecondary }}>
-        TF
-      </span>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="flex items-center gap-0.5 text-[9px] font-bold font-mono px-1.5 py-0.5 border transition-colors"
-        style={{
-          borderColor: colors.accent,
-          backgroundColor: `${colors.accent}22`,
-          color: colors.accent,
-        }}
-        onClick={toggle}
-        title="Bar interval"
-      >
-        {INTERVAL_LABEL[barInterval]}
-        <ChevronDown className="h-2.5 w-2.5" />
-      </button>
-      {open && pos && (
-        <div
-          className="fixed z-50 border min-w-[110px]"
-          style={{
-            left: pos.left,
-            top: pos.top,
-            background: colors.surface,
-            borderColor: colors.border,
-          }}
-        >
-          {BAR_INTERVALS.map((iv) => {
-            const active = barInterval === iv;
-            const fitsPeriod = INTERVAL_VALID_RANGES[iv as BarInterval].includes(timePeriod);
-            return (
-              <button
-                key={iv}
-                type="button"
-                className="w-full flex items-center justify-between gap-2 px-2 py-1 text-[9px] font-mono border-b hover:opacity-70"
-                style={{
-                  borderColor: `${colors.border}44`,
-                  color: active ? colors.accent : colors.text,
-                  background: active ? `${colors.accent}14` : "transparent",
-                }}
-                onClick={() => {
-                  onChange(iv as BarInterval);
-                  setOpen(false);
-                }}
-              >
-                <span className="font-bold">{INTERVAL_LABEL[iv as BarInterval]}</span>
-                {!fitsPeriod && (
-                  <span className="text-[8px] opacity-40">
-                    →{PERIOD_LABEL[INTERVAL_DEFAULT_RANGE[iv as BarInterval]]}
-                  </span>
-                )}
-                {active && <Check className="h-2.5 w-2.5" />}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /** Static fundamentals, revealed on demand so they cost no vertical space. */
 function QuoteStatsPopover({
   fields,
@@ -1058,6 +973,19 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   // keeps the shape GMOV / ticker / heatmap also depend on).
   const { data: ratesData, isLoading: ratesLoading } = useRatesCurve();
   const { data: fxData } = useFxTicks();
+  // VIX-family "fear" gauges. Own endpoint rather than a region inside
+  // /api/market-data: they are not a region, and that payload's shape is
+  // consumed by GMOV, the ticker strip and the heatmap.
+  const { data: volData, isLoading: volLoading } = useQuery<{
+    items?: VolatilityItem[];
+    error?: string;
+  }>({
+    queryKey: ["volatility"],
+    queryFn: () => fetch("/api/volatility").then((r) => r.json()),
+    staleTime: 55_000,
+    refetchInterval: 60_000,
+  });
+  const volItems = volData?.items ?? [];
   const usRates = ratesData?.us ?? [];
   const jpRates = ratesData?.jp ?? [];
   const fxPairs = fxData?.pairs ?? [];
@@ -1272,6 +1200,8 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
 
   const setCurrentView = useSetAtom(currentViewAtom);
   const setStockSymbol = useSetAtom(stockSearchSymbolAtom);
+  const openChartWindow = useSetAtom(openChartWindowAtom);
+  const chartWindows = useAtomValue(chartWindowsAtom);
   const [pins] = useAtom(pinnedAssetsAtom);
 
   useEffect(() => {
@@ -1504,14 +1434,16 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   ];
   // Indices + FX only. Rate rows are deliberately excluded: "yield up" means the
   // bond market fell, so counting them alongside "index up" would make the ▲/▼
-  // tally mix two opposite meanings.
+  // tally mix two opposite meanings. Volatility rows are out for the same
+  // reason — a green VIX is a bad day, not a good one.
   const upCount =
     allMarketItems.filter((m) => m.pctChange > 0).length +
     fxPairs.filter((p) => (p.pctChange ?? 0) > 0).length;
   const downCount =
     allMarketItems.filter((m) => m.pctChange < 0).length +
     fxPairs.filter((p) => (p.pctChange ?? 0) < 0).length;
-  const tickRowCount = allMarketItems.length + usRates.length + jpRates.length + fxPairs.length;
+  const tickRowCount =
+    allMarketItems.length + usRates.length + jpRates.length + volItems.length + fxPairs.length;
 
   // ── Panel Renderers ─────────────────────────────────────────────────────────
 
@@ -1768,6 +1700,40 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                       ))}
                   </Fragment>
                 ))}
+
+                {/* ── VOLATILITY — the VIX family, grouped by what each one
+                    is priced off. Sub-headers rather than one flat list: the
+                    S&P term structure only means something read in order. ── */}
+                <RegionHeader
+                  label="VOLATILITY"
+                  count={volItems.length}
+                  colors={colors}
+                  collapsed={collapsedSections.includes("volatility")}
+                  onToggle={() => toggleSection("volatility")}
+                  note={volData?.error ? "feed unavailable" : undefined}
+                />
+                {!collapsedSections.includes("volatility") && (
+                  <TickNotice
+                    colors={colors}
+                    loading={volLoading}
+                    error={volData?.error}
+                    empty={volItems.length === 0}
+                  />
+                )}
+                {!collapsedSections.includes("volatility") &&
+                  volItems.map((item, idx) => (
+                    <Fragment key={item.id}>
+                      {item.group && item.group !== volItems[idx - 1]?.group && (
+                        <SubGroupHeader label={item.group} colors={colors} />
+                      )}
+                      <TickRow
+                        item={item}
+                        colors={colors}
+                        isSelected={selectedTickId === item.id}
+                        onClick={() => handleTickSelect(item)}
+                      />
+                    </Fragment>
+                  ))}
 
                 {/* ── FX — moved here from the removed FX [E] view ── */}
                 <RegionHeader
@@ -2095,104 +2061,98 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
       </div>
 
       {/* Period + bar interval + chart type — one row that never wraps.
-          Period and interval are the same "what timeframe" decision, so they
-          share a row; the interval collapses to a dropdown because nine buttons
-          spelled out was what forced this row onto a second line. */}
-      {/* Scrollbar hidden rather than thin: a classic scrollbar adds ~13px of
-          height, which would re-create the very second row this merge removed. */}
-      <div
-        className="flex flex-nowrap items-center gap-0 px-1 py-0.5 shrink-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        style={{ background: "#050505", borderBottom: `1px solid ${colors.border}` }}
-      >
-        {TIME_PERIODS.map((p) => {
-          const active = p === timePeriod;
-          const validRanges =
-            heatmapChartType === "candle"
-              ? INTERVAL_VALID_RANGES[barInterval as BarInterval]
-              : null;
-          const disabled = validRanges ? !validRanges.includes(p as TimePeriod) : false;
-          return (
+          Same control the popped-out chart windows use (chart/TimeframeRow). */}
+      <TimeframeRow
+        colors={colors}
+        timePeriod={timePeriod as TimePeriod}
+        barInterval={barInterval as BarInterval}
+        chartType={heatmapChartType}
+        onPeriodChange={(p) => handleHeatmapPeriod(p, heatmapChartType)}
+        onIntervalChange={(iv) => handleHeatmapInterval(iv)}
+        trailing={
+          <>
+            {/* Pop the current symbol into a free-floating window — the panel
+              chart stays put, so this is "add a chart", not "move the chart". */}
             <button
-              key={p}
-              className="text-[9px] font-bold font-mono px-1.5 py-0.5 shrink-0"
-              disabled={disabled}
-              style={{
-                background: active ? colors.accent : "transparent",
-                color: disabled
-                  ? `${colors.textSecondary}44`
-                  : active
-                    ? "#000"
-                    : colors.textSecondary,
-                cursor: disabled ? "not-allowed" : "pointer",
-              }}
-              onClick={() => handleHeatmapPeriod(p as TimePeriod, heatmapChartType)}
+              type="button"
+              disabled={
+                !selectedSymbol ||
+                (chartWindows.length >= MAX_CHART_WINDOWS &&
+                  !chartWindows.some((w) => w.symbol === selectedSymbol))
+              }
+              title={
+                chartWindows.length >= MAX_CHART_WINDOWS
+                  ? `Chart window limit reached (${MAX_CHART_WINDOWS})`
+                  : "Pop out into a floating chart window"
+              }
+              className="flex items-center gap-0.5 px-1 py-0 text-[8px] font-mono border disabled:opacity-40"
+              style={{ borderColor: colors.border, color: colors.textSecondary }}
+              onClick={() =>
+                selectedSymbol &&
+                openChartWindow({
+                  symbol: selectedSymbol,
+                  label: selectedLabel,
+                  timePeriod,
+                  barInterval,
+                })
+              }
             >
-              {PERIOD_LABEL[p as TimePeriod]}
+              <PictureInPicture2 className="h-2 w-2" /> POP
             </button>
-          );
-        })}
-        {heatmapChartType === "candle" && (
-          <IntervalPicker
-            colors={colors}
-            barInterval={barInterval as BarInterval}
-            timePeriod={timePeriod as TimePeriod}
-            onChange={(iv) => handleHeatmapInterval(iv)}
-          />
-        )}
-        <div className="ml-auto shrink-0 flex items-center gap-1">
-          {/* Chart type toggle */}
-          <div className="flex border overflow-hidden" style={{ borderColor: colors.border }}>
-            <button
-              className="flex items-center gap-0.5 px-1 py-0 text-[8px] font-mono transition-colors"
-              style={{
-                backgroundColor: heatmapChartType === "area" ? colors.accent : "transparent",
-                color: heatmapChartType === "area" ? "#000" : colors.textSecondary,
-              }}
-              onClick={() => setHeatmapChartType("area")}
-            >
-              <LineChart className="h-2 w-2" /> AREA
-            </button>
-            <button
-              className="flex items-center gap-0.5 px-1 py-0 text-[8px] font-mono transition-colors border-l"
-              style={{
-                borderColor: colors.border,
-                backgroundColor: heatmapChartType === "candle" ? colors.accent : "transparent",
-                color: heatmapChartType === "candle" ? "#000" : colors.textSecondary,
-              }}
-              onClick={() => setHeatmapChartType("candle")}
-            >
-              <BarChart2 className="h-2 w-2" /> CANDLE
-            </button>
-          </div>
-          {heatmapChartType === "area" && (
-            <button
-              className="text-[8px] px-1 py-0 font-bold"
-              style={{
-                color: showVolume ? "#00FFFF" : colors.textSecondary,
-                background: showVolume ? "#00FFFF15" : "transparent",
-              }}
-              onClick={() => setShowVolume((v) => !v)}
-            >
-              VOL
-            </button>
-          )}
-          {heatmapChartType === "area" && (
-            <button
-              className="text-[8px] px-1 py-0 font-bold"
-              style={{
-                color: showMACD ? "#ff9800" : colors.textSecondary,
-                background: showMACD ? "#ff980015" : "transparent",
-              }}
-              onClick={() => setShowMACD((v) => !v)}
-            >
-              MACD
-            </button>
-          )}
-          {quoteQuery.isLoading && (
-            <Loader2 className="h-2.5 w-2.5 animate-spin" style={{ color: colors.accent }} />
-          )}
-        </div>
-      </div>
+            {/* Chart type toggle */}
+            <div className="flex border overflow-hidden" style={{ borderColor: colors.border }}>
+              <button
+                className="flex items-center gap-0.5 px-1 py-0 text-[8px] font-mono transition-colors"
+                style={{
+                  backgroundColor: heatmapChartType === "area" ? colors.accent : "transparent",
+                  color: heatmapChartType === "area" ? "#000" : colors.textSecondary,
+                }}
+                onClick={() => setHeatmapChartType("area")}
+              >
+                <LineChart className="h-2 w-2" /> AREA
+              </button>
+              <button
+                className="flex items-center gap-0.5 px-1 py-0 text-[8px] font-mono transition-colors border-l"
+                style={{
+                  borderColor: colors.border,
+                  backgroundColor: heatmapChartType === "candle" ? colors.accent : "transparent",
+                  color: heatmapChartType === "candle" ? "#000" : colors.textSecondary,
+                }}
+                onClick={() => setHeatmapChartType("candle")}
+              >
+                <BarChart2 className="h-2 w-2" /> CANDLE
+              </button>
+            </div>
+            {heatmapChartType === "area" && (
+              <button
+                className="text-[8px] px-1 py-0 font-bold"
+                style={{
+                  color: showVolume ? "#00FFFF" : colors.textSecondary,
+                  background: showVolume ? "#00FFFF15" : "transparent",
+                }}
+                onClick={() => setShowVolume((v) => !v)}
+              >
+                VOL
+              </button>
+            )}
+            {heatmapChartType === "area" && (
+              <button
+                className="text-[8px] px-1 py-0 font-bold"
+                style={{
+                  color: showMACD ? "#ff9800" : colors.textSecondary,
+                  background: showMACD ? "#ff980015" : "transparent",
+                }}
+                onClick={() => setShowMACD((v) => !v)}
+              >
+                MACD
+              </button>
+            )}
+            {quoteQuery.isLoading && (
+              <Loader2 className="h-2.5 w-2.5 animate-spin" style={{ color: colors.accent }} />
+            )}
+          </>
+        }
+      />
 
       {/* Indicator picker bar (candle mode only) */}
       {heatmapChartType === "candle" && (

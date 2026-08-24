@@ -6,7 +6,8 @@
 ---
 
 ## Market / Heatmap (`routers/market.py`)
-- `GET /api/market-data` — 19 global indices (Americas/EMEA/Asia), 60s cache
+- `GET /api/market-data` — 20 global indices (Americas/EMEA/Asia, incl. KOSPI), 60s cache
+- `GET /api/volatility` — 19 VIX-family "fear" indices for the TICK DATA VOLATILITY section, 60s cache. Rows are the SAME shape as a market-data index row plus `group` (`S&P TERM` / `VOL OF VOL` / `EQUITY` / `GLOBAL` / `COMMOD/RATES`) → `{ items: [...], lastUpdated, dataSource }`. Symbol list lives in `config.VOL_INDICES` (table `symbol_lists`, list_id `volatility`)
 - `GET /api/heatmap` — sectors, commodities, bonds, indicators heatmap groups
 
 ## Stock (`routers/stock.py`)
@@ -460,6 +461,7 @@ Per symbol: `trend` (EMA20/50/200 stack), `rsi` (Wilder 14), `rvol` (vs 20d avg)
 ```
 app/api/
 ├── market-data/route.ts
+├── volatility/route.ts (55s in-memory cache; NO static fallback — a stale VIX is worse than an empty section)
 ├── stock/route.ts
 ├── news/facebook/route.ts
 ├── clippings/route.ts / content / ai / ai/models

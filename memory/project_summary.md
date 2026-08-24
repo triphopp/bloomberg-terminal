@@ -242,7 +242,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 
 | Key | Button | View | Component |
 |-----|--------|------|-----------|
-| `1` | MKT | Market View (default) | `market-view.tsx` — watchlist + chart + Regime Detection + TICK DATA board (6 collapsible sections: AMERICAS/EMEA/ASIA PACIFIC + RATES·US + RATES·JP + FX) |
+| `1` | MKT | Market View (default) | `market-view.tsx` — watchlist + chart + Regime Detection + TICK DATA board (7 collapsible sections: AMERICAS/EMEA/ASIA PACIFIC + RATES·US + RATES·JP + VOLATILITY + FX) |
 | `2` | NEWS | News | `news-view.tsx` → barrel for `views/news/` — WATCHLIST (default, sector rail + per-ticker stream) / NEWSFEED / SOCIAL tabs + Polymarket right column (256px fixed; watchlist-matched markets on top of macro signals) |
 | `3` | GMOV | Market Movers | `market-movers-view.tsx` — indices table + heatmap treemap |
 | `4` | CLIP | Clippings + AI | `clippings-view.tsx` |
@@ -282,6 +282,8 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026
 - [ ] Seed sector data: POST /api/sectors/fetch for TH/KR/HK/EU/US
 
 ### Features
+- [x] **Dynamic Chart History** — ซูมออกจนสุดข้อมูลแล้วกราฟโหลดช่วงถัดไปเอง (3M→YTD→1Y→5Y→MAX) โดยไม่เสียมุมมอง; lib ของเราเอง `components/bloomberg/chartkit/` (pure core + engine adapter) เตรียมไว้เขียน candle engine เอง — done 2026-08-25 (`plans/completed/dynamic-chart-history.md`)
+- [ ] **Floating Chart Windows** — เปิดกราฟหลายตัวพร้อมกันเป็น popup ลอยอิสระ (ลาก/ย่อขยาย/ย่อเก็บ/z-order, cap 10, persist localStorage, ลอยข้ามทุก view) — เฟส 1 done 2026-08-24; เหลือเฟส 2: TILE + edge snap, indicator แยกต่อหน้าต่าง (`plans/floating-chart-windows.md`)
 - [ ] **IV SD Heatmap** — BS lognormal σ-band pane (5 buckets −2σ…+2σ) จาก `σ_mid=(IV_call+IV_put)/2`; 2 โหมด occupancy/cheapness, ตาราง `iv_snapshots` สะสม IV เอง, `/api/options/{sym}/sd-bands`; ยัง verify pixel ไม่ได้ (`plans/iv-sd-heatmap.md`)
 - [x] **TAIL Risk Monitor v2** — CBOE vol data (VIX/VIX9D/VIX3M/VIX6M/VVIX/SKEW/OVX/GVZ/VXN) แทน yfinance ที่ค้าง 28 วัน, tri-state signals, 6 risk dimensions, composite นับมิติไม่ใช่นับ signal — done 2026-08-16 (`plans/completed/tail-risk-v2.md`)
 - [x] **Company OUTLOOK (SEC EDGAR)** — guidance ที่บริษัทยื่นใน 8-K EX-99.1 + คำพูด CEO + MD&A forward-looking + งบ as-reported จาก XBRL; แท็บ OUTLOOK ใน stock-view + แถบใน NEWS — done 2026-08-15 (`plans/completed/company-outlook-edgar.md`)
