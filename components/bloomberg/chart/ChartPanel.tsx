@@ -15,7 +15,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useStockHistory, useStockQuote } from "../hooks/useStockData";
 import { bloombergColors } from "../lib/theme-config";
 import { EventDetailPopover } from "./EventDetailPopover";
@@ -25,7 +25,6 @@ import { ModularChart } from "./ModularChart";
 import { PEPane } from "./PEPane";
 import { TimeframeRow } from "./TimeframeRow";
 import type { BarInterval, OhlcvBar, TimePeriod } from "./types";
-import { useAutoExtendRange } from "./useAutoExtendRange";
 import { useChartIndicators } from "./useChartIndicators";
 import { applyInterval, applyPeriod } from "./useChartTimeframe";
 import { useSdBands } from "./useSdBands";
@@ -107,21 +106,7 @@ export function ChartPanel({
   // The quote is cheap, cached and unpolled, and a paused (minimized) window
   // still shows the price in its title bar — so it is not gated on `paused`.
   const quoteQuery = useStockQuote(symbol);
-
-  // Zoom out past the oldest bar and the window widens by itself — the fetch
-  // below follows `effectivePeriod`, not the timeframe button the user pressed.
-  // Fed back from the query below through an effect: the query cannot be read
-  // before the hook that decides which window it fetches.
-  const [dataState, setDataState] = useState({ barCount: 0, isLoading: false });
-  const { effectivePeriod, onLogicalRange, viewportKey, extended } = useAutoExtendRange({
-    symbol: activeSymbol,
-    period: timePeriod,
-    interval: barInterval,
-    barCount: dataState.barCount,
-    isLoading: dataState.isLoading,
-    enabled: !paused,
-  });
-  const historyQuery = useStockHistory(activeSymbol, effectivePeriod, barInterval);
+  const historyQuery = useStockHistory(activeSymbol, timePeriod, barInterval);
 
   const {
     indicators,
@@ -193,14 +178,6 @@ export function ChartPanel({
     });
   }, [historyQuery.data, isIntraday]);
 
-  useEffect(() => {
-    setDataState((prev) =>
-      prev.barCount === ohlcv.length && prev.isLoading === historyQuery.isFetching
-        ? prev
-        : { barCount: ohlcv.length, isLoading: historyQuery.isFetching }
-    );
-  }, [ohlcv.length, historyQuery.isFetching]);
-
   const quote = quoteQuery.data as QuoteRow | undefined;
   const price = quote?.price ?? quote?.regularMarketPrice ?? null;
   const changePct = quote?.changePercent ?? quote?.regularMarketChangePercent ?? null;
@@ -257,17 +234,6 @@ export function ChartPanel({
         )}
         {!paused && (historyQuery.isFetching || quoteQuery.isFetching) && (
           <Loader2 className="h-2.5 w-2.5 animate-spin" style={{ color: colors.accent }} />
-        )}
-        {/* The timeframe buttons still show what the user picked; this says how
-            far the chart has actually loaded after zooming out past it. */}
-        {extended && (
-          <span
-            className="text-[8px] font-mono px-0.5 border"
-            title={`Zoomed out past ${timePeriod.toUpperCase()} — history auto-extended to ${effectivePeriod.toUpperCase()}`}
-            style={{ borderColor: colors.border, color: colors.textSecondary }}
-          >
-            {effectivePeriod.toUpperCase()}·AUTO
-          </span>
         )}
         <span className="flex-1" />
         {headerRight}
@@ -425,8 +391,6 @@ export function ChartPanel({
                       eventMarkers={eventMarkers}
                       onBarClick={handleChartClick}
                       crosshairCursor={regressionArmed}
-                      onLogicalRange={onLogicalRange}
-                      viewportKey={viewportKey}
                     />
                     {selectedEvent && (
                       <EventDetailPopover
