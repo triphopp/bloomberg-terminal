@@ -300,7 +300,10 @@ WORLD_BANK_URL = "https://api.worldbank.org/v2/country"
 YAHOO_SEARCH_URL = "https://query1.finance.yahoo.com/v1/finance/search"
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+CORS_ORIGINS = os.getenv(
+    "CORS_ORIGINS",
+    "http://bloomberg.localhost:9318,http://localhost:9318,http://127.0.0.1:9318",
+).split(",")
 
 # ── Claude API ─────────────────────────────────────────────────────────────────
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-5")

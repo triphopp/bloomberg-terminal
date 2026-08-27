@@ -75,19 +75,19 @@ function Start-Bloomberg {
         [Environment]::SetEnvironmentVariable($kv.Key, $kv.Value, "Process")
     }
 
-    Write-Info "Starting backend  (port 8000) ..."
+    Write-Info "Starting backend  (port $BACKEND_PORT) ..."
     $backendDir  = "$PROJECT_ROOT\backend"
     $backendProc = Start-Process powershell -ArgumentList @(
         "-NoProfile", "-Command",
         "cd '$backendDir'; " +
         ($ENV_VARS.GetEnumerator() | ForEach-Object { "`$env:$($_.Key) = '$($_.Value)'; " }) +
-        "python -m uvicorn main:app --port 8000 --reload *>> '$BACKEND_LOG' 2>&1"
+        "python -m uvicorn main:app --port $BACKEND_PORT --reload *>> '$BACKEND_LOG' 2>&1"
     ) -WindowStyle Hidden -PassThru
     Write-Ok "Backend PID: $($backendProc.Id)"
 
     Start-Sleep -Milliseconds 2000
 
-    Write-Info "Starting frontend (port 3000) ..."
+    Write-Info "Starting frontend (port $FRONTEND_PORT) ..."
     $frontendProc = Start-Process powershell -ArgumentList @(
         "-NoProfile", "-Command",
         "cd '$PROJECT_ROOT'; npm run dev *>> '$FRONTEND_LOG' 2>&1"
@@ -98,7 +98,7 @@ function Start-Bloomberg {
     "backend=$($backendProc.Id)`nfrontend=$($frontendProc.Id)" | Set-Content $PID_FILE
 
     Start-Sleep -Milliseconds 3000
-    Write-Ok "Bloomberg Terminal running at http://localhost:3000"
+    Write-Ok "Bloomberg Terminal running at http://localhost:$FRONTEND_PORT"
     Write-Info "Logs: $LOG_DIR"
     Write-Info "Run 'bloomberg open' to launch in browser"
 }
@@ -155,8 +155,8 @@ function Show-Status {
         }
     }
     Write-Host "  ─────────────────────────"
-    Write-Host "  Frontend: http://localhost:3000"
-    Write-Host "  Backend:  http://localhost:8000/health"
+    Write-Host "  Frontend: http://localhost:$FRONTEND_PORT"
+    Write-Host "  Backend:  http://localhost:$BACKEND_PORT/health"
     Write-Host "  Logs:     $LOG_DIR`n"
 }
 
@@ -173,7 +173,7 @@ function Show-Logs {
 }
 
 function Open-Browser {
-    Start-Process "http://localhost:3000"
+    Start-Process "http://bloomberg.localhost:$FRONTEND_PORT"
 }
 
 function Show-Help {
@@ -187,7 +187,7 @@ function Show-Help {
     bloomberg status   Show running status + memory usage
     bloomberg logs     Show recent logs (both services)
     bloomberg restart  Stop then start
-    bloomberg open     Open http://localhost:3000 in browser
+    bloomberg open     Open the terminal in your browser
     bloomberg help     Show this help
 
   Logs stored in: $LOG_DIR

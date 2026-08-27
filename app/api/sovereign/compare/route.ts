@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 
-const PYTHON_API = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+import { PYTHON_API } from "@/lib/constants";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const codes     = searchParams.get("codes") ?? "";
+  const codes = searchParams.get("codes") ?? "";
   const indicator = searchParams.get("indicator") ?? "listed_companies";
-  const params    = new URLSearchParams({ codes, indicator });
+  const params = new URLSearchParams({ codes, indicator });
   try {
     const res = await fetch(`${PYTHON_API}/api/sovereign/compare?${params}`, {
       cache: "no-store",
