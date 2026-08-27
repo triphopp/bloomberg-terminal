@@ -78,3 +78,8 @@ next-env.d.ts
 
 # Codex tool config
 .codex/
+
+# windows launcher
+/BloombergTerminal.exe
+/logs/
+tools/launcher/*.res

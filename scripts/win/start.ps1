@@ -3,17 +3,18 @@
 # Or double-click start.bat which calls this automatically.
 
 param(
-    [int]$BackendPort  = 8000,
+    [int]$BackendPort  = 9317,
+    [int]$FrontendPort = 9318,
     [string]$ClippingsDir = "./data/clippings",
     [string]$OllamaUrl    = "http://localhost:11434"
 )
 
-$root = $PSScriptRoot
+$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 Write-Host ""
 Write-Host "  Bloomberg Terminal Launcher" -ForegroundColor Cyan
 Write-Host "  Backend  -> http://localhost:$BackendPort" -ForegroundColor DarkGray
-Write-Host "  Frontend -> http://localhost:3000" -ForegroundColor DarkGray
+Write-Host "  Frontend -> http://localhost:$FrontendPort" -ForegroundColor DarkGray
 Write-Host ""
 
 # ── Check Python ──────────────────────────────────────────────────────────────
@@ -66,22 +67,22 @@ if (-not $ready) {
 # node.exe directly instead of npm.ps1 → no execution-policy issue
 $nextBin = "$root\node_modules\.bin\next.cmd"
 $frontendCmd = if (Test-Path $nextBin) {
-    "cd /d `"$root`" && `"$nextBin`" dev"
+    "cd /d `"$root`" && `"$nextBin`" dev --port $FrontendPort"
 } else {
     # Fallback: use node_modules/.bin/next via npx (cmd-safe)
-    "cd /d `"$root`" && npx next dev"
+    "cd /d `"$root`" && npx next dev --port $FrontendPort"
 }
 
 Write-Host "  [2/2] Starting frontend (cmd window)..." -ForegroundColor Cyan
-Start-Process cmd -ArgumentList "/k", "title Bloomberg Frontend :3000 && $frontendCmd"
+Start-Process cmd -ArgumentList "/k", "title Bloomberg Frontend :$FrontendPort && $frontendCmd"
 
 Write-Host ""
 Write-Host "  Both processes launched in separate cmd windows." -ForegroundColor White
-Write-Host "  Open http://localhost:3000 in your browser." -ForegroundColor White
+Write-Host "  Open http://localhost:$FrontendPort in your browser." -ForegroundColor White
 Write-Host ""
 Write-Host "  To stop: close the two cmd windows, or press Ctrl+C in each." -ForegroundColor DarkGray
 
 # ── Auto-open browser after 6s ─────────────────────────────────────────────────
 Write-Host "  Opening browser in 6 seconds..." -ForegroundColor DarkGray
 Start-Sleep -Seconds 6
-Start-Process "http://localhost:3000"
+Start-Process "http://bloomberg.localhost:$FrontendPort"

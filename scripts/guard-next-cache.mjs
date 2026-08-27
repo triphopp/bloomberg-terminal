@@ -29,6 +29,12 @@ const STAMP = join(NEXT_DIR, ".route-guard.json");
 // change freely without altering the route table.
 const ROUTE_FILE = /^(route|page|layout|template|default|not-found|error|loading)\.(t|j)sx?$/;
 
+// File-convention metadata (favicon.ico, icon.png, apple-icon.png, …) becomes a
+// generated route too, so adding or removing one changes the route table the
+// same way a page.tsx does — and goes just as stale in the cache.
+const METADATA_FILE =
+  /^(favicon\.ico|(icon|apple-icon|opengraph-image|twitter-image)\d*\.(ico|jpg|jpeg|png|svg|gif|tsx?|jsx?)|(robots|sitemap|manifest)\.(txt|xml|json|webmanifest))$/;
+
 function collectRouteFiles(dir, out = []) {
   let entries;
   try {
@@ -40,7 +46,7 @@ function collectRouteFiles(dir, out = []) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
       collectRouteFiles(full, out);
-    } else if (ROUTE_FILE.test(entry.name)) {
+    } else if (ROUTE_FILE.test(entry.name) || METADATA_FILE.test(entry.name)) {
       out.push(relative(ROOT, full).replace(/\\/g, "/"));
     }
   }
