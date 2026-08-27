@@ -84,12 +84,26 @@ async function jsonOrThrow(res: Response) {
   return data;
 }
 
+/**
+ * The list endpoints answer with an array. When the Python backend is down the
+ * Next proxy answers `{ error: "Backend unavailable" }` with a 503 — and a bare
+ * `.then(r => r.json())` handed that object straight to callers, which then
+ * blew up on `.filter is not a function` and took the whole terminal with it.
+ * Fail the query instead: React Query keeps the last good data and the UI
+ * degrades to "no alerts" rather than a crash.
+ */
+async function listOrThrow<T>(res: Response): Promise<T[]> {
+  const data = await jsonOrThrow(res);
+  if (!Array.isArray(data)) throw new Error("Expected a list response");
+  return data as T[];
+}
+
 export function useAlertRules() {
   const qc = useQueryClient();
 
   const query = useQuery<AlertRule[]>({
     queryKey: RULES_KEY,
-    queryFn: () => fetch("/api/alerts/rules").then((r) => r.json()),
+    queryFn: () => fetch("/api/alerts/rules").then((r) => listOrThrow<AlertRule>(r)),
     staleTime: 60_000,
   });
 
@@ -165,7 +179,8 @@ export function useAlertEvents(opts: { limit?: number; acked?: boolean; ruleId?:
 
   const query = useQuery<AlertEvent[]>({
     queryKey: [...EVENTS_KEY, qs],
-    queryFn: () => fetch(`/api/alerts/events${qs ? `?${qs}` : ""}`).then((r) => r.json()),
+    queryFn: () =>
+      fetch(`/api/alerts/events${qs ? `?${qs}` : ""}`).then((r) => listOrThrow<AlertEvent>(r)),
     staleTime: 30_000,
     refetchInterval: 60_000,
   });

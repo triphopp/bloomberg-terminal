@@ -25,7 +25,12 @@ import type { bloombergColors } from "../lib/theme-config";
 const ALERT_CYAN = "#33DDFF";
 
 export function WatchlistAlertsBadge({ colors }: { colors: typeof bloombergColors.dark }) {
-  const { events, ackEvents } = useAlertEvents({ limit: 50 });
+  const { events: allEvents, ackEvents } = useAlertEvents({ limit: 50 });
+
+  // An event whose rule was deleted is audit history, not a live warning. The
+  // events endpoint keeps returning it (deliberately - no FK, see plan 5), so
+  // the badge kept counting alerts for conditions the user had already removed.
+  const events = allEvents.filter((e) => e.ruleName != null);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 

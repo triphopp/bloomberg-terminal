@@ -69,6 +69,18 @@ def create_alert_tables(conn: sqlite3.Connection) -> None:
     _add_column(conn, "alert_events", "notified_at", "TEXT")
     _add_column(conn, "alert_events", "notify_error", "TEXT")
 
+    # Rules deleted before delete_rule learned to ack their events left unacked
+    # orphans behind, and an orphan alerts forever: the events endpoint gives a
+    # row with no rule the default notify=["ticker"], so the ticker and the
+    # watchlist badge kept warning about conditions the user had already
+    # removed. Ack them once, here, where every start-up passes.
+    conn.execute("""
+        UPDATE alert_events
+           SET acked = 1
+         WHERE acked = 0
+           AND rule_id NOT IN (SELECT id FROM alert_rules)
+    """)
+
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
     """Idempotent ALTER — SQLite has no ADD COLUMN IF NOT EXISTS."""
