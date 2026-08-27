@@ -233,7 +233,7 @@ def _call_internal(name: str) -> tuple[dict, bool]:
     """Read another router's data by calling its handler in this process.
 
     v1 issued an HTTP request to its own port for each of these. That hardcoded
-    localhost:8000, burned a second threadpool slot per dependency, and — the
+    the port, burned a second threadpool slot per dependency, and — the
     reason it actually mattered — timed out at 10s whenever the upstream cache
     was cold, which downgraded every credit and regime signal to `unknown` on
     exactly the requests that took the longest. The handlers are plain sync

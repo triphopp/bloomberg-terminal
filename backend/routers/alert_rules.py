@@ -4,7 +4,8 @@ Alert Rule Engine — CRUD + preview + scan + events.
 GET    /api/alerts/rules            list
 POST   /api/alerts/rules            create (validate + normalize before save)
 PATCH  /api/alerts/rules/{id}       update
-DELETE /api/alerts/rules/{id}       delete (cascades alert_rule_state; events kept for audit)
+DELETE /api/alerts/rules/{id}       delete (cascades alert_rule_state; events kept for
+                                    audit but acked, so they stop alerting)
 POST   /api/alerts/rules/preview    dry-run against real history — doesn't save anything
 POST   /api/alerts/scan             evaluate enabled rules now, persist events
 GET    /api/alerts/events           feed for alert-ticker.tsx
@@ -367,6 +368,16 @@ def delete_rule(rule_id: str):
             raise HTTPException(404, "Rule not found")
         # alert_rule_state cascades via FK. alert_events has no FK on purpose
         # — fired history survives rule deletion as an audit trail (plan §5).
+        #
+        # Surviving is not the same as still shouting: an unacked orphan keeps
+        # its row in the ticker and in the watchlist badge forever, because the
+        # events endpoint falls back to notify=["ticker"] for a row whose rule
+        # is gone. Deleting the rule is the user saying they are done with it,
+        # so ack what it fired. The rows stay, the warnings stop.
+        conn.execute(
+            "UPDATE alert_events SET acked = 1 WHERE rule_id = ? AND acked = 0",
+            (rule_id,),
+        )
         conn.execute("DELETE FROM alert_rules WHERE id = ?", (rule_id,))
         conn.commit()
     return {"ok": True}

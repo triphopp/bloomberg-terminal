@@ -106,7 +106,7 @@ cp .env.example .env
 # from project root
 npm install
 cp .env.local.example .env.local
-# PYTHON_API_URL=http://localhost:8000  (already set)
+# PYTHON_API_URL=http://localhost:9317  (already set)
 ```
 
 ### 4. Run
@@ -129,11 +129,11 @@ Output is color-coded per process — `Ctrl+C` stops everything at once.
 ```bash
 # Terminal 1 — backend
 cd backend
-python -m uvicorn main:app --port 8000 --reload
+python -m uvicorn main:app --port 9317 --reload
 
 # Terminal 2 — frontend
 npm run dev
-# → http://localhost:3000
+# → http://localhost:9318
 ```
 
 **Windows one-click:** `start.ps1` or `start.bat` launches both in separate windows.
@@ -159,7 +159,7 @@ Copy `backend/.env.example` → `backend/.env`. Only `FRED_API_KEY` is required.
 
 Frontend (`.env.local`):
 ```
-PYTHON_API_URL=http://localhost:8000
+PYTHON_API_URL=http://localhost:9317
 ```
 
 ---
@@ -248,7 +248,7 @@ The backend must be running before the frontend. If using mobile hotspot, Yahoo 
 
 ```bash
 # Verify backend is running
-curl http://localhost:8000/api/market-data
+curl http://localhost:9317/api/market-data
 ```
 
 ### `npm ci` fails with peer dependency error

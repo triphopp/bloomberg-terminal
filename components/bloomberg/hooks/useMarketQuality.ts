@@ -2,7 +2,10 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-const API = "http://localhost:8000";
+// Same-origin Next proxy routes (app/api/**). Calling the Python backend
+// directly from the browser hardcoded its port here and needed CORS for every
+// page that used this hook; the proxy resolves the backend from PYTHON_API_URL
+// on the server instead, so a port change is one env var.
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -16,11 +19,11 @@ export interface CrisisComposite {
   composite_score: number;
   traffic_light: "GREEN" | "YELLOW" | "RED";
   indicators: {
-    cape:        CompositeIndicator;
-    vix:         CompositeIndicator;
-    hy_spread:   CompositeIndicator;
+    cape: CompositeIndicator;
+    vix: CompositeIndicator;
+    hy_spread: CompositeIndicator;
     yield_10y2y: CompositeIndicator;
-    ted_spread:  CompositeIndicator;
+    ted_spread: CompositeIndicator;
   };
   as_of: string;
 }
@@ -122,7 +125,7 @@ export function useCrisisComposite() {
   return useQuery<CrisisComposite>({
     queryKey: ["crisis-composite"],
     queryFn: async () => {
-      const res = await fetch(`${API}/api/crisis/composite`);
+      const res = await fetch("/api/crisis/composite");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
@@ -135,7 +138,7 @@ export function useStockQuality(symbol: string | null) {
   return useQuery<StockQuality>({
     queryKey: ["stock-quality", symbol],
     queryFn: async () => {
-      const res = await fetch(`${API}/api/stock/quality/${symbol}`);
+      const res = await fetch(`/api/stock/quality/${symbol}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
@@ -148,7 +151,7 @@ export function useMarginRequirement() {
   return useQuery<MarginResult>({
     queryKey: ["circuit-margin"],
     queryFn: async () => {
-      const res = await fetch(`${API}/api/circuit-breaker/margin`);
+      const res = await fetch("/api/circuit-breaker/margin");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
@@ -160,7 +163,7 @@ export function useListingGateScreen() {
   const qc = useQueryClient();
   return useMutation<ListingGateResult, Error, ListingGateInput>({
     mutationFn: async (body) => {
-      const res = await fetch(`${API}/api/listing-gate/screen`, {
+      const res = await fetch("/api/listing-gate/screen", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -172,9 +175,13 @@ export function useListingGateScreen() {
 }
 
 export function useCircuitBreakerCheck() {
-  return useMutation<CircuitBreakerResult, Error, { symbol: string; price: number; priorClose: number }>({
+  return useMutation<
+    CircuitBreakerResult,
+    Error,
+    { symbol: string; price: number; priorClose: number }
+  >({
     mutationFn: async ({ symbol, price, priorClose }) => {
-      const url = `${API}/api/circuit-breaker/check?symbol=${encodeURIComponent(symbol)}&price=${price}&prior_close=${priorClose}`;
+      const url = `/api/circuit-breaker/check?symbol=${encodeURIComponent(symbol)}&price=${price}&prior_close=${priorClose}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
@@ -183,9 +190,13 @@ export function useCircuitBreakerCheck() {
 }
 
 export function useCircuitBreakerMarket() {
-  return useMutation<MarketHaltResult, Error, { indexValue: number; priorClose: number; time?: string }>({
+  return useMutation<
+    MarketHaltResult,
+    Error,
+    { indexValue: number; priorClose: number; time?: string }
+  >({
     mutationFn: async ({ indexValue, priorClose, time }) => {
-      let url = `${API}/api/circuit-breaker/market?index_value=${indexValue}&prior_close=${priorClose}`;
+      let url = `/api/circuit-breaker/market?index_value=${indexValue}&prior_close=${priorClose}`;
       if (time) url += `&time=${encodeURIComponent(time)}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

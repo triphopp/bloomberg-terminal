@@ -166,7 +166,9 @@ components/bloomberg/
 | `chart/useAnchoredPanel.ts` | `useAnchoredPanel()` → `{ open, setOpen, toggle, pos, wrapRef, triggerRef }` |
 | `chart/useChartTimeframe.ts` | `useChartTimeframe()`, plus pure `applyPeriod(p, interval, chartType)` / `applyInterval(iv, period)` for components that store the timeframe outside React state |
 | `chart/useAutoExtendRange.ts` | `useAutoExtendRange({symbol, period, interval, barCount, isLoading, enabled})` → `{ effectivePeriod, onLogicalRange, atMaxHistory, extended, viewportKey }` — ซูมออกสุดข้อมูล → ไต่ period ladder โหลดประวัติเพิ่มเอง; plus `periodSpanDays`, `ladderSteps` |
+| `chartkit/prefetch.ts` | `isApproachingEdge`, `planPrefetch` — warm history window ถัดไปล่วงหน้า (เทคนิค stream LOD); คู่กับ `usePrefetchStockHistory()` ใน `hooks/useStockData.ts` |
 | `chartkit/` (lib ของเราเอง) | `buildLadder`, `nextWider`, `needsExtend`, `planExtend`, types `LogicalRange`/`TimeRange`/`ViewportSample`; `chartkit/adapters/lightweight-charts` → `watchLogicalRange`, `captureVisibleRange`, `applyVisibleRange`. **กฎ:** core บริสุทธิ์ (ห้าม import engine/React), engine อยู่ใน `adapters/` เท่านั้น — ดู `chartkit/README.md` |
+| `chart/ModularChart.tsx` (perf contract) | props `indicators`/`overlays`/`eventMarkers` = **โครงสร้าง** (ต้อง memo ที่ call site); `data` ไม่ใช่ — บาร์ใหม่ถูก push เข้า series เดิมผ่าน refill path, rebuild เฉพาะเมื่อ refill ทำไม่ได้ |
 | `chart/useWindowDrag.ts` | `useWindowDrag()` → `{ x, y, w, h, isGesturing, isResizing, beginDrag, beginResize }` |
 | `hooks/useTerminalUI.ts` | `useTerminalUI()` → `{ currentView, handleKeyPress, ... }` |
 | `layout/bloomberg-terminal.tsx` | `BloombergTerminal` (default) |

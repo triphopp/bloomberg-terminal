@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-const API = process.env.PYTHON_API ?? "http://localhost:8000";
+
+import { PYTHON_API as API } from "@/lib/constants";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);

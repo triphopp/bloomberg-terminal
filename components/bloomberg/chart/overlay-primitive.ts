@@ -94,11 +94,28 @@ export class OverlayPrimitive implements ISeriesPrimitive<Time> {
   private readonly _paneViews: IPrimitivePaneView[];
 
   constructor(
-    private readonly _overlay: CanvasOverlay,
-    private readonly _data: OhlcvBar[],
+    private _overlay: CanvasOverlay,
+    private _data: OhlcvBar[],
     private readonly _isDark: boolean
   ) {
     this._paneViews = [new OverlayPaneView(this)];
+  }
+
+  /**
+   * Point the overlay at new bars in place.
+   *
+   * Lets the chart absorb more history without being torn down and rebuilt:
+   * the renderer is constructed fresh on every draw from these fields, so
+   * swapping them and asking for a repaint is all it takes. `overlay` is
+   * swappable too because the event rail is derived from the bars — its chip
+   * positions are bar indices, which every new bar invalidates.
+   */
+  update(overlay: CanvasOverlay, data: OhlcvBar[]): void {
+    this._overlay = overlay;
+    this._data = data;
+    // Cheapest public "invalidate": a no-op options write marks the series
+    // dirty, and primitives are redrawn on every internal invalidation.
+    this._series?.applyOptions({});
   }
 
   attached(param: SeriesAttachedParameter<Time>): void {

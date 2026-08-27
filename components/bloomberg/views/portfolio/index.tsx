@@ -534,7 +534,7 @@ export function PortfolioView() {
               ⚠ BACKEND UNAVAILABLE
             </span>
             <span className="text-[9px]" style={{ color: colors.textSecondary }}>
-              Could not reach the Python API on port 8000.
+              Could not reach the Python API. Check that the backend is running.
             </span>
             <button
               type="button"

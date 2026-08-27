@@ -230,7 +230,20 @@ def patch_asset(asset_id: str, body: PinnedAssetPatch):
         if not existing:
             raise HTTPException(status_code=404, detail="Asset not found")
 
-        updates = body.model_dump(exclude_none=True)
+        # exclude_unset, not exclude_none: a price target is cleared by sending
+        # null, and exclude_none dropped exactly that field - the UI would empty
+        # the box, the row would keep its old target, and the "price target hit"
+        # badge went on warning about a target the user had deleted.
+        #
+        # Only the two target columns are nullable, so a null for anything else
+        # is still ignored rather than writing NULL into a column that has never
+        # held one.
+        NULLABLE = {"buy_target", "sell_target"}
+        updates = {
+            k: v
+            for k, v in body.model_dump(exclude_unset=True).items()
+            if v is not None or k in NULLABLE
+        }
         if not updates:
             return _asset_with_tags(conn, existing)
 

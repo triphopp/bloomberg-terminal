@@ -9,15 +9,40 @@
 # Backend (Terminal 1) — macOS/Linux
 cd backend
 # env vars are in backend/.env — loaded automatically by python-dotenv
-python -m uvicorn main:app --port 8000 --reload
+python -m uvicorn main:app --port 9317 --reload
 
 # Backend (Terminal 1) — Windows PowerShell
 cd backend
-python -m uvicorn main:app --port 8000 --reload
+python -m uvicorn main:app --port 9317 --reload
 
 # Frontend (Terminal 2)
-npm run dev   # → http://localhost:3000
+npm run dev   # → http://bloomberg.localhost:9318 (or localhost:9318)
 ```
+
+**Windows one-click / start-up:** `BloombergTerminal.exe` (repo root) — native tray
+launcher, starts both servers hidden, logs to `logs\`, kills them on quit.
+Build with `tools\launcher\build.bat`; `start.bat` builds it on first run.
+Details + flags: `tools/launcher/README.md`. Auto-start at log-on:
+`scripts\win\install-startup-task.ps1` (scheduled task, 30s delay, restarts the
+launcher if it dies) or the tray's "Run at Windows start-up" (`HKCU\...\Run`) —
+never a copy of the exe in `shell:startup`. The launcher also restarts a dead
+backend/frontend by itself (3 tries, budget resets when healthy). Icons (exe + browser favicon)
+มาจาก `npm run icons` (`scripts/gen-icons.mjs`) แหล่งเดียว. Per-server debug windows live in
+`scripts\win\`.
+
+## Ports
+
+Backend **9317**, frontend **9318** (off the crowded 3000/8000 pair). The UI opens at
+`http://bloomberg.localhost:9318` — browsers map `*.localhost` to loopback themselves, so it
+needs no hosts entry or cert (a `.dev` name would be forced to HTTPS by Chrome's HSTS preload). Changing them
+touches three places and nothing else:
+1. `.env.local` → `PYTHON_API_URL`
+2. `backend/.env` → `CORS_ORIGINS`
+3. whatever starts the servers — `BloombergTerminal.exe --backend-port N --frontend-port N`,
+   or `BACKEND_PORT` / `FRONTEND_PORT` for the `dev:all` / `dev:no-ollama` npm scripts.
+
+Every `app/api/**` proxy imports `PYTHON_API` from `lib/constants.ts` — never
+re-declare it, and never `fetch("http://localhost:<port>")` from a component.
 
 ## Rules
 - Never fetch Yahoo Finance directly from Next.js — always go through the Python backend

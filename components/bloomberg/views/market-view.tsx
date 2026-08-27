@@ -63,13 +63,19 @@ import {
 import type { BarInterval, IndicatorRegistryEntry, OhlcvBar, TimePeriod } from "../chart";
 import { FearGreedPane } from "../chart/FearGreedPane";
 import { PEPane } from "../chart/PEPane";
+import { useAutoExtendRange } from "../chart/useAutoExtendRange";
 import { useSdBands } from "../chart/useSdBands";
 import { ExtendedHoursPrice, MarketSessionBadge, staleMoveStyle } from "../core/market-session";
 import { UsMarketClock } from "../core/us-market-clock";
 import { type FxPair, useFxTicks } from "../hooks/useFxTicks";
 import { useMarketDataQuery } from "../hooks/useMarketDataQuery";
 import { type RateRowData, useRatesCurve } from "../hooks/useRatesCurve";
-import { useStockHistory, useStockQuote, useStockSearch } from "../hooks/useStockData";
+import {
+  usePrefetchStockHistory,
+  useStockHistory,
+  useStockQuote,
+  useStockSearch,
+} from "../hooks/useStockData";
 import { calcHurst } from "../lib/market-utils";
 import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import { displayName, displaySymbol } from "../lib/symbol-display";
@@ -1046,15 +1052,25 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
 
     setLayout((prev) => {
       const newWidths = { ...prev.panelWidths };
-      const newLeft = Math.max(15, Math.min(60, newWidths[leftPanel] + deltaPct));
-      const newRight = Math.max(15, Math.min(60, newWidths[rightPanel] - deltaPct));
-      newWidths[leftPanel] = newLeft;
-      newWidths[rightPanel] = newRight;
+      newWidths[leftPanel] = Math.max(15, Math.min(60, newWidths[leftPanel] + deltaPct));
+      newWidths[rightPanel] = Math.max(15, Math.min(60, newWidths[rightPanel] - deltaPct));
       const next = { ...prev, panelWidths: newWidths };
       saveLayout(next);
       return next;
     });
   }, []);
+
+  /**
+   * The panel that absorbs leftover width — everything else keeps the size the
+   * user set. The chart, whenever it is open: extra room shows more bars, while
+   * a wider watchlist or tick board just pads columns. Falls back to the last
+   * open panel so the row never leaves a gap.
+   */
+  const fillerPanel = useMemo(() => {
+    const open = layout.panelOrder.filter((id) => !layout.collapsedPanels.includes(id));
+    if (open.includes("chart")) return "chart";
+    return open[open.length - 1];
+  }, [layout.panelOrder, layout.collapsedPanels]);
 
   // Selected symbol for chart
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
@@ -1216,8 +1232,29 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   const searchResult = useStockSearch(searchQuery);
 
   const quoteQuery = useStockQuote(selectedSymbol);
+  // Zoom out past the oldest bar and the chart loads more history by itself:
+  // the candle query follows `effectivePeriod`, which climbs the period ladder
+  // while `timePeriod` stays whatever the user pressed. Area mode is a plain
+  // line chart with no logical-range events, so it keeps the picked window.
+  const [chartDataState, setChartDataState] = useState({ barCount: 0, isLoading: false });
+  const prefetchHistory = usePrefetchStockHistory();
+  const {
+    effectivePeriod,
+    onLogicalRange: onChartLogicalRange,
+    viewportKey: chartViewportKey,
+    extended: chartExtended,
+  } = useAutoExtendRange({
+    symbol: selectedSymbol,
+    period: timePeriod,
+    interval: barInterval,
+    barCount: chartDataState.barCount,
+    isLoading: chartDataState.isLoading,
+    enabled: heatmapChartType === "candle",
+    onPrefetch: (p) => prefetchHistory(selectedSymbol, p, barInterval),
+  });
+
   const areaHistQuery = useStockHistory(selectedSymbol, timePeriod);
-  const candleHistQuery = useStockHistory(selectedSymbol, timePeriod, barInterval);
+  const candleHistQuery = useStockHistory(selectedSymbol, effectivePeriod, barInterval);
   const historyQuery = heatmapChartType === "candle" ? candleHistQuery : areaHistQuery;
 
   const quote = quoteQuery.data;
@@ -1299,6 +1336,29 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
         )
     );
   }, [rawChartData, timePeriod, heatmapChartType, barInterval]);
+
+  /**
+   * Indicators minus Fear & Greed (it has its own pane below the chart).
+   *
+   * Memoised because `ModularChart` treats this array's identity as structure:
+   * a fresh `.filter()` result every render made it tear the chart down and
+   * rebuild it on every single state change in this view — a keystroke in the
+   * symbol box was enough.
+   */
+  const chartIndicators = useMemo(
+    () => heatmapIndicators.filter((i) => i.id !== "fear-greed"),
+    [heatmapIndicators]
+  );
+
+  // Fed back to the auto-extend hook, which runs before the query it drives and
+  // so cannot read the result directly.
+  useEffect(() => {
+    setChartDataState((prev) =>
+      prev.barCount === heatmapOhlcv.length && prev.isLoading === candleHistQuery.isFetching
+        ? prev
+        : { barCount: heatmapOhlcv.length, isLoading: candleHistQuery.isFetching }
+    );
+  }, [heatmapOhlcv.length, candleHistQuery.isFetching]);
 
   // Fallback only — the API now returns each row's real ticker as `item.symbol`
   // (see routers/market.py fetch_one). This map exists purely for the static
@@ -2071,6 +2131,17 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
         onIntervalChange={(iv) => handleHeatmapInterval(iv)}
         trailing={
           <>
+            {/* The period buttons keep showing what the user picked; this says
+              how far the chart has actually loaded after zooming out past it. */}
+            {chartExtended && (
+              <span
+                className="px-1 py-0 text-[8px] font-mono border"
+                title={`Zoomed out past ${timePeriod.toUpperCase()} — history auto-extended to ${effectivePeriod.toUpperCase()}`}
+                style={{ borderColor: colors.border, color: colors.textSecondary }}
+              >
+                {effectivePeriod.toUpperCase()}·AUTO
+              </span>
+            )}
             {/* Pop the current symbol into a free-floating window — the panel
               chart stays put, so this is "add a chart", not "move the chart". */}
             <button
@@ -2318,11 +2389,13 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 isDark={isDark}
                 colors={colors}
                 height={240}
-                indicators={heatmapIndicators.filter((i) => i.id !== "fear-greed")}
+                indicators={chartIndicators}
                 overlays={heatmapOverlays}
                 eventMarkers={heatmapEventMarkers}
                 onBarClick={handleMktChartClick}
                 crosshairCursor={mktRegressionArmed}
+                onLogicalRange={onChartLogicalRange}
+                viewportKey={chartViewportKey}
               />
               {mktSelectedEvent && (
                 <EventDetailPopover
@@ -2716,29 +2789,49 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
         />
       )}
 
-      {/* 3-Column customizable layout */}
+      {/* 3-Column customizable layout.
+
+          The side panels hold their configured width; the chart absorbs
+          whatever folding a panel frees. Before, every open panel had
+          `flexGrow: 1`, so collapsing TICK DATA handed the watchlist half the
+          freed space — it jumped from its 30% to ~45% and the divider could not
+          pull it back, since its stored width was already at the 15% floor
+          while the bonus stayed. A watchlist is a list: it needs the width the
+          user gave it and no more. The chart is what benefits from the room. */}
       <div ref={containerRef} className="flex-1 flex overflow-hidden min-h-0">
         {layout.panelOrder.map((panelId, idx) => {
           const isCollapsed = layout.collapsedPanels.includes(panelId);
-          const width = isCollapsed ? "36px" : `${layout.panelWidths[panelId]}%`;
+          const nextPanel = layout.panelOrder[idx + 1];
+          const isFiller = panelId === fillerPanel;
+          // A divider between an open panel and a folded rail would resize
+          // nothing, so it is only drawn between two open panels.
+          const showDivider =
+            !isCollapsed && nextPanel != null && !layout.collapsedPanels.includes(nextPanel);
 
           return (
             <div
               key={panelId}
               className="flex"
-              style={{
-                width,
-                minWidth: isCollapsed ? 36 : panelId === "watchlist" ? 260 : undefined,
-                flexShrink: isCollapsed ? 0 : 1,
-                flexGrow: isCollapsed ? 0 : 1,
-              }}
+              style={
+                isCollapsed
+                  ? { flex: "0 0 36px", minWidth: 36 }
+                  : isFiller
+                    ? // Explicit `minWidth: 0` rather than `auto`: a flex item
+                      // never shrinks below its min-content width by default,
+                      // and the chart's tables are wide enough to claim space
+                      // back off the panel widths.
+                      { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0 }
+                    : {
+                        flex: `0 0 ${layout.panelWidths[panelId]}%`,
+                        minWidth: panelId === "watchlist" ? 260 : 0,
+                      }
+              }
             >
               {/* Panel content */}
               <div className="flex-1 overflow-hidden">{panelRenderers[panelId](isCollapsed)}</div>
-              {/* Resize divider (not after last panel) */}
-              {idx < layout.panelOrder.length - 1 && !isCollapsed && (
+              {showDivider && (
                 <ResizeDivider
-                  onDrag={(delta) => handleResize(panelId, layout.panelOrder[idx + 1], delta)}
+                  onDrag={(delta) => handleResize(panelId, nextPanel, delta)}
                   colors={colors}
                 />
               )}
