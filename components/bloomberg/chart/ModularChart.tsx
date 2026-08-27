@@ -26,14 +26,22 @@ import {
   CandlestickSeries,
   HistogramSeries,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   LineSeries,
   LineStyle,
   type SeriesType,
+  type Time,
   createChart,
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chartPaneHeightsAtom, chartRsiScaleAtom } from "../atoms";
+import type { LogicalRange, TimeRange } from "../chartkit";
+import {
+  applyVisibleRange,
+  captureVisibleRange,
+  watchLogicalRange,
+} from "../chartkit/adapters/lightweight-charts";
 import { createEventRailOverlay } from "./event-rail-overlay";
 import { placeEvents } from "./event-reaction";
 import { createHeatmapOverlay } from "./heatmap-overlay";
@@ -101,6 +109,23 @@ export interface ModularChartProps {
   onBarClick?: (time: string | number, ctx?: ChartClickContext) => void;
   /** Show a crosshair cursor — signals that a click will be captured. */
   crosshairCursor?: boolean;
+  /**
+   * Fired (debounced) with the visible bar range whenever the user pans or
+   * zooms. `from` runs negative into the whitespace left of the data — that is
+   * how a caller knows the user has zoomed out past the history it loaded.
+   * Held in a ref, so a fresh closure each render does not rebuild the chart.
+   */
+  onLogicalRange?: (range: LogicalRange) => void;
+  /**
+   * Identity of what is being charted, from the viewer's point of view —
+   * typically symbol + the timeframe they picked.
+   *
+   * While it stays the same, a data change keeps the current viewport: more
+   * bars arriving for the same view must not yank the user back to a fitted
+   * chart. When it changes, the chart fits the new content. Leave undefined to
+   * always fit (the previous behaviour).
+   */
+  viewportKey?: string;
 }
 
 // ── Pane sizing ──────────────────────────────────────────────────────────────
@@ -132,6 +157,29 @@ function isDarkSurface(el: HTMLElement | null, fallback: boolean): boolean {
   return fallback;
 }
 
+/**
+ * Recompute one indicator against new bars and re-point the series it owns.
+ *
+ * Returns false when the indicator no longer produces the same series it was
+ * built with — more bars can turn a "not enough data" indicator into a drawn
+ * one, and a chart cannot grow a series without being rebuilt.
+ */
+function refillSeries(
+  indicator: ChartIndicator,
+  built: ISeriesApi<SeriesType>[],
+  bars: OhlcvBar[],
+  kinds: ReadonlyArray<IndicatorSeriesOutput["type"]>
+): boolean {
+  if (bars.length < indicator.minBars) return built.length === 0;
+  const outputs = indicator.compute(bars, indicator.config).filter((o) => kinds.includes(o.type));
+  if (outputs.length !== built.length) return false;
+  for (const [i, output] of outputs.entries()) {
+    // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
+    built[i].setData(output.data as any[]);
+  }
+  return true;
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 // ── Marker styling ──────────────────────────────────────────────────────────
@@ -161,6 +209,8 @@ export function ModularChart({
   eventMarkers = [],
   onBarClick,
   crosshairCursor = false,
+  onLogicalRange,
+  viewportKey,
 }: ModularChartProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -170,6 +220,35 @@ export function ModularChart({
   // rebuilds it — the effect below depends on data/indicators, not on this.
   const barClickRef = useRef(onBarClick);
   barClickRef.current = onBarClick;
+  const logicalRangeRef = useRef(onLogicalRange);
+  logicalRangeRef.current = onLogicalRange;
+  /**
+   * The viewport as it stood at the last teardown, tagged with the view it
+   * belonged to. Read on the next build to decide "restore" vs "fit".
+   */
+  const savedViewportRef = useRef<{ key: string; range: TimeRange<Time> } | null>(null);
+  /**
+   * Latest bars, read by the build effect instead of closing over the prop.
+   *
+   * `data` is deliberately NOT a dependency of that effect any more: new bars
+   * are pushed into the existing series (see the refill effect below) rather
+   * than triggering a teardown and a fresh `createChart`. Rebuilding on every
+   * extend is what made zooming out feel like it stalled — the chart threw away
+   * every series, pane and primitive to show data it already had room for.
+   */
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  /**
+   * Push new bars into the live chart. Null when there is no chart, and returns
+   * false when the change is structural (an indicator produced a different
+   * number of series, a heatmap pane is present, the event rail appeared or
+   * vanished) — the caller then falls back to a full rebuild.
+   */
+  const refillRef = useRef<((bars: OhlcvBar[]) => boolean) | null>(null);
+  /** The bars the live chart was last drawn from — refills skip a no-op pass. */
+  const appliedDataRef = useRef<OhlcvBar[] | null>(null);
+  /** Bumped to force a rebuild when an in-place refill is impossible. */
+  const [rebuildTick, setRebuildTick] = useState(0);
 
   // Height the parent actually grants us (0 until first measurement).
   const [availableHeight, setAvailableHeight] = useState(0);
@@ -230,6 +309,11 @@ export function ModularChart({
       decimals: inferPriceDecimals(closes),
     };
   }, [data, rsiIndicator, rsiPeriod, rsiScale.basis]);
+  // Read by the axis formatter and the projected price lines. A ref because the
+  // basis moves with every new bar, and the chart must not be rebuilt for that.
+  const rsiBasisRef = useRef(rsiBasis);
+  rsiBasisRef.current = rsiBasis;
+
   const overlayIndicators = indicators.filter((i) => i.type === "overlay");
   const paneKeys = paneIndicators.map((i) => paneKey(i.id));
   // Height preferences are looked up from the registry rather than carried on the
@@ -258,9 +342,18 @@ export function ModularChart({
   // biome-ignore lint/correctness/useExhaustiveDependencies: chart is fully rebuilt from these inputs; colors object identity is intentionally excluded
   useEffect(() => {
     const container = containerRef.current;
+    const data = dataRef.current;
     if (!container || data.length === 0) return;
 
     const gridColor = isDark ? "#2a2a2a" : "#dcdcdc";
+
+    /**
+     * Everything that has to be re-pointed when new bars arrive.
+     *
+     * Filled in as the chart is built; each entry either updates itself in
+     * place and returns true, or reports that the change is structural.
+     */
+    const refills: ((bars: OhlcvBar[]) => boolean)[] = [];
 
     // ── Event markers (dividends, earnings, splits) ──
     // Drawn by the event rail overlay further down, not as series markers. All
@@ -272,6 +365,11 @@ export function ModularChart({
 
     const placedEvents = placeEvents(eventMarkers, data);
     const hasRail = placedEvents.length > 0;
+
+    // Both are bar-relative, so both are re-derived on every refill. The click
+    // handler reads these bindings rather than the originals.
+    let liveIndexByTime = indexByTime;
+    let livePlacedEvents = placedEvents;
 
     // ── Create chart ──
     const chart = createChart(container, {
@@ -305,6 +403,11 @@ export function ModularChart({
         timeVisible: true,
         fixLeftEdge: false,
         fixRightEdge: false,
+        // Default is 0.5px per bar, which caps zoom-out at ~2 bars per pixel:
+        // a 5-year daily chart hits the wall with ~250 bars still off-screen
+        // and the wheel simply stops responding. Lower so the user can keep
+        // zooming out — which is also what asks for the next history window.
+        minBarSpacing: 0.05,
       },
     });
 
@@ -322,12 +425,20 @@ export function ModularChart({
     // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
     candleSeries.setData(data as any[]);
     mainSeriesRef.current = candleSeries;
+    refills.push((bars) => {
+      // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
+      candleSeries.setData(bars as any[]);
+      return true;
+    });
 
     // ── Render overlay indicators on main pane ──
     for (const indicator of overlayIndicators) {
       if (data.length < indicator.minBars) continue;
       const outputs = indicator.compute(data, indicator.config);
 
+      // Series in output order, so a refill can recompute and re-point them
+      // one-for-one without knowing what the indicator is.
+      const built: ISeriesApi<SeriesType>[] = [];
       for (const output of outputs) {
         if (output.type === "line") {
           const series = chart.addSeries(LineSeries, {
@@ -339,8 +450,10 @@ export function ModularChart({
           });
           // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
           series.setData(output.data as any[]);
+          built.push(series);
         }
       }
+      refills.push((bars) => refillSeries(indicator, built, bars, ["line"]));
     }
 
     // ── Render pane indicators — each gets its own isolated pane ──
@@ -370,10 +483,17 @@ export function ModularChart({
         ? ({ type: "custom", formatter: rsiFormatter, minMove: 0.01 } as const)
         : undefined;
 
+      // Same one-for-one refill contract as the overlay panes above.
+      const builtSeries: ISeriesApi<SeriesType>[] = [];
+      let paneRefillable = true;
+
       for (const output of outputs) {
         const isVolume = output.priceScaleId === "vol";
 
         if (output.type === "heatmap") {
+          // The heatmap's columns, its anchor points and its primitive are all
+          // built from the bars, so new bars mean a new pane — not a refill.
+          paneRefillable = false;
           if (!output.heatmap) continue;
           // The cells are painted by a primitive, but a primitive has to hang off
           // a series and a pane needs a series to size itself — hence a fully
@@ -422,6 +542,7 @@ export function ModularChart({
           });
           // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
           series.setData(output.data as any[]);
+          builtSeries.push(series);
         } else if (output.type === "line") {
           const series = subPane.addSeries(LineSeries, {
             color: output.color ?? "#888",
@@ -436,8 +557,13 @@ export function ModularChart({
           });
           // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
           series.setData(output.data as any[]);
+          builtSeries.push(series);
         }
       }
+
+      refills.push((bars) =>
+        paneRefillable ? refillSeries(indicator, builtSeries, bars, ["line", "histogram"]) : false
+      );
     }
 
     subPaneKeysRef.current = builtPanes.map((p) => p.key);
@@ -447,9 +573,18 @@ export function ModularChart({
     // "what close on the next bar puts RSI at 70", which is a different number
     // every bar. Plotting it historically would be a path question with no
     // unique answer, and plotting it as a flat line would be a lie.
-    if (rsiScale.projectToPricePane && rsiIndicator && rsiBasis) {
-      const floor = Math.min(...data.map((d) => d.low));
-      const ceiling = Math.max(...data.map((d) => d.high));
+    // Redrawn on every refill: the projection is a function of the last closed
+    // bar, so bars arriving move it even though nothing structural changed.
+    let rsiPriceLines: IPriceLine[] = [];
+    const applyRsiLines = (bars: OhlcvBar[]) => {
+      for (const line of rsiPriceLines) candleSeries.removePriceLine(line);
+      rsiPriceLines = [];
+
+      const basis = rsiBasisRef.current;
+      if (!(rsiScale.projectToPricePane && rsiIndicator && basis)) return;
+
+      const floor = Math.min(...bars.map((d) => d.low));
+      const ceiling = Math.max(...bars.map((d) => d.high));
       const span = ceiling - floor || ceiling;
 
       for (const [levelKey, color] of [
@@ -459,7 +594,7 @@ export function ModularChart({
         const level = rsiIndicator.config[levelKey] as number | undefined;
         if (typeof level !== "number") continue;
 
-        const projection = priceForRsi(rsiBasis.close, rsiBasis.state, rsiBasis.period, level);
+        const projection = priceForRsi(basis.close, basis.state, basis.period, level);
         if (!projection) continue;
         // Levels near 0 or 100 project absurdly far — RSI 95 can want a 60% day.
         // Drawing that squashes the price scale to a sliver, and the reading is
@@ -471,18 +606,36 @@ export function ModularChart({
           continue;
         }
 
-        candleSeries.createPriceLine({
-          price: projection.price,
-          color,
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: `RSI ${level}`,
-        });
+        rsiPriceLines.push(
+          candleSeries.createPriceLine({
+            price: projection.price,
+            color,
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: `RSI ${level}`,
+          })
+        );
       }
-    }
+    };
+    applyRsiLines(data);
+    refills.push((bars) => {
+      applyRsiLines(bars);
+      return true;
+    });
 
-    chart.timeScale().fitContent();
+    // ── Viewport: keep it, or fit ──
+    // A rebuild triggered by more history arriving for the SAME view must land
+    // the user exactly where they were — fitting instead would zoom them out to
+    // the whole new range on every extend, which is its own kind of jump. Any
+    // other rebuild (new symbol, hand-picked timeframe) fits as before.
+    const saved = savedViewportRef.current;
+    const restored =
+      viewportKey !== undefined &&
+      saved !== null &&
+      saved.key === viewportKey &&
+      applyVisibleRange(chart, saved.range);
+    if (!restored) chart.timeScale().fitContent();
 
     // ── Canvas overlays (Volume Profile, Footprint, Event Rail) ──
     // Attached to the candle series as primitives: lightweight-charts renders
@@ -508,6 +661,21 @@ export function ModularChart({
         candleSeries.attachPrimitive(p);
       }
 
+      refills.push((bars) => {
+        // The rail is derived from the bars (chips are placed by bar index), so
+        // it is rebuilt here; the rest of the overlays are bar-independent and
+        // only need to be handed the new array. A rail that appears or vanishes
+        // changes the price-scale margins, which only a rebuild can apply.
+        const placed = placeEvents(eventMarkers, bars);
+        if (placed.length > 0 !== hasRail) return false;
+        livePlacedEvents = placed;
+
+        const nextOverlays = hasRail ? [...overlays, createEventRailOverlay(placed)] : allOverlays;
+        if (nextOverlays.length !== primitives.length) return false;
+        primitives.forEach((p, i) => p.update(nextOverlays[i], bars));
+        return true;
+      });
+
       overlayUnsubscribe = () => {
         for (const p of primitives) {
           candleSeries.detachPrimitive(p);
@@ -527,9 +695,9 @@ export function ModularChart({
       // that collide on the rail are drawn as a single cluster, and opening only
       // one of the events hidden behind it would misreport what was clicked.
       let events: ChartEventMarker[] | undefined;
-      const clickedIdx = indexByTime.get(String(time));
+      const clickedIdx = liveIndexByTime.get(String(time));
       if (clickedIdx !== undefined && hasRail) {
-        const near = placedEvents
+        const near = livePlacedEvents
           .map((p) => ({ p, dist: Math.abs(p.barIdx - clickedIdx) }))
           .filter((h) => h.dist <= EVENT_HIT_BARS)
           .sort((a, b) => a.dist - b.dist);
@@ -545,6 +713,10 @@ export function ModularChart({
       barClickRef.current?.(time, { point, events });
     };
     chart.subscribeClick(clickHandler);
+
+    // Viewport readings for the caller (auto-extend lives outside the chart —
+    // only the caller knows what "more history" means for its data source).
+    const unwatchRange = watchLogicalRange(chart, (range) => logicalRangeRef.current?.(range));
 
     /**
      * Re-record what the panes currently measure.
@@ -577,6 +749,28 @@ export function ModularChart({
     });
     ro.observe(container);
 
+    // The bar-index map every click resolves against.
+    refills.push((bars) => {
+      const map = new Map<string, number>();
+      bars.forEach((d, i) => map.set(String(d.time), i));
+      liveIndexByTime = map;
+      return true;
+    });
+
+    /**
+     * One pass over every refill. Runs them ALL even after one reports a
+     * structural change: the caller rebuilds on false, so a half-updated chart
+     * is thrown away either way, and short-circuiting would only hide which
+     * parts still worked while debugging.
+     */
+    refillRef.current = (bars) => {
+      let ok = true;
+      for (const fn of refills) ok = fn(bars) && ok;
+      if (ok) appliedDataRef.current = bars;
+      return ok;
+    };
+    appliedDataRef.current = data;
+
     // First baseline, once the initial layout has settled.
     const baselineFrame = requestAnimationFrame(takeBaseline);
 
@@ -602,6 +796,15 @@ export function ModularChart({
         setPaneHeights((prev) => ({ ...prev, ...dragged }));
       }
 
+      // Captured before the chart is destroyed — and in TIME, not bar indices:
+      // extending history prepends bars, so index 0 stops meaning the same bar.
+      if (viewportKey !== undefined) {
+        const range = captureVisibleRange(chart);
+        savedViewportRef.current = range ? { key: viewportKey, range } : null;
+      }
+
+      refillRef.current = null;
+      unwatchRange();
       overlayUnsubscribe?.();
       chart.unsubscribeClick(clickHandler);
       ro.disconnect();
@@ -612,7 +815,9 @@ export function ModularChart({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    data,
+    // `data` is absent on purpose — new bars go in through the refill effect
+    // below, which is the whole point of keeping the chart alive. So is
+    // `rsiBasis`: it moves with every bar and is read through a ref instead.
     isDark,
     chartHeight,
     paneHeightSig,
@@ -620,8 +825,25 @@ export function ModularChart({
     overlays,
     eventMarkers,
     rsiScale,
-    rsiBasis,
+    viewportKey,
+    rebuildTick,
   ]);
+
+  /**
+   * New bars → push them into the live chart; rebuild only if that is not
+   * possible.
+   *
+   * The chart, its panes, its series and its primitives all survive, so the
+   * viewport, the price scale and any pane the user dragged stay exactly as
+   * they were. A rebuild is the fallback, not the mechanism: it costs a full
+   * teardown plus `createChart` plus every indicator recomputing into new
+   * series, which on a MAX daily chart is the stall this replaces.
+   */
+  useEffect(() => {
+    if (data.length === 0 || appliedDataRef.current === data) return;
+    const refill = refillRef.current;
+    if (!refill || !refill(data)) setRebuildTick((t) => t + 1);
+  }, [data]);
 
   /**
    * Which sub-pane sits under a viewport y. Pane 0 is the price pane; the rest
