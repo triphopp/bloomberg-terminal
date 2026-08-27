@@ -651,3 +651,104 @@ KOSPI อยู่ใน `config.INDICES` มานานแต่ไม่เ�
 โค้ดทดสอบ/automation ที่เก็บ `canvas` ไว้ในตัวแปรแล้วยิง wheel/pointer ซ้ำหลัง data เปลี่ยน จะยิงใส่ element ที่ detach แล้ว — ดูเหมือนฟีเจอร์พัง ทั้งที่ปกติ
 **ต้อง query element ใหม่ทุกครั้งหลังข้อมูลเปลี่ยน**
 
+
+## `X.filter is not a function` — proxy 503 ไหลเข้า React Query แทน array
+
+`/api/*` proxy ของ Next คืน `{"error":"Backend unavailable"}` + HTTP 503 เมื่อ backend :8000 ตาย
+`queryFn: () => fetch(url).then(r => r.json())` **ไม่เช็ค `res.ok`** → `query.data` กลายเป็น object
+`query.data ?? []` ไม่ช่วย (object ไม่ใช่ null) → caller เรียก `.filter()` แล้ว throw ทั้ง terminal ล่ม
+
+เจอครั้งแรกที่ `useAlertNotifications.ts:145` (2026-08-25) ต้นทางคือ `useAlertRules.ts`
+**แก้:** ใช้ `listOrThrow<T>(res)` — throw ถ้า `!res.ok` หรือผลลัพธ์ไม่ใช่ array
+React Query จะเก็บ data ก้อนล่าสุดไว้แล้ว degrade เป็น "ไม่มี alert" แทนที่จะ crash
+list endpoint ใหม่ทุกตัวต้องผ่าน helper นี้ อย่าใช้ `.then(r => r.json())` เปล่าๆ
+
+## localStorage ใน `useState` initializer + SSR = hydration mismatch เสมอ
+
+pattern ใน CLAUDE.md (`useState(() => loadDefaults())`) ถูกต้องสำหรับ client
+แต่ Next **SSR client component ด้วย** — บน server ไม่มี `localStorage` → ได้ค่า default
+ส่วน render แรกฝั่ง client ได้ค่าที่ save ไว้ → tree ไม่ตรง React ทิ้ง SSR output
+
+อาการ: overlay ชี้ไป element ที่ conditional ตาม state นั้น เช่น `{isRot && <div/>}`
+(`sector-regime-heatmap.tsx:803`) หรือค่า inline style ไม่ตรง (`height:509` vs `height:"220px"`)
+
+**แก้ที่ราก:** `app/page.tsx` โหลด `BloombergTerminal` ด้วย `dynamic(..., { ssr: false })`
+ทั้ง terminal เป็น client-only อยู่แล้ว (ข้อมูลมาจาก React Query หลัง mount) SSR ไม่ได้อะไรเลย
+ผลพลอยได้: hydration mismatch จาก browser extension (Dark Reader ฉีด `--darkreader-inline-*`) หายไปด้วย
+
+
+## panel `flexGrow: 1` ทุกอัน = พับ panel หนึ่ง แล้วอีก panel โตผิดสัดส่วน
+
+MKT layout เดิมให้ทุก panel ที่เปิดอยู่เป็น `width: <stored>%` + `flexGrow: 1`
+พอพับ TICK DATA (36px rail) พื้นที่ที่ว่าง **ถูกแบ่งเท่าๆ กัน** ไม่ใช่ตามสัดส่วน
+→ WATCHLIST เด้งจาก 30% เป็น ~45% และลาก divider ดึงกลับไม่ได้ เพราะ stored width ชนพื้น 15% ไปแล้ว
+แต่ส่วนแบ่งที่ได้เปล่ายังอยู่
+
+**วิธีแก้ (market-view.tsx):** เลือก **filler panel** หนึ่งตัว (chart ถ้าเปิดอยู่ ไม่งั้น panel เปิดตัวสุดท้าย)
+- filler → `flexGrow: 1, flexBasis: 0, minWidth: 0`
+- panel อื่น → `flex: 0 0 <stored>%` (คงขนาดที่ผู้ใช้ตั้งไว้ ไม่ว่าจะพับกี่ตัว)
+- divider วาดเฉพาะระหว่าง panel ที่เปิดทั้งคู่ (คั่นกับ rail ที่พับแล้ว ลากไปก็ไม่มีอะไรเปลี่ยน)
+
+**ห้ามลืม `minWidth: 0` บน filler** — flex item ไม่ยอมหดต่ำกว่า min-content โดยดีฟอลต์
+ตาราง chart/tick กว้างพอที่จะแย่งพื้นที่คืนจากค่าที่ตั้งไว้ (เทสจริง: 30/40/30 กลายเป็น 274/663/343)
+
+## ส่ง `array.filter(...)` เป็น prop ให้ ModularChart = rebuild ทั้ง chart ทุก render
+
+`ModularChart` อ่าน identity ของ `indicators` / `overlays` / `eventMarkers` เป็น **โครงสร้าง** (อยู่ใน deps ของ build effect)
+`indicators={list.filter(i => i.id !== "fear-greed")}` สร้าง array ใหม่ทุก render → teardown + `createChart` + สร้าง series/pane ใหม่ทั้งหมด
+ทุกครั้งที่ view re-render (พิมพ์ในช่อง search ก็นับ)
+
+**กฎ:** ทุก array/object ที่ส่งเข้า `ModularChart` ต้อง `useMemo` เสมอ — ไฟล์ `useChartIndicators.ts` มีคอมเมนต์เตือนไว้แล้วสำหรับ `eventMarkers` แต่ call site ยัง filter สดๆ อยู่ (แก้แล้ว 2026-08-25 ใน market-view + ChartPanel)
+
+## query key ใหม่ = `isLoading` true = view สลับไป spinner = chart unmount
+
+pattern `historyQuery.isLoading ? <Spinner/> : <ModularChart/>` ทำให้การเปลี่ยน period/interval **ทำลาย chart ทิ้ง** แล้วสร้างใหม่ (เสีย viewport, เสีย pane height, เห็นกระพริบ)
+React Query ให้ `isLoading` = ไม่มีข้อมูลใน cache สำหรับ key นั้น ซึ่งเป็นจริงเสมอสำหรับ key ใหม่
+
+**แก้:** `placeholderData: (prev, prevQuery) => prevQuery?.queryKey[2] === symbol ? prev : undefined` ใน `useStockHistory`
+คงบาร์ชุดเดิมไว้จนของใหม่มา (เช็ค symbol ด้วย ไม่งั้นจะเอาราคาหุ้นตัวเก่าไปแสดงใต้ชื่อหุ้นตัวใหม่)
+
+## dev มี React StrictMode — effect/refill รันซ้ำ 2 ครั้ง
+
+log ที่เห็นซ้ำเป๊ะๆ ตอน debug (`refill true` สองบรรทัดต่อ data ชุดเดียว) เป็นพฤติกรรม StrictMode ของ dev ไม่ใช่บั๊ก
+อย่าเพิ่ง "แก้" การรันซ้ำก่อนเช็ค production build — และเวลาวัด rebuild ให้ใช้ MutationObserver นับ canvas ที่ถูกถอดจริง ไม่ใช่นับ log
+
+
+## ALERT ค้างแม้ลบ rule ไปแล้ว — orphan event ไม่เคยถูก ack
+
+`alert_events` **ไม่มี FK** ไป `alert_rules` โดยตั้งใจ (เก็บ audit trail ตาม plan §5)
+แต่ `list_events` ทำ LEFT JOIN แล้ว **fallback `notify: ["ticker"]`** เมื่อ rule หายไป
+→ event ที่ยัง `acked=0` ของ rule ที่ลบทิ้งแล้ว จะขึ้น ticker + badge ตลอดกาล
+
+เจอ 2026-08-25: unacked 10 รายการ เป็น orphan ของ rule SNDK ที่ลบไปตั้งแต่ 2026-08-02 ทั้งหมด
+
+**แก้ 2 ชั้น:**
+1. `delete_rule` — `UPDATE alert_events SET acked=1 WHERE rule_id=? AND acked=0` ก่อน DELETE rule
+   (แถวยังอยู่ = audit ยังครบ แต่หยุดเตือน)
+2. `alerts/schema.py` — sweep ตอน startup: ack orphan ที่ค้างจากก่อนมี fix
+
+ถ้าเพิ่ม channel/notify ใหม่ อย่าลืมว่า orphan จะได้ default channel เสมอ
+
+## quote ของ chart header ไม่ขยับ ต้อง refresh เอง (แต่ WATCHLIST ขยับ)
+
+`useStockQuote` ตั้ง `refetchInterval: false` + `staleTime: 5min` มาแต่แรก (คอมเมนต์เดิมว่า "fetch only when user searches")
+ผลคือแถบราคาบนหัว chart — รวม pre/after-hours ที่ `ExtendedHoursPrice` อ่านจาก quote เดียวกัน — ค้างที่ค่าตอนเลือก symbol
+ส่วน watchlist มี `setInterval(fetchQuotes, 60_000)` ของตัวเอง เลยขยับ → ดูเหมือนบั๊กเฉพาะ pre-market
+
+**แก้:** `refetchInterval: isRealTimeEnabled ? 60_000 : 300_000`, `staleTime: 30s`, `refetchOnWindowFocus: true`
+ผูกกับ `isRealTimeEnabledAtom` ตัวเดียวกับ `useMarketData` — ปุ่ม realtime ใน header คุมทั้งหมดจากที่เดียว
+
+## ล้าง BUY/SELL target ของ pin ไม่ติด — badge "price target hit" ค้างตลอด
+
+badge สีแดงใน WATCHLIST header **ไม่ใช่ระบบ alert rule** — มันนับ pin ที่ราคาแตะ `buyTarget`/`sellTarget`
+(`pinned-assets.tsx` `totalAlerts`) และเป็น **level condition** ไม่ใช่ edge → ตราบใดที่ target ยังอยู่ มันเตือนไม่หยุด
+
+ลบ target ผ่าน UI แล้วไม่หาย เพราะพังทั้ง 2 ฝั่ง:
+1. **frontend** — edit form ส่ง `buyTarget: undefined` เมื่อช่องว่าง แต่ `handleSaveEdit` มี guard
+   `if (updates.buyTarget !== undefined)` → PATCH ไม่เคยถูกส่ง (local หาย แต่ DB ยังอยู่ → โหลดใหม่กลับมา)
+2. **backend** — `patch_asset` ใช้ `body.model_dump(exclude_none=True)` → **ทิ้ง null ทุกตัว** ล้างไม่ได้อยู่ดี
+
+**แก้:** ฝั่ง frontend ส่ง `null` (type เป็น `number | null`), ฝั่ง backend ใช้ `exclude_unset=True`
+แล้วกรอง None เฉพาะคอลัมน์ที่ไม่ nullable (`NULLABLE = {"buy_target","sell_target"}`)
+
+`null` = ล้าง, `undefined` = ไม่แตะ — PATCH ที่ partial ต้องแยกสองอย่างนี้ให้ออกเสมอ

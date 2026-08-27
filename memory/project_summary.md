@@ -18,10 +18,10 @@
 # Terminal 1 — Python backend
 cd backend
 # Set env vars in backend/.env (copy from .env.example)
-python -m uvicorn main:app --port 8000 --reload
+python -m uvicorn main:app --port 9317 --reload
 
 # Terminal 2 — Next.js frontend
-npm run dev  # → http://localhost:3000
+npm run dev  # → http://localhost:9318
 ```
 
 ```bash
@@ -42,7 +42,7 @@ npx tsc --noEmit                           # TypeScript check
 | State | Jotai (atoms) + TanStack React Query |
 | Charts | Recharts + custom CandlestickChart |
 | Styling | Tailwind CSS, bloombergColors theme |
-| Backend | Python FastAPI (port 8000) — modular routers |
+| Backend | Python FastAPI (port 9317) — modular routers |
 | Data | yfinance (market/stock/crypto/fx) |
 | Macro data | FRED API + Alpha Vantage fallback |
 | AI | Ollama (local, port 11434) + Claude API (Anthropic) |
@@ -105,7 +105,7 @@ SEC2_API_KEY        — single key: Fund v2 + Bond v2 + One Report v1
 
 ### Next.js (`.env.local`)
 ```
-PYTHON_API_URL=http://localhost:8000
+PYTHON_API_URL=http://localhost:9317
 ALPHA_VANTAGE_API_KEY
 OPENAI_API_KEY      — optional
 ```
