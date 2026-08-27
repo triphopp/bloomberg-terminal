@@ -860,8 +860,13 @@ function EditCardForm({
     onSave(pin.id, {
       comment: editComment,
       groupId: editGroupId,
-      buyTarget: editBuyTarget ? Number.parseFloat(editBuyTarget) : undefined,
-      sellTarget: editSellTarget ? Number.parseFloat(editSellTarget) : undefined,
+      // null, not undefined: handleSaveEdit only sends the fields that are
+      // present in the update, so an emptied box used to clear the target in
+      // the local list and leave it untouched in the database - the pin came
+      // back with its old target on the next load, and the price-target badge
+      // started warning again about a target the user had just deleted.
+      buyTarget: editBuyTarget ? Number.parseFloat(editBuyTarget) : null,
+      sellTarget: editSellTarget ? Number.parseFloat(editSellTarget) : null,
       priority: editPriority,
       tags: editTags,
     });
@@ -1067,8 +1072,8 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
     groupId: a.group_id,
     comment: a.comment ?? "",
     addedAt: a.added_at ?? a.addedAt ?? "",
-    buyTarget: a.buy_target ?? undefined,
-    sellTarget: a.sell_target ?? undefined,
+    buyTarget: a.buy_target ?? null,
+    sellTarget: a.sell_target ?? null,
     priceAtPin: a.price_at_pin ?? undefined,
     priority: a.priority ?? 1,
     tags: a.tags ?? [],
@@ -1574,10 +1579,9 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
         className="flex items-center gap-1.5 px-2 py-1 border-b"
         style={{ borderColor: colors.border, background: "#111" }}
       >
+        {/* No "WATCHLIST" caption here: the panel this sits inside already
+            carries that heading, and repeating it read as two nested sections. */}
         <Pin className="h-3 w-3 shrink-0" style={{ color: colors.accent }} />
-        <span className="text-[10px] font-bold tracking-widest" style={{ color: colors.accent }}>
-          WATCHLIST
-        </span>
         <span className="text-[10px] font-mono" style={{ color: colors.textSecondary }}>
           ({pins.length})
         </span>

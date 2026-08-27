@@ -23,8 +23,12 @@ export interface PinnedAsset {
   groupId: string; // references PinGroup.id
   comment: string; // free-text note
   addedAt: string; // YYYY-MM-DD
-  buyTarget?: number; // alert when price <= this
-  sellTarget?: number; // alert when price >= this
+  // null means "cleared", undefined means "not part of this update" - the two
+  // are not interchangeable, because the PATCH that syncs a pin to the backend
+  // has to be able to tell a target being removed from a field it was not
+  // asked to touch.
+  buyTarget?: number | null; // alert when price <= this
+  sellTarget?: number | null; // alert when price >= this
   priority?: number; // 1–3 stars
   priceAtPin?: number; // price when first pinned
   tags?: string[]; // array of PinTag IDs
