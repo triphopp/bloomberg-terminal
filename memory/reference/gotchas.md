@@ -752,3 +752,24 @@ badge สีแดงใน WATCHLIST header **ไม่ใช่ระบบ al
 แล้วกรอง None เฉพาะคอลัมน์ที่ไม่ nullable (`NULLABLE = {"buy_target","sell_target"}`)
 
 `null` = ล้าง, `undefined` = ไม่แตะ — PATCH ที่ partial ต้องแยกสองอย่างนี้ให้ออกเสมอ
+
+## optimistic write + `catch (console.error)` = ของหายเงียบตอน reload (PIN GROUP)
+
+อาการ: สร้าง PIN GROUP ใหม่ได้ กลุ่มโผล่ในจอ แต่ refresh แล้วหาย → ผู้ใช้สรุปว่า "สร้างไม่ได้"
+
+`handleAddGroup` เขียน state + localStorage ก่อน แล้ว POST ทีหลัง โดยจับ error แค่ `console.error`
+พอ backend ล่ม/POST fail state ยังค้างว่าเพิ่มสำเร็จ → bootstrap ครั้งถัดไป `setGroups(dbGroups)` ทับทิ้งทันที
+ไม่มี error ให้เห็นสักจุด (console อยู่หลัง devtools)
+
+**แก้:** optimistic ได้ แต่ต้องมี rollback — เก็บ `prevGroups/prevPins` ไว้ก่อน, fail แล้ว `setGroups(prev)` +
+`saveToLS(prev)` + ตั้ง `mutError` ที่แสดงเป็น badge แดงใน header (`rollbackGroups()` ใน `pinned-assets.tsx`)
+
+ประเด็นซ้อน 2 ข้อที่เจอพร้อมกัน:
+- **rename ไม่มี UI เลย** — backend `PATCH /api/pins/groups/{id}` + proxy มีครบตั้งแต่แรก แต่ frontend ไม่เคยเรียก
+  (ตอนนี้อยู่ใน `GroupManagerPanel` แบบ dropdown เหมือน TagManagerPanel — คลิกชื่อ/ดินสอเพื่อ rename, ColorPicker เปลี่ยนสี)
+- **ghost group `watchlist`** — `DEFAULT_WATCHLIST_GROUP` ถูกใส่ใน state ตอน DB ว่าง แต่ไม่เคย INSERT ลง DB
+  ขณะที่ `db.py` เปิด `PRAGMA foreign_keys = ON` + `pinned_assets.group_id REFERENCES pin_groups(id)`
+  → pin แรกที่ add จะ FK fail เงียบ หายตอน reload เหมือนกัน แก้โดย seed ผ่าน `/api/pins/import` ตอน bootstrap เจอ DB ว่าง
+
+บทเรียน: ฟอร์มที่ render ใต้ `{!collapsed && ...}` แต่ปุ่มเปิดอยู่นอก block นั้น = กดแล้วไม่มีอะไรเกิดขึ้นเมื่อ panel ถูกพับ
+panel แบบ dropdown (`absolute`) เลี่ยงกับดักนี้ได้ทั้งหมด
