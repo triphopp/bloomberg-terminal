@@ -24,7 +24,8 @@
     "icons": "node scripts/gen-icons.mjs",
     "analyze": "ANALYZE=true next build",
     "analyze:server": "ANALYZE=true next build --experimental-build-mode=compile",
-    "prepare": "husky"
+    "prepare": "husky",
+    "dev:backend": "cd backend && python -m uvicorn main:app --port 9317"
   },
   "dependencies": {
     "@ai-sdk/openai": "^1.3.21",

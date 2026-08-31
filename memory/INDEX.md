@@ -79,6 +79,9 @@ memory/
 | **Multi-Currency Sub-Portfolio** (instrument ccy authoritative, per-trade rollup, hybrid historical/live FX, ECON attribution) ✅ done 2026-07-14 | `plans/completed/multi-currency-portfolio.md` |
 | **Bloomberg CLI + MCP Server** (`bloomberg market/portfolio/mcp`, 13 MCP tools) | `plans/bloomberg-cli-mcp.md` |
 | **Portfolio Risk Management System** (VaR/CVaR/Greeks/Stress, RiskTab, Action Log) | `plans/portfolio-risk-system.md` |
+| **Corporate IR Stress Testing (CIRST)** (bottom-up firm-level rate shock: EaR → Merton PD → ΔWACC/ΔEV, ES/Euler, IR-Stress Score) 📋 planned | `plans/corporate-ir-stress-testing.md` |
+| **CIRST Validation Harness** (5-yr PIT backtest, null models, float-share inference, calibration/IC/DM gates) 📋 planned | `plans/cirst-validation-harness.md` |
+| **CIRST RATE STRESS tab** (stock-view sub-tab 5 อัน: EXPOSURE/SCENARIO/DURATION/HISTORY/DIAGNOSTICS — เข้าจาก NEWS, มีตารางทฤษฎี-vs-จริง) 📋 planned | `plans/cirst-stock-rate-tab.md` |
 | **Data Source Contract** (canonical models + OHLCVFrame migration fix + Dividends fix + cache clear) | ✅ Phase A+B partial done — `plans/completed/data-source-contract.md`; Phase B remainder in `plans/data-source-contract.md` |
 | **Pane Height Persistence Fix** (pane ยุบ 0 + drag ไม่ persist ข้าม reload) 📋 | `plans/pane-height-persistence-fix.md` |
 | **TICK DATA Consolidation** (RATES·US/JP curve + FX เข้า MKT tick board, ลบ CRYP/FX views) ✅ done 2026-08-01 | `plans/completed/tickdata-rates-fx-consolidation.md` |
