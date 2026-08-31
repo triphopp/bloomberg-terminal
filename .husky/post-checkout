@@ -1,0 +1,5 @@
+#!/bin/sh
+# $3 = 1 for a branch checkout, 0 for a single-file checkout. Only a branch
+# switch can change what the repo expects of the gitignored env files.
+[ "$3" = "1" ] || exit 0
+node scripts/env-doctor.mjs
