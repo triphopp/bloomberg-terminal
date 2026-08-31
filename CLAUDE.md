@@ -44,6 +44,28 @@ touches three places and nothing else:
 Every `app/api/**` proxy imports `PYTHON_API` from `lib/constants.ts` — never
 re-declare it, and never `fetch("http://localhost:<port>")` from a component.
 
+### env-doctor — the drift check
+
+`.env.local` and `backend/.env` are gitignored, so they never travel with a
+`git pull`. A port migration lands in the tracked code on one machine and does
+nothing on the other, because the env var beats the default in the source. The
+symptom is "I pulled and nothing changed" — the 8000/3000 → 9317/9318 move hit
+exactly this on macOS.
+
+```bash
+npm run doctor      # report (also runs as predev, warn-only)
+npm run doctor:fix  # create missing files, add missing keys, rewrite stale ports
+npm run doctor:ci   # exit 1 on any finding
+```
+
+`scripts/env-doctor.mjs` reads the ports out of `package.json` (the thing that
+actually launches the servers) and checks them against `.env.local`,
+`backend/.env`, `lib/constants.ts` and `backend/config.py`, plus any
+`BACKEND_PORT` / `FRONTEND_PORT` / `PYTHON_API_URL` exported in the shell — those
+silently outrank every file. `.husky/post-merge` and `post-checkout` run it after
+a pull or a branch switch. It prints key *names* only, never values, and `--fix`
+never deletes a key.
+
 ## Rules
 - Never fetch Yahoo Finance directly from Next.js — always go through the Python backend
 - Never reintroduce `@upstash/redis`, `yahoo-finance2`, or any top-level scheduler singleton

@@ -120,6 +120,13 @@ npm run dev:no-ollama    # backend + frontend only (if Ollama not installed)
 
 Output is color-coded per process — `Ctrl+C` stops everything at once.
 
+> **Pulled and nothing changed?** `.env.local` and `backend/.env` are gitignored,
+> so they stay exactly as this machine first set them up while the repo moves on
+> — and an env var always beats the default in the code. Run `npm run doctor` to
+> see the drift (stale ports, missing or renamed keys, a `PYTHON_API_URL` left
+> exported in your shell) and `npm run doctor:fix` to apply it. It also runs
+> automatically before `dev`, and after a `git pull` or branch switch.
+
 > On Ctrl+C, `uvicorn --reload`'s supervisor signals its worker mid-shutdown and asyncio used to
 > print an alarming (but harmless) `KeyboardInterrupt` / `CancelledError` traceback. Every process
 > still exited 0 and freed its port; the noise is filtered out in `backend/main.py` as of 2026-08-01.

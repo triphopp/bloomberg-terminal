@@ -1,0 +1,5 @@
+#!/bin/sh
+# `.env.local` and `backend/.env` are gitignored, so a pull can change what the
+# repo expects without touching what this machine actually has. Report-only —
+# never blocks the merge.
+node scripts/env-doctor.mjs
