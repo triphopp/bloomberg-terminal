@@ -179,10 +179,47 @@ def _resolve_meta(symbol: str) -> dict:
             meta["sector"] = "Index"
         else:
             meta["sector"] = "Unclassified"
+    else:
+        # Keep what yfinance gave us. `sector_classifications` is only ever filled
+        # by an explicit index-wide fetch, so on a machine that has never run one
+        # every sector on this screen depends on `.info` answering — and the moment
+        # Yahoo throttles, a watchlist of real companies renders as Unclassified.
+        # Writing the answer down as it arrives means the throttle costs nothing
+        # the second time.
+        _remember_sector(sym, meta)
 
     meta["symbol"] = sym
     _meta_cache.set(sym, meta)
     return meta
+
+
+def _remember_sector(symbol: str, meta: dict) -> None:
+    """Persist a resolved sector so a later yfinance outage cannot blank it."""
+    try:
+        from datetime import date
+
+        from db import upsert_sector_classification
+
+        # `country` is the partition key of the table, and the rest of the app
+        # writes short codes ("US", "TH") there rather than yfinance's
+        # "United States" — a long name would create a second row for the same
+        # company that the index-wide fetch would never update.
+        country = "TH" if symbol.upper().endswith(".BK") else "US"
+
+        upsert_sector_classification(
+            symbol,
+            country,
+            {
+                "sector_gics": meta.get("sector"),
+                "sector_display": meta.get("sector"),
+                "industry_gics": meta.get("industry"),
+                "company_name": meta.get("company"),
+                "source": "news_watchlist",
+                "last_fetched": date.today().isoformat(),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - caching is a bonus, never a failure
+        print(f"[news/watchlist] remember sector {symbol}: {exc}")
 
 
 def _search_terms(symbol: str, company: str) -> list[str]:
