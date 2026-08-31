@@ -81,6 +81,11 @@ export const selectedHoldingSymbolAtom = atom<string>("");
 // Pre-filled symbol when navigating from a market card to the equity view
 export const stockSearchSymbolAtom = atom<string>("");
 
+// Analysis tab to open on arrival in the equity view. Set by a caller that knows
+// which panel the user asked for — a rate-stress row in NEWS, say — and cleared
+// by stock-view once consumed, so a later plain navigation still lands on the default.
+export const stockAnalysisTabAtom = atom<string>("");
+
 // Filter state atoms
 export const showMoversAtom = atom(false);
 export const showVolatilityAtom = atom(false);

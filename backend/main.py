@@ -58,7 +58,7 @@ from db import (
 from analytics.regime_calibration import ensure_model_fresh
 from analytics.regime_v2 import ensure_v2_fresh
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses
+from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, ir_stress
 import sync
 from sync.gate import is_synced_write, should_gate
 from alerts import scheduler as alert_scheduler
@@ -128,6 +128,7 @@ app.include_router(central_banks.router)
 app.include_router(polymarket.router)
 app.include_router(polymarket_stock.router, tags=["Polymarket"])
 app.include_router(company_filings.router, tags=["Company Filings"])
+app.include_router(ir_stress.router, tags=["IR Stress"])
 app.include_router(bot.router)
 app.include_router(screener.router)
 app.include_router(config_router.router)

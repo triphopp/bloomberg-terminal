@@ -37,6 +37,7 @@ import {
   isDarkModeAtom,
   pinGroupsAtom,
   pinnedAssetsAtom,
+  stockAnalysisTabAtom,
 } from "../atoms";
 import {
   ChartTimeframeBar,
@@ -65,6 +66,7 @@ import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import { displayName, displaySymbol } from "../lib/symbol-display";
 import { bloombergColors } from "../lib/theme-config";
 import { OptionsTab } from "./options-tab";
+import { RateStressTab } from "./stock/rate-stress";
 
 // ─── Pin helpers (shared with global-search) ─────────────────────────────────────
 
@@ -157,7 +159,8 @@ type AnalysisTab =
   | "calendar"
   | "quality"
   | "grid"
-  | "strategy-fit";
+  | "strategy-fit"
+  | "rate-stress";
 
 type FinancialBar = { label: string; value: number | null };
 
@@ -4390,6 +4393,16 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
   });
 
   const [analysisTab, setAnalysisTab] = useState<AnalysisTab>("financials");
+
+  // A caller can ask for a specific panel on the way in (NEWS opens a name straight
+  // into RATE STRESS). Consume it once so an ordinary navigation later still lands
+  // on the default tab.
+  const [requestedTab, setRequestedTab] = useAtom(stockAnalysisTabAtom);
+  useEffect(() => {
+    if (!requestedTab) return;
+    setAnalysisTab(requestedTab as AnalysisTab);
+    setRequestedTab("");
+  }, [requestedTab, setRequestedTab]);
   const [searchQuery, setSearchQuery] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -5245,6 +5258,7 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                 { id: "quality", label: "EARNINGS QUALITY" },
                 { id: "grid", label: "GRID TRADING" },
                 { id: "strategy-fit", label: "STRATEGY FIT" },
+                { id: "rate-stress", label: "RATE STRESS" },
               ] as { id: AnalysisTab; label: string }[]
             ).map(({ id, label }) => (
               <button
@@ -5271,6 +5285,9 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
               activeSymbol={activeSymbol}
               colors={colors}
             />
+          )}
+          {analysisTab === "rate-stress" && activeSymbol && (
+            <RateStressTab symbol={activeSymbol} colors={colors} />
           )}
           {analysisTab === "outlook" && activeSymbol && (
             <CompanyOutlookPanel symbol={activeSymbol} colors={colors} />

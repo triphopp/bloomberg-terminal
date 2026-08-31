@@ -33,6 +33,15 @@ backend/.sync_state_*.json
 backend/.sync_base*.json
 backend/*.db.bak*
 backend/.pytest_cache/
+# The same artifacts at the repo root. PORTFOLIO_DB defaults to a path relative
+# to the working directory, so starting the backend from anywhere other than
+# backend/ silently creates a second database here instead of using the real
+# one — ignored so a stray copy of somebody's portfolio can never be committed.
+/*.db
+/*.db-wal
+/*.db-shm
+/.sync_state*.json
+/.sync_base*.json
 backend/analytics/__pycache__/
 backend/routers/__pycache__/
 **/*.pyc

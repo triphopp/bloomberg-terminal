@@ -5,6 +5,7 @@ import { AlertTriangle, ExternalLink, Filter, Layers, RefreshCw, Settings2, X } 
 import { useEffect, useMemo, useState } from "react";
 import { currentViewAtom, stockSearchSymbolAtom } from "../../atoms";
 import { BloombergButton } from "../../core/bloomberg-button";
+import { RateStressTab } from "../stock/rate-stress";
 import {
   ALL_SOURCE_IDS,
   SENTIMENT_COLORS,
@@ -233,6 +234,18 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
 
   const [selectedSector, setSelectedSector] = useState<string | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+
+  // With one company in focus the panel can answer more than "what was written
+  // about it". Rate stress rides alongside the headlines rather than replacing
+  // them. The choice is stored against the company it was made for, so moving
+  // the focus falls back to the headlines without an effect having to notice.
+  const [panelChoice, setPanelChoice] = useState<{
+    symbol: string | null;
+    panel: "headlines" | "rate-stress";
+  }>({ symbol: null, panel: "headlines" });
+  const panel = panelChoice.symbol === selectedSymbol ? panelChoice.panel : "headlines";
+  const setPanel = (next: "headlines" | "rate-stress") =>
+    setPanelChoice({ symbol: selectedSymbol, panel: next });
   const [filterText, setFilterText] = useState("");
   const [showSourcePicker, setShowSourcePicker] = useState(false);
 
@@ -668,13 +681,53 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
             >
               clear ✕
             </button>
+
+            {selectedSymbol && (
+              <div className="ml-auto flex items-center gap-0">
+                {(
+                  [
+                    { id: "headlines", label: "HEADLINES" },
+                    { id: "rate-stress", label: "RATE STRESS" },
+                  ] as const
+                ).map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setPanel(t.id)}
+                    className="px-2 py-0.5 text-[9px] font-bold tracking-widest"
+                    style={{
+                      borderBottom:
+                        panel === t.id ? `2px solid ${colors.accent}` : "2px solid transparent",
+                      color: panel === t.id ? colors.accent : colors.textSecondary,
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Rate stress for the single company in focus, same panel the equity
+            view uses so the two never drift apart. */}
+        {selectedSymbol && panel === "rate-stress" && (
+          <div
+            className="flex-1 overflow-y-auto"
+            style={{ scrollbarWidth: "thin", scrollbarColor: "#333 #000" }}
+          >
+            <RateStressTab symbol={selectedSymbol} colors={colors} />
           </div>
         )}
 
         {/* Stream */}
         <div
           className="flex-1 overflow-y-auto"
-          style={{ scrollbarWidth: "thin", scrollbarColor: "#333 #000" }}
+          style={{
+            scrollbarWidth: "thin",
+            scrollbarColor: "#333 #000",
+            display: selectedSymbol && panel === "rate-stress" ? "none" : undefined,
+          }}
         >
           {error && (
             <div
