@@ -67,6 +67,7 @@ memory/
 | **Dynamic Chart History** (ซูมออก → กราฟโหลด period ถัดไปเอง, viewport ไม่กระโดด; lib `chartkit/`) ✅ done 2026-08-25 | `plans/completed/dynamic-chart-history.md` |
 | **Floating Chart Windows** (popup กราฟลอยอิสระหลายตัว: drag/resize/minimize/z-order, cap 10, persist, ข้าม view) ✅ เฟส 1 done 2026-08-24 · เฟส 2 (TILE + snap, indicator แยกต่อหน้าต่าง) ค้าง | `plans/floating-chart-windows.md` |
 | **IV SD Heatmap** (BS lognormal σ-band pane −2σ…+2σ จาก ATM IV mid; occupancy / cheapness; `iv_snapshots` สะสมเอง) 🔄 code done, pixel verify ค้าง | `plans/iv-sd-heatmap.md` |
+| **Thesis Notes** (sub-tab NOTES: scenario/risk/catalyst ที่แก้ได้ + L×S + watch date + resolve → NOTE_RESOLVED event) ✅ done 2026-08-31 | `plans/completed/thesis-notes.md` |
 | **Thesis System (DB) + Allocation Basis** (thesis เก็บใน SQLite + sync Drive + event log; ALLOCATION (OPEN) cost-vs-market + rebalance sizing) ✅ done 2026-08-15 | `plans/completed/thesis-db-and-allocation-basis.md` |
 | **Company OUTLOOK จาก SEC EDGAR** (guidance + คำพูด CEO + งบ as-reported XBRL) ✅ done 2026-08-15 | `plans/completed/company-outlook-edgar.md` |
 | **Polymarket stock price ladders** (P(up)/skew รายหุ้น ใน NEWS + คอลัมน์ PM ใน MKT) ✅ done 2026-08-15 | `plans/completed/polymarket-stock-ladder.md` |

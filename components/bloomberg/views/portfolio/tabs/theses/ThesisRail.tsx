@@ -93,6 +93,15 @@ export function ThesisRail({
                         <span className="font-bold text-[10px]" style={{ color: colors.accent }}>
                           {t.symbol}
                         </span>
+                        {!!t.open_note_count && (
+                          <span
+                            className="text-[7px] px-0.5 border"
+                            title={`${t.open_note_count} open note(s) — scenarios, risks, catalysts`}
+                            style={{ color: "#60a5fa", borderColor: "#60a5fa55" }}
+                          >
+                            {t.open_note_count}N
+                          </span>
+                        )}
                         {t.conviction != null && (
                           <span
                             className="ml-auto text-[7px]"

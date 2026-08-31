@@ -64,10 +64,11 @@ components/bloomberg/
 │           ├── BacktestTab.tsx       ← backtest v2 (4 sub-tabs: equity/holdings/distribution/attribution)
 │           ├── RiskTab.tsx           ← 2 sub-tabs: OVERVIEW (dense col layout: header/9-stat/VaR+chart+EWS) | OPTIONS risk
 │           ├── ThesesTab.tsx         ← barrel → tabs/theses/
-│           ├── theses/                ← DB-backed thesis system (CRUD + history)
-│           │   ├── index.tsx          ← rail + detail + sub-tabs THESIS|HISTORY|LINKED TRADES|AI
-│           │   ├── ThesisRail.tsx     ← grouped category → sub-portfolio → symbol
+│           ├── theses/                ← DB-backed thesis system (CRUD + notes + history)
+│           │   ├── index.tsx          ← rail + detail + sub-tabs THESIS|NOTES|HISTORY|LINKED TRADES|AI
+│           │   ├── ThesisRail.tsx     ← grouped category → sub-portfolio → symbol (+ open-note badge "3N")
 │           │   ├── ThesisEditor.tsx   ← form + markdown editor/preview
+│           │   ├── ThesisNotes.tsx    ← standing scenarios/risks/catalysts: kind filter, L×S score, watch date, resolve
 │           │   ├── ThesisTimeline.tsx ← thesis_events feed + manual notes
 │           │   ├── markdown.tsx       ← renderMarkdown
 │           │   └── types.ts
@@ -182,9 +183,10 @@ components/bloomberg/
 | `portfolio/tabs/AnalyticsTab.tsx` | `AnalyticsTab` — CAPM card: β HEDGE / HEDGE notional / β REAL / vs IDX / α CAPM / t / R² / N; rf chip เปิดแผงตั้งค่า (override ต่อสกุลใน `localStorage["bloomberg_capm_rf"]`) |
 | `portfolio/ui/AllocationBasisCard.tsx` | `AllocationBasisCard`, `AllocRow` — ALLOCATION (OPEN) cost-vs-market card (COST/VALUE/DRIFT modes + rebalance table) |
 | `portfolio/tabs/theses/index.tsx` | `ThesesTab` (props: `colors`, `accountId`, `initialSymbol`, `onConsumeInitialSymbol`) |
-| `portfolio/tabs/theses/types.ts` | `Thesis`, `ThesisStatus`, `ThesisEvent`, `ThesisLink`, `STATUSES`, `STATUS_COLOR`, `CATEGORIES`, `HORIZONS`, `STRATEGIES` |
+| `portfolio/tabs/theses/types.ts` | `Thesis`, `ThesisStatus`, `ThesisEvent`, `ThesisLink`, `ThesisNote`, `NoteKind`, `NoteStatus`, `NoteImpact`, `STATUSES`, `STATUS_COLOR`, `CATEGORIES`, `HORIZONS`, `STRATEGIES`, `NOTE_KINDS`, `NOTE_STATUSES`, `NOTE_KIND_COLOR`, `NOTE_STATUS_COLOR`, `NOTE_IMPACT_COLOR` |
 | `portfolio/tabs/theses/ThesisRail.tsx` | `ThesisRail` |
 | `portfolio/tabs/theses/ThesisEditor.tsx` | `ThesisEditor`, `ThesisDraft`, `emptyDraft`, `draftFrom` |
+| `portfolio/tabs/theses/ThesisNotes.tsx` | `ThesisNotes`, `NoteDraft`, `emptyNoteDraft` |
 | `portfolio/tabs/theses/ThesisTimeline.tsx` | `ThesisTimeline` |
 | `portfolio/modals/SellModal.tsx` | `SellModal` |
 | `portfolio/modals/TradeEditModal.tsx` | `TradeEditModal` |

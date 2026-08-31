@@ -12,6 +12,8 @@ const KIND_COLOR: Record<string, string> = {
   DELETED: "#f87171",
   RESTORED: "#4ade80",
   NOTE: "#888",
+  NOTE_ADDED: "#60a5fa",
+  NOTE_RESOLVED: "#4ade80",
   TRADE_LINKED: "#a78bfa",
   TRADE_UNLINKED: "#a78bfa",
   EXPORTED: "#666",

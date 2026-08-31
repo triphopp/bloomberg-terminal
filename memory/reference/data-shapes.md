@@ -179,10 +179,16 @@ Two bases at once — the ALLOCATION (OPEN) card used to weight sectors by cost 
   "events": [{"id": "uuid", "event_type": "EDITED",
               "payload": {"title": {"from": "old", "to": "new"}},
               "note": "sharpened it", "occurred_at": "...", "device_id": "PC"}],
-  "links":  [{"trade_id": "uuid", "role": "entry", "symbol": "PLTR", "date_entry": "2026-01-02"}] }
+  "links":  [{"trade_id": "uuid", "role": "entry", "symbol": "PLTR", "date_entry": "2026-01-02"}],
+  "notes":  [{"id": "uuid", "thesis_id": "uuid", "kind": "SCENARIO", "title": "China supply lands early",
+              "body": "...", "impact": "bear", "likelihood": 3, "severity": 4,
+              "status": "open", "watch_date": "2026-11-30", "pinned": 0,
+              "deleted_at": null, "device_id": "PC", "created_at": "...", "updated_at": "..."}] }
 ```
 
-`status`: `draft|active|watch|invalidated|closed`. `event_type`: `CREATED|EDITED|STATUS_CHANGED|TARGET_CHANGED|INVALIDATED|NOTE|TRADE_LINKED|TRADE_UNLINKED|DELETED|RESTORED|EXPORTED`. `payload` is a `{field: {from, to}}` diff on edits, free JSON otherwise.
+`status`: `draft|active|watch|invalidated|closed`. `event_type`: `CREATED|EDITED|STATUS_CHANGED|TARGET_CHANGED|INVALIDATED|NOTE|NOTE_ADDED|NOTE_RESOLVED|TRADE_LINKED|TRADE_UNLINKED|DELETED|RESTORED|EXPORTED`. `payload` is a `{field: {from, to}}` diff on edits, free JSON otherwise.
+
+**Note** (`GET /api/v2/theses/{id}/notes`, same row shape as above): `kind` `NOTE|SCENARIO|RISK|CATALYST|QUESTION|EVIDENCE` · `status` `open|watching|confirmed|dismissed` · `impact` `bull|bear|mixed|null` · `likelihood`/`severity` 1–5, clamped server-side (the UI shows L×S only when both are set). `GET /api/v2/theses/notes/due` returns the same rows plus `symbol` + `thesis_title` from the join.
 
 ## Risk Metrics (`GET /api/v2/portfolio/risk/metrics`)
 ```json
