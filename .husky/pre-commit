@@ -17,7 +17,7 @@ if [ -n "$TS_JS_FILES" ]; then
   echo "📝 Running Biome checks..."
   
   # Runs Biome check (format + lint) directly on staged files from the monorepo root
-  echo "$TS_JS_FILES" | xargs -r pnpm exec biome check --write
+  echo "$TS_JS_FILES" | xargs -r npx --no-install biome check --write
   BIOME_EXIT_CODE=$?
 
   if [ $BIOME_EXIT_CODE -ne 0 ]; then
@@ -27,7 +27,7 @@ if [ -n "$TS_JS_FILES" ]; then
   
   # Run type checking
   echo "🔍 Running type checking..."
-  pnpm typecheck
+  npm run typecheck
   TYPECHECK_EXIT_CODE=$?
 
   if [ $TYPECHECK_EXIT_CODE -ne 0 ]; then
