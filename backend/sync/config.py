@@ -66,6 +66,11 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     # which makes LWW a union rather than a race.
     ("theses",                   ["id"]),
     ("thesis_events",            ["id"]),
+    # thesis_notes IS edited in place, unlike thesis_events — but it is the same
+    # shape as `theses` itself (uuid PK, field-level LWW on a head row), so the
+    # existing merge handles it. Adding a table needs no SCHEMA_VER bump: an old
+    # peer ignores a table it does not walk, and its snapshot simply carries none.
+    ("thesis_notes",             ["id"]),
     ("thesis_links",             ["thesis_id", "trade_id"]),   # composite PK
     ("allocation_targets",       ["account_id", "scope", "key"]),  # UNIQUE(...)
     # ATM implied-vol history. Market data, which normally stays local (see

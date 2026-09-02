@@ -805,9 +805,63 @@ def stock_balance_sheet(symbol: str):
 
 # ── Dividends History ────────────────────────────────────────────────────────
 
+def _upcoming_dividend(ticker, paid: list[dict]) -> dict | None:
+    """The next ex-dividend date, when the issuer has already declared it.
+
+    ``ticker.dividends`` is a record of cash that has *already* gone ex — it can
+    never contain a future date, so a chart built from it alone shows the last
+    dividend as if it were the next one.  Yahoo carries the declared date
+    separately on the calendar, which is the only place a not-yet-paid dividend
+    appears.
+
+    The calendar's ``Ex-Dividend Date`` is not always in the future: between the
+    ex-date and the next declaration it still reports the one that just paid
+    (AAPL sits like this for ~11 weeks a quarter).  That case is dropped rather
+    than reported as upcoming — a stale date drawn ahead of the last bar would
+    be worse than no marker at all.
+
+    The amount is not on the calendar; the last paid dividend stands in for it,
+    flagged ``estimated`` so the UI can say so.
+    """
+    try:
+        cal = ticker.calendar or {}
+    except Exception:
+        return None
+    if not isinstance(cal, dict):  # older yfinance returned a DataFrame here
+        return None
+    ex = cal.get("Ex-Dividend Date")
+    if ex is None:
+        return None
+    ex_date = ex.date() if hasattr(ex, "date") else ex
+    ex_str = ex_date.strftime("%Y-%m-%d") if hasattr(ex_date, "strftime") else str(ex_date)[:10]
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    if ex_str <= today:
+        return None
+    # Already gone ex and recorded — not upcoming, whatever the calendar says.
+    if any(d["date"] == ex_str for d in paid):
+        return None
+
+    pay = cal.get("Dividend Date")
+    pay_date = pay.date() if hasattr(pay, "date") else pay
+    pay_str = (
+        pay_date.strftime("%Y-%m-%d")
+        if hasattr(pay_date, "strftime")
+        else (str(pay_date)[:10] if pay_date else None)
+    )
+
+    amount = paid[-1]["dividend"] if paid else None
+    return {
+        "date": ex_str,
+        "payDate": pay_str,
+        "dividend": amount,
+        "estimated": amount is not None,
+    }
+
+
 @router.get("/api/stock/dividends/{symbol}")
 def stock_dividends(symbol: str):
-    """Dividend history + splits."""
+    """Dividend history + splits, plus the next declared ex-dividend date."""
     cache_key = f"divs:{symbol.upper()}"
     cached = _stock_cache.get(cache_key, ttl=_DETAIL_TTL)
     if cached is not None:
@@ -824,7 +878,12 @@ def stock_dividends(symbol: str):
         if splits is not None and len(splits) > 0:
             for dt, val in splits.items():
                 split_list.append({"date": dt.strftime("%Y-%m-%d"), "ratio": float(val)})
-        data = {"dividends": div_list, "splits": split_list}
+        upcoming = _upcoming_dividend(ticker, div_list)
+        data = {
+            "dividends": div_list,
+            "splits": split_list,
+            "upcomingDividends": [upcoming] if upcoming else [],
+        }
         _stock_cache.set(cache_key, data)
         return data
     except Exception as exc:

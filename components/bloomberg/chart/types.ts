@@ -318,6 +318,17 @@ export interface ChartEventMarker {
   dividend?: number;
   /** split — new:old ratio (2 means a 2:1 split) */
   splitRatio?: number;
+
+  /**
+   * The event has not happened yet: a declared-but-unpaid ex-dividend date, or
+   * a scheduled report. No bar exists for it, so it has no price reaction and
+   * the rail draws it past the last candle instead of on one.
+   */
+  upcoming?: boolean;
+  /** The figure is carried over from the last occurrence, not announced. */
+  estimated?: boolean;
+  /** dividend — pay date, when it differs from the ex-date. */
+  payDate?: string | null;
 }
 
 /** How a marker's price reaction played out, derived from the loaded OHLCV. */
@@ -355,6 +366,14 @@ export interface CanvasOverlay {
   name: string;
   /** "right" = fixed-width strip beside price scale (default); "full" = spans entire chart area */
   mode?: "right" | "full";
+  /**
+   * Where the overlay sits against the series it is attached to.
+   *
+   * "top" (default) is what every reading overlay wants — a volume profile
+   * under the candles would be pointless. "bottom" exists for overlays that
+   * paint the pane itself rather than read from it, such as the grid mask.
+   */
+  zOrder?: "bottom" | "top";
   /** Called each frame / range-change to draw on the overlay canvas */
   draw(
     ctx: CanvasRenderingContext2D,

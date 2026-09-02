@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   computeEventReaction,
+  daysPastLastBar,
   earningsSession,
   findEventBarIndex,
   placeEvents,
@@ -117,8 +118,47 @@ test("years of pre-history do not pile onto the first bar", () => {
   assert.equal(placeEvents(old, daily).length, 0);
 });
 
-test("placement drops events past the right edge instead of clamping them", () => {
-  assert.equal(placeEvents([earnings("2026-05-01")], daily).length, 0);
+test("an event past the right edge is kept as upcoming, anchored on the last bar", () => {
+  // The market has not reached 2026-05-01, so no bar can host it. Dropping it
+  // here is what hid every declared-but-unpaid dividend and every scheduled
+  // report from the rail.
+  const [p] = placeEvents([earnings("2026-05-01")], daily);
+  assert.equal(p.future, true);
+  assert.equal(p.time, "2026-03-12");
+  assert.equal(p.barIdx, daily.length - 1);
+  assert.equal(p.daysAhead, 50);
+});
+
+test("an event too far out is dropped rather than crowding the right edge", () => {
+  assert.equal(placeEvents([earnings("2027-06-01")], daily).length, 0);
+});
+
+test("upcoming events come out in date order, after the placed ones", () => {
+  const placed = placeEvents(
+    [earnings("2026-06-01"), earnings("2026-04-01"), earnings("2026-03-05")],
+    daily
+  );
+  assert.deepEqual(
+    placed.map((p) => [p.marker.time, p.future ?? false]),
+    [
+      ["2026-03-05", false],
+      ["2026-04-01", true],
+      ["2026-06-01", true],
+    ]
+  );
+});
+
+test("an upcoming event has no price reaction to report", () => {
+  const r = computeEventReaction(daily, earnings("2026-05-01"));
+  assert.equal(r.closeOnEvent, null);
+  assert.equal(r.gapPct, null);
+  assert.equal(r.fiveDayPct, null);
+});
+
+test("days past the last bar is zero for anything inside the range", () => {
+  assert.equal(daysPastLastBar(daily, earnings("2026-03-05")), 0);
+  assert.equal(daysPastLastBar(daily, earnings("2026-03-12")), 0);
+  assert.equal(daysPastLastBar(daily, earnings("2026-03-13")), 1);
 });
 
 // ── computeEventReaction ───────────────────────────────────────────────────

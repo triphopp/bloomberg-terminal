@@ -584,6 +584,38 @@ def init_thesis_schema() -> None:
             )
         """)
 
+        # Standing notes: the scenarios, risks and catalysts that could move a
+        # thesis. Deliberately NOT thesis_events — an event is an immutable fact
+        # about the past ("status changed on the 3rd"), while a note is a live
+        # object the user keeps revising until the scenario resolves. Editing an
+        # event row would break the append-only property the sync merge relies on.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS thesis_notes (
+                id         TEXT PRIMARY KEY,
+                thesis_id  TEXT NOT NULL,
+                kind       TEXT NOT NULL DEFAULT 'NOTE',
+                title      TEXT NOT NULL DEFAULT '',
+                body       TEXT NOT NULL DEFAULT '',
+                impact     TEXT,
+                likelihood INTEGER,
+                severity   INTEGER,
+                status     TEXT NOT NULL DEFAULT 'open',
+                watch_date TEXT,
+                pinned     INTEGER NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                deleted_at TEXT,
+                device_id  TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_thnote_thesis ON thesis_notes(thesis_id, status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_thnote_watch ON thesis_notes(watch_date)"
+        )
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS allocation_targets (
                 id         TEXT PRIMARY KEY,

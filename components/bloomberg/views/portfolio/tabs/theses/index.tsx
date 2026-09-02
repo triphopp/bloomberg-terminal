@@ -6,12 +6,19 @@ import { fmtK, pnlColor } from "../../helpers";
 import { ConfirmDeleteModal } from "../../modals/ConfirmDeleteModal";
 import type { Trade } from "../../types";
 import { type ThesisDraft, ThesisEditor, draftFrom, emptyDraft } from "./ThesisEditor";
+import { type NoteDraft, ThesisNotes } from "./ThesisNotes";
 import { ThesisRail } from "./ThesisRail";
 import { ThesisTimeline } from "./ThesisTimeline";
 import { renderMarkdown } from "./markdown";
-import { STATUS_COLOR, type Thesis, type ThesisEvent, type ThesisLink } from "./types";
+import {
+  STATUS_COLOR,
+  type Thesis,
+  type ThesisEvent,
+  type ThesisLink,
+  type ThesisNote,
+} from "./types";
 
-type SubTab = "thesis" | "history" | "trades" | "ai";
+type SubTab = "thesis" | "notes" | "history" | "trades" | "ai";
 
 const API = "/api/v2/theses";
 
@@ -34,6 +41,7 @@ export function ThesesTab({
     thesis: Thesis;
     events: ThesisEvent[];
     links: ThesisLink[];
+    notes?: ThesisNote[];
   } | null>(null);
   const [subTab, setSubTab] = useState<SubTab>("thesis");
   const [editing, setEditing] = useState(false);
@@ -130,6 +138,14 @@ export function ThesesTab({
     const cost = lots.reduce((n, p) => n + (p.cost_basis_base ?? 0), 0);
     return { volume, pnl, pct: cost > 0 ? (pnl / cost) * 100 : null, lots: lots.length };
   }, [positions, thesis]);
+
+  // Only unresolved notes are counted on the tab: a badge that also counts
+  // dismissed scenarios never goes down, so it stops meaning anything.
+  const openNoteCount = useMemo(
+    () =>
+      (detail?.notes ?? []).filter((n) => n.status === "open" || n.status === "watching").length,
+    [detail]
+  );
 
   const startNew = () => {
     setIsNew(true);
@@ -236,6 +252,61 @@ export function ThesesTab({
     if (!selectedId) return;
     await fetch(`${API}/${selectedId}/events/${id}`, { method: "DELETE" });
     loadDetail(selectedId);
+  };
+
+  // ── Notes ────────────────────────────────────────────────────────────────
+  // Reload the list too: the rail badge counts open notes, so adding or
+  // resolving one has to move it or the badge lies until the next mount.
+  const afterNoteWrite = async () => {
+    if (!selectedId) return;
+    await loadDetail(selectedId);
+    loadList();
+  };
+
+  const createNote = async (d: NoteDraft) => {
+    if (!selectedId) return;
+    const r = await fetch(`${API}/${selectedId}/notes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: d.kind,
+        title: d.title.trim(),
+        body: d.body,
+        impact: d.impact || null,
+        likelihood: d.likelihood === "" ? null : Number(d.likelihood),
+        severity: d.severity === "" ? null : Number(d.severity),
+        status: d.status,
+        watch_date: d.watch_date || null,
+        pinned: d.pinned,
+      }),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      setBanner(typeof e.detail === "string" ? e.detail : "Could not add the note");
+      return;
+    }
+    await afterNoteWrite();
+  };
+
+  const patchNote = async (id: string, patch: Record<string, unknown>) => {
+    if (!selectedId) return;
+    const r = await fetch(`${API}/${selectedId}/notes/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      setBanner(typeof e.detail === "string" ? e.detail : "Could not save the note");
+      return;
+    }
+    await afterNoteWrite();
+  };
+
+  const removeNote = async (id: string) => {
+    if (!selectedId) return;
+    await fetch(`${API}/${selectedId}/notes/${id}`, { method: "DELETE" });
+    await afterNoteWrite();
   };
 
   const runResearch = async () => {
@@ -445,6 +516,7 @@ export function ThesesTab({
                 {(
                   [
                     ["thesis", "THESIS"],
+                    ["notes", `NOTES (${openNoteCount})`],
                     ["history", `HISTORY (${detail?.events.length ?? 0})`],
                     ["trades", `LINKED TRADES (${detail?.links.length ?? 0})`],
                     ["ai", "AI ANALYSIS"],
@@ -476,6 +548,16 @@ export function ThesesTab({
                   </div>
                 )}
               </div>
+            )}
+
+            {subTab === "notes" && (
+              <ThesisNotes
+                notes={detail?.notes ?? []}
+                onCreate={createNote}
+                onPatch={patchNote}
+                onDelete={removeNote}
+                colors={colors}
+              />
             )}
 
             {subTab === "history" && (

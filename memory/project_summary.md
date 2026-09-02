@@ -223,6 +223,13 @@ theses              (id TEXT uuid PK, symbol, resolved_symbol, market, account_i
 thesis_events       (id TEXT uuid PK, thesis_id, event_type, payload JSON diff, note, occurred_at,
                      device_id, created_at)  -- APPEND-ONLY: never UPDATEd, so LWW merge is a union
 thesis_links        (thesis_id, trade_id, role, created_at) PK(thesis_id,trade_id)
+thesis_notes        (id TEXT uuid PK, thesis_id, kind NOTE|SCENARIO|RISK|CATALYST|QUESTION|EVIDENCE,
+                     title, body, impact bull|bear|mixed, likelihood 1-5, severity 1-5,
+                     status open|watching|confirmed|dismissed, watch_date, pinned, sort_order,
+                     deleted_at, device_id, created_at, updated_at)
+-- 2026-08-31: standing notes (scenarios/risks/catalysts). EDITED IN PLACE, unlike thesis_events —
+--   an event is a fact about the past, a note is a live object until the scenario resolves.
+--   Resolving one (confirmed|dismissed) writes ONE NOTE_RESOLVED event; body edits write none.
 allocation_targets  (id TEXT uuid PK, account_id, scope sector|symbol, key, target_pct, band_pct,
                      updated_at) UNIQUE(account_id, scope, key)
 sync_tombstones     (table_name, row_id, deleted_at) PK(table_name,row_id)  -- cloud-sync delete log
@@ -290,6 +297,7 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026
 - [ ] **IV SD Heatmap** — BS lognormal σ-band pane (5 buckets −2σ…+2σ) จาก `σ_mid=(IV_call+IV_put)/2`; 2 โหมด occupancy/cheapness, ตาราง `iv_snapshots` สะสม IV เอง, `/api/options/{sym}/sd-bands`; ยัง verify pixel ไม่ได้ (`plans/iv-sd-heatmap.md`)
 - [x] **TAIL Risk Monitor v2** — CBOE vol data (VIX/VIX9D/VIX3M/VIX6M/VVIX/SKEW/OVX/GVZ/VXN) แทน yfinance ที่ค้าง 28 วัน, tri-state signals, 6 risk dimensions, composite นับมิติไม่ใช่นับ signal — done 2026-08-16 (`plans/completed/tail-risk-v2.md`)
 - [x] **Company OUTLOOK (SEC EDGAR)** — guidance ที่บริษัทยื่นใน 8-K EX-99.1 + คำพูด CEO + MD&A forward-looking + งบ as-reported จาก XBRL; แท็บ OUTLOOK ใน stock-view + แถบใน NEWS — done 2026-08-15 (`plans/completed/company-outlook-edgar.md`)
+- [x] **Thesis Notes** — sub-tab NOTES ในหน้า THESES: standing scenario/risk/catalyst/question ที่แก้ในที่ได้ (kind, impact bull/bear, likelihood×severity, watch date, pin, resolve/reopen) + `thesis_notes` table + sync + `/notes/due` cross-thesis feed — done 2026-08-31 (`plans/completed/thesis-notes.md`)
 - [x] **Polymarket stock price ladders** — `/api/polymarket/stock/{sym}` แปลง touch ladder + "close above" CDF เป็น P(up)/skew/implied range; panel ใน NEWS + คอลัมน์ PM ใน MKT watchlist — done 2026-08-15 (`plans/completed/polymarket-stock-ladder.md`)
 - [x] **NEWS watchlist redesign** — ข่าวรายหุ้นจาก 7 แหล่ง (Yahoo/yfinance/Google/Bing/Seeking Alpha/Nasdaq/SEC), แบ่งกลุ่มตาม SECTOR อัตโนมัติ, ticker badge ทุกหัวข้อ, Polymarket จับคู่รายหุ้น — done 2026-08-15 (`plans/completed/news-watchlist-redesign.md`)
 - [x] **Analytics Cash Card** — CASH tile + MARKET VALUE split (excl./incl. idle cash) in ANALYTICS Capital Breakdown — done 2026-07-14 (`plans/completed/analytics-cash-card.md`)

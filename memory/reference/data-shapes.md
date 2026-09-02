@@ -179,10 +179,16 @@ Two bases at once — the ALLOCATION (OPEN) card used to weight sectors by cost 
   "events": [{"id": "uuid", "event_type": "EDITED",
               "payload": {"title": {"from": "old", "to": "new"}},
               "note": "sharpened it", "occurred_at": "...", "device_id": "PC"}],
-  "links":  [{"trade_id": "uuid", "role": "entry", "symbol": "PLTR", "date_entry": "2026-01-02"}] }
+  "links":  [{"trade_id": "uuid", "role": "entry", "symbol": "PLTR", "date_entry": "2026-01-02"}],
+  "notes":  [{"id": "uuid", "thesis_id": "uuid", "kind": "SCENARIO", "title": "China supply lands early",
+              "body": "...", "impact": "bear", "likelihood": 3, "severity": 4,
+              "status": "open", "watch_date": "2026-11-30", "pinned": 0,
+              "deleted_at": null, "device_id": "PC", "created_at": "...", "updated_at": "..."}] }
 ```
 
-`status`: `draft|active|watch|invalidated|closed`. `event_type`: `CREATED|EDITED|STATUS_CHANGED|TARGET_CHANGED|INVALIDATED|NOTE|TRADE_LINKED|TRADE_UNLINKED|DELETED|RESTORED|EXPORTED`. `payload` is a `{field: {from, to}}` diff on edits, free JSON otherwise.
+`status`: `draft|active|watch|invalidated|closed`. `event_type`: `CREATED|EDITED|STATUS_CHANGED|TARGET_CHANGED|INVALIDATED|NOTE|NOTE_ADDED|NOTE_RESOLVED|TRADE_LINKED|TRADE_UNLINKED|DELETED|RESTORED|EXPORTED`. `payload` is a `{field: {from, to}}` diff on edits, free JSON otherwise.
+
+**Note** (`GET /api/v2/theses/{id}/notes`, same row shape as above): `kind` `NOTE|SCENARIO|RISK|CATALYST|QUESTION|EVIDENCE` · `status` `open|watching|confirmed|dismissed` · `impact` `bull|bear|mixed|null` · `likelihood`/`severity` 1–5, clamped server-side (the UI shows L×S only when both are set). `GET /api/v2/theses/notes/due` returns the same rows plus `symbol` + `thesis_title` from the join.
 
 ## Risk Metrics (`GET /api/v2/portfolio/risk/metrics`)
 ```json
@@ -519,12 +525,16 @@ interface ChartEventMarker { time: string|number; type: ChartEventType; label: s
   // raw, unformatted — the detail popover lays these out; the chart itself only reads type/color
   epsEstimate?: number|null; reportedEPS?: number|null; surprise?: number|null; eventType?: string;
   reportedAt?: string;   // "YYYY-MM-DD HH:MM" — hour ≥16 means AMC, so the reaction is on the NEXT bar
-  dividend?: number; splitRatio?: number; }
+  dividend?: number; splitRatio?: number;
+  upcoming?: boolean;    // declared/scheduled but not reached — drawn past the last bar, no reaction
+  estimated?: boolean;   // amount carried over from the last payment, not announced
+  payDate?: string|null; // dividend pay date, when known }
 interface EventPriceReaction { gapPct: number|null; sameDayPct: number|null; nextDayPct: number|null; fiveDayPct: number|null; closeOnEvent: number|null; }
 ```
 - Built by `hooks/useStockEvents.ts` from `/api/stock?type=dividends` + `type=earnings-calendar`. `time` is always sliced to `YYYY-MM-DD`.
 - `EventPriceReaction` is **derived client-side** from the OHLCV already on the chart (`chart/event-reaction.ts`) — no endpoint. Fields go `null` rather than wrong when the window runs off either edge of the loaded period.
-- `label` is still populated but is no longer drawn — markers are shape-only since 2026-08-04.
+- **Upcoming events** (`upcoming: true`) have no bar to sit on. `placeEvents()` anchors them on the last bar with `future: true` + `daysAhead` (dropped past `MAX_FUTURE_DAYS` = 200); the rail queues them past the right edge with a dashed chip (`$?` / `E?`), and the popover shows "Scheduled — no price reaction yet".
+- `label` (`$` / `$?` / `E+` / `E-` / `E?` / `x10`) is no longer drawn on the rail — since 2026-08-31 chips carry a `lucide` icon (`EventChipStyle.icon`, see `chart/event-icons.ts`) and `label` survives as the accessible name for it.
 
 ### `PolySignal` (news-view.tsx)
 ```ts

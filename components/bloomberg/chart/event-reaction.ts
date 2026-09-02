@@ -38,6 +38,15 @@ export function earningsSession(reportedAt?: string): EarningsSession {
  */
 const MAX_BACKFILL_DAYS = 4;
 
+/**
+ * How far past the last bar an event may sit and still be shown as upcoming.
+ *
+ * Yahoo's earnings calendar carries estimates a year out for some names; a chip
+ * for a report that far away tells the reader nothing about the chart in front
+ * of them, so the rail stops at roughly two quarters.
+ */
+const MAX_FUTURE_DAYS = 200;
+
 const dayDiff = (fromIso: string, toIso: string): number =>
   (Date.parse(`${toIso}T00:00:00Z`) - Date.parse(`${fromIso}T00:00:00Z`)) / 86_400_000;
 
@@ -90,6 +99,14 @@ export interface PlacedEvent {
   time: string | number;
   /** Index of that bar in `data`. */
   barIdx: number;
+  /**
+   * The event has not happened yet, so `time`/`barIdx` are the last bar as an
+   * anchor only — the rail draws it past the right edge, and there is no price
+   * reaction to measure.
+   */
+  future?: boolean;
+  /** Days from the last bar to the event. Only set when `future`. */
+  daysAhead?: number;
 }
 
 /**
@@ -102,12 +119,59 @@ export interface PlacedEvent {
  * describes a different bar than the chip sits over.
  */
 export function placeEvents(markers: ChartEventMarker[], data: OhlcvBar[]): PlacedEvent[] {
+  if (data.length === 0) return [];
   const placed: PlacedEvent[] = [];
+  const lastIdx = data.length - 1;
+
   for (const marker of markers) {
     const barIdx = findEventBarIndex(data, marker);
-    if (barIdx >= 0) placed.push({ marker, time: data[barIdx].time, barIdx });
+    if (barIdx >= 0) {
+      placed.push({ marker, time: data[barIdx].time, barIdx });
+      continue;
+    }
+    // No bar matched. That is either pre-history (dropped) or a date the market
+    // has not reached yet — a declared ex-dividend, a scheduled report. Those
+    // used to fall out here, which is why the rail only ever showed the *last*
+    // dividend and never the next one.
+    const ahead = daysPastLastBar(data, marker);
+    if (ahead > 0 && ahead <= MAX_FUTURE_DAYS) {
+      placed.push({
+        marker,
+        time: data[lastIdx].time,
+        barIdx: lastIdx,
+        future: true,
+        daysAhead: ahead,
+      });
+    }
   }
+
+  // Future chips are drawn in a queue past the right edge, so they have to come
+  // out in date order regardless of the order the markers arrived in.
+  placed.sort((a, b) => (a.daysAhead ?? 0) - (b.daysAhead ?? 0));
   return placed;
+}
+
+/**
+ * Whole days between the last loaded bar and the event, or 0 when the event is
+ * not after it.
+ */
+export function daysPastLastBar(data: OhlcvBar[], marker: ChartEventMarker): number {
+  if (data.length === 0) return 0;
+  const last = data[data.length - 1].time;
+
+  if (typeof last === "number") {
+    const target =
+      typeof marker.time === "number"
+        ? marker.time
+        : Math.floor(new Date(`${String(marker.time).slice(0, 10)}T00:00:00`).getTime() / 1000);
+    const diff = target - last;
+    return diff > 0 ? Math.ceil(diff / 86_400) : 0;
+  }
+
+  const target = typeof marker.time === "string" ? marker.time.slice(0, 10) : String(marker.time);
+  const lastStr = String(last).slice(0, 10);
+  if (target <= lastStr) return 0;
+  return Math.round(dayDiff(lastStr, target));
 }
 
 const pct = (value: number, base: number): number | null =>

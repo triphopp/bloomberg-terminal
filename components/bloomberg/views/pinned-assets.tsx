@@ -551,58 +551,210 @@ function MiniSparkline({ prices, isUp }: { prices: number[]; isUp: boolean }) {
   );
 }
 
-// ── AddGroupInline ────────────────────────────────────────────────────────────
+// ── GroupManagerPanel ─────────────────────────────────────────────────────────
 
-function AddGroupInline({
+/** One row of the group list: shows the group, switches to an inline editor on
+ *  click. Rename and recolour both go through the same `onRename` patch. */
+function GroupRow({
+  group,
+  count,
   colors,
-  onAdd,
-  onCancel,
+  canDelete,
+  onRename,
+  onDelete,
 }: {
-  colors: typeof bloombergColors.dark;
-  onAdd: (g: PinGroup) => void;
-  onCancel: () => void;
+  group: PinGroup;
+  count: number;
+  colors: ThemeColors;
+  canDelete: boolean;
+  onRename: (id: string, patch: { name?: string; color?: string }) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(group.name);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+
+  const commit = () => {
+    const n = name.trim();
+    setEditing(false);
+    if (!n || n === group.name) {
+      setName(group.name);
+      return;
+    }
+    onRename(group.id, { name: n });
+  };
+
+  if (editing) {
+    return (
+      <div className="space-y-1 py-0.5">
+        <div className="flex items-center gap-1">
+          <input
+            ref={inputRef}
+            className="text-[10px] px-1 py-0.5 border outline-none font-mono flex-1 min-w-0"
+            style={{
+              background: colors.background,
+              color: colors.text,
+              borderColor: colors.accent,
+            }}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit();
+              if (e.key === "Escape") {
+                setName(group.name);
+                setEditing(false);
+              }
+            }}
+          />
+          <button type="button" title="Save" onClick={commit}>
+            <Check className="h-3 w-3" style={{ color: colors.accent }} />
+          </button>
+          <button
+            type="button"
+            title="Cancel"
+            onClick={() => {
+              setName(group.name);
+              setEditing(false);
+            }}
+          >
+            <X className="h-3 w-3" style={{ color: colors.textSecondary }} />
+          </button>
+        </div>
+        <ColorPicker value={group.color} onChange={(hex) => onRename(group.id, { color: hex })} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1 py-0.5 group/row">
+      <span className="w-2 h-2 shrink-0" style={{ background: group.color }} title={group.color} />
+      <button
+        type="button"
+        title="Rename group"
+        className="flex-1 min-w-0 text-left text-[10px] font-mono truncate hover:underline"
+        style={{ color: colors.text }}
+        onClick={() => setEditing(true)}
+      >
+        {group.name}
+      </button>
+      <span className="text-[9px] shrink-0" style={{ color: colors.textSecondary }}>
+        {count}
+      </span>
+      <button type="button" title="Rename group" onClick={() => setEditing(true)}>
+        <Edit3 className="h-2.5 w-2.5" style={{ color: colors.textSecondary }} />
+      </button>
+      <button
+        type="button"
+        title={
+          canDelete ? "Delete group (pins move to the first group)" : "Cannot delete the last group"
+        }
+        disabled={!canDelete}
+        className="disabled:opacity-25"
+        onClick={() => canDelete && onDelete(group.id)}
+      >
+        <Trash2 className="h-2.5 w-2.5 text-red-400 hover:opacity-70" />
+      </button>
+    </div>
+  );
+}
+
+function GroupManagerPanel({
+  groups,
+  pins,
+  colors,
+  onCreateGroup,
+  onRenameGroup,
+  onDeleteGroup,
+  onClose,
+}: {
+  groups: PinGroup[];
+  pins: PinnedAsset[];
+  colors: ThemeColors;
+  onCreateGroup: (g: PinGroup) => void;
+  onRenameGroup: (id: string, patch: { name?: string; color?: string }) => void;
+  onDeleteGroup: (id: string) => void;
+  onClose: () => void;
 }) {
   const [name, setName] = useState("");
   const [color, setColor] = useState(PALETTE[0].hex);
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => inputRef.current?.focus(), []);
 
+  const counts = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const p of pins) m[p.groupId] = (m[p.groupId] ?? 0) + 1;
+    return m;
+  }, [pins]);
+
   const submit = () => {
     const n = name.trim();
     if (!n) return;
-    onAdd({ id: Date.now().toString(), name: n, color });
+    onCreateGroup({ id: Date.now().toString(), name: n, color });
+    setName("");
   };
 
   return (
     <div
-      className="flex items-center gap-2 px-2 py-1 border"
+      className="absolute right-0 top-6 z-20 w-56 border p-2 text-xs space-y-1.5"
       style={{ background: colors.surface, borderColor: colors.border }}
     >
-      <input
-        ref={inputRef}
-        className="text-xs px-1 py-0.5 border outline-none font-mono w-24"
-        style={{ background: colors.background, color: colors.text, borderColor: colors.border }}
-        placeholder="Group name"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") submit();
-          if (e.key === "Escape") onCancel();
-        }}
-      />
-      <ColorPicker value={color} onChange={setColor} />
-      <button
-        type="button"
-        className="text-[10px] px-2 py-0.5 font-bold disabled:opacity-40"
-        style={{ background: colors.accent, color: "#000" }}
-        disabled={!name.trim()}
-        onClick={submit}
-      >
-        ADD
-      </button>
-      <button type="button" onClick={onCancel}>
-        <X className="h-3 w-3" style={{ color: colors.textSecondary }} />
-      </button>
+      <div className="flex items-center justify-between">
+        <span className="font-bold tracking-widest text-[9px]" style={{ color: colors.accent }}>
+          GROUP MANAGER
+        </span>
+        <button type="button" onClick={onClose}>
+          <X className="h-3 w-3" style={{ color: colors.textSecondary }} />
+        </button>
+      </div>
+      <div className="space-y-0.5 max-h-40 overflow-y-auto">
+        {groups.length === 0 && (
+          <div
+            className="text-center py-1 opacity-50 text-[9px]"
+            style={{ color: colors.textSecondary }}
+          >
+            No groups
+          </div>
+        )}
+        {groups.map((g) => (
+          <GroupRow
+            key={g.id}
+            group={g}
+            count={counts[g.id] ?? 0}
+            colors={colors}
+            canDelete={groups.length > 1}
+            onRename={onRenameGroup}
+            onDelete={onDeleteGroup}
+          />
+        ))}
+      </div>
+      <div className="border-t pt-1.5" style={{ borderColor: colors.border }}>
+        <input
+          ref={inputRef}
+          className="text-[10px] px-1 py-0.5 border outline-none font-mono w-full mb-1"
+          style={{ background: colors.background, color: colors.text, borderColor: colors.border }}
+          placeholder="Group name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+            if (e.key === "Escape") onClose();
+          }}
+        />
+        <ColorPicker value={color} onChange={setColor} />
+        <button
+          type="button"
+          className="mt-1 text-[10px] px-2 py-0.5 font-bold w-full disabled:opacity-40"
+          style={{ background: colors.accent, color: "#000" }}
+          disabled={!name.trim()}
+          onClick={submit}
+        >
+          CREATE
+        </button>
+      </div>
     </div>
   );
 }
@@ -1002,8 +1154,11 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [loadingQuotes, setLoadingQuotes] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const [showAddGroup, setShowAddGroup] = useState(false);
+  const [showGroupMgr, setShowGroupMgr] = useState(false);
   const [showTagMgr, setShowTagMgr] = useState(false);
+  /** Last failed group/pin write — shown in the header so an optimistic update
+   *  that got rolled back is never silent. */
+  const [mutError, setMutError] = useState<string>("");
   const [showAddRow, setShowAddRow] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<string>("symbol");
@@ -1152,6 +1307,15 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
           if (dbGroups.length === 0) {
             const lsGroupsFallback: PinGroup[] = lsGroups ? JSON.parse(lsGroups) : [DEFAULT_GROUP];
             const lsPinsFallback: PinnedAsset[] = lsPins ? JSON.parse(lsPins) : [];
+            // The DB is reachable but has no groups, so seed the fallback ones.
+            // pinned_assets.group_id is a real FK (PRAGMA foreign_keys = ON), so
+            // without this row every "add pin" POST fails and the pin disappears
+            // on the next reload.
+            try {
+              await apiPost("/api/pins/import", { groups: lsGroupsFallback, assets: [] });
+            } catch (seedErr) {
+              console.warn("[PinnedAssets] default group seed failed", seedErr);
+            }
             const ordered = applySavedOrder(lsPinsFallback);
             setGroups(lsGroupsFallback);
             setPins(ordered);
@@ -1246,11 +1410,28 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
 
   // ── CRUD Handlers ─────────────────────────────────────────────────────────
 
+  // Group writes are optimistic, but a failed write used to be swallowed by a
+  // console.error: the group appeared, localStorage kept it, and the next
+  // bootstrap overwrote state with what the DB actually had — so it silently
+  // vanished. Every group mutation now rolls the optimistic state back and
+  // surfaces the failure instead.
+  const rollbackGroups = useCallback(
+    (prevGroups: PinGroup[], prevPins: PinnedAsset[], msg: string, err: unknown) => {
+      console.error(`[pins] ${msg}`, err);
+      setGroups(prevGroups);
+      setPins(prevPins);
+      saveToLS(prevGroups, prevPins, tags);
+      setMutError(msg);
+    },
+    [setGroups, setPins, saveToLS, tags]
+  );
+
   const handleAddGroup = async (g: PinGroup) => {
+    const prevGroups = groups;
     const newGroups = [...groups, g];
     setGroups(newGroups);
-    setShowAddGroup(false);
     saveToLS(newGroups, pins, tags);
+    setMutError("");
     try {
       await apiPost("/api/pins/groups", {
         id: g.id,
@@ -1259,22 +1440,39 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
         sort_order: newGroups.length - 1,
       });
     } catch (err) {
-      console.error("[handleAddGroup]", err);
+      rollbackGroups(prevGroups, pins, `Create group "${g.name}" failed`, err);
+    }
+  };
+
+  const handleRenameGroup = async (id: string, patch: { name?: string; color?: string }) => {
+    const prevGroups = groups;
+    const newGroups = groups.map((g) => (g.id === id ? { ...g, ...patch } : g));
+    setGroups(newGroups);
+    saveToLS(newGroups, pins, tags);
+    setMutError("");
+    try {
+      await apiPatch(`/api/pins/groups/${encodeURIComponent(id)}`, patch);
+    } catch (err) {
+      rollbackGroups(prevGroups, pins, "Rename group failed", err);
     }
   };
 
   const handleDeleteGroup = async (id: string) => {
     if (groups.length <= 1) return;
+    const prevGroups = groups;
+    const prevPins = pins;
     const fallback = groups.find((g) => g.id !== id)?.id ?? groups[0].id;
     const newGroups = groups.filter((g) => g.id !== id);
     const newPins = pins.map((p) => (p.groupId === id ? { ...p, groupId: fallback } : p));
     setGroups(newGroups);
     setPins(newPins);
     saveToLS(newGroups, newPins, tags);
+    setMutError("");
+    if (filterGroup === id) setFilterGroup("all");
     try {
       await apiDelete(`/api/pins/groups/${encodeURIComponent(id)}`);
     } catch (err) {
-      console.error(err);
+      rollbackGroups(prevGroups, prevPins, "Delete group failed", err);
     }
   };
 
@@ -1659,6 +1857,19 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
             LOCAL
           </span>
         )}
+        {mutError && (
+          <button
+            type="button"
+            title={`${mutError} — change was rolled back. Click to dismiss.`}
+            className="flex items-center gap-0.5 text-[8px] px-1 border"
+            style={{ color: "#f87171", borderColor: "#f8717166" }}
+            onClick={() => setMutError("")}
+          >
+            <AlertTriangle className="h-2.5 w-2.5" />
+            {mutError.toUpperCase()}
+            <X className="h-2 w-2" />
+          </button>
+        )}
 
         <div className="ml-auto flex items-center gap-1">
           {/* Group filter */}
@@ -1728,15 +1939,32 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
             )}
           </div>
 
-          <button
-            type="button"
-            title="New group"
-            className="flex items-center gap-0.5 text-[9px] px-1 py-0.5 border font-bold hover:opacity-80"
-            style={{ borderColor: colors.border, color: colors.textSecondary }}
-            onClick={() => setShowAddGroup((v) => !v)}
-          >
-            <Layers className="h-2.5 w-2.5" />
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              title="Groups — create, rename, recolour, delete"
+              className="flex items-center gap-0.5 text-[9px] px-1 py-0.5 border font-bold hover:opacity-80"
+              style={{
+                borderColor: showGroupMgr ? colors.accent : colors.border,
+                color: showGroupMgr ? colors.accent : colors.textSecondary,
+              }}
+              onClick={() => setShowGroupMgr((v) => !v)}
+            >
+              <Layers className="h-2.5 w-2.5" />
+              GRP
+            </button>
+            {showGroupMgr && (
+              <GroupManagerPanel
+                groups={groups}
+                pins={pins}
+                colors={colors}
+                onCreateGroup={handleAddGroup}
+                onRenameGroup={handleRenameGroup}
+                onDeleteGroup={handleDeleteGroup}
+                onClose={() => setShowGroupMgr(false)}
+              />
+            )}
+          </div>
 
           <button
             type="button"
@@ -1767,14 +1995,6 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
 
       {!collapsed && (
         <div>
-          {showAddGroup && (
-            <AddGroupInline
-              colors={colors}
-              onAdd={handleAddGroup}
-              onCancel={() => setShowAddGroup(false)}
-            />
-          )}
-
           {/* Add / Edit forms — shown above both table and card views */}
           {showAddRow && (
             <AddCardForm

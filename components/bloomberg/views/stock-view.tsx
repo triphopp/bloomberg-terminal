@@ -4334,8 +4334,6 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
     indicators: chartIndicators,
     overlays: chartOverlays,
     eventMarkers,
-    showEvents,
-    toggleEvents,
     supportsEvents,
     selectedEvent,
     clearSelectedEvent,
@@ -5051,22 +5049,6 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                         {regressionOpts.mode === "stddev"
                           ? `${regressionOpts.stdDevMult}σ`
                           : `q${regressionOpts.tauPct}`}
-                      </button>
-                    )}
-                    {/* Events toggle (dividends, earnings, splits) — equities only */}
-                    {supportsEvents && (
-                      <button
-                        type="button"
-                        onClick={toggleEvents}
-                        title="Toggle Events (Dividends, Earnings, Splits)"
-                        className="px-1.5 py-0.5 border font-mono text-[9px] transition-colors"
-                        style={{
-                          borderColor: showEvents ? "#4fc3f7" : colors.border,
-                          backgroundColor: showEvents ? "#4fc3f722" : "transparent",
-                          color: showEvents ? "#4fc3f7" : colors.textSecondary,
-                        }}
-                      >
-                        EVENTS
                       </button>
                     )}
                     {/* Trailing P/E pane toggle — equities only */}

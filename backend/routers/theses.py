@@ -17,7 +17,7 @@ is the source of truth once a thesis has been imported.
 import json
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -44,6 +44,18 @@ VALID_STATUS = {"draft", "active", "watch", "invalidated", "closed"}
 
 def _now() -> str:
     return datetime.utcnow().isoformat()
+
+
+def _now_sync() -> str:
+    """`updated_at` in the exact format the sync triggers write.
+
+    db.py stamps `strftime('%Y-%m-%d %H:%M:%f')` — space separator, millisecond
+    precision — and the merge compares those stamps as plain strings. An ISO
+    `T` separator sorts ABOVE every space-separated stamp ('T' > ' '), so a row
+    inserted with `_now()` would out-rank every later trigger-written update and
+    last-write-wins would keep the stale copy forever.
+    """
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
 def _uid() -> str:
@@ -180,8 +192,19 @@ def list_theses(
                 "SELECT thesis_id, COUNT(*) n FROM thesis_events GROUP BY thesis_id"
             ).fetchall()
         }
+        # Only the unresolved ones: a rail badge counting dismissed scenarios
+        # would never go down, so it would stop meaning anything.
+        note_counts = {
+            r["thesis_id"]: r["n"]
+            for r in conn.execute(
+                "SELECT thesis_id, COUNT(*) n FROM thesis_notes "
+                "WHERE deleted_at IS NULL AND status IN ('open','watching') "
+                "GROUP BY thesis_id"
+            ).fetchall()
+        }
     for r in rows:
         r["event_count"] = counts.get(r["id"], 0)
+        r["open_note_count"] = note_counts.get(r["id"], 0)
     return {"theses": rows}
 
 
@@ -249,13 +272,14 @@ def get_thesis(thesis_id: str, event_limit: int = Query(50)):
                 (thesis_id,),
             ).fetchall()
         ]
+        notes = _notes_for(conn, thesis_id)
     for ev in events:
         if ev.get("payload"):
             try:
                 ev["payload"] = json.loads(ev["payload"])
             except (TypeError, ValueError):
                 pass
-    return {"thesis": thesis, "events": events, "links": links}
+    return {"thesis": thesis, "events": events, "links": links, "notes": notes}
 
 
 @router.post("")
@@ -404,6 +428,221 @@ def delete_event(thesis_id: str, event_id: str):
             raise HTTPException(status_code=400, detail="only NOTE events can be deleted")
         conn.execute("DELETE FROM thesis_events WHERE id = ?", (event_id,))
     return {"ok": True}
+
+
+# ── Notes ────────────────────────────────────────────────────────────────────
+#
+# A note is the standing counterpart to an event: the scenarios, risks and
+# catalysts the user is holding in their head about a thesis, kept editable
+# until they resolve. Events stay append-only; a note that resolves writes ONE
+# event so the timeline still shows when the thinking moved.
+
+VALID_NOTE_KIND = {"NOTE", "SCENARIO", "RISK", "CATALYST", "QUESTION", "EVIDENCE"}
+VALID_NOTE_STATUS = {"open", "watching", "confirmed", "dismissed"}
+VALID_IMPACT = {"bull", "bear", "mixed"}
+
+NOTE_EDITABLE = (
+    "kind", "title", "body", "impact", "likelihood", "severity",
+    "status", "watch_date", "pinned", "sort_order",
+)
+
+
+class NoteIn(BaseModel):
+    kind: str = "NOTE"
+    title: str = ""
+    body: str = ""
+    impact: Optional[str] = None
+    likelihood: Optional[int] = None
+    severity: Optional[int] = None
+    status: str = "open"
+    watch_date: Optional[str] = None
+    pinned: bool = False
+
+
+class NotePatch(BaseModel):
+    kind: Optional[str] = None
+    title: Optional[str] = None
+    body: Optional[str] = None
+    impact: Optional[str] = None
+    likelihood: Optional[int] = None
+    severity: Optional[int] = None
+    status: Optional[str] = None
+    watch_date: Optional[str] = None
+    pinned: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+
+def _validate_note(kind: Optional[str], status: Optional[str], impact: Optional[str]) -> None:
+    if kind is not None and kind.upper() not in VALID_NOTE_KIND:
+        raise HTTPException(status_code=400, detail=f"kind must be one of {sorted(VALID_NOTE_KIND)}")
+    if status is not None and status not in VALID_NOTE_STATUS:
+        raise HTTPException(
+            status_code=400, detail=f"status must be one of {sorted(VALID_NOTE_STATUS)}"
+        )
+    # "" is how the UI clears the select, and is stored as NULL rather than rejected.
+    if impact not in (None, "") and impact not in VALID_IMPACT:
+        raise HTTPException(status_code=400, detail=f"impact must be one of {sorted(VALID_IMPACT)}")
+
+
+def _clamp_1_5(v: Optional[int]) -> Optional[int]:
+    if v is None:
+        return None
+    return max(1, min(5, int(v)))
+
+
+def _notes_for(conn, thesis_id: str, include_deleted: bool = False) -> list[dict]:
+    sql = "SELECT * FROM thesis_notes WHERE thesis_id = ?"
+    if not include_deleted:
+        sql += " AND deleted_at IS NULL"
+    # Pinned first, then the ones with a date to watch, soonest first — an
+    # undated note has no deadline and should not outrank one that does.
+    sql += (
+        " ORDER BY pinned DESC, "
+        " CASE WHEN watch_date IS NULL OR watch_date = '' THEN 1 ELSE 0 END ASC,"
+        " watch_date ASC, sort_order ASC, created_at DESC"
+    )
+    return [dict(r) for r in conn.execute(sql, (thesis_id,)).fetchall()]
+
+
+@router.get("/notes/due")
+def notes_due(days: int = Query(14), include_undated: bool = Query(False)):
+    """Open notes whose watch_date falls inside the window — the "what am I
+    waiting on across the whole book" view, joined to the thesis they belong to."""
+    horizon = (datetime.utcnow().date() + timedelta(days=max(0, days))).isoformat()
+    sql = """SELECT n.*, t.symbol, t.title AS thesis_title, t.status AS thesis_status
+             FROM thesis_notes n JOIN theses t ON t.id = n.thesis_id
+             WHERE n.deleted_at IS NULL AND t.deleted_at IS NULL
+               AND n.status IN ('open','watching')"""
+    if include_undated:
+        sql += " AND (n.watch_date IS NULL OR n.watch_date = '' OR n.watch_date <= ?)"
+    else:
+        sql += " AND n.watch_date IS NOT NULL AND n.watch_date != '' AND n.watch_date <= ?"
+    sql += " ORDER BY n.watch_date ASC, n.created_at DESC"
+    with get_db() as conn:
+        rows = [dict(r) for r in conn.execute(sql, (horizon,)).fetchall()]
+    return {"notes": rows, "horizon": horizon}
+
+
+@router.get("/{thesis_id}/notes")
+def list_notes(thesis_id: str, include_deleted: bool = Query(False)):
+    with get_db() as conn:
+        _get_thesis(conn, thesis_id)
+        return {"notes": _notes_for(conn, thesis_id, include_deleted)}
+
+
+@router.post("/{thesis_id}/notes")
+def add_note(thesis_id: str, body: NoteIn):
+    _validate_note(body.kind, body.status, body.impact)
+    if not body.title.strip() and not body.body.strip():
+        raise HTTPException(status_code=400, detail="a note needs a title or a body")
+    note_id = _uid()
+    now = _now_sync()
+    with get_db() as conn:
+        _get_thesis(conn, thesis_id)
+        conn.execute(
+            """INSERT INTO thesis_notes
+               (id, thesis_id, kind, title, body, impact, likelihood, severity,
+                status, watch_date, pinned, sort_order, device_id, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                note_id,
+                thesis_id,
+                body.kind.upper(),
+                body.title.strip(),
+                body.body,
+                body.impact or None,
+                _clamp_1_5(body.likelihood),
+                _clamp_1_5(body.severity),
+                body.status,
+                body.watch_date or None,
+                1 if body.pinned else 0,
+                0,
+                device_id(),
+                now,
+                now,
+            ),
+        )
+        _log_event(
+            conn,
+            thesis_id,
+            "NOTE_ADDED",
+            {"kind": body.kind.upper(), "note_id": note_id},
+            body.title.strip() or body.body[:120],
+        )
+        row = dict(conn.execute("SELECT * FROM thesis_notes WHERE id = ?", (note_id,)).fetchone())
+    return {"note": row}
+
+
+@router.patch("/{thesis_id}/notes/{note_id}")
+def patch_note(thesis_id: str, note_id: str, body: NotePatch):
+    _validate_note(body.kind, body.status, body.impact)
+    # exclude_unset, not exclude_none: sending null is how the UI clears
+    # watch_date / impact / likelihood, and exclude_none would drop exactly that.
+    updates = body.model_dump(exclude_unset=True)
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM thesis_notes WHERE id = ? AND thesis_id = ?", (note_id, thesis_id)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="note not found")
+        before = dict(row)
+
+        fields: dict[str, Any] = {}
+        for key in NOTE_EDITABLE:
+            if key not in updates:
+                continue
+            val = updates[key]
+            if key == "kind" and val is not None:
+                val = str(val).upper()
+            elif key in ("likelihood", "severity"):
+                val = _clamp_1_5(val)
+            elif key == "pinned":
+                val = 1 if val else 0
+            elif key in ("impact", "watch_date") and val == "":
+                val = None
+            fields[key] = val
+        if not fields:
+            return {"note": before}
+
+        fields["updated_at"] = _now_sync()
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        conn.execute(
+            f"UPDATE thesis_notes SET {sets} WHERE id = ?", [*fields.values(), note_id]
+        )
+
+        # A note going confirmed/dismissed is the thinking actually moving, so
+        # it belongs in the timeline. Fixing a typo in the body does not.
+        new_status = fields.get("status")
+        if new_status and new_status != before["status"] and new_status in ("confirmed", "dismissed"):
+            _log_event(
+                conn,
+                thesis_id,
+                "NOTE_RESOLVED",
+                {"status": {"from": before["status"], "to": new_status}, "note_id": note_id},
+                before["title"] or (before["body"] or "")[:120],
+            )
+        after = dict(conn.execute("SELECT * FROM thesis_notes WHERE id = ?", (note_id,)).fetchone())
+    return {"note": after}
+
+
+@router.delete("/{thesis_id}/notes/{note_id}")
+def delete_note(thesis_id: str, note_id: str, purge: bool = Query(False)):
+    """Soft by default, same reasoning as the thesis delete: an UPDATE emits no
+    tombstone and stays reversible on both devices."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM thesis_notes WHERE id = ? AND thesis_id = ?", (note_id, thesis_id)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="note not found")
+        if purge:
+            conn.execute("DELETE FROM thesis_notes WHERE id = ?", (note_id,))
+        else:
+            conn.execute(
+                "UPDATE thesis_notes SET deleted_at = ?, updated_at = ? WHERE id = ?",
+                (_now(), _now_sync(), note_id),
+            )
+    return {"ok": True, "purged": purge}
 
 
 # ── Trade links ──────────────────────────────────────────────────────────────

@@ -207,9 +207,6 @@ export const chartShowFootprintAtom = atomWithStorage<boolean>(
     getOnInit: true,
   }
 );
-export const chartShowEventsAtom = atomWithStorage<boolean>("chart:show-events", true, undefined, {
-  getOnInit: true,
-});
 export const chartShowPEAtom = atomWithStorage<boolean>("chart:show-pe", false, undefined, {
   getOnInit: true,
 });

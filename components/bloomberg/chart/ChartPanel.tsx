@@ -142,8 +142,6 @@ export function ChartPanel({
     toggleRegression,
     setRegressionMode,
     handleChartClick,
-    showEvents,
-    toggleEvents,
     supportsEvents,
     selectedEvent,
     clearSelectedEvent,
@@ -351,21 +349,6 @@ export function ChartPanel({
                 {regressionOpts.mode === "stddev"
                   ? `${regressionOpts.stdDevMult}σ`
                   : `q${regressionOpts.tauPct}`}
-              </button>
-            )}
-            {supportsEvents && (
-              <button
-                type="button"
-                className="text-[8px] px-1 py-0 font-bold border"
-                title="Toggle Events (Dividends, Earnings, Splits)"
-                style={{
-                  borderColor: showEvents ? "#4fc3f7" : colors.border,
-                  color: showEvents ? "#4fc3f7" : colors.textSecondary,
-                  background: showEvents ? "#4fc3f715" : "transparent",
-                }}
-                onClick={toggleEvents}
-              >
-                EVT
               </button>
             )}
             {supportsEvents && (

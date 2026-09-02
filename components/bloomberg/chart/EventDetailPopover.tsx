@@ -12,8 +12,9 @@
  * hide the rest. With more than one, the card opens on the list.
  */
 
-import { ChevronLeft, X } from "lucide-react";
+import { Banknote, ChevronLeft, Clock, Split, TrendingDown, TrendingUp, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { EventIconName } from "./event-icons.ts";
 import { eventChipStyle } from "./event-rail-overlay";
 import { computeEventReaction, earningsSession } from "./event-reaction";
 import type { ChartColors, ChartEventMarker, OhlcvBar } from "./types";
@@ -34,6 +35,22 @@ const CARD_WIDTH = 232;
 /** Keep the card clear of the click so it never lands under the cursor. */
 const OFFSET = 12;
 const VIEWPORT_MARGIN = 8;
+
+/**
+ * The DOM twin of the rail's canvas icons.
+ *
+ * The rail cannot use React components — it paints on the chart's own canvas —
+ * so the two sets are drawn from different code. Keeping them keyed off the same
+ * `EventIconName` is what stops them drifting into two different vocabularies
+ * for the same event.
+ */
+const ICON: Record<EventIconName, typeof Banknote> = {
+  cash: Banknote,
+  arrowUp: TrendingUp,
+  arrowDown: TrendingDown,
+  clock: Clock,
+  split: Split,
+};
 
 const TYPE_TITLE: Record<ChartEventMarker["type"], string> = {
   dividend: "DIVIDEND",
@@ -177,6 +194,7 @@ export function EventDetailPopover({
         <div className="py-0.5">
           {markers.map((m, i) => {
             const chip = eventChipStyle(m);
+            const Icon = ICON[chip.icon];
             return (
               <button
                 key={`${m.type}-${String(m.time)}`}
@@ -184,8 +202,12 @@ export function EventDetailPopover({
                 className="flex w-full items-center gap-2 px-1.5 py-0.5 text-left hover:bg-white/5"
                 onClick={() => setPicked(i)}
               >
-                <span className="w-6 shrink-0 font-bold" style={{ color: chip.color }}>
-                  {chip.text}
+                <span
+                  className="flex w-6 shrink-0 items-center gap-0.5 font-bold"
+                  style={{ color: chip.color }}
+                  title={chip.label}
+                >
+                  <Icon className="h-2.5 w-2.5" aria-label={chip.label} />
                 </span>
                 <span className="shrink-0" style={{ color: colors.text }}>
                   {fmtDate(m)}
@@ -264,6 +286,7 @@ export function EventDetailPopover({
             </button>
           )}
           {TYPE_TITLE[marker.type]}
+          {marker.upcoming ? <span style={{ color: colors.textSecondary }}>· UPCOMING</span> : null}
           {symbol ? <span style={{ color: colors.textSecondary }}> · {symbol}</span> : null}
         </span>
         <button
@@ -277,7 +300,14 @@ export function EventDetailPopover({
       </div>
 
       <div className="px-1.5 py-1 space-y-0.5">
-        <Row label="DATE" value={dateStr} colors={colors} />
+        <Row
+          label={marker.upcoming && marker.type === "dividend" ? "EX-DATE" : "DATE"}
+          value={dateStr}
+          colors={colors}
+        />
+        {marker.upcoming && marker.payDate ? (
+          <Row label="PAY DATE" value={marker.payDate} colors={colors} />
+        ) : null}
 
         {marker.type === "earnings" && (
           <>
@@ -306,7 +336,11 @@ export function EventDetailPopover({
           <>
             <Row
               label="AMOUNT"
-              value={marker.dividend != null ? marker.dividend.toFixed(4) : "—"}
+              value={
+                marker.dividend != null
+                  ? `${marker.dividend.toFixed(4)}${marker.estimated ? " est" : ""}`
+                  : "—"
+              }
               colors={colors}
             />
             <Row
@@ -327,22 +361,40 @@ export function EventDetailPopover({
       </div>
 
       <div className="px-1.5 py-1 space-y-0.5" style={{ borderTop: `1px solid ${colors.border}` }}>
-        <div className="tracking-wide" style={{ color: colors.textSecondary }}>
-          {reactionLabel}
-        </div>
-        {(
-          [
-            ["gap", reaction.gapPct],
-            ["close", reaction.sameDayPct],
-            ["D+1", reaction.nextDayPct],
-            ["D+5", reaction.fiveDayPct],
-          ] as const
-        ).map(([label, value]) => {
-          const f = fmtPct(value, colors);
-          return (
-            <Row key={label} label={label} value={f.text} valueColor={f.color} colors={colors} />
-          );
-        })}
+        {marker.upcoming ? (
+          // No bar exists for a date the market has not reached, so every
+          // reaction figure would be an em dash. Say why instead of showing four
+          // blanks that read like missing data.
+          <div style={{ color: colors.textSecondary }}>
+            Scheduled — no price reaction yet
+            {marker.estimated ? "; amount carried from the last payment" : ""}
+          </div>
+        ) : (
+          <>
+            <div className="tracking-wide" style={{ color: colors.textSecondary }}>
+              {reactionLabel}
+            </div>
+            {(
+              [
+                ["gap", reaction.gapPct],
+                ["close", reaction.sameDayPct],
+                ["D+1", reaction.nextDayPct],
+                ["D+5", reaction.fiveDayPct],
+              ] as const
+            ).map(([label, value]) => {
+              const f = fmtPct(value, colors);
+              return (
+                <Row
+                  key={label}
+                  label={label}
+                  value={f.text}
+                  valueColor={f.color}
+                  colors={colors}
+                />
+              );
+            })}
+          </>
+        )}
       </div>
     </div>
   );

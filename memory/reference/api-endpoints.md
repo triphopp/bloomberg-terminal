@@ -16,7 +16,8 @@
 - `GET /api/stock/history/{symbol}` — OHLCV history (1d/1w/1m/3m/ytd/1y/5y/max)
 - `GET /api/stock/financials/{symbol}` — income statement + cash flow
 - `GET /api/stock/analyst/{symbol}` — analyst ratings
-- `GET /api/stock/earnings-calendar/{symbol}` — earnings dates + EPS estimate/reported/surprise%
+- `GET /api/stock/dividends/{symbol}` — `{dividends, splits, upcomingDividends}`; cache 1h. `dividends` is paid history only (yfinance `ticker.dividends` can never hold a future date) — the next **declared** ex-date comes from `ticker.calendar` as `upcomingDividends: [{date, payDate, dividend, estimated}]`, empty when Yahoo's calendar date is already in the past. Next.js proxy: `type=dividends`
+- `GET /api/stock/earnings-calendar/{symbol}` — earnings dates + EPS estimate/reported/surprise%; **includes the next scheduled report** (reportedEPS `null`)
 - `GET /api/stock/pe-history/{symbol}` — trailing (TTM) P/E weekly series (adj-EPS) + percentile stats + earnings list; cache 1h. Next.js proxy: `type=pe-history`
 
 ## Options (`routers/options.py`)
@@ -157,8 +158,8 @@ US listings only (EDGAR ไม่มี `.BK`/`.KS` → ใช้ `routers/sec_v
 
 ## Theses (`routers/theses.py`) — prefix `/api/v2/theses`
 DB-backed investment theses. `theses` = materialised head (field-level LWW merge); `thesis_events` = append-only history (never UPDATEd → no merge conflicts). Cloud-synced via `SYNC_TABLES`.
-- `GET /api/v2/theses?symbol&category&status&account_id&include_deleted` — list + `event_count`
-- `GET /api/v2/theses/{id}` — `{thesis, events, links}` (links join `trades`)
+- `GET /api/v2/theses?symbol&category&status&account_id&include_deleted` — list + `event_count` + `open_note_count` (open|watching only — a badge counting dismissed scenarios never goes down)
+- `GET /api/v2/theses/{id}` — `{thesis, events, links, notes}` (links join `trades`)
 - `GET /api/v2/theses/by-symbol/{symbol}` — theses for one ticker
 - `GET /api/v2/theses/summary/by-symbol` — `{by_symbol: {SYM: {count, status, conviction, id}}}`, one query for the whole book (positions-table badge)
 - `POST /api/v2/theses` — create → event `CREATED`
@@ -168,6 +169,10 @@ DB-backed investment theses. `theses` = materialised head (field-level LWW merge
 - `GET|POST /api/v2/theses/{id}/events` — timeline; POST adds a manual `NOTE` (`occurred_at` may be back-dated)
 - `DELETE /api/v2/theses/{id}/events/{event_id}` — NOTE events only (400 otherwise — edits are the record)
 - `POST /api/v2/theses/{id}/links` / `DELETE .../links/{trade_id}` — link a thesis to a trade
+- `GET|POST /api/v2/theses/{id}/notes?include_deleted` — standing notes (scenarios/risks/catalysts); POST logs `NOTE_ADDED`. Order: pinned → soonest `watch_date` → undated
+- `PATCH /api/v2/theses/{id}/notes/{note_id}` — edit in place; `""` clears `impact`/`watch_date`; a status flip to `confirmed`/`dismissed` logs ONE `NOTE_RESOLVED`, body edits log nothing
+- `DELETE /api/v2/theses/{id}/notes/{note_id}?purge=false` — soft by default (same tombstone reasoning as the thesis delete)
+- `GET /api/v2/theses/notes/due?days=14&include_undated=false` — cross-thesis: unresolved notes whose `watch_date` falls inside the window, joined to their thesis (`symbol`, `thesis_title`)
 - `POST /api/v2/theses/import-md?dry_run` — import `THESES_DIR/*.md`; keyed on `source_file` so re-running never duplicates
 - `POST /api/v2/theses/{id}/export-md` — write markdown back to `THESES_DIR` (Obsidian); DB stays authoritative
 
