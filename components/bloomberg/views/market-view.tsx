@@ -1171,8 +1171,6 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     setRegressionMode: setMktRegressionMode,
     handleChartClick: handleMktChartClick,
     toggleVolumeProfile: toggleHeatmapVP,
-    showEvents: heatmapShowEvents,
-    toggleEvents: toggleHeatmapEvents,
     supportsEvents: heatmapSupportsEvents,
     selectedEvent: mktSelectedEvent,
     clearSelectedEvent: clearMktSelectedEvent,
@@ -2307,20 +2305,6 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
               {mktRegressionOpts.mode === "stddev"
                 ? `${mktRegressionOpts.stdDevMult}\u03c3`
                 : `q${mktRegressionOpts.tauPct}`}
-            </button>
-          )}
-          {heatmapSupportsEvents && (
-            <button
-              className="text-[8px] px-1 py-0 font-bold border"
-              style={{
-                borderColor: heatmapShowEvents ? "#4fc3f7" : colors.border,
-                color: heatmapShowEvents ? "#4fc3f7" : colors.textSecondary,
-                background: heatmapShowEvents ? "#4fc3f715" : "transparent",
-              }}
-              onClick={toggleHeatmapEvents}
-              title="Toggle Events (Dividends, Earnings, Splits)"
-            >
-              EVT
             </button>
           )}
           {heatmapSupportsEvents && (

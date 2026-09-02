@@ -58,6 +58,7 @@ import {
 } from "./indicators/rsiScale";
 import { OverlayPrimitive } from "./overlay-primitive";
 import { clampPaneHeight, computePaneLayout, paneKey, subPaneKeyAtOffset } from "./pane-layout";
+import { createPriceGridOverlay } from "./price-grid-overlay";
 import type {
   CanvasOverlay,
   ChartColors,
@@ -381,9 +382,13 @@ export function ModularChart({
         fontFamily: "monospace",
         fontSize: 10,
       },
+      // The library's grid is chart-wide — every pane or none — so it is off,
+      // and the price pane draws its own (`createPriceGridOverlay`, attached
+      // below). An indicator sub-pane then has no grid because nothing draws one
+      // there, rather than because something is painted over it.
       grid: {
-        vertLines: { color: gridColor },
-        horzLines: { color: gridColor },
+        vertLines: { visible: false },
+        horzLines: { visible: false },
       },
       crosshair: {
         mode: 0,
@@ -649,7 +654,12 @@ export function ModularChart({
     // The event rail is an overlay like any other, so it inherits pane clipping
     // and the redraw-on-every-invalidation behaviour for free — including the
     // pan/zoom repositioning that a DOM-based rail would have to chase by hand.
-    const allOverlays = hasRail ? [...overlays, createEventRailOverlay(placedEvents)] : overlays;
+    // The grid is an overlay like the rest, and always first in the list so it
+    // is the bottom-most thing in the pane.
+    const gridOverlay = createPriceGridOverlay(gridColor);
+    const allOverlays = hasRail
+      ? [gridOverlay, ...overlays, createEventRailOverlay(placedEvents)]
+      : [gridOverlay, ...overlays];
 
     if (allOverlays.length > 0) {
       // Measured once per chart build: overlay colors follow the painted surface,
@@ -670,7 +680,12 @@ export function ModularChart({
         if (placed.length > 0 !== hasRail) return false;
         livePlacedEvents = placed;
 
-        const nextOverlays = hasRail ? [...overlays, createEventRailOverlay(placed)] : allOverlays;
+        // Same order as `allOverlays`, grid first: `OverlayPrimitive` fixes its
+        // z-order at construction, so swapping a "top" overlay into the slot
+        // holding the "bottom" grid would put the grid over the candles.
+        const nextOverlays = hasRail
+          ? [gridOverlay, ...overlays, createEventRailOverlay(placed)]
+          : allOverlays;
         if (nextOverlays.length !== primitives.length) return false;
         primitives.forEach((p, i) => p.update(nextOverlays[i], bars));
         return true;

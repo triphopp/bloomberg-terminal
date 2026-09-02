@@ -20,38 +20,50 @@ const marker = (over: Partial<ChartEventMarker> = {}): ChartEventMarker => ({
 // red-green colour blindness and disappears entirely on a printout.
 
 test("a dividend reads as money", () => {
-  assert.equal(eventChipStyle(marker({ type: "dividend", dividend: 1.47 })).text, "$");
+  const style = eventChipStyle(marker({ type: "dividend", dividend: 1.47 }));
+  assert.equal(style.icon, "cash");
+  assert.equal(style.label, "$");
 });
 
-test("earnings say beat, miss, or pending in the glyph itself", () => {
-  assert.equal(eventChipStyle(marker({ surprise: 5.8 })).text, "E+");
-  assert.equal(eventChipStyle(marker({ surprise: -4.1 })).text, "E-");
-  assert.equal(eventChipStyle(marker({ surprise: null })).text, "E?");
+test("a declared but unpaid dividend is marked as not yet certain", () => {
+  // A paid dividend and an announced one must not draw the same chip — the
+  // amount on the upcoming one is last quarter's until the issuer says so.
+  assert.equal(
+    eventChipStyle(marker({ type: "dividend", dividend: 1.47, upcoming: true })).label,
+    "$?"
+  );
+});
+
+test("earnings say beat, miss, or pending in the mark itself", () => {
+  // Direction is carried by the arrow, not by the colour it is drawn in.
+  assert.equal(eventChipStyle(marker({ surprise: 5.8 })).icon, "arrowUp");
+  assert.equal(eventChipStyle(marker({ surprise: -4.1 })).icon, "arrowDown");
+  assert.equal(eventChipStyle(marker({ surprise: null })).icon, "clock");
 });
 
 test("an exactly in-line report counts as a beat, not a miss", () => {
-  assert.equal(eventChipStyle(marker({ surprise: 0 })).text, "E+");
+  assert.equal(eventChipStyle(marker({ surprise: 0 })).icon, "arrowUp");
 });
 
 test("a split shows its ratio", () => {
-  assert.equal(eventChipStyle(marker({ type: "split", splitRatio: 10 })).text, "x10");
+  assert.equal(eventChipStyle(marker({ type: "split", splitRatio: 10 })).label, "x10");
 });
 
 test("a fractional split ratio is not rounded away to x1", () => {
   // A 1.5:1 split rendered as "x1" would read as no split at all.
-  assert.equal(eventChipStyle(marker({ type: "split", splitRatio: 1.5 })).text, "x1.5");
+  assert.equal(eventChipStyle(marker({ type: "split", splitRatio: 1.5 })).label, "x1.5");
 });
 
 test("a split with no ratio still gets a label", () => {
-  assert.equal(eventChipStyle(marker({ type: "split" })).text, "SPL");
+  assert.equal(eventChipStyle(marker({ type: "split" })).label, "SPL");
 });
 
 // ── clusterChips ───────────────────────────────────────────────────────────
 
-const chip = (x: number, w = 12, text = "$"): PositionedChip => ({
+const chip = (x: number, w = 12): PositionedChip => ({
   x,
   w,
-  style: { text, color: "#4fc3f7" },
+  style: { icon: "cash", label: "$", color: "#4fc3f7" },
 });
 
 test("well-separated chips each stay their own", () => {

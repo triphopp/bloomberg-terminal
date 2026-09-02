@@ -18,6 +18,12 @@ interface SplitEntry {
   date: string;
   ratio: number;
 }
+interface UpcomingDividendEntry {
+  date: string;
+  payDate: string | null;
+  dividend: number | null;
+  estimated: boolean;
+}
 interface EarningsEntry {
   date: string;
   epsEstimate: number | null;
@@ -27,6 +33,13 @@ interface EarningsEntry {
 }
 
 const EMPTY: ChartEventMarker[] = [];
+
+/** Local calendar day, so "upcoming" matches the user's clock, not UTC. */
+function todayIso(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
 
 export function useStockEvents(symbol: string | null, enabled = true) {
   const divQuery = useQuery({
@@ -53,6 +66,7 @@ export function useStockEvents(symbol: string | null, enabled = true) {
   const markers: ChartEventMarker[] = useMemo(() => {
     if (!divData && !earningsData) return EMPTY;
     const out: ChartEventMarker[] = [];
+    const today = todayIso();
 
     // Dividends
     const divs: DividendEntry[] = divData?.dividends ?? [];
@@ -80,6 +94,28 @@ export function useStockEvents(symbol: string | null, enabled = true) {
       });
     }
 
+    // Upcoming dividends — declared but not yet gone ex, so they are absent from
+    // the paid history above. The amount is last quarter's unless the issuer
+    // announced a change, hence `estimated`.
+    const upcomingDivs: UpcomingDividendEntry[] = divData?.upcomingDividends ?? [];
+    for (const u of upcomingDivs) {
+      const amount = u.dividend ?? undefined;
+      out.push({
+        time: u.date.slice(0, 10),
+        type: "dividend",
+        label: "D",
+        value: amount,
+        dividend: amount,
+        payDate: u.payDate,
+        upcoming: true,
+        estimated: u.estimated,
+        detail:
+          amount != null
+            ? `Ex-div ${amount.toFixed(4)}${u.estimated ? " (est)" : ""}`
+            : "Ex-dividend",
+      });
+    }
+
     // Earnings — colored green (beat) / red (miss); an upcoming report has no
     // reported EPS yet and stays neutral.
     const earnings: EarningsEntry[] = earningsData?.earningsDates ?? [];
@@ -101,6 +137,8 @@ export function useStockEvents(symbol: string | null, enabled = true) {
         surprise,
         eventType: e.eventType,
         reportedAt: e.date,
+        // A scheduled report: dated ahead of today with nothing reported yet.
+        upcoming: e.date.slice(0, 10) > today && e.reportedEPS == null,
       });
     }
 

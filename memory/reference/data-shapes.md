@@ -525,12 +525,16 @@ interface ChartEventMarker { time: string|number; type: ChartEventType; label: s
   // raw, unformatted — the detail popover lays these out; the chart itself only reads type/color
   epsEstimate?: number|null; reportedEPS?: number|null; surprise?: number|null; eventType?: string;
   reportedAt?: string;   // "YYYY-MM-DD HH:MM" — hour ≥16 means AMC, so the reaction is on the NEXT bar
-  dividend?: number; splitRatio?: number; }
+  dividend?: number; splitRatio?: number;
+  upcoming?: boolean;    // declared/scheduled but not reached — drawn past the last bar, no reaction
+  estimated?: boolean;   // amount carried over from the last payment, not announced
+  payDate?: string|null; // dividend pay date, when known }
 interface EventPriceReaction { gapPct: number|null; sameDayPct: number|null; nextDayPct: number|null; fiveDayPct: number|null; closeOnEvent: number|null; }
 ```
 - Built by `hooks/useStockEvents.ts` from `/api/stock?type=dividends` + `type=earnings-calendar`. `time` is always sliced to `YYYY-MM-DD`.
 - `EventPriceReaction` is **derived client-side** from the OHLCV already on the chart (`chart/event-reaction.ts`) — no endpoint. Fields go `null` rather than wrong when the window runs off either edge of the loaded period.
-- `label` is still populated but is no longer drawn — markers are shape-only since 2026-08-04.
+- **Upcoming events** (`upcoming: true`) have no bar to sit on. `placeEvents()` anchors them on the last bar with `future: true` + `daysAhead` (dropped past `MAX_FUTURE_DAYS` = 200); the rail queues them past the right edge with a dashed chip (`$?` / `E?`), and the popover shows "Scheduled — no price reaction yet".
+- `label` (`$` / `$?` / `E+` / `E-` / `E?` / `x10`) is no longer drawn on the rail — since 2026-08-31 chips carry a `lucide` icon (`EventChipStyle.icon`, see `chart/event-icons.ts`) and `label` survives as the accessible name for it.
 
 ### `PolySignal` (news-view.tsx)
 ```ts

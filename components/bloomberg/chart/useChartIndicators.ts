@@ -7,7 +7,7 @@
  * Views call this hook, destructure what they need, and pass outputs straight
  * to <ModularChart>. No view should manage indicators/overlays/events itself.
  *
- *   const { indicators, overlays, eventMarkers, showEvents, toggleEvents } =
+ *   const { indicators, overlays, eventMarkers } =
  *     useChartIndicators({ symbol, barInterval, chartType });
  */
 
@@ -20,7 +20,6 @@ import {
   chartIndicatorSpecsAtom,
   chartRegressionAtom,
   chartRegressionOptsAtom,
-  chartShowEventsAtom,
   chartShowFootprintAtom,
   chartShowPEAtom,
   chartShowVolumeProfileAtom,
@@ -161,7 +160,6 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
   const [specs, setSpecs] = useAtom(chartIndicatorSpecsAtom);
   const [showVolumeProfile, setShowVolumeProfile] = useAtom(chartShowVolumeProfileAtom);
   const [showFootprint, setShowFootprint] = useAtom(chartShowFootprintAtom);
-  const [showEvents, setShowEvents] = useAtom(chartShowEventsAtom);
   const [showPE, setShowPE] = useAtom(chartShowPEAtom);
   const [vpConfig, setVPConfig] = useAtom(chartVPConfigAtom);
   const [intradayData, setIntradayData] = useState<OhlcvBar[] | undefined>(undefined);
@@ -228,17 +226,20 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
   const footprintQuery = useFootprintData(fpEnabled ? symbol : null, barInterval, fpEnabled);
 
   // ── Event markers: dividends, earnings, splits ──
-  const { markers: rawEventMarkers } = useStockEvents(
-    supportsEvents && showEvents && chartType === "candle" ? symbol : null,
-    true
-  );
+  //
+  // Not a toggle. Dividends, earnings and splits are part of what a price
+  // series *is* — a gap the size of an ex-dividend reads as a sell-off with the
+  // rail switched off — so the rail is always on wherever it applies, the way
+  // the volume pane is. The events chip row costs one pinned row at the bottom
+  // of the price pane and no vertical space in the candles themselves.
+  const showEvents = supportsEvents && chartType === "candle";
+  const { markers: rawEventMarkers } = useStockEvents(showEvents ? symbol : null, true);
 
   // Memoized: ModularChart rebuilds the whole chart when this array's identity
   // changes, so a fresh `[]` on every render would tear it down continuously.
   const eventMarkers: ChartEventMarker[] = useMemo(
-    () =>
-      showEvents && supportsEvents && chartType === "candle" ? rawEventMarkers : EMPTY_MARKERS,
-    [showEvents, supportsEvents, chartType, rawEventMarkers]
+    () => (showEvents ? rawEventMarkers : EMPTY_MARKERS),
+    [showEvents, rawEventMarkers]
   );
 
   // ── Trailing P/E history (equities only) ──
@@ -392,7 +393,6 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     [setShowVolumeProfile]
   );
   const toggleFootprint = useCallback(() => setShowFootprint((v) => !v), [setShowFootprint]);
-  const toggleEvents = useCallback(() => setShowEvents((v) => !v), [setShowEvents]);
   const toggleWindowUnit = useCallback(
     () => setWindowUnit((u) => (u === "bars" ? "days" : "bars")),
     [setWindowUnit]
@@ -471,10 +471,9 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     // Lookback window unit: "bars" (raw candles) vs "days" (session time)
     windowUnit,
     toggleWindowUnit,
-    // Event markers — pass directly to <ModularChart eventMarkers={...}>
+    // Event markers — pass directly to <ModularChart eventMarkers={...}>. Always
+    // populated for an equity on a candle chart; there is no switch.
     eventMarkers,
-    showEvents,
-    toggleEvents,
     supportsEvents,
     // Marker clicked on the chart — feed into <EventDetailPopover>
     selectedEvent,

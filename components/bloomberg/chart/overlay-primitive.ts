@@ -78,9 +78,12 @@ class OverlayPaneRenderer implements IPrimitivePaneRenderer {
 class OverlayPaneView implements IPrimitivePaneView {
   constructor(private readonly _primitive: OverlayPrimitive) {}
 
-  /** Above the series, matching the old canvas z-index that beat the candles. */
+  /**
+   * Above the series by default, matching the old canvas z-index that beat the
+   * candles. An overlay that paints the pane's own ground asks for "bottom".
+   */
   zOrder(): PrimitivePaneViewZOrder {
-    return "top";
+    return this._primitive.zOrder;
   }
 
   renderer(): IPrimitivePaneRenderer | null {
@@ -89,6 +92,8 @@ class OverlayPaneView implements IPrimitivePaneView {
 }
 
 export class OverlayPrimitive implements ISeriesPrimitive<Time> {
+  /** Read by the pane view; fixed for the primitive's lifetime. */
+  readonly zOrder: PrimitivePaneViewZOrder;
   private _chart: IChartApi | null = null;
   private _series: ISeriesApi<SeriesType> | null = null;
   private readonly _paneViews: IPrimitivePaneView[];
@@ -98,6 +103,7 @@ export class OverlayPrimitive implements ISeriesPrimitive<Time> {
     private _data: OhlcvBar[],
     private readonly _isDark: boolean
   ) {
+    this.zOrder = _overlay.zOrder ?? "top";
     this._paneViews = [new OverlayPaneView(this)];
   }
 

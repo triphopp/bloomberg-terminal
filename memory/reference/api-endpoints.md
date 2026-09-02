@@ -16,7 +16,8 @@
 - `GET /api/stock/history/{symbol}` — OHLCV history (1d/1w/1m/3m/ytd/1y/5y/max)
 - `GET /api/stock/financials/{symbol}` — income statement + cash flow
 - `GET /api/stock/analyst/{symbol}` — analyst ratings
-- `GET /api/stock/earnings-calendar/{symbol}` — earnings dates + EPS estimate/reported/surprise%
+- `GET /api/stock/dividends/{symbol}` — `{dividends, splits, upcomingDividends}`; cache 1h. `dividends` is paid history only (yfinance `ticker.dividends` can never hold a future date) — the next **declared** ex-date comes from `ticker.calendar` as `upcomingDividends: [{date, payDate, dividend, estimated}]`, empty when Yahoo's calendar date is already in the past. Next.js proxy: `type=dividends`
+- `GET /api/stock/earnings-calendar/{symbol}` — earnings dates + EPS estimate/reported/surprise%; **includes the next scheduled report** (reportedEPS `null`)
 - `GET /api/stock/pe-history/{symbol}` — trailing (TTM) P/E weekly series (adj-EPS) + percentile stats + earnings list; cache 1h. Next.js proxy: `type=pe-history`
 
 ## Options (`routers/options.py`)
