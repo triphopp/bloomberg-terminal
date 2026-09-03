@@ -63,8 +63,14 @@ backend/**/*.joblib
 data/**/*.pkl
 data/**/*.pickle
 data/**/*.joblib
-# regime v2 meta — regenerated on startup alongside its (ignored) .pkl
+# derived model params — regenerated on startup from the (ignored) .pkl, so the
+# tracked copy was never the one in use: a fresh clone has no .pkl, retrains
+# immediately, and overwrites whatever was committed. Float-only diffs that
+# nobody can review or merge. Regen: backend startup, or POST the retrain
+# endpoint. Kept out: validation.json (walk-forward eval record, manual only).
 data/models/regime_v2.json
+data/models/thresholds.json
+data/models/bc_thresholds.json
 
 # personal memory — session logs, analysis reports, active plans (AI agent audit trail)
 memory/sessions/

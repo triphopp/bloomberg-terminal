@@ -289,6 +289,12 @@ def model_age_days() -> Optional[float]:
 
 
 def needs_training() -> bool:
+    # Both artifacts must be present: the .pkl and thresholds.json are written
+    # together but are no longer tracked, so a checkout can leave one without
+    # the other. Age alone keyed on the .pkl would report a fresh model while
+    # MRSCalibrator sits at ready=False, silently serving heuristic labels.
+    if not os.path.exists(_THRESHOLDS_FILE):
+        return True
     age = model_age_days()
     return age is None or age > _RETRAIN_DAYS
 
