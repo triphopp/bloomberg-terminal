@@ -7,6 +7,14 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### Backtest / Statistical Evaluation
+
+| Symptom | Root Cause | Fix |
+|---|---|---|
+| Last h outcomes counted as failures despite unknown future; parity test passes | Numeric NaN compared with threshold becomes boolean False; test checks intermediate excursion only | Never let a threshold comparison be the label. `(m >= k).where(m.notna())` keeps it float64 1.0/0.0/NaN so `.dropna()` can still find the unknowns; assert on the *label* column per horizon, not on the float measure beside it. **FIXED 2026-09-09** — `D:/Agents/Claude/backtest-idea/05_bbw_squeeze/features.py::_label` + `test_parity.py` check 5. Found by [BBW audit](../reports/bbw-squeeze-2026-09-09-risk-report.md) |
+| Model claims to beat production but budget/benchmark changes after parameter search | Benchmark flag is rebuilt from selected model feature config; final evaluation lacks CV purge and common eligibility | Benchmark against the rule production actually runs, rebuilt from its own frozen params, and score both on the same `.dropna()` row set at the same alert rate. **FIXED 2026-09-09** — `D:/Agents/Claude/backtest-idea/05_bbw_squeeze/run.py::stage_d`. Found by [BBW audit](../reports/bbw-squeeze-2026-09-09-risk-report.md) |
+| Reported median wait is shorter than time where half the population experienced event | Median calculated only among observed hits, excluding right-censored cases | Give never-crossed rows `inf`, not NaN, so they stay in the cohort and push the median right; give `NaN` only to rows whose future was never observable, and drop those. **FIXED 2026-09-09** — report §9.2 (medians moved 7→9 / 8→10 days). Found by [BBW audit](../reports/bbw-squeeze-2026-09-09-risk-report.md) |
+
 ### Frontend / React
 
 | Symptom | Root Cause | Fix |

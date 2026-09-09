@@ -839,7 +839,8 @@ def _dcc_ewma_correlation(R: np.ndarray, lambda_: float = 0.94) -> dict:
 
     Backtest note (2026-06-06): Symmetric EWMA-DCC outperforms hand-tuned A-DCC (8/9 vs 5/9).
     A-DCC requires MLE calibration of alpha/gamma to outperform symmetric baseline.
-    HMM regime adds orthogonal signal — see backtest/02_dcc_correlation_monitor/run.py.
+    HMM regime adds orthogonal signal — see D:/Agents/Claude/backtest-idea/02_dcc_correlation_monitor/run.py
+    (the backtest suite lives outside this repo).
 
     lambda_=0.94 is the RiskMetrics daily decay constant.
     Returns last-90-day series + spike/trend/signal for EWS integration.
