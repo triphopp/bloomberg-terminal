@@ -1,5 +1,7 @@
 # Bloomberg Terminal — Memory Index
 
+- [BBW squeeze audit 2026-09-09](reports/bbw-squeeze-2026-09-09-risk-report.md) — ทบทวน study เดิม: พบ label/benchmark/purge และการตีความผิด; E2 ranking signal ยังอยู่หลังตรวจแก้ cohort
+
 > **อ่านไฟล์นี้ก่อนเสมอ** เพื่อรู้ว่าต้องการข้อมูลอะไร อยู่ที่ไหน
 
 ---
@@ -66,6 +68,7 @@ memory/
 | อะไร reintroduce ไม่ได้ (CPU/RAM) | `project_summary.md` → "CPU/RAM History" |
 | **Dynamic Chart History** (ซูมออก → กราฟโหลด period ถัดไปเอง, viewport ไม่กระโดด; lib `chartkit/`) ✅ done 2026-08-25 | `plans/completed/dynamic-chart-history.md` |
 | **Floating Chart Windows** (popup กราฟลอยอิสระหลายตัว: drag/resize/minimize/z-order, cap 10, persist, ข้าม view) ✅ เฟส 1 done 2026-08-24 · เฟส 2 (TILE + snap, indicator แยกต่อหน้าต่าง) ค้าง | `plans/floating-chart-windows.md` |
+| **BBW Squeeze Hazard Study** (rank252 < 0.30; model ชนะกฎเดิม +24% บน label E2 แต่ label control E3 พลิกเครื่องหมาย — squeeze = vol mean-reversion ไม่ใช่ breakout) ✅ done 2026-09-09 | `plans/completed/bbw-squeeze-hazard.md` |
 | **IV SD Heatmap** (BS lognormal σ-band pane −2σ…+2σ จาก ATM IV mid; occupancy / cheapness; `iv_snapshots` สะสมเอง) 🔄 code done, pixel verify ค้าง | `plans/iv-sd-heatmap.md` |
 | **Thesis Notes** (sub-tab NOTES: scenario/risk/catalyst ที่แก้ได้ + L×S + watch date + resolve → NOTE_RESOLVED event) ✅ done 2026-08-31 | `plans/completed/thesis-notes.md` |
 | **Thesis System (DB) + Allocation Basis** (thesis เก็บใน SQLite + sync Drive + event log; ALLOCATION (OPEN) cost-vs-market + rebalance sizing) ✅ done 2026-08-15 | `plans/completed/thesis-db-and-allocation-basis.md` |

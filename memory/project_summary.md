@@ -1,5 +1,7 @@
 # Bloomberg Terminal — Project Summary
 
+> **BBW study audit 2026-09-09:** ข้อสรุป study เดิมต้องอ่านคู่กับ [audit](reports/bbw-squeeze-2026-09-09-risk-report.md): พบ unknown labels, benchmark drift, final purge gap และการตีความ coefficient/survival median ผิด ผล E2 ranking ยังอยู่ในการคำนวณตรวจซ้ำ แต่ยังไม่มี trading validation
+
 **Repo:** `bloomberg-terminal` — macOS `~/bloomberg-terminal`, Windows `D:\Agents\Claude\bloomberg-terminal-main`
 **Last updated:** 2026-08-01 (TICK DATA consolidation + rates router)
 
@@ -289,6 +291,7 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026
 - [ ] Seed sector data: POST /api/sectors/fetch for TH/KR/HK/EU/US
 
 ### Features
+- [x] **BBW Squeeze Hazard Study** — done 2026-09-09 — ตอบว่า BB Width ต้องบีบเท่าไหร่ถึงยก P(volatility expansion ภายใน h วัน) เหนือ base rate และโมเดล rank+duration+RV-term ชนะกฎ `BBW ≤ 1.05×min125` เดิมหรือไม่; S&P500 500 ตัว, purged walk-forward, holdout แตะครั้งเดียว (`plans/completed/bbw-squeeze-hazard.md`, ผล: `D:/Agents/Claude/backtest-idea/05_bbw_squeeze/results/2026-09-09/report.md`)
 - [ ] **Corporate Interest Rate Stress Testing (CIRST)** — วัดผลกระทบ shock ดอกเบี้ยระดับบริษัท (QERM): repricing ladder + fixed/float จาก XBRL → Earnings-at-Risk + breaking-point bp → Merton PD → spread → ΔWACC/ΔEV/equity duration → ES + Euler contribution → IR-Stress Score 0–100; tab ใหม่ใน stock-view + screener ใน CRDT (`plans/corporate-ir-stress-testing.md`)
 - [ ] **CIRST Validation Harness** — backtest 5 ปี point-in-time (20 as-of, XBRL first-filed revision + FRED daily curve), เทียบ predicted vs realized 5 tier, บังคับชนะ null models (persist / full-reprice / debt×Δy) ด้วย Diebold-Mariano ก่อนเปิด Score; ได้ implied float-share ต่อบริษัทเป็นผลพลอยได้ (`plans/cirst-validation-harness.md`)
 - [ ] **CIRST RATE STRESS tab** — แท็บที่ 13 ใน stock-view (เข้าจาก NEWS → คลิกหุ้น) 5 sub-tab: EXPOSURE (ladder+refi gap) · SCENARIO (ตาราง ΔI bound / ICR / DDM vs empirical) · DURATION (Gordon inverted + θ) · HISTORY (20 as-of ย้อน 5 ปี + error summary + attribution) · DIAGNOSTICS; 4 แท็บแรก ship ได้ทันที HISTORY รอ harness (`plans/cirst-stock-rate-tab.md`)

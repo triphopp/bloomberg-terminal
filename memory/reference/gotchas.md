@@ -7,6 +7,14 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### Backtest / Statistical Evaluation
+
+| Symptom | Root Cause | Fix |
+|---|---|---|
+| Last h outcomes counted as failures despite unknown future; parity test passes | Numeric NaN compared with threshold becomes boolean False; test checks intermediate excursion only | Preserve nullable target and label_end, test actual event-label validity and warm-up/tail; rebuild versioned cache. **OPEN 2026-09-09:** [BBW audit](../reports/bbw-squeeze-2026-09-09-risk-report.md) |
+| Model claims to beat production but budget/benchmark changes after parameter search | Benchmark flag is rebuilt from selected model feature config; final evaluation lacks CV purge and common eligibility | Freeze production rule separately, use identical eligible rows and alert policy, enforce label_end boundaries in final fit as well as CV. **OPEN 2026-09-09:** [BBW audit](../reports/bbw-squeeze-2026-09-09-risk-report.md) |
+| Reported median wait is shorter than time where half the population experienced event | Median calculated only among observed hits, excluding right-censored cases | Compute survival median from complete-cohort CDF or censoring-aware survival estimator; label conditional median explicitly. **OPEN 2026-09-09:** [BBW audit](../reports/bbw-squeeze-2026-09-09-risk-report.md) |
+
 ### Frontend / React
 
 | Symptom | Root Cause | Fix |
