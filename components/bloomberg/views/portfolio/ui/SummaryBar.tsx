@@ -13,6 +13,15 @@ export function SummaryBar({
   const economicPnl = summary.total_economic_pnl_base;
   const sym = currency === "THB" ? "฿" : "$";
   const openCount = summary.accounts.reduce((a, s) => a + s.open_count, 0);
+  const optionCount = summary.accounts.reduce((a, s) => a + (s.options_open_count ?? 0), 0);
+  const optionsMv = summary.total_options_mv_base ?? 0;
+  const optionsUnrealized = summary.total_options_unrealized_base ?? 0;
+  const optionsDelta = summary.total_options_delta_notional_base ?? 0;
+  const cash = summary.total_cash_base;
+  const cashTitle =
+    "Estimated idle cash = invested capital + realized P&L (equities and options) + dividends " +
+    "− open cost basis. Derived, not a broker balance: commissions, taxes and margin interest " +
+    "that were never entered are invisible to it.";
   const economicPnlTitle =
     "Economic realized P&L = (entry cost + native P&L) × exit FX − entry cost × entry FX. Uses stored trade FX when available, otherwise dated market FX estimate. Includes principal FX attribution; broker-style realized P&L excludes it.";
 
@@ -49,6 +58,36 @@ export function SummaryBar({
         <span style={{ color: colors.textSecondary }}>OPEN </span>
         <span style={{ color: "#ff9900" }}>{openCount}</span>
       </div>
+      {optionCount > 0 && (
+        <div
+          title={`Option book market value ${sym}${fmtK(optionsMv)} · delta exposure ${sym}${fmtK(optionsDelta)}. Market value counts toward NAV; delta notional is what the book is exposed to and is what weights allocation.`}
+        >
+          <span style={{ color: colors.textSecondary }}>OPT </span>
+          <span style={{ color: "#ff9900" }}>{optionCount}</span>
+          <span style={{ color: colors.textSecondary }}> · </span>
+          <span style={{ color: colors.text }}>
+            {sym}
+            {fmtK(optionsMv)}
+          </span>
+          <span className="ml-1" style={{ color: pnlColor(optionsUnrealized) }}>
+            {optionsUnrealized >= 0 ? "+" : "-"}
+            {sym}
+            {fmtK(Math.abs(optionsUnrealized))}
+          </span>
+        </div>
+      )}
+      {cash != null && (
+        <div title={cashTitle}>
+          <span style={{ color: colors.textSecondary }}>CASH~ </span>
+          <span style={{ color: cash >= 0 ? colors.text : "#f87171" }}>
+            {sym}
+            {fmtK(Math.abs(cash))}
+          </span>
+          <span className="ml-0.5 text-[8px]" style={{ color: colors.textSecondary }}>
+            est
+          </span>
+        </div>
+      )}
       <div style={{ color: colors.textSecondary }}>
         FX: <span style={{ color: colors.text }}>1 USD = ฿{summary.thb_per_usd.toFixed(2)}</span>
       </div>

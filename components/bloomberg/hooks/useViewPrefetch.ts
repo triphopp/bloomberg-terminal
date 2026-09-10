@@ -59,11 +59,15 @@ export function useViewPrefetch() {
     }
   }, []);
 
-  // Prefetch tier-1 views (most-used) when idle
+  // Prefetch tier-1 views (most-used) when idle. PORTFOLIO earns its place here
+  // even though it is not opened as often as the rest: it is the heaviest view
+  // to bring up, so paying for its chunk while the terminal is idle is what
+  // makes pressing P feel instant.
   const prefetchTier1 = useCallback(() => {
     if (typeof requestIdleCallback !== "undefined") {
       requestIdleCallback(() => {
         prefetch("stock");
+        prefetch("portfolio");
       });
     }
   }, [prefetch]);

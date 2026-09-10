@@ -122,6 +122,7 @@ components/bloomberg/
 │
 ├── core/
 │   ├── bloomberg-button.tsx
+│   ├── boot-screen.tsx          ← dynamic() loading fallback + watchdog (auto-reload if terminal chunk stalls)
 │   ├── confirmation-modal.tsx
 │   ├── global-search.tsx        ← search overlay (/ or Ctrl+K) — terminal engine + stock search
 │   ├── keyboard-shortcuts.tsx   ← shortcuts help panel
@@ -184,6 +185,15 @@ components/bloomberg/
 | `portfolio/ui/SummaryBar.tsx` | `SummaryBar` |
 | `portfolio/tabs/AnalyticsTab.tsx` | `AnalyticsTab` — CAPM card: β HEDGE / HEDGE notional / β REAL / vs IDX / α CAPM / t / R² / N; rf chip เปิดแผงตั้งค่า (override ต่อสกุลใน `localStorage["bloomberg_capm_rf"]`) |
 | `portfolio/ui/AllocationBasisCard.tsx` | `AllocationBasisCard`, `AllocRow` — ALLOCATION (OPEN) cost-vs-market card (COST/VALUE/DRIFT modes + rebalance table) |
+- `views/portfolio/ui/PayoffChart.tsx` — payoff chart (2026-09-10): expiry line solid, T+0 dashed, shaded profit/loss regions, reference lines at spot and each breakeven, plus the headline stats. Exports `PayoffChart`, `PayoffResult`, `PayoffPoint`
+- `views/portfolio/ui/usePayoff.ts` — `usePayoff(legs)` returns the expiry curve immediately from `localPayoff()` and swaps in the backend's answer (T+0 + POP) after a debounce. ⚠️ Depends on `JSON.stringify(legs)`, NOT the array: callers build it inline, so depending on the array re-ran the effect every render and aborted the request every time
+- `views/portfolio/modals/PayoffModal.tsx` — payoff for a saved lot, combined across every lot on the same underlying by default (a hedge read alone looks like a pure loss) with a `THIS LOT ONLY` toggle
+- `views/portfolio/modals/OptionTradeEditModal.tsx` — correct a mis-entered option trade (2026-09-10): every field plus a required-by-convention `reason`, contract terms locked while the trade is matched, and the trade's audit log inline. Exports `OptionTradeEditModal`
+- `views/portfolio/ui/OptionTradeLog.tsx` — OPTIONS tab · TRADES view (2026-09-10): every
+  option execution with the 5 greeks + spot/IV captured at that trade. Migrated trades show
+  `unknown` / `—` with a banner rather than being back-filled with today's values. Exports
+  `OptionTradeLog`, `OptionTrade`
+- `views/portfolio/ui/OptionAttributionCard.tsx` — ANALYTICS section `DERIVATIVES · PNL ATTRIBUTION` (2026-09-09): portfolio split across Δ/Γ/Θ/ν/residual, stacked bar per day, per-contract table with spot/IV endpoints and `explained_pct`. Exports `OptionAttributionCard`, `OptionAttribution`
 | `portfolio/tabs/theses/index.tsx` | `ThesesTab` (props: `colors`, `accountId`, `initialSymbol`, `onConsumeInitialSymbol`) |
 | `portfolio/tabs/theses/types.ts` | `Thesis`, `ThesisStatus`, `ThesisEvent`, `ThesisLink`, `ThesisNote`, `NoteKind`, `NoteStatus`, `NoteImpact`, `STATUSES`, `STATUS_COLOR`, `CATEGORIES`, `HORIZONS`, `STRATEGIES`, `NOTE_KINDS`, `NOTE_STATUSES`, `NOTE_KIND_COLOR`, `NOTE_STATUS_COLOR`, `NOTE_IMPACT_COLOR` |
 | `portfolio/tabs/theses/ThesisRail.tsx` | `ThesisRail` |
@@ -206,6 +216,10 @@ components/bloomberg/
 | `hooks/useStockPredictions.ts` | `useStockPrediction()`, `useStockPredictionSummaries()`, `probColor()` + prediction types |
 | `hooks/useCompanyOutlook.ts` | `useCompanyOutlook()`, `useCompanyXbrl()`, `useCompanyFilings()`, `isUsListing()`, `shortMetric()` |
 | `core/company-outlook-panel.tsx` | `CompanyOutlookPanel` (`variant="full"` = stock-view OUTLOOK tab · `"compact"` = NEWS column strip) |
+| `app/boot-watchdog.tsx` | `BootWatchdog` — inline `<script>` in the root layout; reloads once after 12s unless `window.__BT_MOUNTED__` is set (runs without the client bundle, which the React-side watchdog cannot) |
+| `views/portfolio/queries.ts` | `portfolioQueries` (summary · accounts · openPositions · stoploss · premarket · costOverrides · thesesSummary — React Query defs, `staleTime` mirrors each backend TTL) + `prewarmPortfolio(queryClient)` |
+| `hooks/usePortfolioPrewarm.ts` | `usePortfolioPrewarm()` — 4s after terminal mount, on idle, fills the PORT caches so opening PORT paints from cache instead of a ~10s cold fetch chain |
+| `core/boot-screen.tsx` | `BootScreen` — loading fallback for the `dynamic(ssr:false)` terminal import; reloads once after 12s if the chunk never arrives (`sessionStorage["bloomberg_boot_retry_at"]` guards the loop), RETRY button after that |
 | `core/us-market-clock.tsx` | `UsMarketClock` — ET clock + session phase strip at the top of the TICK DATA board (presentation only) |
 | `lib/us-market-session.ts` | `computeSession` `fmtClock` `fmtCountdown` + `NYSE_HOLIDAYS` `NYSE_HALF_DAYS` — pure session maths, no React. **US markets have no lunch break**; the model is pre/regular/after + 13:00 ET half-days. Tests: `npm run test:session` (21) |
 | `views/macro-view.tsx` | `MacroView` (default) |

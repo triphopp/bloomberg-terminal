@@ -23,8 +23,9 @@ SCHEMA_VER = 2  # trades.exit_exchange_rate + dividends.currency
 
 # Tables included in cloud snapshots, with their NATURAL merge key.
 # Only tables with stable, cross-device keys are listed — TEXT uuid PKs, or a
-# UNIQUE(...) natural key. Auto-increment-id tables (symbol_lists,
-# trade_audit_log) are intentionally excluded: their ids collide across devices.
+# UNIQUE(...) natural key. Auto-increment-id tables (symbol_lists) are
+# intentionally excluded: their ids collide across devices. trade_audit_log used
+# to be excluded for that reason and now carries a uuid `event_id` instead.
 #
 #   (table_name, [natural key columns])
 SYNC_TABLES: list[tuple[str, list[str]]] = [
@@ -33,7 +34,30 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     ("trades",                  ["id"]),
     ("cash_ledger",             ["id"]),
     ("dividends",               ["id"]),
-    ("option_positions",        ["id"]),
+    # Normalized option schema (2026-09-10). Contracts sync on their natural key
+    # so the same contract entered on two devices merges into one row; trades
+    # and matches carry uuid PKs.
+    #
+    # ORDER MATTERS: restore._upsert walks this list in sequence with
+    # foreign_keys ON, so a table must appear after whatever it references —
+    # contracts before trades, trades before the greeks and matches that point
+    # at them.
+    ("option_contracts",        ["occ_symbol"]),          # UNIQUE(occ_symbol)
+    ("option_trades",           ["trade_id"]),
+    # The market state at each execution. Same argument as iv_snapshots below:
+    # a chain only ever reports NOW, so spot/IV/greeks at a past trade cannot be
+    # re-derived on the other machine — without this the peer receives the trade
+    # and permanently loses what the contract looked like when it was made.
+    # (An earlier version excluded this as "derived state, rebuilt on demand",
+    # which was simply wrong — nothing can rebuild it.)
+    ("option_trade_greeks",     ["trade_id"]),
+    ("option_trade_matches",    ["close_trade_id", "open_trade_id"]),  # composite PK
+    # Daily greeks history behind PnL attribution. Accumulate-only for the same
+    # reason, so a day only one machine recorded is a permanent hole in the
+    # attribution chart unless it travels. Rows are that day's snapshot of one
+    # position, so two devices recording the same day agree on substance and
+    # last-write-wins is a union in practice.
+    ("option_greeks_snapshots", ["position_id", "snapshot_date"]),  # composite PK
     ("position_cost_overrides", ["account_id", "symbol"]),   # UNIQUE(account_id, symbol)
     ("pin_groups",              ["id"]),
     ("pinned_assets",           ["id"]),
@@ -73,6 +97,13 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     ("thesis_notes",             ["id"]),
     ("thesis_links",             ["thesis_id", "trade_id"]),   # composite PK
     ("allocation_targets",       ["account_id", "scope", "key"]),  # UNIQUE(...)
+    # Why an edit was made, for both equity and option trades. Append-only by
+    # construction — no endpoint UPDATEs a row — so last-write-wins is a union,
+    # the same shape as thesis_events. Keyed on the uuid `event_id`, never the
+    # device-local autoincrement `id`. Listed after `trades` and the option
+    # tables it refers to, though it declares no FK: the rows it points at
+    # should already be present when a reader goes looking.
+    ("trade_audit_log",          ["event_id"]),
     # ATM implied-vol history. Market data, which normally stays local (see
     # fx_rates, deliberately absent) — but this series is the one kind that
     # CANNOT be re-derived later: the provider publishes only the CURRENT IV of a
@@ -94,7 +125,8 @@ TABLE_PK: dict[str, list[str]] = {t: pk for t, pk in SYNC_TABLES}
 # deleted trade is silent and gone. Everything else keeps delete-wins-on-tie.
 MONEY_TABLES: frozenset[str] = frozenset({
     "transactions", "trades", "cash_ledger", "dividends",
-    "option_positions", "portfolio_accounts", "position_cost_overrides",
+    "option_trades", "option_trade_matches",
+    "portfolio_accounts", "position_cost_overrides",
 })
 
 # char(31) — unit separator — joins composite key parts inside tombstone row_id.

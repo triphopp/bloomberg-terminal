@@ -18,6 +18,18 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) 
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
 
+def occ_symbol(underlying: str, expiry: str, strike: float, option_type: str) -> str:
+    """OCC 21-character contract symbol: root(6, space-padded) + YYMMDD + C/P + strike*1000(8).
+
+    Used as the natural key for option_contracts so the same contract entered
+    twice cannot become two rows.
+    """
+    root = str(underlying or "").strip().upper()[:6].ljust(6)
+    ymd = str(expiry or "")[:10].replace("-", "")[2:]
+    cp = "C" if str(option_type).lower() == "call" else "P"
+    return f"{root}{ymd}{cp}{int(round(float(strike) * 1000)):08d}"
+
+
 @contextmanager
 def get_db():
     conn = sqlite3.connect(str(DB_PATH))
@@ -191,6 +203,126 @@ def init_db() -> None:
         )
 
 
+def _migrate_option_positions(conn: sqlite3.Connection) -> None:
+    """One-way move of the flat `option_positions` rows into the normalized
+    tables, then drop the old table.
+
+    Runs only while `option_positions` still exists, so it is a no-op on every
+    start after the first. Greeks for migrated trades are recorded as
+    `source='unavailable'` with every value NULL: the market state at those
+    entries was never captured and — like iv_snapshots — cannot be recovered.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='option_positions'"
+    ).fetchone():
+        return
+
+    import uuid as _uuid
+
+    rows = [dict(r) for r in conn.execute("SELECT * FROM option_positions").fetchall()]
+    id_map: dict[str, str] = {}          # old position id → new OPEN trade id
+
+    for row in rows:
+        under = str(row.get("underlying") or "").upper()
+        expiry = str(row.get("expiry") or "")[:10]
+        strike = float(row.get("strike") or 0)
+        otype = str(row.get("option_type") or "call")
+        mult = float(row.get("multiplier") or 100) or 100.0
+        ccy = str(row.get("currency") or "USD").upper()
+        occ = occ_symbol(under, expiry, strike, otype)
+
+        found = conn.execute(
+            "SELECT contract_id FROM option_contracts WHERE occ_symbol = ?", (occ,)
+        ).fetchone()
+        if found:
+            contract_id = found["contract_id"]
+        else:
+            contract_id = str(_uuid.uuid4())
+            conn.execute(
+                """INSERT INTO option_contracts
+                   (contract_id, occ_symbol, underlying, expiry, strike,
+                    option_type, multiplier, currency)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (contract_id, occ, under, expiry, strike, otype, mult, ccy),
+            )
+
+        qty = float(row.get("quantity") or 0)
+        if qty == 0:
+            continue
+        # The old column was signed; direction now lives in action+side.
+        side = "BUY" if qty > 0 else "SELL"
+        open_id = str(_uuid.uuid4())
+        id_map[str(row.get("id"))] = open_id
+        conn.execute(
+            """INSERT INTO option_trades
+               (trade_id, contract_id, account_id, trade_date, action, side,
+                quantity, price, note)
+               VALUES (?,?,?,?, 'OPEN', ?, ?, ?, ?)""",
+            (
+                open_id, contract_id, row.get("account_id") or "dime",
+                str(row.get("entry_date") or "")[:10], side,
+                abs(qty), float(row.get("entry_price") or 0),
+                str(row.get("notes") or ""),
+            ),
+        )
+        conn.execute(
+            "INSERT INTO option_trade_greeks (trade_id, source) VALUES (?, 'unavailable')",
+            (open_id,),
+        )
+
+        status = str(row.get("status") or "open")
+        if status == "open":
+            continue
+
+        # Closed rows become a CLOSE trade plus a full-size match. A row closed
+        # before exit_price existed keeps price NULL and close_reason 'UNKNOWN'
+        # — its realized P&L is unknown, and writing 0 there would report a
+        # 100% loss that never happened.
+        exit_price = row.get("exit_price")
+        close_id = str(_uuid.uuid4())
+        conn.execute(
+            """INSERT INTO option_trades
+               (trade_id, contract_id, account_id, trade_date, action, side,
+                quantity, price, close_reason, note)
+               VALUES (?,?,?,?, 'CLOSE', ?, ?, ?, ?, ?)""",
+            (
+                close_id, contract_id, row.get("account_id") or "dime",
+                str(row.get("exit_date") or row.get("expiry") or "")[:10],
+                "SELL" if qty > 0 else "BUY",
+                abs(qty), exit_price,
+                "TRADE" if exit_price is not None
+                else ("EXPIRED" if status == "expired" else "UNKNOWN"),
+                "migrated from option_positions",
+            ),
+        )
+        conn.execute(
+            "INSERT INTO option_trade_greeks (trade_id, source) VALUES (?, 'unavailable')",
+            (close_id,),
+        )
+        realized = (
+            (float(exit_price) - float(row.get("entry_price") or 0)) * qty * mult
+            if exit_price is not None else None
+        )
+        conn.execute(
+            """INSERT INTO option_trade_matches
+               (close_trade_id, open_trade_id, quantity, realized_pnl)
+               VALUES (?,?,?,?)""",
+            (close_id, open_id, abs(qty), realized),
+        )
+
+    # Daily greeks history keyed the old position id; without this remap the
+    # attribution chart goes quietly empty — the join simply finds nothing.
+    for old_id, new_id in id_map.items():
+        conn.execute(
+            "UPDATE option_greeks_snapshots SET position_id = ? WHERE position_id = ?",
+            (new_id, old_id),
+        )
+
+    conn.execute("DROP TABLE option_positions")
+    logger_msg = f"[option-migration] moved {len(rows)} row(s) into the normalized schema"
+    print(logger_msg)
+
+
 def init_portfolio_v2() -> None:
     """Create portfolio v2 tables (multi-account, trade log, cash, dividends)."""
     with get_db() as conn:
@@ -309,24 +441,210 @@ def init_portfolio_v2() -> None:
         from portfolio_currency import backfill_currency_columns
         backfill_currency_columns(conn)
 
+        # `option_positions` is deliberately NOT created here any more. It was
+        # replaced by the normalized tables below; _migrate_option_positions()
+        # moves any surviving rows and drops it. Re-creating it would have the
+        # migration drop an empty table on every single start.
+
+        # ── Normalized option schema (2026-09-10) ────────────────────────────
+        # `option_positions` crammed three different levels into one flat row:
+        # the INSTRUMENT (a contract, shared by every trade on it), the
+        # EXECUTION (one buy or sell), and the LOT LIFECYCLE (open → closed).
+        # That made partial closes impossible (one row holds one exit_price),
+        # left no room for the market state at entry, and let editing a price
+        # silently rewrite realized P&L that had already been reported.
+        #
+        # Split three ways, with the lot DERIVED rather than stored:
+        #   option_contracts     — the instrument, deduplicated
+        #   option_trades        — one immutable row per execution
+        #   option_trade_greeks  — the market state at that execution (1:1)
+        #   option_trade_matches — which close consumed which open (FIFO)
+        #
+        # A "lot" is an OPEN trade that is not yet fully matched, which is what
+        # v_option_open_lots computes. `status` therefore does not exist as a
+        # column: expiry and exercise are CLOSE trades like any other, so every
+        # end of a lot is a row someone can point at.
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS option_positions (
-                id            TEXT PRIMARY KEY,
-                account_id    TEXT NOT NULL DEFAULT 'dime',
-                underlying    TEXT NOT NULL,
-                expiry        TEXT NOT NULL,
-                strike        REAL NOT NULL,
-                option_type   TEXT NOT NULL CHECK(option_type IN ('call','put')),
-                quantity      INTEGER NOT NULL,
-                entry_price   REAL NOT NULL,
-                entry_date    TEXT NOT NULL,
-                status        TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed','expired')),
-                notes         TEXT DEFAULT '',
-                created_at    TEXT DEFAULT (datetime('now'))
+            CREATE TABLE IF NOT EXISTS option_contracts (
+                contract_id  TEXT PRIMARY KEY,
+                occ_symbol   TEXT NOT NULL UNIQUE,
+                underlying   TEXT NOT NULL,
+                expiry       TEXT NOT NULL,
+                strike       REAL NOT NULL,
+                option_type  TEXT NOT NULL CHECK(option_type IN ('call','put')),
+                multiplier   REAL NOT NULL DEFAULT 100,
+                currency     TEXT NOT NULL DEFAULT 'USD',
+                created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(underlying, expiry, strike, option_type)
             )
         """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_opt_account ON option_positions(account_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_opt_status  ON option_positions(status)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_oc_underlying ON option_contracts(underlying)"
+        )
+
+        # `quantity` is ALWAYS positive; direction comes from action+side:
+        #   OPEN/BUY  = open long      OPEN/SELL  = open short (credit received)
+        #   CLOSE/SELL = close a long  CLOSE/BUY  = close a short
+        # `price` is nullable only for a close whose price is genuinely unknown
+        # (close_reason='UNKNOWN') — lots closed by the pre-2026-09-09 endpoint,
+        # which recorded no price. Unknown is not zero, and must not be reported
+        # as a 100% loss.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS option_trades (
+                trade_id      TEXT PRIMARY KEY,
+                contract_id   TEXT NOT NULL REFERENCES option_contracts(contract_id),
+                account_id    TEXT NOT NULL,
+                trade_date    TEXT NOT NULL,
+                action        TEXT NOT NULL CHECK(action IN ('OPEN','CLOSE')),
+                side          TEXT NOT NULL CHECK(side IN ('BUY','SELL')),
+                quantity      REAL NOT NULL CHECK(quantity > 0),
+                price         REAL,
+                fees          REAL NOT NULL DEFAULT 0,
+                exchange_rate REAL,
+                close_reason  TEXT CHECK(close_reason IN
+                                  ('TRADE','EXPIRED','EXERCISED','ASSIGNED','UNKNOWN')),
+                note          TEXT NOT NULL DEFAULT '',
+                created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                CHECK (action = 'CLOSE' OR price IS NOT NULL),
+                CHECK (action = 'OPEN'  OR close_reason IS NOT NULL),
+                CHECK (price IS NOT NULL OR close_reason = 'UNKNOWN')
+            )
+        """)
+        for col in ("contract_id", "account_id", "trade_date", "action"):
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_ot_{col} ON option_trades({col})"
+            )
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS option_trade_greeks (
+                trade_id    TEXT PRIMARY KEY
+                            REFERENCES option_trades(trade_id) ON DELETE CASCADE,
+                spot        REAL,
+                iv          REAL,
+                delta       REAL,
+                gamma       REAL,
+                theta       REAL,
+                vega        REAL,
+                rho         REAL,
+                source      TEXT NOT NULL DEFAULT 'live'
+                            CHECK(source IN ('live','manual','unavailable')),
+                captured_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+        # realized_pnl is materialized rather than derived from a join. Derived,
+        # a later edit to a trade's price would silently rewrite P&L that has
+        # already been reported; stored, correcting a price has to be an
+        # intentional re-match. NULL means genuinely unknown (see UNKNOWN above),
+        # which is not the same as zero.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS option_trade_matches (
+                close_trade_id TEXT NOT NULL
+                               REFERENCES option_trades(trade_id) ON DELETE CASCADE,
+                open_trade_id  TEXT NOT NULL
+                               REFERENCES option_trades(trade_id) ON DELETE CASCADE,
+                quantity       REAL NOT NULL CHECK(quantity > 0),
+                fees_alloc     REAL NOT NULL DEFAULT 0,
+                realized_pnl   REAL,
+                matched_at     TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (close_trade_id, open_trade_id)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_otm_open ON option_trade_matches(open_trade_id)"
+        )
+
+        # A lot is an OPEN trade with quantity left to close. Deriving it means
+        # there is no second copy of the remaining size to drift out of step
+        # with the trades that produced it.
+        conn.execute("DROP VIEW IF EXISTS v_option_open_lots")
+        conn.execute("""
+            CREATE VIEW v_option_open_lots AS
+            SELECT
+                t.trade_id                                     AS lot_id,
+                t.trade_id                                     AS open_trade_id,
+                t.contract_id, t.account_id,
+                c.underlying, c.expiry, c.strike, c.option_type,
+                c.multiplier, c.currency, c.occ_symbol,
+                t.trade_date                                   AS entry_date,
+                t.price                                        AS entry_price,
+                t.fees                                         AS entry_fees,
+                t.exchange_rate                                AS entry_exchange_rate,
+                t.note,
+                CASE WHEN t.side = 'BUY' THEN 1 ELSE -1 END    AS direction,
+                (t.quantity - COALESCE(m.matched, 0))
+                    * CASE WHEN t.side = 'BUY' THEN 1 ELSE -1 END AS quantity,
+                t.quantity                                     AS quantity_opened,
+                COALESCE(m.matched, 0)                         AS quantity_closed,
+                g.spot   AS entry_spot,  g.iv    AS entry_iv,
+                g.delta  AS entry_delta, g.gamma AS entry_gamma,
+                g.theta  AS entry_theta, g.vega  AS entry_vega,
+                g.rho    AS entry_rho,   g.source AS entry_greeks_source
+            FROM option_trades t
+            JOIN option_contracts c ON c.contract_id = t.contract_id
+            LEFT JOIN option_trade_greeks g ON g.trade_id = t.trade_id
+            LEFT JOIN (
+                SELECT open_trade_id, SUM(quantity) AS matched
+                FROM option_trade_matches GROUP BY open_trade_id
+            ) m ON m.open_trade_id = t.trade_id
+            WHERE t.action = 'OPEN'
+              AND t.quantity - COALESCE(m.matched, 0) > 1e-9
+        """)
+
+        conn.execute("DROP VIEW IF EXISTS v_option_realized")
+        conn.execute("""
+            CREATE VIEW v_option_realized AS
+            SELECT
+                mt.close_trade_id, mt.open_trade_id,
+                mt.quantity, mt.fees_alloc, mt.realized_pnl,
+                ct.account_id, ct.trade_date AS exit_date, ct.price AS exit_price,
+                ct.close_reason, ct.exchange_rate AS exit_exchange_rate,
+                ot.trade_date AS entry_date, ot.price AS entry_price,
+                CASE WHEN ot.side = 'BUY' THEN 1 ELSE -1 END AS direction,
+                c.contract_id, c.underlying, c.expiry, c.strike, c.option_type,
+                c.multiplier, c.currency, c.occ_symbol
+            FROM option_trade_matches mt
+            JOIN option_trades ct ON ct.trade_id = mt.close_trade_id
+            JOIN option_trades ot ON ot.trade_id = mt.open_trade_id
+            JOIN option_contracts c ON c.contract_id = ot.contract_id
+        """)
+
+        _migrate_option_positions(conn)
+
+        # Greeks history. P&L attribution needs the state at the START of each
+        # period (spot, IV and the greeks computed from them) and none of that
+        # can be reconstructed later — Yahoo serves only the CURRENT chain, so
+        # like iv_snapshots this can only be ACCUMULATED, never back-filled.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS option_greeks_snapshots (
+                position_id      TEXT NOT NULL,
+                snapshot_date    TEXT NOT NULL,
+                account_id       TEXT,
+                underlying       TEXT,
+                expiry           TEXT,
+                strike           REAL,
+                option_type      TEXT,
+                quantity         REAL,
+                multiplier       REAL,
+                currency         TEXT,
+                spot             REAL,
+                iv               REAL,
+                mark             REAL,
+                delta            REAL,
+                gamma            REAL,
+                theta            REAL,
+                vega             REAL,
+                market_value_usd REAL,
+                created_at       TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (position_id, snapshot_date)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ogs_date ON option_greeks_snapshots(snapshot_date)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ogs_account ON option_greeks_snapshots(account_id)"
+        )
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS regime_alerts (
@@ -486,6 +804,9 @@ def init_portfolio_v2() -> None:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pop_account ON paper_option_positions(account_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pop_status  ON paper_option_positions(status)")
+        # Mirror the live table so paper and live value on the same basis.
+        _ensure_column(conn, "paper_option_positions", "currency",   "currency TEXT NOT NULL DEFAULT 'USD'")
+        _ensure_column(conn, "paper_option_positions", "multiplier", "multiplier REAL NOT NULL DEFAULT 100")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS trade_audit_log (
@@ -500,6 +821,25 @@ def init_portfolio_v2() -> None:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tal_trade ON trade_audit_log(trade_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tal_time  ON trade_audit_log(created_at)")
+        # The autoincrement `id` is device-local: two machines both write id 42
+        # for different events, so it cannot key a sync. `event_id` is a uuid
+        # that identifies the event itself, which is what lets the log travel.
+        # Rows are append-only (nothing UPDATEs one), so merging is a union.
+        _ensure_column(conn, "trade_audit_log", "event_id", "event_id TEXT")
+        stale = [
+            r[0] for r in conn.execute(
+                "SELECT id FROM trade_audit_log WHERE event_id IS NULL OR event_id = ''"
+            ).fetchall()
+        ]
+        if stale:
+            import uuid as _uuid
+            conn.executemany(
+                "UPDATE trade_audit_log SET event_id = ? WHERE id = ?",
+                [(str(_uuid.uuid4()), i) for i in stale],
+            )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_tal_event ON trade_audit_log(event_id)"
+        )
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS position_cost_overrides (

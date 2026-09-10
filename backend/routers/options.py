@@ -1,3 +1,4 @@
+import json
 import math
 import uuid
 from bisect import bisect_left, bisect_right
@@ -19,7 +20,9 @@ from analytics.sd_bands import (
     sd_band,
 )
 from cache import TTLCache
-from db import get_db
+from analytics.option_payoff import build_payoff
+from db import get_db, occ_symbol
+from portfolio_options import _chain_rows
 from greeks import compute_greeks, estimate_moments
 from providers.base_options import OptionContract
 from providers.yahoo_options import YahooOptionsProvider
@@ -33,6 +36,34 @@ _sd_bands_cache = TTLCache(ttl=600, maxsize=60)
 
 # Swap provider here — nothing else changes
 _provider = YahooOptionsProvider()
+
+_spot_cache = TTLCache(ttl=60, maxsize=200)
+
+
+def underlying_spot(symbol: str) -> Optional[float]:
+    """Last price of the UNDERLYING, not of the option contract.
+
+    `OptionMarketData.last_price` is the contract's own `lastPrice` (the
+    premium) — feeding that to Black-Scholes as `spot` prices a $200-strike
+    call as if the share traded at $5.80, which drives every delta to ~0.
+    See reports/options-greeks-spot-risk-report.md.
+    """
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return None
+    cached = _spot_cache.get(sym)
+    if cached is not None:
+        return cached
+    try:
+        info = market_data.get_fast_info(sym)
+        price = getattr(info, "last_price", None) or getattr(info, "regular_market_price", None)
+    except Exception:
+        price = None
+    if not price or price <= 0:
+        return None
+    price = float(price)
+    _spot_cache.set(sym, price)
+    return price
 
 
 def clean_df(df: pd.DataFrame) -> list[dict]:
@@ -59,6 +90,93 @@ def clean_df(df: pd.DataFrame) -> list[dict]:
             df[col] = df[col].fillna(False).astype(bool)
 
     return df.to_dict(orient="records")
+
+
+# Declared ahead of the `/api/options/{symbol}` chain route on purpose: that
+# route matches any single segment, so a literal path registered after it is
+# never reached. Keep every literal one-segment GET above this line.
+class PayoffLeg(BaseModel):
+    underlying: str
+    expiry: str
+    strike: float
+    option_type: str            # "call" | "put"
+    quantity: float             # signed: negative is short
+    entry_price: float
+    multiplier: float = 100
+    fees: float = 0
+
+
+class PayoffIn(BaseModel):
+    legs: list[PayoffLeg]
+    spot: Optional[float] = None      # default: live price of the first leg's underlying
+    points: int = 121
+    range_pct: float = 0.35
+
+
+@router.post("/api/options/payoff")
+async def compute_payoff(body: PayoffIn):
+    """Payoff geometry for a set of legs — hypothetical or already held.
+
+    Implied vol is pulled from each leg's own chain row. A leg whose contract is
+    not quoted comes back with no IV, which drops the T+0 line and POP for the
+    whole set: drawing them from the legs that happen to be quoted would be a
+    different position than the one on screen.
+    """
+    if not body.legs:
+        raise HTTPException(400, "at least one leg is required")
+
+    spot = body.spot or underlying_spot(body.legs[0].underlying)
+    if not spot or spot <= 0:
+        raise HTTPException(422, f"No spot price for {body.legs[0].underlying}")
+
+    legs = [leg.model_dump() for leg in body.legs]
+    ivs: list[Optional[float]] = []
+    for leg in body.legs:
+        row = _chain_rows(leg.underlying.strip().upper(), str(leg.expiry)[:10]).get(
+            (leg.option_type.lower(), round(float(leg.strike), 4))
+        )
+        iv = row.get("iv") if row else None
+        try:
+            ivs.append(float(iv) if iv and float(iv) > 0 else None)
+        except (TypeError, ValueError):
+            ivs.append(None)
+
+    result = build_payoff(
+        legs, float(spot), ivs,
+        points=max(21, min(int(body.points), 401)),
+        range_pct=max(0.05, min(float(body.range_pct), 2.0)),
+    )
+    result["currency"] = "USD"
+    result["underlyings"] = sorted({leg.underlying.strip().upper() for leg in body.legs})
+    return result
+
+
+@router.get("/api/options/trades")
+async def list_option_trades(account_id: str | None = Query(None), limit: int = Query(200)):
+    """Every execution, newest first, with the greeks captured at each one."""
+    where, params = ["1=1"], []
+    if account_id and account_id != "all":
+        where.append("t.account_id = ?")
+        params.append(account_id)
+    params.append(max(1, limit))
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT t.*, c.underlying, c.expiry, c.strike, c.option_type, "
+            "       c.multiplier, c.currency, c.occ_symbol, "
+            "       g.spot, g.iv, g.delta, g.gamma, g.theta, g.vega, g.rho, "
+            "       g.source AS greeks_source, "
+            "       COALESCE(m.matched, 0) AS quantity_matched "
+            "FROM option_trades t "
+            "JOIN option_contracts c ON c.contract_id = t.contract_id "
+            "LEFT JOIN option_trade_greeks g ON g.trade_id = t.trade_id "
+            "LEFT JOIN (SELECT open_trade_id, SUM(quantity) matched "
+            "           FROM option_trade_matches GROUP BY open_trade_id) m "
+            "       ON m.open_trade_id = t.trade_id "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY t.trade_date DESC, t.created_at DESC LIMIT ?",
+            params,
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 @router.get("/api/options/{symbol}")
@@ -728,33 +846,135 @@ async def get_sd_bands(
     return base
 
 
-# ── Option Positions CRUD ─────────────────────────────────────────────────────
+# ── Option Positions CRUD (normalized schema, 2026-09-10) ────────────────────
+# A position is not a row any more: it is an OPEN trade that closes have not
+# fully consumed. So "add a position" writes a contract + one OPEN trade, and
+# "close" writes a CLOSE trade plus the FIFO matches that say which lots it ate.
+# Every lifecycle event is therefore a row someone can point at, and closing
+# part of a lot needs no new concept.
+
 
 class OptionPositionIn(BaseModel):
     account_id: str = "dime"
     underlying: str
     expiry: str
     strike: float
-    option_type: str   # "call" | "put"
-    quantity: int
+    option_type: str          # "call" | "put"
+    quantity: int             # signed: negative opens a short
     entry_price: float
     entry_date: str
+    fees: float = 0
+    multiplier: float = 100
+    currency: str = "USD"
     notes: str = ""
+
+
+class OptionCloseIn(BaseModel):
+    """Close some or all of one lot.
+
+    `quantity` omitted (or 0) closes whatever the lot has left. `exit_price`
+    omitted records a close whose price is genuinely unknown — it contributes
+    nothing to realized P&L rather than being reported as break-even.
+    """
+    quantity: Optional[float] = None
+    exit_price: Optional[float] = None
+    exit_date: Optional[str] = None
+    fees: float = 0
+    close_reason: Optional[str] = None
+    note: str = ""
+
+
+def _upsert_contract(conn, underlying: str, expiry: str, strike: float,
+                     option_type: str, multiplier: float, currency: str) -> str:
+    """Contract id for these terms, creating the row the first time it is seen."""
+    occ = occ_symbol(underlying, expiry, strike, option_type)
+    row = conn.execute(
+        "SELECT contract_id FROM option_contracts WHERE occ_symbol = ?", (occ,)
+    ).fetchone()
+    if row:
+        return row["contract_id"]
+    cid = str(uuid.uuid4())
+    conn.execute(
+        """INSERT INTO option_contracts
+           (contract_id, occ_symbol, underlying, expiry, strike, option_type,
+            multiplier, currency)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (cid, occ, underlying.strip().upper(), str(expiry)[:10], float(strike),
+         option_type, float(multiplier) or 100.0, (currency or "USD").upper()),
+    )
+    return cid
+
+
+async def _capture_trade_greeks(conn, trade_id: str, underlying: str, expiry: str,
+                                strike: float, option_type: str) -> str:
+    """Record the market state at the moment of a trade.
+
+    This is the whole reason the table exists: spot and IV at an execution are
+    not recoverable later — the chain only ever reports now. A failure here must
+    not lose the trade, so it degrades to source='unavailable' with NULLs, which
+    reads as "never captured" rather than as zeros.
+    """
+    spot = iv = None
+    greeks: dict = {}
+    try:
+        market = await _provider.get_market_data(
+            OptionContract(underlying=underlying.upper(), expiry=expiry,
+                           strike=strike, option_type=option_type)
+        )
+        spot = underlying_spot(underlying)
+        iv = market.implied_volatility if market else None
+        if spot and iv and iv > 0:
+            moments = estimate_moments(underlying)
+            computed = compute_greeks(
+                spot=spot, strike=strike, expiry=expiry, option_type=option_type,
+                implied_vol=iv, skew=moments["skew"], kurt=moments["kurt"],
+            )
+            if "error" not in computed:
+                greeks = computed
+    except Exception:
+        pass
+
+    source = "live" if greeks else "unavailable"
+    conn.execute(
+        """INSERT INTO option_trade_greeks
+           (trade_id, spot, iv, delta, gamma, theta, vega, rho, source)
+           VALUES (?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(trade_id) DO UPDATE SET
+               spot=excluded.spot, iv=excluded.iv, delta=excluded.delta,
+               gamma=excluded.gamma, theta=excluded.theta, vega=excluded.vega,
+               rho=excluded.rho, source=excluded.source""",
+        (trade_id, spot, iv, greeks.get("delta"), greeks.get("gamma"),
+         greeks.get("theta"), greeks.get("vega"), greeks.get("rho"), source),
+    )
+    return source
 
 
 @router.get("/api/options/positions/list")
 async def list_option_positions(account_id: str | None = Query(None), status: str = "open"):
-    with get_db() as conn:
+    """Open lots (status='open') or realized matches (anything else)."""
+    if status == "open":
+        where, params = ["1=1"], []
         if account_id:
+            where.append("account_id = ?")
+            params.append(account_id)
+        with get_db() as conn:
             rows = conn.execute(
-                "SELECT * FROM option_positions WHERE account_id=? AND status=? ORDER BY expiry, underlying",
-                (account_id, status),
+                f"SELECT *, lot_id AS id FROM v_option_open_lots "
+                f"WHERE {' AND '.join(where)} ORDER BY expiry, underlying",
+                params,
             ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM option_positions WHERE status=? ORDER BY expiry, underlying",
-                (status,),
-            ).fetchall()
+        return [dict(r) for r in rows]
+
+    where, params = ["1=1"], []
+    if account_id:
+        where.append("account_id = ?")
+        params.append(account_id)
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM v_option_realized WHERE {' AND '.join(where)} "
+            "ORDER BY exit_date DESC",
+            params,
+        ).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -762,30 +982,40 @@ async def list_option_positions(account_id: str | None = Query(None), status: st
 async def add_option_position(body: OptionPositionIn):
     if body.option_type not in ("call", "put"):
         raise HTTPException(400, "option_type must be 'call' or 'put'")
+    if body.quantity == 0:
+        raise HTTPException(400, "quantity must not be zero")
 
-    # Verify contract exists in provider before saving
-    contract = OptionContract(
-        underlying=body.underlying.upper(),
-        expiry=body.expiry,
-        strike=body.strike,
-        option_type=body.option_type,
+    underlying = body.underlying.strip().upper()
+    # Verify the contract exists upstream before writing anything.
+    market_data_result = await _provider.get_market_data(
+        OptionContract(underlying=underlying, expiry=body.expiry,
+                       strike=body.strike, option_type=body.option_type)
     )
-    market_data_result = await _provider.get_market_data(contract)
 
-    pos_id = str(uuid.uuid4())
+    trade_id = str(uuid.uuid4())
     with get_db() as conn:
+        contract_id = _upsert_contract(
+            conn, underlying, body.expiry, body.strike, body.option_type,
+            body.multiplier, body.currency,
+        )
         conn.execute(
-            """INSERT INTO option_positions
-               (id, account_id, underlying, expiry, strike, option_type,
-                quantity, entry_price, entry_date, notes)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (pos_id, body.account_id, body.underlying.upper(), body.expiry,
-             body.strike, body.option_type, body.quantity,
-             body.entry_price, body.entry_date, body.notes),
+            """INSERT INTO option_trades
+               (trade_id, contract_id, account_id, trade_date, action, side,
+                quantity, price, fees, note)
+               VALUES (?,?,?,?, 'OPEN', ?, ?, ?, ?, ?)""",
+            (trade_id, contract_id, body.account_id, str(body.entry_date)[:10],
+             "BUY" if body.quantity > 0 else "SELL", abs(body.quantity),
+             body.entry_price, body.fees, body.notes),
+        )
+        greeks_source = await _capture_trade_greeks(
+            conn, trade_id, underlying, body.expiry, body.strike, body.option_type
         )
 
     return {
-        "id": pos_id,
+        "id": trade_id,
+        "trade_id": trade_id,
+        "contract_id": contract_id,
+        "greeks_source": greeks_source,
         "provider_verified": market_data_result is not None,
         "freshness": market_data_result.freshness.__dict__ if market_data_result else None,
         "current_price": market_data_result.last_price if market_data_result else None,
@@ -794,21 +1024,18 @@ async def add_option_position(body: OptionPositionIn):
 
 @router.get("/api/options/positions/{position_id}/quote")
 async def get_position_quote(position_id: str):
-    """Fetch live market data for a saved position."""
+    """Live market data for one open lot."""
     with get_db() as conn:
         row = conn.execute(
-            "SELECT * FROM option_positions WHERE id=?", (position_id,)
+            "SELECT * FROM v_option_open_lots WHERE lot_id = ?", (position_id,)
         ).fetchone()
     if not row:
         raise HTTPException(404, "Position not found")
 
-    contract = OptionContract(
-        underlying=row["underlying"],
-        expiry=row["expiry"],
-        strike=row["strike"],
-        option_type=row["option_type"],
+    result = await _provider.get_market_data(
+        OptionContract(underlying=row["underlying"], expiry=row["expiry"],
+                       strike=row["strike"], option_type=row["option_type"])
     )
-    result = await _provider.get_market_data(contract)
     if not result:
         raise HTTPException(404, "Contract not found in market data provider")
 
@@ -826,105 +1053,523 @@ async def get_position_quote(position_id: str):
 
 
 @router.patch("/api/options/positions/{position_id}/close")
-async def close_option_position(position_id: str):
+async def close_option_position(position_id: str, body: OptionCloseIn | None = None):
+    """Close some or all of one lot: a CLOSE trade plus its FIFO matches.
+
+    Closing more than the lot holds is refused rather than silently opening a
+    short in the opposite direction.
+    """
+    body = body or OptionCloseIn()
+    exit_date = (body.exit_date or date.today().isoformat())[:10]
+
     with get_db() as conn:
+        lot = conn.execute(
+            "SELECT * FROM v_option_open_lots WHERE lot_id = ?", (position_id,)
+        ).fetchone()
+        if not lot:
+            raise HTTPException(404, "Open lot not found")
+        lot = dict(lot)
+
+        remaining = abs(float(lot["quantity"]))
+        qty = abs(float(body.quantity)) if body.quantity else remaining
+        if qty > remaining + 1e-9:
+            raise HTTPException(
+                400,
+                f"Cannot close {qty:g} contracts — the lot has {remaining:g} left",
+            )
+
+        direction = int(lot["direction"])          # +1 long, -1 short
+        mult = float(lot["multiplier"]) or 100.0
+        entry_price = float(lot["entry_price"] or 0)
+
+        reason = body.close_reason or ("TRADE" if body.exit_price is not None else "UNKNOWN")
+        close_id = str(uuid.uuid4())
         conn.execute(
-            "UPDATE option_positions SET status='closed' WHERE id=?", (position_id,)
+            """INSERT INTO option_trades
+               (trade_id, contract_id, account_id, trade_date, action, side,
+                quantity, price, fees, close_reason, note)
+               VALUES (?,?,?,?, 'CLOSE', ?, ?, ?, ?, ?, ?)""",
+            (close_id, lot["contract_id"], lot["account_id"], exit_date,
+             "SELL" if direction > 0 else "BUY", qty, body.exit_price,
+             body.fees, reason, body.note),
         )
-    return {"ok": True}
+
+        # Long: (exit - entry). Short: (entry - exit). `direction` carries both.
+        realized = (
+            direction * (float(body.exit_price) - entry_price) * qty * mult - float(body.fees or 0)
+            if body.exit_price is not None else None
+        )
+        conn.execute(
+            """INSERT INTO option_trade_matches
+               (close_trade_id, open_trade_id, quantity, fees_alloc, realized_pnl)
+               VALUES (?,?,?,?,?)""",
+            (close_id, position_id, qty, float(body.fees or 0), realized),
+        )
+        await _capture_trade_greeks(
+            conn, close_id, lot["underlying"], lot["expiry"],
+            float(lot["strike"]), lot["option_type"],
+        )
+
+    return {
+        "ok": True,
+        "close_trade_id": close_id,
+        "quantity_closed": qty,
+        "quantity_remaining": remaining - qty,
+        "exit_price": body.exit_price,
+        "exit_date": exit_date,
+        "realized_pnl": realized,
+        "close_reason": reason,
+    }
+
+
+class OptionCloseFifoIn(OptionCloseIn):
+    """Close across every open lot of one contract, oldest first."""
+    account_id: str = "dime"
+    underlying: str
+    expiry: str
+    strike: float
+    option_type: str
+
+
+@router.post("/api/options/close-fifo")
+async def close_option_fifo(body: OptionCloseFifoIn):
+    """Close N contracts of one option, consuming open lots oldest-first.
+
+    Ordered by trade_date then created_at — two lots opened the same day must
+    follow the order they were actually recorded in, not whatever order SQLite
+    happens to return.
+    """
+    exit_date = (body.exit_date or date.today().isoformat())[:10]
+    occ = occ_symbol(body.underlying, body.expiry, body.strike, body.option_type)
+
+    with get_db() as conn:
+        lots = [dict(r) for r in conn.execute(
+            "SELECT v.* FROM v_option_open_lots v "
+            "WHERE v.occ_symbol = ? AND v.account_id = ? "
+            "ORDER BY v.entry_date, (SELECT created_at FROM option_trades t "
+            "                        WHERE t.trade_id = v.lot_id)",
+            (occ, body.account_id),
+        ).fetchall()]
+        if not lots:
+            raise HTTPException(404, "No open lots for that contract")
+
+        available = sum(abs(float(l["quantity"])) for l in lots)
+        want = abs(float(body.quantity)) if body.quantity else available
+        if want > available + 1e-9:
+            raise HTTPException(
+                400, f"Cannot close {want:g} contracts — only {available:g} are open"
+            )
+
+        direction = int(lots[0]["direction"])
+        mult = float(lots[0]["multiplier"]) or 100.0
+        close_id = str(uuid.uuid4())
+        reason = body.close_reason or ("TRADE" if body.exit_price is not None else "UNKNOWN")
+        conn.execute(
+            """INSERT INTO option_trades
+               (trade_id, contract_id, account_id, trade_date, action, side,
+                quantity, price, fees, close_reason, note)
+               VALUES (?,?,?,?, 'CLOSE', ?, ?, ?, ?, ?, ?)""",
+            (close_id, lots[0]["contract_id"], body.account_id, exit_date,
+             "SELL" if direction > 0 else "BUY", want, body.exit_price,
+             body.fees, reason, body.note),
+        )
+
+        matches = []
+        left = want
+        total_fees = float(body.fees or 0)
+        for lot in lots:
+            if left <= 1e-9:
+                break
+            take = min(left, abs(float(lot["quantity"])))
+            # Fees follow the quantity they belong to; charging the whole
+            # commission to the first lot would distort its realized P&L.
+            fee_alloc = total_fees * (take / want) if want else 0.0
+            realized = (
+                direction * (float(body.exit_price) - float(lot["entry_price"] or 0))
+                * take * mult - fee_alloc
+                if body.exit_price is not None else None
+            )
+            conn.execute(
+                """INSERT INTO option_trade_matches
+                   (close_trade_id, open_trade_id, quantity, fees_alloc, realized_pnl)
+                   VALUES (?,?,?,?,?)""",
+                (close_id, lot["lot_id"], take, round(fee_alloc, 6), realized),
+            )
+            matches.append({
+                "open_trade_id": lot["lot_id"],
+                "entry_date": lot["entry_date"],
+                "entry_price": lot["entry_price"],
+                "quantity": take,
+                "realized_pnl": None if realized is None else round(realized, 2),
+            })
+            left -= take
+
+        await _capture_trade_greeks(
+            conn, close_id, body.underlying, body.expiry, body.strike, body.option_type
+        )
+
+    return {
+        "ok": True,
+        "close_trade_id": close_id,
+        "quantity_closed": want,
+        "matches": matches,
+        "realized_pnl": (
+            None if body.exit_price is None
+            else round(sum(m["realized_pnl"] or 0 for m in matches), 2)
+        ),
+    }
 
 
 @router.delete("/api/options/positions/{position_id}")
 async def delete_option_position(position_id: str):
+    """Delete an OPEN trade. Refused once closes have consumed part of it —
+    deleting it would leave matches pointing at a lot that no longer exists."""
     with get_db() as conn:
-        conn.execute("DELETE FROM option_positions WHERE id=?", (position_id,))
+        matched = conn.execute(
+            "SELECT COUNT(*) c FROM option_trade_matches WHERE open_trade_id = ?",
+            (position_id,),
+        ).fetchone()["c"]
+        if matched:
+            raise HTTPException(
+                409,
+                "This lot has closes matched against it. Delete those close "
+                "trades first, or the realized P&L they produced would lose its "
+                "other half.",
+            )
+        conn.execute("DELETE FROM option_trades WHERE trade_id = ?", (position_id,))
     return {"ok": True}
+
+
+class OptionTradeEditIn(BaseModel):
+    """Correct a mis-entered trade.
+
+    Trades are otherwise immutable — this is for fixing a typo, not for
+    recording that something changed in the market. Every edit is written to
+    `trade_audit_log`, and any match touching the trade is recomputed, because
+    `realized_pnl` is materialized and would otherwise keep reporting a number
+    derived from the wrong price.
+    """
+    trade_date: Optional[str] = None
+    price: Optional[float] = None
+    quantity: Optional[float] = None
+    fees: Optional[float] = None
+    note: Optional[str] = None
+    close_reason: Optional[str] = None
+    # Contract terms. Changing these moves the trade to a different instrument.
+    underlying: Optional[str] = None
+    expiry: Optional[str] = None
+    strike: Optional[float] = None
+    option_type: Optional[str] = None
+    multiplier: Optional[float] = None
+    currency: Optional[str] = None
+    reason: str = ""
+    clear_price: bool = False        # explicitly set price back to unknown
+
+
+def _rematch_trade(conn, trade_id: str) -> int:
+    """Recompute realized P&L for every match touching this trade.
+
+    Fees are re-apportioned by matched quantity at the same time: a changed
+    quantity moves the split, not just the price.
+    """
+    rows = [dict(r) for r in conn.execute(
+        """SELECT mt.close_trade_id, mt.open_trade_id, mt.quantity,
+                  ot.price AS open_price, ot.side AS open_side,
+                  ct.price AS close_price, ct.fees AS close_fees,
+                  ct.quantity AS close_quantity,
+                  c.multiplier
+           FROM option_trade_matches mt
+           JOIN option_trades ot ON ot.trade_id = mt.open_trade_id
+           JOIN option_trades ct ON ct.trade_id = mt.close_trade_id
+           JOIN option_contracts c ON c.contract_id = ot.contract_id
+           WHERE mt.open_trade_id = ? OR mt.close_trade_id = ?""",
+        (trade_id, trade_id),
+    ).fetchall()]
+
+    for m in rows:
+        mult = float(m["multiplier"] or 100)
+        qty = float(m["quantity"] or 0)
+        close_qty = float(m["close_quantity"] or 0)
+        fee_alloc = (
+            float(m["close_fees"] or 0) * (qty / close_qty) if close_qty else 0.0
+        )
+        direction = 1 if m["open_side"] == "BUY" else -1
+        realized = (
+            direction * (float(m["close_price"]) - float(m["open_price"] or 0)) * qty * mult
+            - fee_alloc
+            if m["close_price"] is not None else None
+        )
+        conn.execute(
+            """UPDATE option_trade_matches
+               SET realized_pnl = ?, fees_alloc = ?
+               WHERE close_trade_id = ? AND open_trade_id = ?""",
+            (realized, round(fee_alloc, 6), m["close_trade_id"], m["open_trade_id"]),
+        )
+    return len(rows)
+
+
+def _audit_option_trade(conn, trade_id: str, action: str, old_row: dict,
+                        new_values: dict, reason: str) -> None:
+    """Reuse trade_audit_log — its `trade_id` is plain TEXT with no FK, so
+    option and equity trades share the same immutable event stream."""
+    changed = {
+        k: {"old": old_row.get(k), "new": v}
+        for k, v in new_values.items()
+        if old_row.get(k) != v
+    }
+    conn.execute(
+        """INSERT INTO trade_audit_log
+               (event_id, trade_id, action, fields_changed, reason, snapshot)
+           VALUES (?,?,?,?,?,?)""",
+        (
+            str(uuid.uuid4()),
+            trade_id, action, json.dumps(changed, default=str), reason or "",
+            json.dumps({k: old_row.get(k) for k in (
+                "trade_date", "action", "side", "quantity", "price", "fees",
+                "close_reason", "note", "underlying", "expiry", "strike",
+                "option_type", "multiplier", "currency",
+            )}, default=str),
+        ),
+    )
+
+
+@router.patch("/api/options/trades/{trade_id}")
+async def edit_option_trade(trade_id: str, body: OptionTradeEditIn):
+    """Correct a mis-entered option trade, then re-match what it affects."""
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT t.*, c.underlying, c.expiry, c.strike, c.option_type,
+                      c.multiplier, c.currency, c.occ_symbol
+               FROM option_trades t
+               JOIN option_contracts c ON c.contract_id = t.contract_id
+               WHERE t.trade_id = ?""",
+            (trade_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Trade not found")
+        old = dict(row)
+
+        matched = conn.execute(
+            """SELECT COALESCE(SUM(quantity), 0) q FROM option_trade_matches
+               WHERE open_trade_id = ? OR close_trade_id = ?""",
+            (trade_id, trade_id),
+        ).fetchone()["q"]
+
+        # ── quantity ────────────────────────────────────────────────────────
+        new_qty = float(body.quantity) if body.quantity is not None else float(old["quantity"])
+        if new_qty <= 0:
+            raise HTTPException(400, "quantity must be greater than zero")
+        if new_qty + 1e-9 < float(matched):
+            raise HTTPException(
+                400,
+                f"Cannot reduce this trade to {new_qty:g} — {float(matched):g} contracts are "
+                "already matched against it. Delete or edit those matches first, or the "
+                "realized P&L they produced would refer to size that no longer exists.",
+            )
+
+        # ── contract terms ──────────────────────────────────────────────────
+        term_fields = ("underlying", "expiry", "strike", "option_type", "multiplier", "currency")
+        wants_terms = {
+            f: getattr(body, f) for f in term_fields if getattr(body, f) is not None
+        }
+        contract_id = old["contract_id"]
+        contract_changed = False
+        contract_siblings = 0
+
+        if wants_terms:
+            merged = {f: wants_terms.get(f, old[f]) for f in term_fields}
+            identity_changed = any(
+                str(merged[f]).upper() != str(old[f]).upper()
+                for f in ("underlying", "expiry", "option_type")
+            ) or float(merged["strike"]) != float(old["strike"])
+
+            if identity_changed:
+                if matched:
+                    raise HTTPException(
+                        409,
+                        "This trade is matched to another. Moving it to a different contract "
+                        "would pair a close on one instrument with an open on another — "
+                        "delete the matching close first.",
+                    )
+                contract_id = _upsert_contract(
+                    conn, str(merged["underlying"]), str(merged["expiry"]),
+                    float(merged["strike"]), str(merged["option_type"]),
+                    float(merged["multiplier"]), str(merged["currency"]),
+                )
+                contract_changed = True
+            elif (
+                float(merged["multiplier"]) != float(old["multiplier"])
+                or str(merged["currency"]).upper() != str(old["currency"]).upper()
+            ):
+                # Contract size and currency belong to the INSTRUMENT, so this
+                # edit reaches every trade on it — not just this one.
+                contract_siblings = conn.execute(
+                    "SELECT COUNT(*) c FROM option_trades WHERE contract_id = ? AND trade_id != ?",
+                    (contract_id, trade_id),
+                ).fetchone()["c"]
+                conn.execute(
+                    "UPDATE option_contracts SET multiplier = ?, currency = ? WHERE contract_id = ?",
+                    (float(merged["multiplier"]), str(merged["currency"]).upper(), contract_id),
+                )
+
+        # ── the trade row itself ────────────────────────────────────────────
+        new_price = (
+            None if body.clear_price
+            else (body.price if body.price is not None else old["price"])
+        )
+        new_reason = body.close_reason if body.close_reason is not None else old["close_reason"]
+        if old["action"] == "CLOSE":
+            # The DB CHECK enforces this too; failing here gives a usable message
+            # instead of an IntegrityError.
+            new_reason = new_reason or ("TRADE" if new_price is not None else "UNKNOWN")
+            if new_price is None and new_reason != "UNKNOWN":
+                raise HTTPException(
+                    400,
+                    "A close with no price must use close_reason='UNKNOWN' — an unknown price "
+                    "is not the same as a zero one.",
+                )
+        elif new_price is None:
+            raise HTTPException(400, "An OPEN trade must have a price")
+
+        new_values = {
+            "trade_date": (str(body.trade_date)[:10] if body.trade_date else old["trade_date"]),
+            "price": new_price,
+            "quantity": new_qty,
+            "fees": float(body.fees) if body.fees is not None else float(old["fees"] or 0),
+            "close_reason": new_reason,
+            "note": body.note if body.note is not None else old["note"],
+        }
+        conn.execute(
+            """UPDATE option_trades
+               SET trade_date = ?, price = ?, quantity = ?, fees = ?,
+                   close_reason = ?, note = ?, contract_id = ?
+               WHERE trade_id = ?""",
+            (*new_values.values(), contract_id, trade_id),
+        )
+
+        rematched = _rematch_trade(conn, trade_id)
+        if contract_siblings:
+            # Every sibling's realized P&L was computed with the old multiplier.
+            for sib in conn.execute(
+                "SELECT trade_id FROM option_trades WHERE contract_id = ?", (contract_id,)
+            ).fetchall():
+                rematched += _rematch_trade(conn, sib["trade_id"])
+
+        audit_values = dict(new_values)
+        audit_values.update(wants_terms)
+        _audit_option_trade(conn, trade_id, "OPTION_EDIT", old, audit_values, body.reason)
+
+    return {
+        "ok": True,
+        "trade_id": trade_id,
+        "contract_changed": contract_changed,
+        "matches_recomputed": rematched,
+        "contract_siblings_affected": contract_siblings,
+        "warning": (
+            f"multiplier/currency belong to the contract — {contract_siblings} other trade(s) "
+            "on it were revalued too"
+        ) if contract_siblings else None,
+    }
+
+
+@router.get("/api/options/trades/{trade_id}/audit-log")
+async def get_option_trade_audit_log(trade_id: str, limit: int = Query(50)):
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM trade_audit_log WHERE trade_id = ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (trade_id, max(1, limit)),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.delete("/api/options/trades/{trade_id}")
+async def delete_option_trade(trade_id: str):
+    """Delete any trade. A CLOSE takes its matches with it (ON DELETE CASCADE),
+    which reopens the quantity it had consumed."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT action FROM option_trades WHERE trade_id = ?", (trade_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Trade not found")
+        if row["action"] == "OPEN":
+            matched = conn.execute(
+                "SELECT COUNT(*) c FROM option_trade_matches WHERE open_trade_id = ?",
+                (trade_id,),
+            ).fetchone()["c"]
+            if matched:
+                raise HTTPException(409, "Delete the closes matched against this lot first")
+        conn.execute("DELETE FROM option_trades WHERE trade_id = ?", (trade_id,))
+    return {"ok": True, "action": row["action"]}
 
 
 @router.post("/api/options/positions/seed-demo")
 async def seed_demo_positions():
-    """
-    Insert realistic demo option positions for UI testing.
-    Mix: long call, long put, near-expiry (alert), short put.
-    Clears existing demo positions first (account_id='dime', status='open').
-    """
-    from datetime import date, timedelta
+    """Insert demo lots for UI testing: long call, long put, near-expiry, short put."""
+    from datetime import timedelta
     today = date.today()
 
     demo = [
-        # Long call — moderately ITM
-        {
-            "underlying": "AAPL", "expiry": str(today + timedelta(days=45)),
-            "strike": 200.0, "option_type": "call",
-            "quantity": 2, "entry_price": 5.80,
-            "entry_date": str(today - timedelta(days=10)),
-            "notes": "demo — earnings play",
-        },
-        # Long put — SPY hedge
-        {
-            "underlying": "SPY", "expiry": str(today + timedelta(days=79)),
-            "strike": 530.0, "option_type": "put",
-            "quantity": 3, "entry_price": 4.20,
-            "entry_date": str(today - timedelta(days=5)),
-            "notes": "demo — portfolio hedge",
-        },
-        # Long call NVDA — momentum
-        {
-            "underlying": "NVDA", "expiry": str(today + timedelta(days=107)),
-            "strike": 130.0, "option_type": "call",
-            "quantity": 1, "entry_price": 9.50,
-            "entry_date": str(today - timedelta(days=3)),
-            "notes": "demo — AI momentum",
-        },
-        # Near-expiry warn (≤21d) — triggers alert
-        {
-            "underlying": "TSLA", "expiry": str(today + timedelta(days=14)),
-            "strike": 250.0, "option_type": "put",
-            "quantity": 2, "entry_price": 3.10,
-            "entry_date": str(today - timedelta(days=20)),
-            "notes": "demo — near expiry warn",
-        },
-        # Critical expiry (≤7d) — triggers red alert
-        {
-            "underlying": "QQQ", "expiry": str(today + timedelta(days=4)),
-            "strike": 480.0, "option_type": "call",
-            "quantity": 1, "entry_price": 2.40,
-            "entry_date": str(today - timedelta(days=30)),
-            "notes": "demo — critical expiry",
-        },
-        # Short put — limited but large loss, triggers short warning
-        {
-            "underlying": "AAPL", "expiry": str(today + timedelta(days=45)),
-            "strike": 185.0, "option_type": "put",
-            "quantity": -2, "entry_price": 3.50,
-            "entry_date": str(today - timedelta(days=7)),
-            "notes": "demo — short put (cash-secured)",
-        },
+        {"underlying": "AAPL", "expiry": str(today + timedelta(days=45)), "strike": 200.0,
+         "option_type": "call", "quantity": 2, "entry_price": 5.80,
+         "entry_date": str(today - timedelta(days=10)), "notes": "demo — earnings play"},
+        {"underlying": "SPY", "expiry": str(today + timedelta(days=79)), "strike": 530.0,
+         "option_type": "put", "quantity": 3, "entry_price": 4.20,
+         "entry_date": str(today - timedelta(days=5)), "notes": "demo — portfolio hedge"},
+        {"underlying": "NVDA", "expiry": str(today + timedelta(days=107)), "strike": 130.0,
+         "option_type": "call", "quantity": 1, "entry_price": 9.50,
+         "entry_date": str(today - timedelta(days=3)), "notes": "demo — AI momentum"},
+        {"underlying": "TSLA", "expiry": str(today + timedelta(days=14)), "strike": 250.0,
+         "option_type": "put", "quantity": 2, "entry_price": 3.10,
+         "entry_date": str(today - timedelta(days=20)), "notes": "demo — near expiry warn"},
+        {"underlying": "QQQ", "expiry": str(today + timedelta(days=4)), "strike": 480.0,
+         "option_type": "call", "quantity": 1, "entry_price": 2.40,
+         "entry_date": str(today - timedelta(days=30)), "notes": "demo — critical expiry"},
+        {"underlying": "AAPL", "expiry": str(today + timedelta(days=45)), "strike": 185.0,
+         "option_type": "put", "quantity": -2, "entry_price": 3.50,
+         "entry_date": str(today - timedelta(days=7)), "notes": "demo — short put (cash-secured)"},
     ]
 
     inserted = []
     with get_db() as conn:
         for pos in demo:
-            pid = str(uuid.uuid4())
-            conn.execute(
-                """INSERT INTO option_positions
-                   (id, account_id, underlying, expiry, strike, option_type,
-                    quantity, entry_price, entry_date, notes)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (pid, "dime", pos["underlying"], pos["expiry"], pos["strike"],
-                 pos["option_type"], pos["quantity"], pos["entry_price"],
-                 pos["entry_date"], pos["notes"]),
+            contract_id = _upsert_contract(
+                conn, pos["underlying"], pos["expiry"], pos["strike"],
+                pos["option_type"], 100, "USD",
             )
-            inserted.append(pid)
+            tid = str(uuid.uuid4())
+            conn.execute(
+                """INSERT INTO option_trades
+                   (trade_id, contract_id, account_id, trade_date, action, side,
+                    quantity, price, note)
+                   VALUES (?,?,?,?, 'OPEN', ?, ?, ?, ?)""",
+                (tid, contract_id, "dime", pos["entry_date"],
+                 "BUY" if pos["quantity"] > 0 else "SELL", abs(pos["quantity"]),
+                 pos["entry_price"], pos["notes"]),
+            )
+            conn.execute(
+                "INSERT INTO option_trade_greeks (trade_id, source) VALUES (?, 'unavailable')",
+                (tid,),
+            )
+            inserted.append(tid)
 
     return {"inserted": len(inserted), "ids": inserted}
 
 
 @router.delete("/api/options/positions/demo/clear")
 async def clear_demo_positions():
-    """Remove all demo positions (notes contain 'demo')."""
+    """Remove demo trades (note starts with 'demo') and any matches on them."""
     with get_db() as conn:
-        conn.execute("DELETE FROM option_positions WHERE notes LIKE 'demo%'")
+        conn.execute(
+            "DELETE FROM option_trades WHERE trade_id IN "
+            "(SELECT trade_id FROM option_trades WHERE note LIKE 'demo%')"
+        )
+        # Contracts left with no trades are dead weight in the instrument table.
+        conn.execute(
+            "DELETE FROM option_contracts WHERE contract_id NOT IN "
+            "(SELECT DISTINCT contract_id FROM option_trades)"
+        )
     return {"ok": True}
 
 
@@ -936,14 +1581,15 @@ _greeks_cache = TTLCache(ttl=300, maxsize=200)
 @router.get("/api/options/positions/{position_id}/greeks")
 async def get_position_greeks(position_id: str):
     """Compute BS + GC-adjusted Greeks for one position."""
-    cache_key = f"greeks:{position_id}"
+    cache_key = f"greeks2:{position_id}"
     cached = _greeks_cache.get(cache_key)
     if cached is not None:
         return cached
 
     with get_db() as conn:
         row = conn.execute(
-            "SELECT * FROM option_positions WHERE id=?", (position_id,)
+            "SELECT *, lot_id AS id FROM v_option_open_lots WHERE lot_id = ?",
+            (position_id,),
         ).fetchone()
     if not row:
         raise HTTPException(404, "Position not found")
@@ -961,7 +1607,7 @@ async def get_position_greeks(position_id: str):
     if not market:
         raise HTTPException(404, "Market data not available for this contract")
 
-    spot = market.last_price or market.ask or market.bid
+    spot = underlying_spot(pos["underlying"])
     iv   = market.implied_volatility
     if not spot or not iv:
         raise HTTPException(422, "Insufficient market data (missing spot or IV)")
@@ -1006,13 +1652,11 @@ async def get_portfolio_greeks(
     with get_db() as conn:
         if account_id:
             rows = conn.execute(
-                "SELECT * FROM option_positions WHERE account_id=? AND status=?",
-                (account_id, status),
+                "SELECT *, lot_id AS id FROM v_option_open_lots WHERE account_id = ?",
+                (account_id,),
             ).fetchall()
         else:
-            rows = conn.execute(
-                "SELECT * FROM option_positions WHERE status=?", (status,)
-            ).fetchall()
+            rows = conn.execute("SELECT *, lot_id AS id FROM v_option_open_lots").fetchall()
 
     positions = [dict(r) for r in rows]
     if not positions:
@@ -1048,16 +1692,17 @@ async def get_portfolio_greeks(
 
         greeks_data: dict = {}
         try:
-            cache_key = f"greeks:{pos['id']}"
+            cache_key = f"greeks2:{pos['id']}"
             cached = _greeks_cache.get(cache_key)
             if cached:
                 greeks_data = cached
             else:
                 market = await _provider.get_market_data(contract)
-                if market and market.last_price and market.implied_volatility:
+                spot = underlying_spot(pos["underlying"])
+                if market and spot and market.implied_volatility:
                     moments = estimate_moments(pos["underlying"])
                     greeks_data = compute_greeks(
-                        spot=market.last_price,
+                        spot=spot,
                         strike=pos["strike"],
                         expiry=pos["expiry"],
                         option_type=pos["option_type"],

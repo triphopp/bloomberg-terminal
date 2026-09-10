@@ -79,6 +79,11 @@ memory/
 | **PORT: Sell system + Dividend auto-fill + Y key** (ทำเสร็จแล้ว) | `plans/completed/portfolio-sell-dividend-y-key.md` |
 | **PORT Analytics: Dividend M/Q/Y, stacked allocation timeline, currency fix** | ✅ done 2026-06-05 — `plans/completed/analytics-charts-enhancement.md` |
 | **Trade Edit System + Sector Standardization** (ทำเสร็จแล้ว) | `plans/completed/trade-edit-and-sector-standard.md` |
+| **Option Payoff Simulator** (พรีวิวสดในฟอร์ม ADD + ปุ่ม PAYOFF ในแถว lot; expiry=เลขคณิต client-side, T+0=BS, POP=lognormal; BE จาก sign change, max P/L จาก slope) ✅ done 2026-09-10 | `plans/completed/option-payoff-simulator.md` |
+| **Option Edit + Portfolio Cash** (cash derived ที่ `/summary` รวม option ทั้ง realized และ open cost; EDIT option trade + re-match + audit log; cash ที่ SummaryBar/CASH/ANALYTICS) ✅ done 2026-09-10 | `plans/completed/option-edit-and-portfolio-cash.md` |
+| **Option Schema Normalization** (contracts/trades/trade_greeks/trade_matches; FIFO partial close; lot เป็น view ไม่ใช่ตาราง; greeks ตอนซื้อ/ขาย; DROP option_positions) ✅ done 2026-09-10 | `plans/completed/option-schema-normalization.md` |
+| **Option Greeks + PnL Attribution** (Δ/Γ/Θ ต่อสัญญา + dollar greeks USD; `option_greeks_snapshots` รายวัน → attribution Δ/Γ/Θ/ν/residual ด้วย greeks ต้นงวด; ANALYTICS DERIVATIVES) ✅ done 2026-09-09 | `plans/completed/option-greeks-and-attribution.md` |
+| **Options in Portfolio** (premium MV เข้า NAV + delta notional ถ่วง allocation; `portfolio_options.py` เป็น single source; schema exit_price/currency/multiplier; greeks spot bug fix 🔴) ✅ done 2026-09-09 | `plans/completed/options-in-portfolio.md` |
 | **Port Redesign** (symbol resolver at-write, sub_portfolios table, currency module, ปิด F06) 🔄 | `plans/port-redesign.md` |
 | **Multi-Currency Sub-Portfolio** (instrument ccy authoritative, per-trade rollup, hybrid historical/live FX, ECON attribution) ✅ done 2026-07-14 | `plans/completed/multi-currency-portfolio.md` |
 | **Bloomberg CLI + MCP Server** (`bloomberg market/portfolio/mcp`, 13 MCP tools) | `plans/bloomberg-cli-mcp.md` |

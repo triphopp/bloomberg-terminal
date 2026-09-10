@@ -26,7 +26,7 @@ import { ConfirmationModal } from "../core/confirmation-modal";
 import { ShortcutsHelp } from "../core/keyboard-shortcuts";
 import { ViewSkeleton } from "../core/view-skeleton";
 import { Watchlist } from "../core/watchlist";
-import { useTerminalUI, useViewPrefetch } from "../hooks";
+import { usePortfolioPrewarm, useTerminalUI, useViewPrefetch } from "../hooks";
 import { useMarketDataQuery } from "../hooks";
 import { AlertTicker } from "../layout/alert-ticker";
 import { TailRiskRibbon } from "../layout/tail-risk-ribbon";
@@ -92,10 +92,19 @@ function BloombergTerminal() {
 
   const { prefetchTier1 } = useViewPrefetch();
 
+  // Tell the inline boot watchdog (app/boot-watchdog.tsx) the bundle came up —
+  // without this flag it reloads the page once, assuming the chunk never landed.
+  useEffect(() => {
+    (window as unknown as { __BT_MOUNTED__?: boolean }).__BT_MOUNTED__ = true;
+  }, []);
+
   // Prefetch tier-1 view chunks when idle after mount
   useEffect(() => {
     prefetchTier1();
   }, [prefetchTier1]);
+
+  // …and the data behind the slowest view, so opening PORT is not a 10s wait.
+  usePortfolioPrewarm();
 
   // Jotai atoms
   const [isConfirmModalOpen] = useAtom(isConfirmModalOpenAtom);

@@ -20,6 +20,16 @@ from sources import market_data
 from cache import TTLCache
 from db import get_db
 from market_session import is_current_session, is_today_at, local_date_of, session_date_for
+from portfolio_options import (
+    capture_daily_greeks,
+    closed_option_positions,
+    open_option_positions,
+    option_cost_base,
+    option_currency,
+    option_multiplier,
+    option_pnl_attribution,
+    realized_option_pnl,
+)
 from portfolio_currency import (
     convert_amount,
     fx_rate as _fx,
@@ -88,7 +98,8 @@ def _get_yf_symbol(symbol: str, account_id: str) -> Optional[str]:
     if not symbol:
         return None
     sym = symbol.strip().upper()
-    # Skip options (PUT_INTC, CALL_INTC etc.)
+    # Options never resolve to an equity quote — they are valued from the
+    # option chain in portfolio_options.py, not from this symbol path.
     if sym.startswith(("PUT_", "CALL_")):
         return None
     if account_id == "finansia":
@@ -387,9 +398,12 @@ def _write_audit_log(
 
     conn.execute(
         """INSERT INTO trade_audit_log
-               (trade_id, action, fields_changed, reason, snapshot)
-           VALUES (?, ?, ?, ?, ?)""",
+               (event_id, trade_id, action, fields_changed, reason, snapshot)
+           VALUES (?, ?, ?, ?, ?, ?)""",
         (
+            # uuid, not the autoincrement id: that one is device-local and would
+            # collide the moment two machines both logged an edit.
+            str(uuid.uuid4()),
             trade_id,
             action,
             json.dumps(fields_changed),
@@ -1624,7 +1638,20 @@ def _open_positions_enriched(account_id: Optional[str], base_currency: str) -> d
             pos["day_pct"] = None
         enriched.append(pos)
 
-    return {"positions": enriched, "thb_per_usd": thb_per_usd}
+    options = open_option_positions(account_id, base_currency)
+    # Greeks history can only be accumulated, never back-filled, so every visit
+    # to PORT records the day. Guarded to once per day and run off-thread — the
+    # caller must not wait on it.
+    if options:
+        threading.Thread(target=capture_daily_greeks, daemon=True).start()
+    return {
+        "positions": enriched,
+        # Kept as its own array rather than merged into `positions`: an option
+        # lot carries strike/expiry/multiplier and no `price_entry`-per-share
+        # meaning, and the table components index trade rows by field name.
+        "options": options,
+        "thb_per_usd": thb_per_usd,
+    }
 
 
 # ── Allocation detail: basis growth + rebalance sizing ───────────────────────
@@ -1754,15 +1781,107 @@ def get_allocation_detail(
         row.pop("cost_native", None)
         symbols.append(row)
 
+    for row in symbols:
+        row["instrument"] = "equity"
+        row["exposure_base"] = row["market_value"] if row["market_value"] is not None else row["cost_base"]
+        row["exposure_source"] = "market_value"
+
+    # ── Option exposure ──────────────────────────────────────────────────────
+    # Money columns stay premium-based (cost, market value, unrealized) because
+    # that is what the lot is worth. WEIGHT is a different question: three SPY
+    # calls worth $1,200 of premium can carry $150k of exposure, so the weight
+    # columns run off delta notional instead. Both are reported; neither is
+    # allowed to masquerade as the other.
+    sector_by_symbol = {r["symbol"]: r["sector"] for r in symbols}
+    try:
+        option_lots = open_option_positions(account_id, base_currency)
+    except Exception:
+        logger.exception("option valuation failed; allocation reports equities only")
+        option_lots = []
+
+    opt_agg: dict[str, dict] = {}
+    for lot in option_lots:
+        under = str(lot.get("underlying") or "").upper()
+        if not under:
+            continue
+        key = f"{under} OPT"
+        row = opt_agg.get(key)
+        if row is None:
+            row = opt_agg[key] = {
+                "symbol": key,
+                "underlying": under,
+                "sector": sector_by_symbol.get(under) or lot.get("sector") or "Options",
+                "account_id": lot.get("account_id"),
+                "account_name": lot.get("acc_name"),
+                "currency": lot.get("currency"),
+                "market": None,
+                "resolved_symbol": None,
+                "price": lot.get("mark"),
+                "volume": 0.0,
+                "cost_base": 0.0,
+                "market_value": 0.0,
+                "exposure_base": 0.0,
+                "priced": True,
+                "lots": 0,
+                "has_override": False,
+                "instrument": "option",
+                "exposure_source": "delta",
+                "_delta_lots": 0,
+                "_premium_lots": 0,
+            }
+        row["lots"] += 1
+        row["volume"] += _to_float_or_zero(lot.get("quantity"))
+        row["cost_base"] += _to_float_or_zero(lot.get("cost_basis_base"))
+        row["market_value"] += _to_float_or_zero(lot.get("market_value_base"))
+        if lot.get("delta_notional_base") is None:
+            # No delta means no defensible weight — fall back to premium value
+            # and say so, rather than dropping the lot out of the book.
+            row["exposure_base"] += _to_float_or_zero(lot.get("market_value_base"))
+            row["_premium_lots"] += 1
+        else:
+            row["exposure_base"] += _to_float_or_zero(lot.get("delta_notional_base"))
+            row["_delta_lots"] += 1
+        if lot.get("mark_stale"):
+            row["priced"] = False
+
+    for row in opt_agg.values():
+        # Say honestly which basis the weight came from — a row mixing a
+        # delta-priced lot with an unquoted one is neither, and calling it
+        # "delta" would overstate how much of the weight is real exposure.
+        row["exposure_source"] = (
+            "delta" if row["_premium_lots"] == 0
+            else "market_value" if row["_delta_lots"] == 0
+            else "mixed"
+        )
+        row.pop("_delta_lots", None)
+        row.pop("_premium_lots", None)
+        row["cost_base"] = round(row["cost_base"], 2)
+        row["market_value"] = round(row["market_value"], 2)
+        row["exposure_base"] = round(row["exposure_base"], 2)
+        row["avg_cost"] = round(row["cost_base"] / row["volume"], 4) if row["volume"] else None
+        row["unrealized"] = round(row["market_value"] - row["cost_base"], 2)
+        row["growth_pct"] = (
+            round(row["unrealized"] / abs(row["cost_base"]) * 100, 2) if row["cost_base"] else None
+        )
+        symbols.append(row)
+
     total_cost = round(sum(r["cost_base"] for r in symbols), 2)
     total_mv = round(sum(r["market_value"] or r["cost_base"] for r in symbols), 2)
     total_gain = round(total_mv - total_cost, 2)
     gross_gain = round(sum(max(r["unrealized"] or 0, 0) for r in symbols), 2)
+    # Shorts make exposure signed, so the denominator is the sum of absolute
+    # exposure — otherwise a delta-neutral book divides by ~0 and every weight
+    # explodes.
+    total_exposure = round(sum(abs(r.get("exposure_base") or 0) for r in symbols), 2)
+    total_options_exposure = round(
+        sum(abs(r.get("exposure_base") or 0) for r in symbols if r.get("instrument") == "option"), 2
+    )
 
     def _weights(row: dict) -> None:
         mv = row["market_value"] if row.get("market_value") is not None else row["cost_base"]
         row["weight_cost_pct"] = _pct(row["cost_base"], total_cost)
         row["weight_mv_pct"] = _pct(mv, total_mv)
+        row["weight_exposure_pct"] = _pct(abs(row.get("exposure_base") or 0), total_exposure)
         row["drift_pp"] = round(row["weight_mv_pct"] - row["weight_cost_pct"], 2)
         row["contrib_growth_pct"] = _pct(row.get("unrealized") or 0, total_cost)
         row["share_of_gain_pct"] = (
@@ -1783,6 +1902,7 @@ def get_allocation_detail(
                 "sector": row["sector"],
                 "cost_base": 0.0,
                 "market_value": 0.0,
+                "exposure_base": 0.0,
                 "unrealized": 0.0,
                 "priced": True,
                 "symbols": [],
@@ -1790,6 +1910,7 @@ def get_allocation_detail(
         )
         sec["cost_base"] += row["cost_base"]
         sec["market_value"] += row["market_value"] or row["cost_base"]
+        sec["exposure_base"] += row.get("exposure_base") or 0
         sec["unrealized"] += row["unrealized"] or 0
         sec["priced"] = sec["priced"] and bool(row["priced"])
         sec["symbols"].append(row)
@@ -1798,6 +1919,7 @@ def get_allocation_detail(
     for sec in sector_map.values():
         sec["cost_base"] = round(sec["cost_base"], 2)
         sec["market_value"] = round(sec["market_value"], 2)
+        sec["exposure_base"] = round(sec["exposure_base"], 2)
         sec["unrealized"] = round(sec["unrealized"], 2)
         sec["growth_pct"] = (
             round((sec["market_value"] / sec["cost_base"] - 1) * 100, 2)
@@ -1829,7 +1951,16 @@ def get_allocation_detail(
         row["action"] = "HOLD" if row["in_band"] or delta_value == 0 else (
             "BUY" if delta_value > 0 else "SELL"
         )
-        if scope == "symbol":
+        if scope == "symbol" and row.get("instrument") == "option":
+            # Sizing an option back to a weight is not a share count: the target
+            # is premium-weighted while the exposure is delta-weighted, and
+            # rounding contracts moves both by different amounts. Report the
+            # value gap and let the user pick the contract.
+            row["delta_shares"] = None
+            row["lot_size"] = 1
+            row["est_realized"] = None
+            row["est_value"] = None
+        elif scope == "symbol":
             price = row.get("price")
             lot = _lot_size(row)
             if price and mv:
@@ -1876,6 +2007,9 @@ def get_allocation_detail(
             "market_value": total_mv,
             "unrealized": total_gain,
             "growth_pct": round((total_mv / total_cost - 1) * 100, 2) if total_cost > 0 else None,
+            "exposure_base": total_exposure,
+            "options_exposure_base": total_options_exposure,
+            "options_exposure_pct": _pct(total_options_exposure, total_exposure),
             "gain_concentration_pct": (top_gain or {}).get("share_of_gain_pct") or 0.0,
             "gain_concentration_symbol": (top_gain or {}).get("symbol"),
             "positions": len(symbols),
@@ -2122,6 +2256,15 @@ def get_summary(base_currency: str = Query("THB")):
             FROM cash_ledger GROUP BY account_id
         """).fetchall()
 
+        # Cost basis of what is still open. Deliberately NOT via
+        # _open_positions_enriched: cost does not depend on today's price, and
+        # that call marks the whole book to market over the network.
+        open_cost_rows = conn.execute("""
+            SELECT t.*, a.currency acc_currency
+            FROM trades t JOIN portfolio_accounts a ON t.account_id = a.id
+            WHERE t.win_loss = 'P'
+        """).fetchall()
+
         dividend_rows = conn.execute("""
             SELECT d.*, a.currency acc_currency
             FROM dividends d JOIN portfolio_accounts a ON d.account_id = a.id
@@ -2180,9 +2323,79 @@ def get_summary(base_currency: str = Query("THB")):
             ytd_economic_acct_map[aid] = ytd_economic_acct_map.get(aid, 0.0) + economic_in_acct
             ytd_economic_base_map[aid] = ytd_economic_base_map.get(aid, 0.0) + economic_in_base
 
+    # Open cost basis per account, converted at the ENTRY rate — the same basis
+    # `/allocation-detail` reports, so the two cannot disagree.
+    open_cost_map: dict[str, float] = {}
+    for raw in open_cost_rows:
+        row = dict(raw)
+        vol = _to_float_or_zero(row.get("volume"))
+        entry = _to_float_or_zero(row.get("price_entry"))
+        native = _to_float_or_zero(row.get("amount")) or (entry * vol)
+        aid = row["account_id"]
+        open_cost_map[aid] = open_cost_map.get(aid, 0.0) + trade_value_in_report(
+            row, native, base_currency, when="entry"
+        )
+
+    # ── Options ───────────────────────────────────────────────────────────────
+    # Priced from the option chain, not the equity quote path. Market value is
+    # what belongs in NAV; delta notional is exposure and is reported alongside
+    # it so the caller can weight a book without mistaking premium for size.
+    opt_mv:      dict[str, float] = {}
+    opt_cost:    dict[str, float] = {}
+    opt_unreal:  dict[str, float] = {}
+    opt_delta:   dict[str, float] = {}
+    opt_count:   dict[str, int]   = {}
+    opt_realized: dict[str, float] = {}
+    opt_realized_native: dict[str, float] = {}
+    opt_wins:   dict[str, int] = {}
+    opt_losses: dict[str, int] = {}
+    opt_ytd_base:   dict[str, float] = {}
+    opt_ytd_native: dict[str, float] = {}
+    opt_ytd_closed: dict[str, int] = {}
+    acct_ccy_map = {a["id"]: str(a.get("currency") or "THB").upper() for a in accounts}
+    try:
+        for o in open_option_positions(None, base_currency):
+            aid = o.get("account_id") or ""
+            opt_mv[aid]     = opt_mv.get(aid, 0.0)     + float(o.get("market_value_base") or 0)
+            opt_cost[aid]   = opt_cost.get(aid, 0.0)   + float(o.get("cost_basis_base") or 0)
+            opt_unreal[aid] = opt_unreal.get(aid, 0.0) + float(o.get("unrealized_pnl_base") or 0)
+            opt_delta[aid]  = opt_delta.get(aid, 0.0)  + float(o.get("delta_notional_base") or 0)
+            opt_count[aid]  = opt_count.get(aid, 0) + 1
+        for o in closed_option_positions(None):
+            aid = o.get("account_id") or ""
+            opt_realized[aid] = opt_realized.get(aid, 0.0) + realized_option_pnl(o, base_currency)
+            opt_realized_native[aid] = opt_realized_native.get(aid, 0.0) + realized_option_pnl(
+                o, acct_ccy_map.get(aid, "THB")
+            )
+            # A match whose closing price was never recorded counts as neither a
+            # win nor a loss: its result is unknown, and calling it either way
+            # would invent one. It also contributes 0 to the P&L above.
+            pnl_native = o.get("realized_pnl")
+            if pnl_native is not None:
+                if float(pnl_native) > 0:
+                    opt_wins[aid] = opt_wins.get(aid, 0) + 1
+                else:
+                    opt_losses[aid] = opt_losses.get(aid, 0) + 1
+                if str(o.get("exit_date") or "")[:10] >= year_start:
+                    opt_ytd_base[aid] = opt_ytd_base.get(aid, 0.0) + realized_option_pnl(
+                        o, base_currency
+                    )
+                    opt_ytd_native[aid] = opt_ytd_native.get(aid, 0.0) + realized_option_pnl(
+                        o, acct_ccy_map.get(aid, "THB")
+                    )
+                    opt_ytd_closed[aid] = opt_ytd_closed.get(aid, 0) + 1
+    except Exception:
+        logger.exception("option valuation failed; summary reports equities only")
+
     result = []
     total_pnl_base = 0.0
     total_economic_pnl_base = 0.0
+    total_options_mv_base = 0.0
+    total_options_unrealized_base = 0.0
+    total_options_delta_base = 0.0
+    total_options_realized_base = 0.0
+    total_open_cost_base = 0.0
+    total_cash_base = 0.0
     total_ytd_realized_base = 0.0
     total_ytd_economic_realized_base = 0.0
     total_wins = total_closed = 0
@@ -2196,21 +2409,34 @@ def get_summary(base_currency: str = Query("THB")):
         income_thb = float(c.get("total_income") or 0)
         invested_thb = float(c.get("total_invested") or 0)
 
-        wins   = int(s.get("wins", 0) or 0)
-        losses = int(s.get("losses", 0) or 0)
+        # Options are trades. A closed option is a realized result like any
+        # other, so it belongs in TOTAL P&L and in WIN RATE — reporting them in
+        # a separate field only meant the headline numbers quietly excluded
+        # them, and ANALYTICS (which does count them) showed a different win
+        # rate on the same screen.
+        wins   = int(s.get("wins", 0) or 0) + opt_wins.get(aid, 0)
+        losses = int(s.get("losses", 0) or 0) + opt_losses.get(aid, 0)
         closed = wins + losses
-        total  = int(s.get("total_trades", 0) or 0)
+        total  = int(s.get("total_trades", 0) or 0) + opt_wins.get(aid, 0) + opt_losses.get(aid, 0)
         open_n = int(s.get("open_count", 0) or 0)
         win_rate = round(wins / closed * 100, 1) if closed > 0 else 0.0
 
-        pnl_native = pnl_acct_map.get(aid, 0.0)
-        ytd_realized_native = ytd_acct_map.get(aid, 0.0)
-        pnl_base = pnl_base_map.get(aid, 0.0)
-        ytd_realized_base = ytd_base_map.get(aid, 0.0)
-        economic_pnl_native = economic_pnl_acct_map.get(aid, 0.0)
-        economic_pnl_base = economic_pnl_base_map.get(aid, 0.0)
-        ytd_economic_realized_native = ytd_economic_acct_map.get(aid, 0.0)
-        ytd_economic_realized_base = ytd_economic_base_map.get(aid, 0.0)
+        pnl_native = pnl_acct_map.get(aid, 0.0) + opt_realized_native.get(aid, 0.0)
+        ytd_realized_native = ytd_acct_map.get(aid, 0.0) + opt_ytd_native.get(aid, 0.0)
+        pnl_base = pnl_base_map.get(aid, 0.0) + opt_realized.get(aid, 0.0)
+        ytd_realized_base = ytd_base_map.get(aid, 0.0) + opt_ytd_base.get(aid, 0.0)
+        # `economic` adds principal-FX attribution on top of realized trading
+        # P&L. Options carry no separate FX attribution here, so their economic
+        # contribution IS their realized figure — leaving them out would make
+        # ECON smaller than TOTAL P&L for no stated reason.
+        economic_pnl_native = economic_pnl_acct_map.get(aid, 0.0) + opt_realized_native.get(aid, 0.0)
+        economic_pnl_base = economic_pnl_base_map.get(aid, 0.0) + opt_realized.get(aid, 0.0)
+        ytd_economic_realized_native = (
+            ytd_economic_acct_map.get(aid, 0.0) + opt_ytd_native.get(aid, 0.0)
+        )
+        ytd_economic_realized_base = (
+            ytd_economic_base_map.get(aid, 0.0) + opt_ytd_base.get(aid, 0.0)
+        )
 
         total_pnl_base += pnl_base
         total_economic_pnl_base += economic_pnl_base
@@ -2218,6 +2444,31 @@ def get_summary(base_currency: str = Query("THB")):
         total_ytd_economic_realized_base += ytd_economic_realized_base
         total_wins  += wins
         total_closed += closed
+
+        # Idle cash, DERIVED — not a ledger balance. Everything paid in, plus
+        # everything realized and received, minus what is still deployed. It
+        # cannot see commissions, taxes or margin interest that were never
+        # recorded, so it is an estimate and every surface that shows it says so.
+        open_cost = open_cost_map.get(aid, 0.0) + opt_cost.get(aid, 0.0)
+        options_mv = opt_mv.get(aid, 0.0)
+        options_unrealized = opt_unreal.get(aid, 0.0)
+        options_realized = opt_realized.get(aid, 0.0)
+        options_delta = opt_delta.get(aid, 0.0)
+        total_options_mv_base += options_mv
+        total_options_unrealized_base += options_unrealized
+        total_options_delta_base += options_delta
+        total_options_realized_base += options_realized
+
+        cash_base = (
+            float(_conv(invested_thb, "THB", base_currency, thb_per_usd))
+            # pnl_base already includes option realized — adding opt_realized
+            # again here would count every closed option twice.
+            + pnl_base
+            + dividends_base
+            - open_cost
+        )
+        total_open_cost_base += open_cost
+        total_cash_base += cash_base
 
         result.append({
             "account":        acc,
@@ -2234,13 +2485,22 @@ def get_summary(base_currency: str = Query("THB")):
             "ytd_realized_base":   round(ytd_realized_base, 2),
             "ytd_economic_realized_native": round(ytd_economic_realized_native, 2),
             "ytd_economic_realized_base":   round(ytd_economic_realized_base, 2),
-            "ytd_closed":     int(s.get("ytd_closed", 0) or 0),
+            "ytd_closed":     int(s.get("ytd_closed", 0) or 0) + opt_ytd_closed.get(aid, 0),
             "total_income":   income_thb,
             "total_income_base": round(_conv(income_thb, "THB", base_currency, thb_per_usd), 2),
             "total_invested": invested_thb,
             "total_invested_base": round(_conv(invested_thb, "THB", base_currency, thb_per_usd), 2),
             "total_dividends": round(dividends_native, 2),
             "total_dividends_base": round(dividends_base, 2),
+            "options_open_count":       opt_count.get(aid, 0),
+            "options_mv_base":          round(options_mv, 2),
+            "options_cost_base":        round(opt_cost.get(aid, 0.0), 2),
+            "options_unrealized_base":  round(options_unrealized, 2),
+            "options_realized_base":    round(options_realized, 2),
+            "options_delta_notional_base": round(options_delta, 2),
+            # Estimate — see the comment where cash_base is computed.
+            "open_cost_base": round(open_cost, 2),
+            "cash_base": round(cash_base, 2),
         })
 
     return {
@@ -2249,6 +2509,13 @@ def get_summary(base_currency: str = Query("THB")):
         "total_economic_pnl_base": round(total_economic_pnl_base, 2),
         "total_ytd_realized_base": round(total_ytd_realized_base, 2),
         "total_ytd_economic_realized_base": round(total_ytd_economic_realized_base, 2),
+        "total_options_mv_base":          round(total_options_mv_base, 2),
+        "total_options_unrealized_base":  round(total_options_unrealized_base, 2),
+        "total_options_realized_base":    round(total_options_realized_base, 2),
+        "total_options_delta_notional_base": round(total_options_delta_base, 2),
+        "total_open_cost_base": round(total_open_cost_base, 2),
+        "total_cash_base": round(total_cash_base, 2),
+        "cash_is_estimate": True,
         "ytd_year":       datetime.now().year,
         "global_win_rate": round(total_wins / total_closed * 100, 1) if total_closed > 0 else 0,
         "base_currency":  base_currency,
@@ -2425,6 +2692,56 @@ def get_portfolio_returns(
                 a.unrealized += mv - cost
             a.cf.append((now, mv))
 
+    # Options are cashflows like any other lot: premium paid out at entry,
+    # proceeds back at exit, and open lots marked to market at `now`. A short
+    # lot's cost is negative (credit received), so it enters as a POSITIVE flow
+    # — the sign falls out of the arithmetic and must not be forced.
+    try:
+        opt_open = open_option_positions(account_id, base_currency)
+        opt_closed = closed_option_positions(account_id)
+    except Exception:
+        logger.exception("option valuation failed; returns report equities only")
+        opt_open, opt_closed = [], []
+
+    for o in opt_open:
+        aid = o.get("account_id") or ""
+        if aid not in accs:
+            continue
+        a = accs[aid]
+        cost = _to_float_or_zero(o.get("cost_basis_base"))
+        mv = _to_float_or_zero(o.get("market_value_base"))
+        d_entry = _parse_date(o.get("entry_date"))
+        if d_entry is None:
+            continue
+        if cost > 0:
+            # Only long premium is deployed capital; a short credit is not
+            # "invested", and counting it would understate every return ratio.
+            a.invested += cost
+        a.first = d_entry if a.first is None else min(a.first, d_entry)
+        a.cf.append((d_entry, -cost))
+        a.unrealized += mv - cost
+        a.cf.append((now, mv))
+
+    for o in opt_closed:
+        aid = o.get("account_id") or ""
+        if aid not in accs:
+            continue
+        a = accs[aid]
+        d_entry = _parse_date(o.get("entry_date"))
+        if d_entry is None:
+            continue
+        # One cashflow pair per MATCH, sized by the matched quantity — a lot
+        # closed in two halves deployed its capital once but returned it twice.
+        cost = option_cost_base(o, base_currency)
+        pnl = realized_option_pnl(o, base_currency)
+        if cost > 0:
+            a.invested += cost
+        a.first = d_entry if a.first is None else min(a.first, d_entry)
+        a.cf.append((d_entry, -cost))
+        a.realized += pnl
+        d_exit = _parse_date(o.get("exit_date")) or _parse_date(o.get("expiry")) or d_entry
+        a.cf.append((d_exit, cost + pnl))
+
     for d in divs:
         aid = d["account_id"]
         if aid not in accs:
@@ -2576,6 +2893,25 @@ def _maybe_capture_nav() -> None:
                 market_thb = trade_value_in_report(p, price * vol, "THB", when="live")
                 unreal[p["account_id"]] += market_thb - cost_thb
 
+        # Options mark to market into the same NAV — without this the curve
+        # steps down by the whole option book the day a position is opened.
+        try:
+            for o in open_option_positions(None, "THB"):
+                aid = o.get("account_id") or ""
+                if aid not in accounts:
+                    continue
+                cost[aid] += _to_float_or_zero(o.get("cost_basis_base"))
+                unreal[aid] += (
+                    _to_float_or_zero(o.get("market_value_base"))
+                    - _to_float_or_zero(o.get("cost_basis_base"))
+                )
+            for o in closed_option_positions(None):
+                aid = o.get("account_id") or ""
+                if aid in accounts:
+                    realized_map[aid] += realized_option_pnl(o, "THB")
+        except Exception:
+            logger.exception("option valuation failed; NAV snapshot is equities only")
+
         rows: list[tuple] = []
         g = {"total": 0.0, "cost": 0.0, "unreal": 0.0, "real": 0.0, "inv": 0.0, "div": 0.0}
         for aid, acc in accounts.items():
@@ -2612,6 +2948,21 @@ def _maybe_capture_nav() -> None:
         logger.exception("NAV snapshot capture failed")
 
 
+@router.get("/options/attribution")
+def get_option_pnl_attribution(
+    account_id: Optional[str] = Query(None),
+    days: int = Query(30),
+):
+    """Greeks-based P&L attribution for the option book, in USD.
+
+    Splits each day's move into delta / gamma / theta / vega using the greeks
+    from the START of the day, with `residual` as whatever the linearisation
+    fails to explain. The split always sums to `actual` by construction — read
+    `explained_pct`, not the sum, to judge whether it described what happened.
+    """
+    return option_pnl_attribution(account_id, days)
+
+
 @router.get("/nav-history")
 def get_nav_history(account_id: Optional[str] = Query(None), days: int = Query(365)):
     """Daily NAV time series (THB base) for charting total asset value."""
@@ -2635,6 +2986,7 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
     # NAV snapshot is capture-on-view but must not block the first viewer of the
     # day — it marks every account to market (many yfinance calls).
     threading.Thread(target=_maybe_capture_nav, daemon=True).start()
+    threading.Thread(target=capture_daily_greeks, daemon=True).start()
     base_currency = report_currency(base_currency)
     where, params = ["t.win_loss != 'P'"], []
     if account_id and account_id != "all":
@@ -2659,6 +3011,58 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
             f"WHERE {' AND '.join(open_where)}",
             open_params,
         ).fetchall()]
+
+    # ── Options folded in as synthetic closed/open rows ───────────────────────
+    # Shaped to match a trade row so realized_pnl_in_report and the aggregates
+    # need no special case. `instrument` distinguishes them for callers that
+    # want equities only. One row per close↔open MATCH, which is the unit
+    # realized P&L is about — a partial close produces several against the same
+    # lot. Matches whose realized_pnl is NULL are skipped: the closing price was
+    # never recorded, and unknown is not break-even.
+    try:
+        for o in closed_option_positions(account_id):
+            if o.get("realized_pnl") is None:
+                continue
+            # `quantity` here is the matched size (unsigned); `direction` says
+            # whether the lot was long or short.
+            qty = _to_float_or_zero(o.get("quantity")) * (_to_float_or_zero(o.get("direction")) or 1.0)
+            mult = option_multiplier(o)
+            cost_native = _to_float_or_zero(o.get("entry_price")) * qty * mult
+            pnl_native = _to_float_or_zero(o.get("realized_pnl"))
+            under = str(o.get("underlying") or "").upper()
+            closed_rows.append({
+                "instrument": "option",
+                "account_id": o.get("account_id"),
+                "acc_name": o.get("acc_name") or o.get("account_id"),
+                "acc_currency": o.get("acc_currency"),
+                "currency": option_currency(o),
+                "symbol": under,
+                "sector": o.get("sector") or "Options",
+                "strategy_name": "OPTION",
+                "note": o.get("note"),
+                "date_entry": str(o.get("entry_date") or "")[:10],
+                "date_exit": str(o.get("exit_date") or o.get("expiry") or "")[:10],
+                "volume": qty * mult,
+                "price_entry": _to_float_or_zero(o.get("entry_price")),
+                "amount": cost_native,
+                "pnl_amount": pnl_native,
+                "win_loss": "W" if pnl_native > 0 else "L",
+            })
+        for o in open_option_positions(account_id, base_currency, with_greeks=False):
+            open_rows.append({
+                "instrument": "option",
+                "account_id": o.get("account_id"),
+                "acc_currency": o.get("acc_currency"),
+                "currency": o.get("currency"),
+                "symbol": str(o.get("underlying") or "").upper(),
+                "sector": o.get("sector") or "Options",
+                "date_entry": str(o.get("entry_date") or "")[:10],
+                "volume": _to_float_or_zero(o.get("quantity")),
+                "price_entry": _to_float_or_zero(o.get("entry_price")),
+                "amount": _to_float_or_zero(o.get("cost_basis_native")),
+            })
+    except Exception:
+        logger.exception("option valuation failed; analytics reports equities only")
 
     from collections import defaultdict as _dd
 
