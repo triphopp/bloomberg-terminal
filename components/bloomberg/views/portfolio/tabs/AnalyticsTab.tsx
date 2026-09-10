@@ -19,6 +19,7 @@ import { type Colors, fmtK, pnlColor } from "../helpers";
 import type { Dividend, Summary, Trade } from "../types";
 import { AccBadge } from "../ui/AccBadge";
 import { AllocationBasisCard } from "../ui/AllocationBasisCard";
+import { OptionAttributionCard } from "../ui/OptionAttributionCard";
 
 interface CapmRow {
   beta: number | null;
@@ -361,7 +362,22 @@ export function AnalyticsTab({
       unrealized += p.unrealized_pnl_base ?? p.unrealized_pnl_thb ?? 0;
       openCost += p.cost_basis_base ?? p.amount ?? p.price_entry * p.volume;
     }
-    const cash = invested + realized + dividends - openCost;
+    // `pnl_base` already includes realized options — the backend folds them in
+    // so TOTAL P&L and WIN RATE mean what they say. Adding
+    // `options_realized_base` on top here would count every closed option
+    // twice; it stays a breakdown field, not another term.
+    const optionsOpenCost = filteredStats.reduce((s, a) => s + (a.options_cost_base ?? 0), 0);
+    const optionsUnrealized = filteredStats.reduce(
+      (s, a) => s + (a.options_unrealized_base ?? 0),
+      0
+    );
+    // Open options are capital still deployed and still moving, so they belong
+    // on both the cost and the unrealized side.
+    openCost += optionsOpenCost;
+    unrealized += optionsUnrealized;
+    // The backend computes this from the same inputs; prefer it so ANALYTICS,
+    // the header chip and the CASH tab cannot drift apart.
+    const cash = summary?.total_cash_base ?? invested + realized + dividends - openCost;
     return {
       realized,
       economicRealized,
@@ -375,7 +391,7 @@ export function AnalyticsTab({
       dividends,
       cash,
     };
-  }, [filteredStats, openPos]);
+  }, [filteredStats, openPos, summary]);
 
   // Per-account unrealized P&L + open cost basis (THB base), keyed by account id.
   const perAcctOpen = useMemo(() => {
@@ -500,7 +516,7 @@ export function AnalyticsTab({
       tone: "pnl",
       hint: "calculated · not tracked directly",
       title:
-        "Approximate idle cash = invested capital + realized P&L + dividends − open cost basis. Does not account for untracked commissions/fees, so treat as an estimate.",
+        "Approximate idle cash = invested capital + realized P&L (equities AND options) + dividends − open cost basis (equities AND options). Blind to commissions, taxes and margin interest that were never recorded, so treat as an estimate, not a broker balance.",
     },
     {
       label: "INVESTED CAPITAL",
@@ -1648,6 +1664,8 @@ export function AnalyticsTab({
       </div>
 
       <AllocationBasisCard accountId={accountId} currency={currency} colors={colors} />
+
+      <OptionAttributionCard accountId={accountId} colors={colors} />
 
       <div className="grid gap-2 p-2" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
         {(analytics?.by_sector ?? []).length > 0 && (

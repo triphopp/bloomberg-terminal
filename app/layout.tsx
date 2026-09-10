@@ -1,6 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import { BootWatchdog } from "./boot-watchdog";
 import "../styles/globals.css";
 
 export const metadata: Metadata = {
@@ -41,6 +42,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
+        <BootWatchdog />
         <Suspense fallback={<AppSkeleton />}>{children}</Suspense>
         <Toaster position="bottom-right" />
       </body>

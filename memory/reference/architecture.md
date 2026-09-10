@@ -97,6 +97,28 @@ BOT data path:
 - `backend/main.py` — App init, CORS, mounts all 26 routers
 - `backend/config.py` — All env vars + BOT tokens (BOT_API_TOKEN, BOT_IR_TOKEN, BOT_FX_TOKEN, BOT_STATS_TOKEN) + SEC_KEYS (old portal) + SEC2_KEYS (new portal, falls back to SEC2_API_KEY)
 - `backend/db.py` — SQLite connection manager + schema init + compute_holdings() + sector_classifications helpers
+- `backend/portfolio_options.py` — canonical option-lot valuation (2026-09-09; reads the
+  normalized schema since 2026-09-10). The ONLY place an
+  `option_positions` row becomes money: mark (chain `last` → mid → ask → entry cost → intrinsic if
+  expired), cost/market value/unrealized in native AND base currency, and delta notional for
+  exposure weighting. Batches one `option_chain()` per (underlying, expiry) and one spot per
+  underlying. `portfolio_v2.py` imports it — never the reverse of `routers/options.py` (that would
+  cycle through the provider + scheduler imports)
+- `backend/analytics/option_payoff.py` — payoff geometry (2026-09-10): expiry curve, breakevens by sign-change + bisection, max profit/loss from the tail slope, T+0 curve through `greeks.py`'s Black-Scholes, and POP by integrating a lognormal over the profitable ranges. Black-Scholes is NOT duplicated in TypeScript — the browser computes only the expiry line, which is arithmetic
+- **Option sync** — all five option tables are in `sync/config.py::SYNC_TABLES`, listed in FK
+  order (`option_contracts` → `option_trades` → `option_trade_greeks` /
+  `option_trade_matches` / `option_greeks_snapshots`) because `restore._upsert` walks the list
+  in sequence with `foreign_keys` ON. The greeks tables sync for the same reason
+  `iv_snapshots` does: a chain only reports NOW, so market state at a past trade cannot be
+  re-derived on the other machine. There is NO lot state to sync — a lot is a view over
+  trades and matches, so the peer rebuilds it
+- **Option schema (2026-09-10)** — `option_contracts` / `option_trades` /
+  `option_trade_greeks` / `option_trade_matches`, created in `db.py::init_portfolio_v2`.
+  A lot is NOT a table: it is an OPEN trade that closes have not fully matched, computed by
+  `v_option_open_lots`. Direction lives in `action`+`side`, never in the sign of `quantity`.
+  `db.py::occ_symbol()` builds the contract's natural key. FIFO matching and greeks capture
+  live in `routers/options.py`; `_migrate_option_positions()` in `db.py` is the one-way move
+  off the old flat table and is a no-op once it has run
 - `backend/portfolio_currency.py` — canonical instrument-currency + FX boundary: stored `trades.currency` first, dated USD/THB lookup, exit-date conversion for realized trading P&L, live MTM conversion, idempotent legacy backfill
 - `backend/greeks.py` — Black-Scholes + Gram-Charlier fat-tail Greeks (added 2026-06-03); see memory/reports/options-greeks-math-report.md
 - `backend/providers/` — OptionsProvider abstraction: `base_options.py` (abstract class + DataFreshness + OptionContract), `yahoo_options.py`. Swap by changing 1 line in options.py:26

@@ -122,6 +122,182 @@
 ```
 `currency`/`pos_currency` = native instrument currency (authoritative). `acc_currency` is only the account's default report currency. Every `*_base` field is already normalized to the requested `base_currency`; the frontend must not convert it again.
 
+## Portfolio Cash (`/summary` → `cash_base`, `total_cash_base`)
+
+```
+cash = invested + realized + dividends − open_cost(equity) − open_cost(options)
+```
+
+`realized` here is `pnl_base`, which **already includes closed options** (since 2026-09-10).
+Adding `options_realized_base` on top double-counts them — that field is a breakdown of what is
+already in the total, not a second term.
+
+**This is an ESTIMATE, not a balance.** Nothing posts to `cash_ledger` when a position closes —
+that table is hand-entered deposits and withdrawals, and NAV is deliberately independent of it
+(`_maybe_capture_nav`: "cash_ledger deposits are often incomplete"). The figure cannot see
+commissions, taxes or margin interest that were never recorded.
+
+Computed in `/summary` rather than in the browser, because ANALYTICS, the header chip and the CASH
+tab all need it and three copies of the formula would drift. Open cost comes from `trades` and
+`v_option_open_lots` directly — cost basis does not depend on today's price, so this adds no
+network calls.
+
+**Options belong on BOTH sides**: their realized P&L is cash in, their open premium is cash still
+deployed. The pre-2026-09-10 client-side version counted NEITHER, and the two omissions partly
+cancelled — which made the number look plausible while being wrong.
+
+On the CASH tab this deliberately does NOT equal `IN − INV`: that pair is what was typed into the
+ledger, while `CASH~` also folds in every closed position. Both are labelled so the difference does
+not read as a bug.
+
+---
+
+## Option Payoff (`POST /api/options/payoff`)
+
+Three kinds of number, and conflating them is how a payoff screen misleads:
+
+| | what it is | rests on |
+|---|---|---|
+| `curve[].expiry`, `breakevens`, `max_profit`, `max_loss` | **arithmetic** | nothing — `max(S−K,0)` and a subtraction |
+| `curve[].t0`, `current.pnl_today` | **model** | Black-Scholes at today's IV (via `greeks.py`) |
+| `pop` | **model estimate** | + lognormal terminal price, IV held constant, risk-neutral drift |
+
+```
+payoff(S) = Σ legs [ (intrinsic(S) − entry_price) × qty × multiplier ] − Σ fees
+```
+
+`quantity` is SIGNED — shorts come out right with no branch, which is exactly why the sign is kept.
+
+**Max profit/loss come from the tail slope, never from the sampled grid.** Only calls still have
+exposure as S→∞, so `Σ(qty×mult)` over the call legs decides it: positive → profit unbounded,
+negative → loss unbounded. Reading the grid's edge would report a number describing the chart's
+width instead of the position. The S→0 side is always finite.
+
+**Breakevens come from a sign-change scan plus bisection**, not `K ± premium`. That closed form
+covers one leg; a spread has one crossing at a different place, a straddle has two, and some
+positions have none.
+
+⚠️ **POP falls as vol rises for an out-of-the-money option.** Under a risk-neutral lognormal the
+mean stays at the forward but the median is `S·exp((r−σ²/2)T)`, which drops as σ grows — at σ=0.30
+the median is 100.75, at σ=0.90 it is 70.29. Verified against closed-form `N(d₂)` to machine
+precision. Counterintuitive, correct, and worth leaving in the tooltip.
+
+---
+
+## Portfolio Option Lots (`GET /api/v2/portfolio/open-positions` → `options[]`)
+
+Produced by `backend/portfolio_options.py::value_option_rows` — the single place an option row
+becomes money. `/summary`, `/allocation-detail`, `/returns`, `/nav-history` and `/analytics` all
+call into it, so none of them can drift from this shape.
+
+```json
+{
+  "id": "uuid", "account_id": "dime", "acc_name": "Dime",
+  "underlying": "AAPL", "expiry": "2027-01-15", "strike": 200.0,
+  "option_type": "call", "quantity": 2, "entry_price": 5.80, "entry_date": "2026-08-01",
+  "symbol": "AAPL 2027-01-15 200C",
+  "currency": "USD", "multiplier": 100,
+  "spot": 314.63, "mark": 125.21, "mark_source": "last", "mark_stale": false,
+  "expired": false, "implied_volatility": 0.2841, "delta": 0.9247,
+  "cost_basis_native": 1160.0, "market_value_native": 25042.0,
+  "unrealized_pnl": 23882.0, "unrealized_pct": 2058.79,
+  "cost_basis_base": 38871.6, "market_value_base": 822379.28,
+  "unrealized_pnl_base": 783507.68, "unrealized_pct_base": 2015.63,
+  "delta_notional_native": 58197.0, "delta_notional_base": 1910852.79,
+
+  "gamma": 0.003147, "theta": -0.0312, "vega": 0.0126,
+  "delta_exp_usd": 1276.91, "gamma_exp_usd": 172.37,
+  "theta_exp_usd": -15.60, "vega_exp_usd": 6.30,
+  "cost_basis_usd": 100.0, "market_value_usd": 85.0,
+  "unrealized_pnl_usd": -15.0, "unrealized_pct_usd": -15.0
+}
+```
+
+**Raw greeks are in `greeks.py`'s own units** ([greeks.py:99-107](../../backend/greeks.py)):
+`theta` per CALENDAR DAY · `vega` per 1pp of IV · `gamma` per $1 of spot. They are `null`, never 0,
+when the chain gave no IV — a lot with no greeks must be skipped by aggregates, not counted as
+having no exposure.
+
+**Dollar greeks are always USD** — they answer "how many dollars does this move", a question about
+the contract's own market, not about the report currency:
+
+| field | formula | reads as |
+|---|---|---|
+| `delta_exp_usd` | Δ × qty × mult × S | USD moved per 100% move in the underlying |
+| `gamma_exp_usd` | Γ × qty × mult × S² × 0.01 | dollar delta gained per **1%** move |
+| `theta_exp_usd` | Θ × qty × mult | USD per calendar day (negative while long) |
+| `vega_exp_usd` | ν × qty × mult | USD per 1pp of implied vol |
+
+`gamma_exp_usd` is the desk convention, NOT the exact derivative — the true d(dollar delta)/dS also
+carries a `Δ × qty × mult` term. Label it "dollar delta per 1% move", never "gamma".
+
+**Sign convention:** `quantity` is signed and nothing is `abs()`-ed. A short lot has a NEGATIVE
+`cost_basis_*` (the credit received) and a NEGATIVE `market_value_*` (the liability) — which is
+exactly what makes `market_value - cost` the right unrealized P&L on both sides. A short put's
+`delta_notional_*` comes out POSITIVE (long exposure), as it should.
+
+**Two numbers, not interchangeable:**
+- `market_value_base` → NAV and unrealized P&L
+- `delta_notional_base` → allocation and sector weight. Three SPY calls worth $1,200 of premium can
+  carry $150k of exposure; weighting a book by premium hides that.
+
+**`unrealized_pct` vs `unrealized_pct_base`:** cost converts at the entry-date FX rate and market
+value at the live one, so when FX moves the base P&L is non-zero even with an unmoved premium.
+Always pair the base amount with `unrealized_pct_base` — pairing it with the native percentage
+prints `-161 (+0.0%)`.
+
+**`mark_source` ladder:** `last` → `mid` (bid/ask) → `ask` → `entry_cost` (`mark_stale: true`),
+or `intrinsic_expired` past expiry. A lot with no quote is held at cost, never at zero — zero would
+render as a total loss.
+
+---
+
+## Option PnL Attribution (`GET /api/v2/portfolio/options/attribution?days=30`)
+
+```json
+{
+  "currency": "USD",
+  "period": {"from": "2026-09-05", "to": "2026-09-09", "snapshot_days": 4, "requested_days": 30},
+  "portfolio": {
+    "delta_pnl": 47.03, "gamma_pnl": 5.34, "theta_pnl": -58.0, "vega_pnl": 29.11,
+    "residual": 16.52, "actual": 40.0, "explained_pct": 58.7
+  },
+  "positions": [{
+    "position_id": "uuid", "symbol": "INTC 2026-09-25 150C", "quantity": 5, "steps": 3,
+    "spot_from": 100.0, "spot_to": 104.685, "iv_from": 0.78, "iv_to": 0.829,
+    "delta_pnl": 47.03, "gamma_pnl": 5.34, "theta_pnl": -58.0, "vega_pnl": 29.11,
+    "residual": 16.52, "actual": 40.0, "explained_pct": 58.7
+  }],
+  "series": [{"date": "2026-09-06", "delta_pnl": 13.5, "...": 0, "actual": 10.0}],
+  "steps_skipped": 0,
+  "note": null
+}
+```
+
+Per day-step, using the greeks from the **start** of the step (`t−1`):
+
+```
+delta_pnl = Δ × ΔS      × qty × mult
+gamma_pnl = ½Γ × ΔS²    × qty × mult
+theta_pnl = Θ  × Δdays  × qty × mult      ← Δdays is the REAL gap between snapshots
+vega_pnl  = ν  × ΔIV_pp × qty × mult      ← ΔIV_pp = (iv_t − iv_{t−1}) × 100
+actual    = (mark_t − mark_{t−1}) × qty × mult
+residual  = actual − (delta + gamma + theta + vega)
+```
+
+**`residual` is defined as the leftover, so the five legs always sum to `actual`.** That is
+arithmetic, not evidence — `explained_pct` = `1 − |residual|/|actual|` is the quality signal. Using
+end-of-period greeks instead would explain a move with information that only existed after it.
+
+`Δdays` is the actual calendar gap between two stored snapshots, not 1. A weekend gap must charge
+two days of theta or the decay reads low every Monday.
+
+Backed by `option_greeks_snapshots` (spot/IV/mark/Δ/Γ/Θ/ν per position per day), captured
+once-per-day off-thread from `/open-positions` and `/analytics`. Like `iv_snapshots` it can only be
+ACCUMULATED — Yahoo serves only the current chain, so no back-fill is possible.
+
+---
+
 ## Portfolio Trades / Dividends — additive report fields
 
 - `GET /api/v2/portfolio/trades?base_currency=THB|USD` adds `amount_base`, `price_entry_base`, `price_exit_base`, `pnl_base`. Closed `pnl_base` = native `pnl_amount` converted at exit-date FX; principal FX gain/loss is intentionally excluded from REALIZED P&L.

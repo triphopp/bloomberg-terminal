@@ -1,4 +1,5 @@
 "use client";
+import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ChevronDown, ChevronRight, Clock, Loader2, RefreshCw } from "lucide-react";
 import React, { useState, useCallback, useEffect, useMemo } from "react";
 import {
@@ -13,25 +14,12 @@ import { type Colors, fmt, fmtK, fmtPct, groupKey, pnlColor, subPortLabel } from
 import { AvgCostModal } from "../modals/AvgCostModal";
 import { SellModal } from "../modals/SellModal";
 import { TradeEditModal } from "../modals/TradeEditModal";
+import { portfolioQueries } from "../queries";
 import type { Trade } from "../types";
 import { AccBadge } from "../ui/AccBadge";
+import type { OptionLot } from "./OptionsTab";
 
 // ── Inline derivatives summary (read-only, no form) ──────────────────────────
-
-interface OptionPos {
-  id: string;
-  underlying: string;
-  expiry: string;
-  strike: number;
-  option_type: "call" | "put";
-  quantity: number;
-  entry_price: number;
-}
-
-interface OptionQuote {
-  last_price: number | null;
-  freshness: { is_realtime: boolean; delay_minutes: number; warning: string; fetched_at: string };
-}
 
 // Columns actually rendered = user's showCols plus the auto PRE/POST column
 // injected while a live session is active. PRE/POST is intentionally NOT a
@@ -71,30 +59,19 @@ function activeSession(
   return null;
 }
 
-function DerivativesSection({ accountId, colors }: { accountId: string; colors: Colors }) {
-  const [positions, setPositions] = useState<OptionPos[]>([]);
-  const [quotes, setQuotes] = useState<Record<string, OptionQuote>>({});
+function DerivativesSection({ lots, colors }: { lots: OptionLot[]; colors: Colors }) {
   const [collapsed, setCollapsed] = useState(false);
 
-  useEffect(() => {
-    const qs = new URLSearchParams({ status: "open" });
-    if (accountId !== "all") qs.set("account_id", accountId);
-    fetch(`/api/options/positions/list?${qs}`)
-      .then((r) => r.json())
-      .then(setPositions)
-      .catch(() => {});
-  }, [accountId]);
+  if (lots.length === 0) return null;
 
-  useEffect(() => {
-    for (const p of positions) {
-      fetch(`/api/options/positions/${p.id}/quote`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((q) => q && setQuotes((prev) => ({ ...prev, [p.id]: q })))
-        .catch(() => {});
-    }
-  }, [positions]);
-
-  if (positions.length === 0) return null;
+  // Reported in USD, the contracts' own currency. The base-currency figures on
+  // the same rows are what feeds NAV and the account rollup — that conversion
+  // still happens, it just isn't what this table shows.
+  const totalMv = lots.reduce((a, l) => a + (l.market_value_usd ?? 0), 0);
+  const totalUnreal = lots.reduce((a, l) => a + (l.unrealized_pnl_usd ?? 0), 0);
+  const totalDelta = lots.reduce((a, l) => a + (l.delta_exp_usd ?? 0), 0);
+  const totalTheta = lots.reduce((a, l) => a + (l.theta_exp_usd ?? 0), 0);
+  const noGreeks = lots.filter((l) => l.delta_exp_usd === null).length;
 
   return (
     <div className="border-t mt-1" style={{ borderColor: "#f59e0b44" }}>
@@ -106,7 +83,31 @@ function DerivativesSection({ accountId, colors }: { accountId: string; colors: 
       >
         <span>{collapsed ? "▶" : "▼"}</span>
         DERIVATIVES · OPTIONS
-        <span className="font-normal text-[8px] opacity-60">{positions.length} open</span>
+        <span className="font-normal text-[8px] opacity-60">{lots.length} open · USD</span>
+        <span className="font-normal text-[8px]" style={{ color: colors.text }}>
+          ${fmtK(totalMv)}
+        </span>
+        <span className="font-normal text-[8px]" style={{ color: pnlColor(totalUnreal) }}>
+          {totalUnreal >= 0 ? "+" : "-"}${fmtK(Math.abs(totalUnreal))}
+        </span>
+        <span
+          className="font-normal text-[8px] opacity-60"
+          title="Δ × qty × 100 × spot — dollars this book moves for a 100% move in the underlying, as opposed to what it cost"
+        >
+          Δexp ${fmtK(totalDelta)}
+        </span>
+        <span
+          className="font-normal text-[8px]"
+          style={{ color: pnlColor(totalTheta) }}
+          title="Θ × qty × 100 — dollars per calendar day. Negative while long options"
+        >
+          Θ/day {totalTheta >= 0 ? "+" : "-"}${fmt(Math.abs(totalTheta), 0)}
+        </span>
+        {noGreeks > 0 && (
+          <span className="font-normal text-[8px]" style={{ color: "#f59e0b" }}>
+            {noGreeks} no-IV excluded
+          </span>
+        )}
         <span className="ml-auto flex items-center gap-0.5 font-normal opacity-60">
           <Clock className="w-2.5 h-2.5" /> ~15m delay
         </span>
@@ -123,9 +124,12 @@ function DerivativesSection({ accountId, colors }: { accountId: string; colors: 
                 "Expiry",
                 "Qty",
                 "Entry",
-                "Last",
-                "P&L",
-                "Data",
+                "Mark",
+                "Value",
+                "Unrealized",
+                "Δ",
+                "Θ/day",
+                "Δ exp",
               ].map((h) => (
                 <th key={h} className="px-2 py-0.5 text-left font-bold">
                   {h}
@@ -134,62 +138,81 @@ function DerivativesSection({ accountId, colors }: { accountId: string; colors: 
             </tr>
           </thead>
           <tbody>
-            {positions.map((p) => {
-              const q = quotes[p.id];
-              const last = q?.last_price ?? null;
-              const pnl = last !== null ? (last - p.entry_price) * p.quantity * 100 : null;
-              const pnlPct =
-                pnl !== null && p.entry_price > 0
-                  ? (((last ?? 0) - p.entry_price) / p.entry_price) * 100
-                  : null;
-              const typeColor = p.option_type === "call" ? "#00FF00" : "#FF4444";
-              const fresh = q?.freshness;
+            {lots.map((l) => {
+              const typeColor = l.option_type === "call" ? "#00FF00" : "#FF4444";
+              const nativeSym = l.currency === "USD" ? "$" : "";
               return (
-                <tr key={p.id} className="border-b" style={{ borderColor: "#1a1a1a" }}>
+                <tr key={l.id} className="border-b" style={{ borderColor: "#1a1a1a" }}>
                   <td className="px-2 py-1 font-bold" style={{ color: colors.text }}>
-                    {p.underlying}
+                    {l.underlying}
                   </td>
                   <td className="px-2 py-1">
                     <span
                       className="text-[8px] px-0.5 rounded"
                       style={{ color: typeColor, border: `1px solid ${typeColor}` }}
                     >
-                      {p.option_type.toUpperCase()}
+                      {l.option_type.toUpperCase()}
                     </span>
                   </td>
                   <td className="px-2 py-1 text-right" style={{ color: colors.text }}>
-                    ${fmt(p.strike)}
+                    {nativeSym}
+                    {fmt(l.strike)}
                   </td>
-                  <td className="px-2 py-1 text-right" style={{ color: colors.textSecondary }}>
-                    {p.expiry}
-                  </td>
-                  <td className="px-2 py-1 text-right" style={{ color: colors.text }}>
-                    {p.quantity}
-                  </td>
-                  <td className="px-2 py-1 text-right" style={{ color: colors.textSecondary }}>
-                    ${fmt(p.entry_price, 2)}
+                  <td
+                    className="px-2 py-1 text-right"
+                    style={{ color: l.expired ? "#FF4444" : colors.textSecondary }}
+                  >
+                    {l.expiry}
                   </td>
                   <td className="px-2 py-1 text-right" style={{ color: colors.text }}>
-                    {last !== null ? `$${fmt(last, 2)}` : <span style={{ color: "#444" }}>—</span>}
+                    {l.quantity}
+                  </td>
+                  <td className="px-2 py-1 text-right" style={{ color: colors.textSecondary }}>
+                    {nativeSym}
+                    {fmt(l.entry_price, 2)}
+                  </td>
+                  <td
+                    className="px-2 py-1 text-right"
+                    style={{ color: l.mark_stale ? "#f59e0b" : colors.text }}
+                    title={l.mark_stale ? "No quote — held at entry cost" : undefined}
+                  >
+                    {nativeSym}
+                    {fmt(l.mark, 2)}
+                  </td>
+                  <td className="px-2 py-1 text-right" style={{ color: colors.text }}>
+                    {fmtK(l.market_value_usd)}
                   </td>
                   <td className="px-2 py-1 text-right">
-                    {pnl !== null ? (
-                      <span style={{ color: pnlColor(pnl) }}>
-                        {pnl >= 0 ? "+" : ""}${fmt(Math.abs(pnl), 0)}
-                        {pnlPct !== null && (
-                          <span className="text-[8px] ml-0.5">
-                            ({pnlPct >= 0 ? "+" : ""}
-                            {fmt(pnlPct, 1)}%)
-                          </span>
-                        )}
-                      </span>
-                    ) : (
+                    <span style={{ color: pnlColor(l.unrealized_pnl_usd) }}>
+                      {l.unrealized_pnl_usd >= 0 ? "+" : "-"}
+                      {fmtK(Math.abs(l.unrealized_pnl_usd))}
+                      {l.unrealized_pct_usd !== null && (
+                        <span className="text-[8px] ml-0.5">
+                          ({l.unrealized_pct_usd >= 0 ? "+" : ""}
+                          {fmt(l.unrealized_pct_usd, 1)}%)
+                        </span>
+                      )}
+                    </span>
+                  </td>
+                  <td className="px-2 py-1 text-right" style={{ color: colors.textSecondary }}>
+                    {l.delta === null ? <span style={{ color: "#444" }}>—</span> : fmt(l.delta, 3)}
+                  </td>
+                  <td className="px-2 py-1 text-right">
+                    {l.theta_exp_usd === null ? (
                       <span style={{ color: "#444" }}>—</span>
+                    ) : (
+                      <span style={{ color: pnlColor(l.theta_exp_usd) }}>
+                        {fmt(l.theta_exp_usd, 1)}
+                      </span>
                     )}
                   </td>
-                  <td className="px-2 py-1">
-                    {fresh && !fresh.is_realtime && (
-                      <DelayBadge warning={fresh.warning} delay={fresh.delay_minutes} />
+                  <td className="px-2 py-1 text-right" style={{ color: colors.textSecondary }}>
+                    {l.delta_exp_usd === null ? (
+                      <span style={{ color: "#444" }} title="No IV — greeks undefined for this lot">
+                        —
+                      </span>
+                    ) : (
+                      fmtK(l.delta_exp_usd)
                     )}
                   </td>
                 </tr>
@@ -326,6 +349,10 @@ function mergePositions(positions: Trade[]): MergedPosition[] {
   return result;
 }
 
+/** Stable fallbacks — a fresh `{}` each render would re-run every memo below. */
+const EMPTY_THESES: Record<string, { count: number; status: string }> = {};
+const EMPTY_SESSION: Record<string, SessionQuote> = {};
+
 export function OpenPositionsTab({
   accountId,
   currency,
@@ -338,9 +365,17 @@ export function OpenPositionsTab({
   /** Jump to TOOLS → THESES for this symbol (existing thesis, or a new one). */
   onOpenThesis?: (symbol: string) => void;
 }) {
-  const [data, setData] = useState<{ positions: Trade[]; thb_per_usd: number } | null>(null);
-  const [theses, setTheses] = useState<Record<string, { count: number; status: string }>>({});
-  const [loading, setLoading] = useState(false);
+  const {
+    data = null,
+    isFetching: loading,
+    refetch: reloadPositions,
+  } = useQuery({
+    ...portfolioQueries.openPositions(currency, accountId),
+    placeholderData: (prev) => prev,
+  });
+  const load = useCallback(() => {
+    void reloadPositions();
+  }, [reloadPositions]);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [expandedLots, setExpandedLots] = useState<Record<string, boolean>>({});
   const [dense, setDense] = useState(false);
@@ -373,108 +408,28 @@ export function OpenPositionsTab({
     volume: number;
     costOverride?: number;
   } | null>(null);
-  const [costOverrides, setCostOverrides] = useState<Record<string, number>>({});
+  const { data: thesesData } = useQuery(portfolioQueries.thesesSummary());
+  const theses = thesesData?.by_symbol ?? EMPTY_THESES;
 
-  const [session, setSession] = useState<Record<string, SessionQuote>>({});
+  const symbols = useMemo(() => [...new Set((data?.positions ?? []).map((p) => p.symbol))], [data]);
 
-  const [stopData, setStopData] = useState<{
-    regime_label: string;
-    vix_percentile: number;
-    stops: Record<
-      string,
-      | { stop_dynamic: number; dist_pct: number; dynamic_mult: number; n_bars_trigger: number }
-      | { error: string }
-    >;
-  } | null>(null);
+  // Both of these hang off the positions list and are slow on a cold backend
+  // (stoploss ~8s, premarket ~4s), which is exactly why the terminal shell
+  // warms them in the background — see `prewarmPortfolio`.
+  const { data: stopData = null } = useQuery(portfolioQueries.stoploss(symbols, accountId));
 
-  const load = useCallback(
-    async (signal?: AbortSignal) => {
-      setLoading(true);
-      try {
-        const qs = new URLSearchParams({ base_currency: currency });
-        if (accountId !== "all") qs.set("account_id", accountId);
-        const r = await fetch(`/api/v2/portfolio/open-positions?${qs}`, { signal });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        setData(await r.json());
-      } catch (e) {
-        if ((e as Error)?.name === "AbortError") return;
-      } finally {
-        setLoading(false);
-      }
-    },
-    [accountId, currency]
-  );
+  const { data: premarketData } = useQuery({
+    ...portfolioQueries.premarket(accountId),
+    enabled: symbols.length > 0,
+  });
+  const session = (premarketData?.quotes ?? EMPTY_SESSION) as Record<string, SessionQuote>;
 
-  useEffect(() => {
-    const ac = new AbortController();
-    load(ac.signal);
-    return () => ac.abort();
-  }, [load]);
-
-  // Which holdings have a written thesis. One summary call for the whole book —
-  // a per-row lookup would be a request storm on a large portfolio.
-  useEffect(() => {
-    const ac = new AbortController();
-    fetch("/api/v2/theses/summary/by-symbol", { signal: ac.signal })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => d?.by_symbol && setTheses(d.by_symbol))
-      .catch((e) => {
-        if (e?.name === "AbortError") return;
-      });
-    return () => ac.abort();
-  }, []);
-
-  // Fetch dynamic stop data after positions load
-  useEffect(() => {
-    const positions = data?.positions;
-    if (!positions?.length) return;
-    const ac = new AbortController();
-    const syms = [...new Set(positions.map((p) => p.symbol))].join(",");
-    const acc = accountId === "all" ? "dime" : accountId;
-    fetch(`/api/stoploss/compute?symbols=${encodeURIComponent(syms)}&account_id=${acc}`, {
-      signal: ac.signal,
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => d && setStopData(d))
-      .catch((e) => {
-        if (e?.name === "AbortError") return;
-      });
-    return () => ac.abort();
-  }, [data, accountId]);
-
-  // Fetch pre-/post-market session quotes in background (heavier .info fetch —
-  // kept off the positions load path so the table never blocks on it).
-  useEffect(() => {
-    const positions = data?.positions;
-    if (!positions?.length) return;
-    const ac = new AbortController();
-    const qs = accountId !== "all" ? `?account_id=${accountId}` : "";
-    fetch(`/api/v2/portfolio/premarket${qs}`, { signal: ac.signal })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => d?.quotes && setSession(d.quotes))
-      .catch((e) => {
-        if (e?.name === "AbortError") return;
-      });
-    return () => ac.abort();
-  }, [data, accountId]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: setCostOverrides is stable setter
-  useEffect(() => {
-    // Fetch cost overrides
-    const ac = new AbortController();
-    const qs = accountId !== "all" ? `?account_id=${accountId}` : "";
-    fetch(`/api/v2/portfolio/cost-overrides${qs}`, { signal: ac.signal })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((rows: { symbol: string; avg_cost: number }[]) => {
-        const map: Record<string, number> = {};
-        for (const row of rows) map[row.symbol] = row.avg_cost;
-        setCostOverrides(map);
-      })
-      .catch((e) => {
-        if (e?.name === "AbortError") return;
-      });
-    return () => ac.abort();
-  }, [accountId, data]);
+  const { data: costRows } = useQuery(portfolioQueries.costOverrides(accountId));
+  const costOverrides = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const row of costRows ?? []) map[row.symbol] = row.avg_cost;
+    return map;
+  }, [costRows]);
 
   // Persist cols to localStorage whenever they change
   useEffect(() => {
@@ -1371,7 +1326,7 @@ export function OpenPositionsTab({
       )}
 
       {/* Derivatives section — below equities, collapsible */}
-      <DerivativesSection accountId={accountId} colors={colors} />
+      <DerivativesSection lots={data?.options ?? []} colors={colors} />
 
       {sellCtx && (
         <SellModal

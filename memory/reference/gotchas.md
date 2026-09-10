@@ -784,3 +784,236 @@ badge สีแดงใน WATCHLIST header **ไม่ใช่ระบบ al
 
 บทเรียน: ฟอร์มที่ render ใต้ `{!collapsed && ...}` แต่ปุ่มเปิดอยู่นอก block นั้น = กดแล้วไม่มีอะไรเกิดขึ้นเมื่อ panel ถูกพับ
 panel แบบ dropdown (`absolute`) เลี่ยงกับดักนี้ได้ทั้งหมด
+
+## Option quote `last_price` is the PREMIUM, not the underlying spot
+
+**อาการ:** greeks ทุกตัวออกมาใกล้ 0 — delta ~0, theta ~0 — โดยไม่มี error ไม่มี log
+ตัวเลขดูสมเหตุสมผลพอที่จะไม่มีใครสงสัย ซึ่งอันตรายกว่าพัง
+
+**สาเหตุ:** `OptionMarketData.last_price` มาจาก `lastPrice` ของแถวใน option chain
+(`backend/providers/yahoo_options.py:59`) = ราคา **สัญญา option** ไม่ใช่ราคาหุ้นอ้างอิง
+ป้อนเข้า `compute_greeks(spot=...)` เท่ากับบอกว่าหุ้น AAPL ราคา $5.80 เทียบ strike $200
+
+**Fix:** ดึง spot แยกด้วย `underlying_spot(symbol)` (`backend/routers/options.py`) —
+`market_data.get_fast_info(sym).last_price` ของ **underlying**; IV ยังเอาจากสัญญาได้ ถูกแล้ว
+ถ้าเคยมี cache ของค่าผิด ต้องเปลี่ยน cache key prefix ด้วย ไม่งั้นยังเสิร์ฟค่าเก่า
+
+**กฎทั่วไป:** เวลาโมเดลรับทั้ง "ราคาของ instrument" และ "ราคาของ underlying"
+อย่าให้ตัวแปรทั้งสองมาจาก response ก้อนเดียวกันโดยไม่ตรวจ — ชื่อ field เหมือนกันได้ ความหมายคนละอย่าง
+
+---
+
+## Base-currency amount คู่กับ native percentage = เครื่องหมายขัดกัน
+
+**อาการ:** UI แสดง `-161 (+0.0%)` — เงินติดลบแต่เปอร์เซ็นต์เป็นบวก/ศูนย์
+
+**สาเหตุ:** cost แปลงที่เรตวันเข้า (`when="entry"`) ส่วน market value แปลงที่เรต live
+พอ FX ขยับ base P&L จึงไม่เป็นศูนย์ ทั้งที่ราคา native ไม่ขยับเลย (native % = 0.0)
+การเอาจำนวนเงิน base มาคู่กับ % native จึงเป็นคนละฐาน
+
+**Fix:** คำนวณ percentage บนฐานเดียวกับจำนวนเงินที่แสดง — เพิ่ม `unrealized_pct_base`
+(`unrealized_pnl_base / |cost_basis_base|`) แล้วให้ UI ใช้ค่านั้นคู่กับยอด base
+เห็นครั้งแรกที่ `backend/portfolio_options.py`; ใช้ได้กับทุกจุดที่รายงาน 2 สกุลพร้อมกัน
+
+---
+
+## `next/dynamic` ไม่มี timeout — chunk ที่ไม่มาถึง = ค้างที่ loading ตลอดกาล (2026-09-10)
+
+**อาการ:** เปิด `http://bloomberg.localhost:9318/` แล้วค้างที่หน้าดำคำว่า BLOOMBERG
+ต้องกด refresh เองจึงจะเข้าเทอร์มินัลได้
+
+**สาเหตุ:** `app/page.tsx` โหลด terminal ด้วย `dynamic(..., { ssr: false })`
+ถ้า import() promise ไม่ resolve และไม่ reject (dev-server compile ค้าง, `ChunkLoadError`
+หลัง rebuild เปลี่ยน hash, request ค้าง) `next/dynamic` ไม่มี timeout ให้ตั้ง —
+มันจะโชว์ `loading` fallback ไปเรื่อยๆ ไม่มี error boundary ไหนจับได้ เพราะไม่มี error
+
+**Fix:** fallback ต้องเฝ้าตัวเอง — `components/bloomberg/core/boot-screen.tsx`
+นับเวลา, ยังไม่ mount ภายใน 12s → `location.reload()` หนึ่งครั้ง (แทน refresh ที่คนกดเอง),
+กัน loop ด้วย `sessionStorage["bloomberg_boot_retry_at"]` ในกรอบ 60s → รอบสองโชว์ปุ่ม RETRY
+และดัก `window.error` ที่เป็น `ChunkLoadError` เพื่อ reload ทันที
+
+**สำคัญ — watchdog ฝั่ง React ไม่พอ:** อาการจริงที่เจอคือหน้าค้างแบบ **ไม่มีตัวนับเวลา**
+= BootScreen ไม่เคย mount, สิ่งที่เห็นคือ HTML ที่ server render ของ fallback เอง
+(`dynamic(ssr:false)` ยัง render `loading` ฝั่ง server) แปลว่า client bundle ไม่โหลด/ไม่ execute
+ตัวจับเวลาที่อยู่ใน bundle จึงตายไปด้วย
+
+**Fix ชั้นสอง:** inline `<script>` ใน `app/layout.tsx` → `app/boot-watchdog.tsx`
+รันจาก HTML ตรงๆ ไม่พึ่ง chunk ใดเลย → 12s ถ้า `window.__BT_MOUNTED__` ยังไม่ถูกเซ็ต
+(เซ็ตใน `bloomberg-terminal.tsx` useEffect) → reload หนึ่งครั้ง, รอบสองโชว์แถบแดง
+`#boot-stalled` แทนการ reload ซ้ำ
+
+**เบาะแสเพิ่ม (2026-09-10):** พิมพ์ URL ในช่อง address bar → ค้าง / เปิดผ่าน shortcut → ไม่ค้าง
+ต่างกันที่ Chrome **prerender ระหว่างพิมพ์** (omnibox preloading) — เอกสารที่ prerender
+ยังไม่ถูกแสดงและอาจนิ่งได้นาน ไม่ใช่อาการค้าง watchdog ทั้งสองตัวจึงเช็ค `document.prerendering`
+และเริ่มจับเวลาที่ event `prerenderingchange` (= ตอน activate) เท่านั้น
+
+**อย่าใช้ `next/script strategy="beforeInteractive"` กับ watchdog ตัวนี้:** มัน block hydration
+วัดได้ ~150ms (first `/api/` request 558ms → 379ms หลังเปลี่ยนกลับเป็น raw `<script>` ใน layout)
+raw tag ก็อยู่ใน server HTML และรันก่อน bundle เหมือนกัน แต่ไม่ถ่วง hydration
+(แลกกับ warning ของ React "Encountered a script tag while rendering React component" ใน dev — cosmetic)
+
+**หลักฐานรอบหน้า:** watchdog ยิง `navigator.sendBeacon("/api/boot-diag", …)` ก่อน reload
+→ บรรทัด `[boot-diag] {...}` ใน `logs/frontend.log` บอก `prerendered`, `visibility`,
+`readyState`, `sinceNav`, script ที่ช้าที่สุด — ไม่ต้องเปิด DevTools ทัน
+(route ต้องชื่อ `app/api/boot-diag/` — โฟลเดอร์ที่ขึ้นต้นด้วย `_` ใน App Router เป็น private
+ไม่ถูก route ให้ ตอนแรกวางเป็น `__boot-diag` แล้วได้ 404)
+
+**กฎทั่วไป:** ทุก `dynamic()` ที่กั้นหน้าจอทั้งหน้า ต้องมี watchdog **นอก bundle** —
+promise ที่ค้างเงียบไม่ใช่ error, และถ้า bundle ไม่รัน โค้ด React ทุกบรรทัดก็ไม่รันเหมือนกัน
+
+---
+
+## PORT ใช้เวลา ~10s ทุกครั้งที่เปิด — fetch ใน useEffect ไม่มี cache (fixed 2026-09-10)
+
+**อาการ:** กด P แล้วตารางว่างค้างหลายวินาที ทุกครั้งที่เข้า ไม่ว่าจะเพิ่งเข้าไปมาก่อนหน้าหรือไม่
+
+**วัดได้ (ก่อนแก้):** 33 requests, settle ที่ 9.7s — `stoploss/compute` 8.4s,
+`v2/portfolio/premarket` 3.7s (ทั้งคู่ต้องรอ `open-positions` ก่อนเพราะต้องใช้ list symbol),
+`theses/summary` 0.8s, `summary` 0.6s
+
+**สาเหตุ:** ทุก tab ใน `views/portfolio/` ใช้ `useEffect` + `fetch` เก็บลง `useState`
+= ไม่มี cache ข้าม mount เลย ออกจาก view แล้วกลับเข้ามา = เริ่มนับหนึ่งใหม่ทั้งชุด
+(backend มี TTLCache อยู่แล้ว — stoploss 300s, premarket 30s — แต่ฝั่ง client ทิ้งทุกอย่าง)
+
+**Fix 2 ชั้น:**
+1. `views/portfolio/queries.ts` — ย้าย 7 endpoint ไป React Query, `staleTime` ตรงกับ TTL ฝั่ง backend
+   (`OpenPositionsTab` + `portfolio/index.tsx` ใช้ผ่าน `useQuery` แทน effect เดิม)
+2. `hooks/usePortfolioPrewarm.ts` — terminal shell warm cache ให้ล่วงหน้า 4s หลัง mount ตอน idle
+   (positions ก่อน แล้วค่อย stoploss/premarket ที่ต้องใช้ symbol list) + เพิ่ม `portfolio` เข้า
+   `prefetchTier1` เพื่อโหลด chunk ไว้ก่อน
+
+**ผลวัดหลังแก้:** กด PORT → ตารางเต็มภายใน ~1s, request ใน 1 วินาทีแรก = 1 (จาก 33)
+
+**กฎทั่วไป:** view ที่ช้าเพราะ request chain (A → ต้องได้ผลก่อนถึงยิง B ที่ช้า)
+แก้ด้วยการ prewarm ตอน idle ได้ผลกว่าการ optimize ตัว request — ผู้ใช้ไม่ได้อยู่หน้านั้นตอนมันโหลด
+
+## FastAPI: literal path ถูก `{param}` route จับก่อน ถ้าประกาศทีหลัง
+
+**อาการ:** `GET /api/options/trades` ตอบ `{"detail":"No options available for TRADES"}`
+— เป็น 404 จาก handler อื่น ไม่ใช่ routing error จึงหาสาเหตุยาก
+
+**สาเหตุ:** FastAPI match ตาม **ลำดับที่ประกาศ** `/api/options/{symbol}` (ประกาศไว้บรรทัด ~123)
+รับ segment เดียวอะไรก็ได้ → `trades` กลายเป็น `symbol="trades"`
+
+**Fix:** ประกาศ literal path **ก่อน** catch-all เสมอ ใน `backend/routers/options.py` มีคอมเมนต์
+กำกับไว้เหนือ `/api/options/{symbol}` แล้วว่าห้ามเพิ่ม literal one-segment GET ใต้บรรทัดนั้น
+
+**กฎทั่วไป:** route ที่มี **2 segment ขึ้นไป** ไม่ชน (`/api/options/positions/list` จึงรอด)
+และ method ต่างกันก็ไม่ชน (`POST /api/options/close-fifo` รอดเพราะ `{symbol}` เป็น GET อย่างเดียว)
+เวลาเพิ่ม endpoint ใหม่ใต้ prefix ที่มี catch-all ให้เช็ค 3 อย่าง: ลำดับ · จำนวน segment · method
+
+---
+
+## `hidden` ไม่ทำงานบน element ที่มี class `flex` / `grid`
+
+**อาการ:** `<div hidden={cond} className="flex …">` ยังแสดงผลทั้งที่ `cond` เป็น true
+
+**สาเหตุ:** attribute `hidden` พึ่ง UA stylesheet `[hidden]{display:none}` ซึ่ง specificity ต่ำ
+`display:flex` จาก class ทับได้ตรงๆ
+
+**Fix:** ใช้ conditional render (`{cond && <div…>}`) หรือประกาศ `[hidden]{display:none!important}`
+ใน global CSS — ในโปรเจกต์นี้เลือกอย่างแรก เพราะ element ที่ซ่อนแล้วไม่ต้อง mount
+
+---
+
+## Headline metric เงียบๆ ไม่นับ instrument class ใหม่ → หน้าจอเดียวมีสองตัวเลข
+
+**อาการ:** SummaryBar โชว์ `WIN RATE 71.6%` แต่ ANALYTICS โชว์ `69.7%` — หน้าจอเดียวกัน
+และ `TOTAL P&L` ไม่มีผลขาดทุนของ option อยู่ในนั้น
+
+**สาเหตุ:** ตอนเอา option เข้า PORT ผมใส่ผลลัพธ์ไว้ใน field **แยก** (`options_realized_base`)
+เพราะดูปลอดภัยกว่า แต่ `/summary` คำนวณ `pnl_base`/`wins`/`losses` จากตาราง `trades` อย่างเดียว
+→ headline number จึงไม่นับ option เลย ส่วน `/analytics` ที่ append synthetic option row เข้า
+`closed_rows` กลับนับ → **สองหน้าคำนวณคนละฐาน**
+
+**Fix:** fold เข้า field หลักไปเลย (`pnl_base`, `wins`, `losses`, ytd, `global_win_rate`)
+แล้วให้ field แยกเป็น **breakdown** ไม่ใช่ addend
+
+⚠️ **ตอน fold ต้องไล่ลบการบวกซ้ำทุกที่** — `AnalyticsTab` เคยบวก `options_realized_base`
+เองอีกรอบ และ `cash_base` ก็มี term `opt_realized` แยก ถ้าไม่ลบจะกลายเป็นนับสองเท่าทันที
+
+**กฎทั่วไป:** เพิ่ม instrument class ใหม่เข้าระบบ ให้ไล่ทุก aggregate ที่มีคำว่า *total* /
+*win rate* / *count* ว่ามันอ่านจากตารางเดิมตารางเดียวหรือเปล่า — field แยกที่ "ปลอดภัย"
+คือการเลื่อนปัญหาไปให้คนอ่านตัวเลขแทน
+
+**Sentinel ที่ควรมี:** ผลลัพธ์ที่ไม่รู้ (เช่น ปิด position โดยไม่บันทึกราคา) ต้อง**ไม่นับ**
+ทั้ง W และ L — ไม่ใช่นับเป็น L เพราะ P&L เป็น 0
+
+---
+
+## useEffect ที่มี array/object ใน deps → debounce ยิงแล้ว abort ตัวเองไม่รู้จบ
+
+**อาการ:** กราฟไม่ขึ้นเลยทั้งที่กรอกข้อมูลครบ ไม่มี error ใน console
+`read_network_requests` เห็น **491 requests ทั้งหมดเป็น `ERR_ABORTED`**
+
+**สาเหตุ:** hook รับ `legs` ที่ caller สร้าง inline (`const legs = [...]` ในตัว component)
+identity จึงเปลี่ยน**ทุก render** พอใส่ไว้ใน dependency ของ `useEffect` ที่ทำ debounce:
+
+```ts
+useEffect(() => {
+  const t = setTimeout(fetchIt, 400);
+  const c = new AbortController();
+  return () => { clearTimeout(t); c.abort(); };
+}, [key, legs]);        // ← legs เปลี่ยน identity ทุก render
+```
+
+→ effect re-run ทุก render → cleanup ยิง `clearTimeout` + `abort()` ทุกครั้ง → **ไม่มีวันครบ 400ms**
+
+**Fix:** ใช้ค่า serialize เป็น dependency ตัวเดียว แล้ว parse กลับข้างใน
+
+```ts
+const key = legs?.length ? JSON.stringify(legs) : "";
+useEffect(() => {
+  const payload = JSON.parse(key);
+  ...
+}, [key]);              // ← เสถียรตามเนื้อหา ไม่ใช่ตาม identity
+```
+
+`useMemo` ที่ caller ช่วยได้อีกชั้น แต่ต้องแก้ที่ hook เป็นหลัก เพราะ caller ตัวถัดไปจะพลาดซ้ำ
+
+**วิธีจับ:** `read_network_requests` แล้วดูจำนวน request — ถ้าเห็นหลักร้อยของ endpoint เดียว
+ที่ควรถูกเรียกไม่กี่ครั้ง แปลว่า effect กำลัง re-run เป็นลูป
+
+---
+
+## POP ของ OTM option **ลดลง** เมื่อ vol สูงขึ้น — ไม่ใช่บั๊ก
+
+**อาการ:** เพิ่ม IV จาก 30% → 90% แล้ว probability of profit ลดจาก 44.5% → 32.8%
+ดูขัดสามัญสำนึกเพราะ "ผันผวนมากขึ้นน่าจะมีโอกาสถึง strike มากขึ้น"
+
+**เหตุผล:** ภายใต้ risk-neutral lognormal `mean` คงที่ที่ forward แต่
+`median = S·exp((r − σ²/2)T)` ซึ่ง**ตกลง**เมื่อ σ โต — σ=0.30 median 100.75, σ=0.90 median 70.29
+การกระจายเบ้ขวามากขึ้น หางขวายาวขึ้นจริง แต่มวลส่วนใหญ่เลื่อนลง
+
+ตรวจกับสูตรปิด `N(d₂)` แล้วตรงทุกหลัก (diff 0.00e+00) — engine ถูก **assertion ในเทสต์ผิดเอง**
+
+**บทเรียน:** เทสต์ที่เขียนจากสัญชาตญาณเรื่อง distribution มีโอกาสผิดสูง
+ควรตรวจกับสูตรปิดที่คำนวณแยกอิสระ ไม่ใช่กับความรู้สึกว่า "ควรจะมากขึ้น/น้อยลง"
+
+---
+
+## เพิ่มตารางใหม่แล้วลืม sync — หรือใส่ผิดลำดับจน FK พัง
+
+**เช็กลิสต์เวลาเพิ่มตารางที่ผู้ใช้กรอกข้อมูลเอง:**
+
+1. ใส่ใน `backend/sync/config.py::SYNC_TABLES` พร้อม **natural key** (ห้ามใช้ auto-increment id —
+   ชนกันข้ามเครื่อง เหมือน `symbol_lists` / `trade_audit_log` ที่ถูกกันออกด้วยเหตุผลนี้)
+2. **ลำดับในลิสต์ = ลำดับ INSERT ตอน restore** และ `get_db()` เปิด `foreign_keys` ไว้
+   → ตารางที่ถูกอ้างถึงต้องมาก่อนตารางที่อ้าง ไม่งั้น restore พังด้วย `IntegrityError`
+3. ถ้าเป็นแถวที่ถือเงิน ใส่ `MONEY_TABLES` ด้วย (delete ชนะเฉพาะเมื่อ timestamp ใหม่กว่าจริง)
+4. `updated_at` + trigger 3 ตัว **ระบบใส่ให้เอง** ผ่าน `init_sync_layer()` — แต่ต้องรันใหม่
+   หลังแก้ config (`main.py` เรียกตอน startup) ตรวจด้วย:
+   `SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_<table>_sync_%'`
+   ต้องได้ 3 อัน
+5. ไม่ต้องบั๊มพ์ `SCHEMA_VER` — peer เก่าข้ามตารางที่มันไม่รู้จักเอง
+
+**กับดักที่เจอจริง:** ตาราง *market state* ที่ดูเหมือน "derived" มักเป็นตาราง**ที่ห้ามไม่ sync ที่สุด**
+IV/greeks/spot ณ อดีต **rebuild ไม่ได้** เพราะ provider รายงานแต่ปัจจุบัน — ถ้าไม่ sync
+เครื่องที่สองจะเสียข้อมูลนั้นถาวร (`iv_snapshots` มีคอมเมนต์อธิบายเรื่องนี้ไว้อยู่แล้ว
+แต่ผมยังเขียน `option_trade_greeks` ว่า "rebuilt on demand" ซึ่งผิด)
+
+**วิธี verify โดยไม่ต้องมี 2 เครื่อง:** `export_snapshot()` จาก DB ที่มีข้อมูล แล้ว `restore()`
+ลง DB เปล่า — เท่ากับ Drive pull ทุกประการ ตรวจว่าจำนวนแถวตรง ไม่มี FK error และ view ที่ derive
+มา rebuild ถูก
+
+---

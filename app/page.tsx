@@ -2,6 +2,7 @@
 
 import { Provider } from "jotai";
 import dynamic from "next/dynamic";
+import { BootScreen } from "../components/bloomberg/core/boot-screen";
 import { QueryClientProvider } from "../components/bloomberg/providers/query-client-provider";
 
 /**
@@ -20,13 +21,7 @@ const BloombergTerminal = dynamic(
   () => import("@/components/bloomberg/layout/bloomberg-terminal"),
   {
     ssr: false,
-    loading: () => (
-      <div className="flex items-center justify-center h-screen" style={{ background: "#000" }}>
-        <span className="text-sm font-bold font-mono tracking-[0.3em]" style={{ color: "#ff9900" }}>
-          BLOOMBERG
-        </span>
-      </div>
-    ),
+    loading: () => <BootScreen />,
   }
 );
 

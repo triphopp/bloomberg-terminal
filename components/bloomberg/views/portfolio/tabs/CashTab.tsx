@@ -4,10 +4,14 @@ import { useCallback, useEffect, useState } from "react";
 import { BLANK_CASH, BLANK_DIV } from "../constants";
 import { type Colors, fmtK, pnlColor } from "../helpers";
 import { ConfirmDeleteModal } from "../modals/ConfirmDeleteModal";
-import type { CashEntry, Dividend, Trade } from "../types";
+import type { CashEntry, Dividend, Summary, Trade } from "../types";
 import { SubPortSelect } from "../ui/SubPortSelect";
 
-export function CashTab({ accountId, colors }: { accountId: string; colors: Colors }) {
+export function CashTab({
+  accountId,
+  summary,
+  colors,
+}: { accountId: string; summary?: Summary | null; colors: Colors }) {
   const [cash, setCash] = useState<CashEntry[]>([]);
   const [dividends, setDivs] = useState<Dividend[]>([]);
   const [reinvestTrades, setReinvestTrades] = useState<Trade[]>([]);
@@ -130,6 +134,15 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
     });
     if (r.ok) setReinvestTrades((list) => list.filter((t) => t.id !== tradeId));
   }, []);
+
+  // Two different numbers on purpose: IN/INV are what was typed into this
+  // ledger; CASH~ also folds in realized P&L from closed positions. Labelling
+  // them apart is the point — a reader who assumes they should match will read
+  // the difference as a bug.
+  const derivedCash =
+    accountId === "all"
+      ? summary?.total_cash_base
+      : summary?.accounts.find((a) => a.account.id === accountId)?.cash_base;
 
   const totalIn = cash.reduce((a, c) => a + c.income, 0);
   const totalInv = cash.reduce((a, c) => a + c.investment, 0);
@@ -375,6 +388,24 @@ export function CashTab({ accountId, colors }: { accountId: string; colors: Colo
           </button>
         )}
         <div className="ml-auto flex gap-3 text-[9px] font-mono flex-wrap">
+          {derivedCash != null && (
+            <span
+              style={{ color: colors.textSecondary }}
+              title={
+                "DERIVED, not a ledger balance. invested + realized P&L (equities and options) + " +
+                "dividends − open cost basis. It will NOT equal IN − INV below: that pair is what " +
+                "you typed into this ledger, while this also folds in every position you have " +
+                "closed. Commissions, taxes and margin interest that were never entered are " +
+                "invisible to both."
+              }
+            >
+              CASH~{" "}
+              <span style={{ color: derivedCash >= 0 ? "#facc15" : "#f87171" }}>
+                ฿{fmtK(Math.abs(derivedCash))}
+              </span>
+              <span className="ml-0.5 text-[8px]">est</span>
+            </span>
+          )}
           <span style={{ color: colors.textSecondary }}>
             IN: <span style={{ color: "#4ade80" }}>฿{fmtK(totalIn)}</span>
           </span>

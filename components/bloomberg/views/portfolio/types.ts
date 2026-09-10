@@ -111,6 +111,20 @@ export interface AccountStat {
   total_invested_base?: number;
   total_dividends: number;
   total_dividends_base?: number;
+  // Options are valued by the same backend path as equities. Market value is
+  // what the book is worth; delta notional is what it is exposed to.
+  options_open_count?: number;
+  options_mv_base?: number;
+  options_cost_base?: number;
+  options_unrealized_base?: number;
+  options_realized_base?: number;
+  options_delta_notional_base?: number;
+  /** Cost basis of everything still open (equity + options), entry-date FX. */
+  open_cost_base?: number;
+  /** DERIVED idle cash, not a ledger balance: invested + realized + dividends
+   *  − open cost. Blind to commissions, taxes and margin interest that were
+   *  never recorded, so it is an estimate — label it as one wherever shown. */
+  cash_base?: number;
 }
 
 export interface Summary {
@@ -123,6 +137,13 @@ export interface Summary {
   global_win_rate: number;
   base_currency: string;
   thb_per_usd: number;
+  total_options_mv_base?: number;
+  total_options_unrealized_base?: number;
+  total_options_realized_base?: number;
+  total_options_delta_notional_base?: number;
+  total_open_cost_base?: number;
+  total_cash_base?: number;
+  cash_is_estimate?: boolean;
 }
 
 // Legacy — used by backtest / theses

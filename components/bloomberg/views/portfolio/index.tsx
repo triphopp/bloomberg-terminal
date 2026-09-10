@@ -1,4 +1,5 @@
 "use client";
+import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
 import { Loader2, RefreshCw } from "lucide-react";
 import {
@@ -19,11 +20,12 @@ import {
   Upload,
   Wrench,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { isDarkModeAtom } from "../../atoms";
 import { useTabShortcuts } from "../../hooks/useTabShortcuts";
 import { bloombergColors } from "../../lib/theme-config";
-import { FLAG, fetchRetry } from "./helpers";
+import { FLAG } from "./helpers";
+import { portfolioQueries } from "./queries";
 import { AnalyticsTab } from "./tabs/AnalyticsTab";
 import { BacktestTab } from "./tabs/BacktestTab";
 import { CashTab } from "./tabs/CashTab";
@@ -160,14 +162,10 @@ export function PortfolioView() {
   const [isDarkMode] = useAtom(isDarkModeAtom);
   const colors = isDarkMode ? bloombergColors.dark : bloombergColors.light;
 
-  const [accounts, setAccounts] = useState<Account[]>([]);
   const [activeAccount, setActiveAccount] = useState<string>("all");
   const [currency, setCurrency] = useState<"THB" | "USD">("THB");
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [loadingSummary, setLoadingSummary] = useState(false);
-  // Gates the tab content: every tab fetches once on mount with no retry of its
-  // own, so mounting them before the backend answers leaves them blank forever.
-  const [bootState, setBootState] = useState<"loading" | "ready" | "error">("loading");
+  // Gates the tab content: a tab mounted before the backend answers would fetch
+  // once, get nothing, and sit blank.
 
   const [topTab, setTopTab] = useState<TopTab>("portfolio");
   const [portfolioSub, setPortfolioSub] = useState<PortfolioSub>("positions");
@@ -214,25 +212,26 @@ export function PortfolioView() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  const loadAccounts = useCallback(async (signal?: AbortSignal) => {
-    setBootState((s) => (s === "ready" ? s : "loading"));
-    try {
-      const r = await fetchRetry("/api/v2/portfolio/accounts", { attempts: 10, signal });
-      const d = await r.json();
-      if (!r.ok || !Array.isArray(d)) throw new Error("bad payload");
-      setAccounts(d);
-      setBootState("ready");
-    } catch (e) {
-      if ((e as Error)?.name === "AbortError") return;
-      setBootState("error");
-    }
-  }, []);
-
-  useEffect(() => {
-    const ac = new AbortController();
-    loadAccounts(ac.signal);
-    return () => ac.abort();
-  }, [loadAccounts]);
+  // Accounts and summary go through React Query so the terminal shell can warm
+  // them before PORT is opened (`prewarmPortfolio`) — on a warm cache the view
+  // paints with data instead of the boot spinner.
+  const {
+    data: accountsData,
+    isError: accountsError,
+    refetch: refetchAccounts,
+  } = useQuery({ ...portfolioQueries.accounts(), retry: 5 });
+  const accounts = useMemo<Account[]>(
+    () => (Array.isArray(accountsData) ? (accountsData as Account[]) : []),
+    [accountsData]
+  );
+  const bootState: "loading" | "ready" | "error" = accountsError
+    ? "error"
+    : accountsData
+      ? "ready"
+      : "loading";
+  const loadAccounts = useCallback(() => {
+    void refetchAccounts();
+  }, [refetchAccounts]);
 
   const createAccount = useCallback(async () => {
     const name = newName.trim();
@@ -315,30 +314,19 @@ export function PortfolioView() {
     }
   }, [deleteTarget, deleteConfirm, activeAccount, loadAccounts]);
 
-  const loadSummary = useCallback(
-    async (signal?: AbortSignal) => {
-      setLoadingSummary(true);
-      try {
-        const r = await fetchRetry(`/api/v2/portfolio/summary?base_currency=${currency}`, {
-          attempts: 10,
-          signal,
-        });
-        if (!r.ok) return;
-        setSummary(await r.json());
-      } catch {
-        /* handled by the boot banner driven off loadAccounts */
-      } finally {
-        setLoadingSummary(false);
-      }
-    },
-    [currency]
-  );
-
-  useEffect(() => {
-    const ac = new AbortController();
-    loadSummary(ac.signal);
-    return () => ac.abort();
-  }, [loadSummary]);
+  const {
+    data: summaryData,
+    isFetching: loadingSummary,
+    refetch: refetchSummary,
+  } = useQuery({
+    ...portfolioQueries.summary(currency),
+    retry: 5,
+    placeholderData: (prev) => prev,
+  });
+  const summary = (summaryData as Summary | undefined) ?? null;
+  const loadSummary = useCallback(() => {
+    void refetchSummary();
+  }, [refetchSummary]);
 
   const acctBtnCls = "flex items-center gap-1 text-[9px] px-2 py-1 font-bold border transition-all";
 
@@ -565,13 +553,13 @@ export function PortfolioView() {
               />
             )}
             {topTab === "portfolio" && portfolioSub === "options" && (
-              <OptionsTab accountId={activeAccount} colors={colors} />
+              <OptionsTab accountId={activeAccount} currency={currency} colors={colors} />
             )}
             {topTab === "portfolio" && portfolioSub === "trades" && (
               <TradeLogTab accountId={activeAccount} currency={currency} colors={colors} />
             )}
             {topTab === "portfolio" && portfolioSub === "cash" && (
-              <CashTab accountId={activeAccount} colors={colors} />
+              <CashTab accountId={activeAccount} summary={summary} colors={colors} />
             )}
             {topTab === "portfolio" && portfolioSub === "entry" && (
               <ImportTab colors={colors} variant="manual" />

@@ -196,8 +196,36 @@ pinned_asset_tags   (asset_id, tag_id)   -- many-to-many
 sector_classifications (id, symbol, country, exchange, sector_gics, industry_gics, sector_local,
                         sector_display, company_name, market_cap, index_tags, source,
                         last_fetched, fetch_error, created_at, updated_at) UNIQUE(symbol, country)
-option_positions    (id, account_id, underlying, expiry, strike, option_type call|put,
-                     quantity, entry_price, entry_date, status open|closed|expired, notes)
+option_contracts    (contract_id, occ_symbol UNIQUE, underlying, expiry, strike,
+                     option_type call|put, multiplier, currency, created_at)
+                     UNIQUE(underlying, expiry, strike, option_type)
+option_trades       (trade_id, contract_id FK, account_id, trade_date, action OPEN|CLOSE,
+                     side BUY|SELL, quantity>0, price, fees, exchange_rate,
+                     close_reason TRADE|EXPIRED|EXERCISED|ASSIGNED|UNKNOWN, note, created_at)
+option_trade_greeks (trade_id PK/FK CASCADE, spot, iv, delta, gamma, theta, vega, rho,
+                     source live|manual|unavailable, captured_at)
+option_trade_matches(close_trade_id FK, open_trade_id FK, quantity, fees_alloc, realized_pnl,
+                     matched_at) PK(close_trade_id, open_trade_id)
+-- 2026-09-10 (option-schema-normalization): แทนที่ `option_positions` เดิมที่ยัด instrument +
+--   execution + lot lifecycle ไว้แถวเดียว (ปิดบางส่วนไม่ได้, ไม่มีสภาพตลาดตอนเข้า, แก้ราคาแล้ว
+--   realized ที่รายงานไปแล้วเปลี่ยนตามเงียบๆ)
+--   * ทิศทางอยู่ที่ action+side ไม่ใช่เครื่องหมายของ quantity — quantity บวกเสมอ
+--   * lot = OPEN trade ที่ยัง match ไม่ครบ → view `v_option_open_lots` ไม่มีตาราง lot
+--     ดังนั้นไม่มีคอลัมน์ status: หมดอายุ/ใช้สิทธิ์ = CLOSE trade เหมือนกันหมด
+--   * realized_pnl materialize ตอน match ไม่ derive — แก้ราคาย้อนหลังจึงไม่รีไรต์ประวัติเงียบๆ
+--   * price/realized_pnl เป็น NULL ได้เมื่อ close_reason='UNKNOWN' = "ไม่รู้ราคา" ≠ 0
+--   * join หุ้น: option_contracts.underlying ↔ trades.symbol/resolved_symbol,
+--     account_id ↔ portfolio_accounts.id
+-- VIEW v_option_open_lots   — lot ที่ยังเปิด + entry greeks (alias lot_id → id ให้ frontend)
+-- VIEW v_option_realized    — 1 แถวต่อ match: entry/exit/direction/realized
+option_greeks_snapshots (position_id, snapshot_date, account_id, underlying, expiry, strike,
+                     option_type, quantity, multiplier, currency, spot, iv, mark,
+                     delta, gamma, theta, vega, market_value_usd, created_at)
+                     PK(position_id, snapshot_date)
+-- 2026-09-09 (option-greeks-and-attribution): state at the START of each day, which is what
+--   P&L attribution needs and what cannot be reconstructed later. Captured once per day
+--   off-thread from /open-positions and /analytics. `iv` here is the CONTRACT's IV — not the
+--   ATM iv_mid in iv_snapshots. Accumulate-only, same as iv_snapshots.
 iv_snapshots        (symbol, snapshot_date, expiry, dte, spot, atm_strike, iv_call, iv_put,
                      iv_mid, source, created_at) PK(symbol, snapshot_date, expiry)
 -- 2026-08-17 (IV SD heatmap): ATM implied-vol history. Yahoo reports only the CURRENT
@@ -307,6 +335,11 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026
 - [x] **Cash Transfer** — linked-pair TRANSFER entry_type in `cash_ledger` so inter-account cash moves (e.g. FINANSIA→DIME) fix per-account `invested_capital` bookkeeping with atomic insert + cascade delete — done 2026-07-14 (`plans/completed/cash-transfer-feature.md`)
 - [ ] **System Audit 2026-07 — Bug Fixes & Refactor** — 9 fix items + 6 refactor items; F01 done 2026-07-03, F06 done 2026-07-04 (via port-redesign resolver); เหลือ F02 AVCO drift 🔴, F03 async blocking 🔴, F04/F05/F07/F08/F09 + R01–R06 (`plans/system-audit-2026-07/README.md`)
 - [x] **Portfolio Cloud Sync** — PC↔Mac sync via Google Drive JSON snapshots, startup pull, row-LWW merge + tombstones, no login done 2026-06-26 (`plans/completed/portfolio-cloud-sync.md`)
+- [x] **Option Payoff Simulator** — done 2026-09-10: `backend/analytics/option_payoff.py` (payoff at expiry = เลขคณิต, T+0 = BS ผ่าน greeks.py, POP = lognormal risk-neutral) + `POST /api/options/payoff`; พรีวิวสดในฟอร์ม ADD (expiry คำนวณที่ client, T+0/POP debounce 400ms) + ปุ่ม PAYOFF ในแถว lot รวมทุก lot ของ underlying; breakeven จาก sign change + bisection, max P/L จาก slope ที่ปลายไม่ใช่ขอบกริด (`plans/completed/option-payoff-simulator.md`)
+- [x] **Option Edit + Portfolio Cash** — done 2026-09-10: `cash_base`/`open_cost_base` คำนวณที่ `/summary` (invested + realized ทั้ง equity และ option + dividends − open cost ทั้งสองประเภท) แสดงที่ SummaryBar + CASH tab + ANALYTICS ทั้งสามอ่านตัวเลขเดียวกัน — เป็นค่าประมาณ ไม่โพสต์ `cash_ledger`; `PATCH /api/options/trades/{id}` แก้ trade ที่กรอกผิด + re-match realized + `trade_audit_log` + EDIT modal (`plans/completed/option-edit-and-portfolio-cash.md`)
+- [x] **Option Schema Normalization** — done 2026-09-10: `option_contracts` (instrument, dedupe ด้วย occ_symbol) + `option_trades` (execution, immutable, ทิศทางอยู่ที่ action+side) + `option_trade_greeks` (5 greeks + spot/IV ณ จุดเทรด, 1:1) + `option_trade_matches` (FIFO partial close, realized materialized); lot = OPEN trade ที่ยัง match ไม่ครบ → `v_option_open_lots` ไม่ใช่ตาราง; หมดอายุ/ใช้สิทธิ์ = CLOSE trade; migrate + DROP `option_positions` (`plans/completed/option-schema-normalization.md`)
+- [x] **Option Greeks + PnL Attribution** — done 2026-09-09: PORT · OPTIONS แสดง Δ/Γ/Θ ต่อสัญญา + dollar greeks (DELTA/GAMMA-1%/THETA-day/VEGA-1pp) หน่วย USD, ตาราง derivatives เป็น USD ล้วน; ตาราง `option_greeks_snapshots` เก็บ spot/IV/greeks รายวัน (accumulate เท่านั้น back-fill ไม่ได้); `/api/v2/portfolio/options/attribution` แยก Δ/Γ/Θ/ν/residual ด้วย greeks ต้นงวด; ANALYTICS section DERIVATIVES ทั้งพอร์ต + ราย option + stacked bar รายวัน (`plans/completed/option-greeks-and-attribution.md`)
+- [x] **Options in Portfolio** — done 2026-09-09: `backend/portfolio_options.py` เป็นจุดเดียวที่ ตีราคา option lot; premium MV เข้า NAV/unrealized/realized ของ `/summary` `/open-positions` `/returns` `/nav-history` `/analytics`, delta-adjusted notional ถ่วงน้ำหนัก `/allocation-detail`; schema +`exit_price`/`exit_date`/`currency`/`multiplier`/`sector`; close endpoint รับราคาปิด; รวม fix greeks spot bug 🔴 (`plans/completed/options-in-portfolio.md`)
 - [ ] **Port Redesign** — symbol resolver (resolve-at-write), sub_portfolios table จริง, currency module, ลบ `_get_yf_symbol`/ปิด F06 (`plans/port-redesign.md`)
 - [x] **Multi-Currency Sub-Portfolio** — done 2026-07-14: `trades.currency` เป็น instrument ccy authoritative, rollup ต่อ trade, mixed-ccy account, realized trading P&L ใช้ exit-date FX (ไม่รวม principal FX attribution), แสดง `ECON` FX-inclusive attribution แยก, live MTM และ daily `fx_rates` (`plans/completed/multi-currency-portfolio.md`)
 - [ ] **VP Indicator Upgrade** — แก้ session timezone bug (B1 🔴) + visible-range VP + delta profile + naked POC + HVN/LVN + config UI; audit: `reports/vp-indicator-risk-report.md` (`plans/vp-indicator-upgrade.md`)

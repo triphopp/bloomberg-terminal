@@ -1,11 +1,16 @@
-import { NextRequest, NextResponse } from "next/server";
 import { PYTHON_API } from "@/lib/constants";
+import { type NextRequest, NextResponse } from "next/server";
 
-export async function PATCH(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // The closing price is what turns a closed lot into realized P&L, so the body
+  // has to reach the backend. An empty body stays valid (price unknown).
+  const body = await req.json().catch(() => ({}));
   try {
     const res = await fetch(`${PYTHON_API}/api/options/positions/${id}/close`, {
       method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) throw new Error(`Backend ${res.status}`);
