@@ -50,6 +50,7 @@ import {
 import type { IndicatorRegistryEntry, OhlcvBar } from "../chart";
 import { FearGreedPane } from "../chart/FearGreedPane";
 import { PEPane } from "../chart/PEPane";
+import { VolumeEventPanel } from "../chart/VolumeEventPanel";
 import { useSdBands } from "../chart/useSdBands";
 import { BloombergButton } from "../core/bloomberg-button";
 import { CompanyOutlookPanel } from "../core/company-outlook-panel";
@@ -4350,6 +4351,8 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
     setRegressionMode,
     handleChartClick,
     toggleVolumeProfile,
+    showVolumeEvents,
+    toggleVolumeEvents,
     vpConfig,
     setVPConfig,
     showPE,
@@ -4977,6 +4980,22 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                         VP
                       </button>
                     )}
+                    {/* Volume Events toggle — chips on the bars + list below */}
+                    {ohlcvData.some((d) => (d.volume ?? 0) > 0) && (
+                      <button
+                        type="button"
+                        onClick={toggleVolumeEvents}
+                        title="Volume Events — classify each bar's participation against its result (climax / absorption / vacuum / breakout / no-demand / dry-up)"
+                        className="px-1.5 py-0.5 border font-mono text-[9px] transition-colors"
+                        style={{
+                          borderColor: showVolumeEvents ? "#26a69a" : colors.border,
+                          backgroundColor: showVolumeEvents ? "#26a69a22" : "transparent",
+                          color: showVolumeEvents ? "#26a69a" : colors.textSecondary,
+                        }}
+                      >
+                        VEVT
+                      </button>
+                    )}
                     {/* VP display-option chips — only when VP is active */}
                     {showVolumeProfile &&
                       ohlcvData.some((d) => (d.volume ?? 0) > 0) &&
@@ -5152,6 +5171,9 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                 )}
                 {showPE && peData?.history && peData.history.length > 0 && (
                   <PEPane data={peData.history} stats={peData.stats} colors={colors} height={110} />
+                )}
+                {showVolumeEvents && ohlcvData.length > 0 && (
+                  <VolumeEventPanel data={ohlcvData} colors={colors} height={130} />
                 )}
               </>
             ) : (

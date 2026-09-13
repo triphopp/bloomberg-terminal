@@ -192,7 +192,8 @@ const BACKEND_SUPPORTED: Record<string, string[]> = {
   ema: ["value"],
   sma: ["value"],
   macd: ["hist"],
-  rvol: ["rvol"],
+  // `z` = robust log-volume z-score, `rvol` = the frozen mean-baseline ratio.
+  rvol: ["rvol", "z"],
   stochastic: ["k", "d"],
   bollinger: ["upper", "middle", "lower"],
   "bollinger-b": ["b"],

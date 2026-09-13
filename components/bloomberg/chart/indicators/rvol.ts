@@ -4,16 +4,39 @@
  * Answers "is today's participation abnormal?" — the context filter that
  * every other volume-based read (VP, POC, breakouts) should be weighted by.
  *
- * Daily bars:    RVOL = volume / SMA(volume, lookback) of the PRIOR bars
- *                (current bar excluded so it can't dilute its own baseline).
- * Intraday bars: RVOL = volume / mean volume of bars at the SAME time-of-day
- *                over the prior `lookback` sessions. Comparing 10:05 to other
- *                10:05s matters because intraday volume is U-shaped — a raw
- *                rolling average would flag every open as "abnormal".
+ * All of the statistics live in lib/volume-stats.ts, which documents why the
+ * baseline is a median of ln(volume) rather than a mean of volume, how intraday
+ * bars are slotted against the same point in prior sessions, and what the
+ * cumulative mode fixes. Three params pick between the readings:
  *
- * Histogram coloring: <1 dim, 1–2 normal, ≥2 highlighted (abnormal).
+ *   baseline  median (default) | mean
+ *             Only affects the ratio. A mean baseline is what the classic RVOL
+ *             uses and it is the reason the pane felt uninformative: one
+ *             earnings spike raises the baseline for the whole lookback, so the
+ *             next spike reads as ordinary. "mean" is kept because a stored
+ *             alert rule may have been calibrated against it.
+ *
+ *   scale     ratio (default) | z
+ *             ratio keeps the familiar unit ("2× normal") but is NOT comparable
+ *             across symbols — RVOL 2 on a mega-cap and on an illiquid small
+ *             cap are different events, because their volume variance differs.
+ *             z is a robust log z-score, which is comparable across symbols and
+ *             timeframes, and which has a meaningful negative half: a dry-up is
+ *             as much an event as a spike, and the ratio squashes it into
+ *             0.0-1.0 where the eye cannot see it.
+ *
+ *   mode      bar (default) | cum
+ *             Intraday only. In bar mode the live last bar is partial, so it
+ *             reads as quiet until the bar closes. cum compares the session's
+ *             volume so far against the same point in prior sessions, so an
+ *             open session reads honestly.
+ *
+ * Histogram colouring, ratio: <1 dim, 1-2 normal, ≥2 highlighted.
+ * z: ≥2.5 abnormal, 1.5-2.5 notable, ≤-1 dry-up (its own colour, since a
+ * sustained dry-up is the setup a squeeze comes out of), otherwise dim.
  */
 
+import { type VolBaseline, type VolMode, volumeRatio, volumeZ } from "../../lib/volume-stats.ts";
 import type {
   ChartIndicator,
   HistogramDataPoint,
@@ -22,65 +45,57 @@ import type {
   OhlcvBar,
 } from "../types";
 
-function timeOfDayKey(unixSec: number): number {
-  return unixSec % 86_400;
+export const RVOL_BASELINES: { value: VolBaseline; label: string }[] = [
+  { value: "median", label: "Median (robust)" },
+  { value: "mean", label: "Mean (classic)" },
+];
+
+export const RVOL_SCALES: { value: "ratio" | "z"; label: string }[] = [
+  { value: "ratio", label: "Ratio (×normal)" },
+  { value: "z", label: "Z-score (log)" },
+];
+
+export const RVOL_MODES: { value: VolMode; label: string }[] = [
+  { value: "bar", label: "Per bar" },
+  { value: "cum", label: "Session cumulative" },
+];
+
+const DIM = "rgba(120,120,120,0.45)";
+const NOTABLE = "#2196f3";
+const ABNORMAL = "#ff9800";
+/** Dry-up gets its own colour: it is a setup, not a weaker version of a spike. */
+const DRY_UP = "#7e57c2";
+
+function ratioColor(v: number): string {
+  if (v >= 2) return ABNORMAL;
+  if (v >= 1) return NOTABLE;
+  return DIM;
 }
 
-function calcRVOL(data: OhlcvBar[], lookback: number): (number | null)[] {
-  const result: (number | null)[] = new Array(data.length).fill(null);
-  if (data.length === 0) return result;
-
-  const isIntraday = typeof data[0].time === "number";
-
-  if (!isIntraday) {
-    // Daily/weekly: trailing mean of prior `lookback` volumes
-    for (let i = 0; i < data.length; i++) {
-      const vol = data[i].volume ?? 0;
-      if (vol <= 0) continue;
-      let sum = 0;
-      let n = 0;
-      for (let j = Math.max(0, i - lookback); j < i; j++) {
-        const v = data[j].volume ?? 0;
-        if (v > 0) {
-          sum += v;
-          n++;
-        }
-      }
-      if (n >= Math.min(5, lookback)) result[i] = vol / (sum / n);
-    }
-    return result;
-  }
-
-  // Intraday: baseline = mean volume at the same time-of-day over prior sessions.
-  // Track per-slot history; only the most recent `lookback` entries count.
-  const history = new Map<number, number[]>();
-  for (let i = 0; i < data.length; i++) {
-    const t = data[i].time as number;
-    const key = timeOfDayKey(t);
-    const vol = data[i].volume ?? 0;
-    const hist = history.get(key);
-    if (hist && hist.length >= 3 && vol > 0) {
-      const window = hist.slice(-lookback);
-      const mean = window.reduce((s, v) => s + v, 0) / window.length;
-      if (mean > 0) result[i] = vol / mean;
-    }
-    if (vol > 0) {
-      if (hist) hist.push(vol);
-      else history.set(key, [vol]);
-    }
-  }
-  return result;
+function zColor(v: number): string {
+  if (v >= 2.5) return ABNORMAL;
+  if (v >= 1.5) return NOTABLE;
+  if (v <= -1) return DRY_UP;
+  return DIM;
 }
 
 export const createRVOL: IndicatorFactory = (overrides = {}) => {
   const lookback = (overrides.lookback as number) ?? 20;
+  const baseline = (overrides.baseline as VolBaseline) ?? "median";
+  const scale = (overrides.scale as "ratio" | "z") ?? "ratio";
+  const mode = (overrides.mode as VolMode) ?? "bar";
 
   const indicator: ChartIndicator = {
-    id: `rvol-${lookback}`,
-    name: `RVOL ${lookback}`,
+    // The id carries the scale so switching it re-keys the pane; baseline and
+    // mode change the values inside the same reading, not what is being read.
+    id: scale === "z" ? `rvol-z-${lookback}` : `rvol-${lookback}`,
+    name: scale === "z" ? `VOL Z ${lookback}` : `RVOL ${lookback}`,
     category: "volume",
     type: "pane",
-    description: "Relative Volume vs same time-of-day baseline (≥2 = abnormal participation)",
+    description:
+      scale === "z"
+        ? "Robust log-volume z-score vs the same bar in prior sessions (≥2 = abnormal, ≤−1 = dry-up)"
+        : "Relative Volume vs same time-of-day baseline (≥2 = abnormal participation)",
     minBars: 10,
     params: [
       {
@@ -92,30 +107,39 @@ export const createRVOL: IndicatorFactory = (overrides = {}) => {
         max: 60,
         step: 1,
       },
+      { key: "scale", label: "Scale", type: "select", default: scale, options: RVOL_SCALES },
+      {
+        key: "baseline",
+        label: "Baseline",
+        type: "select",
+        default: baseline,
+        options: RVOL_BASELINES,
+      },
+      { key: "mode", label: "Intraday", type: "select", default: mode, options: RVOL_MODES },
     ],
-    config: { lookback },
+    config: { lookback, baseline, scale, mode },
 
     compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
-      const lb = config.lookback as number;
-      const rvol = calcRVOL(data, lb);
+      const opts = {
+        lookback: config.lookback as number,
+        baseline: (config.baseline as VolBaseline) ?? "median",
+        mode: (config.mode as VolMode) ?? "bar",
+      };
+      const asZ = ((config.scale as string) ?? "ratio") === "z";
+      const series = asZ ? volumeZ(data, opts) : volumeRatio(data, opts);
+      const color = asZ ? zColor : ratioColor;
 
       const points: HistogramDataPoint[] = [];
       for (let i = 0; i < data.length; i++) {
-        const v = rvol[i];
+        const v = series[i];
         if (v == null) continue;
-        let color: string;
-        if (v >= 2)
-          color = "#ff9800"; // abnormal — pay attention
-        else if (v >= 1)
-          color = "#2196f3"; // above average
-        else color = "rgba(120,120,120,0.45)"; // quiet
-        points.push({ time: data[i].time, value: v, color });
+        points.push({ time: data[i].time, value: v, color: color(v) });
       }
 
       return [
         {
-          id: "rvol-hist",
-          label: "RVOL",
+          id: asZ ? "rvol-z-hist" : "rvol-hist",
+          label: asZ ? "VOL Z" : "RVOL",
           type: "histogram",
           data: points,
         },

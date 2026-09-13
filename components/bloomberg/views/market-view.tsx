@@ -63,6 +63,7 @@ import {
 import type { BarInterval, IndicatorRegistryEntry, OhlcvBar, TimePeriod } from "../chart";
 import { FearGreedPane } from "../chart/FearGreedPane";
 import { PEPane } from "../chart/PEPane";
+import { VolumeEventPanel } from "../chart/VolumeEventPanel";
 import { useAutoExtendRange } from "../chart/useAutoExtendRange";
 import { useSdBands } from "../chart/useSdBands";
 import { ExtendedHoursPrice, MarketSessionBadge, staleMoveStyle } from "../core/market-session";
@@ -1001,14 +1002,25 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   // chartable series (clicking US 7Y must light the row without relabelling a
   // chart that is still showing something else).
   const [selectedTickId, setSelectedTickId] = useState<string | null>(null);
-  const [collapsedSections, setCollapsedSections] = useState<TickSection[]>(loadTickSections);
+  // Same post-mount restore as `layout` below: which sections are collapsed
+  // changes the markup, so it can only diverge from the server's HTML after
+  // hydration, never during it.
+  const [collapsedSections, setCollapsedSections] = useState<TickSection[]>(
+    DEFAULT_COLLAPSED_SECTIONS
+  );
+  const [sectionsRestored, setSectionsRestored] = useState(false);
   useEffect(() => {
+    setCollapsedSections(loadTickSections());
+    setSectionsRestored(true);
+  }, []);
+  useEffect(() => {
+    if (!sectionsRestored) return;
     try {
       localStorage.setItem(LS_TICK_SECTIONS, JSON.stringify(collapsedSections));
     } catch {
       /* ignore */
     }
-  }, [collapsedSections]);
+  }, [sectionsRestored, collapsedSections]);
   const toggleSection = useCallback((id: TickSection) => {
     setCollapsedSections((prev) =>
       prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]
@@ -1114,13 +1126,19 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   // Vertical resize for watchlist panel
   const watchlistContentRef = useRef<HTMLDivElement>(null);
   // Default 220px so regime heatmap below has visible space from the start
-  const [watchlistHeight, setWatchlistHeight] = useState<number>(() => {
+  const [watchlistHeight, setWatchlistHeight] = useState<number>(220);
+
+  // Adopt the stored height only after mount. Reading it in the initializer
+  // put a different height in the first client render than the server had
+  // emitted, and React discards the whole tree on that mismatch.
+  useEffect(() => {
     try {
-      return Number.parseInt(localStorage.getItem(LS_WATCHLIST_H) ?? "220", 10) || 220;
+      const stored = Number.parseInt(localStorage.getItem(LS_WATCHLIST_H) ?? "", 10);
+      if (Number.isFinite(stored) && stored >= 100) setWatchlistHeight(stored);
     } catch {
-      return 220;
+      /* private mode — keep the default */
     }
-  });
+  }, []);
 
   const handleWatchlistResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -1171,6 +1189,8 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     setRegressionMode: setMktRegressionMode,
     handleChartClick: handleMktChartClick,
     toggleVolumeProfile: toggleHeatmapVP,
+    showVolumeEvents: heatmapShowVolumeEvents,
+    toggleVolumeEvents: toggleHeatmapVolumeEvents,
     supportsEvents: heatmapSupportsEvents,
     selectedEvent: mktSelectedEvent,
     clearSelectedEvent: clearMktSelectedEvent,
@@ -2271,6 +2291,33 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
               </button>
             );
           })()}
+          {(() => {
+            const hasVolume = heatmapOhlcv.some((d) => (d.volume ?? 0) > 0);
+            return (
+              <button
+                className="text-[8px] px-1 py-0 font-bold border"
+                style={{
+                  borderColor: heatmapShowVolumeEvents && hasVolume ? "#26a69a" : colors.border,
+                  color: !hasVolume
+                    ? colors.border
+                    : heatmapShowVolumeEvents
+                      ? "#26a69a"
+                      : colors.textSecondary,
+                  background: heatmapShowVolumeEvents && hasVolume ? "#26a69a15" : "transparent",
+                  cursor: hasVolume ? "pointer" : "not-allowed",
+                }}
+                disabled={!hasVolume}
+                title={
+                  hasVolume
+                    ? "Volume Events — classify each bar's participation against its result (climax / absorption / vacuum / breakout / no-demand / dry-up) as chips on the bars plus a list below"
+                    : "Volume Events — this symbol reports no volume, so there is nothing to classify"
+                }
+                onClick={toggleHeatmapVolumeEvents}
+              >
+                VEVT
+              </button>
+            );
+          })()}
           <button
             className="text-[8px] px-1 py-0 font-bold border"
             title={
@@ -2405,6 +2452,11 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                   colors={colors}
                   height={100}
                 />
+              </div>
+            )}
+            {heatmapShowVolumeEvents && heatmapOhlcv.length > 0 && (
+              <div className="shrink-0">
+                <VolumeEventPanel data={heatmapOhlcv} colors={colors} />
               </div>
             )}
             {/* Chart footer stats */}

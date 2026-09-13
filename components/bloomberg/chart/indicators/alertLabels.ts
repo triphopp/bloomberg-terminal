@@ -342,18 +342,31 @@ export const STOCHASTIC_LABELS: AlertLabel[] = [
 
 // ── RVOL ─────────────────────────────────────────────────────────────────────
 
-function rvolOperand(ind: Record<string, number>): IndicatorOperand {
-  return { src: "indicator", id: "rvol", params: { lookback: ind.lookback }, output: "rvol" };
+/**
+ * Both labels read the `z` output, not the `rvol` ratio.
+ *
+ * A ratio threshold is not portable: "RVOL ≥ 2" is a different event on a
+ * mega-cap than on an illiquid small cap, because their volume variance
+ * differs, so one alert rule cannot be reused across a watchlist. The robust
+ * log z-score is comparable, so a single threshold means the same thing
+ * everywhere (see lib/volume-stats.ts).
+ *
+ * Rules stored before this change keep their own expanded AST, which still
+ * points at `output: "rvol"` — the backend resolves both, so nothing already
+ * calibrated changes behaviour.
+ */
+function rvolZOperand(ind: Record<string, number>): IndicatorOperand {
+  return { src: "indicator", id: "rvol", params: { lookback: ind.lookback }, output: "z" };
 }
 
 export const RVOL_LABELS: AlertLabel[] = [
   {
     concept: "spike",
     calibrations: ["static"],
-    params: [th("th", "Threshold", 2, 1.2, 10)],
+    params: [th("th", "Threshold (σ)", 2, 1, 6)],
     build: ({ indParams, labelParams }): RuleNode => ({
       op: "cmp",
-      left: rvolOperand(indParams),
+      left: rvolZOperand(indParams),
       cmp: "gte",
       right: { src: "const", value: labelParams.th },
     }),
@@ -361,10 +374,10 @@ export const RVOL_LABELS: AlertLabel[] = [
   {
     concept: "dryUp",
     calibrations: ["static"],
-    params: [th("th", "Threshold", 0.5, 0.1, 0.9)],
+    params: [th("th", "Threshold (σ)", -1, -3, -0.2)],
     build: ({ indParams, labelParams }): RuleNode => ({
       op: "cmp",
-      left: rvolOperand(indParams),
+      left: rvolZOperand(indParams),
       cmp: "lte",
       right: { src: "const", value: labelParams.th },
     }),

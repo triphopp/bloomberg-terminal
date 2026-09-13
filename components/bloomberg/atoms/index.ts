@@ -211,6 +211,21 @@ export const chartShowPEAtom = atomWithStorage<boolean>("chart:show-pe", false, 
   getOnInit: true,
 });
 
+/**
+ * Volume-event chips on the price pane + the event list under the chart
+ * (chart/volume-event-overlay.ts, chart/VolumeEventPanel.tsx).
+ *
+ * Off by default: unlike the corporate-event rail, these are a derived reading
+ * rather than part of what the price series is, and the chips sit on the bars
+ * themselves — a chart should not acquire labels nobody asked for.
+ */
+export const chartShowVolumeEventsAtom = atomWithStorage<boolean>(
+  "chart:volume-events",
+  false,
+  undefined,
+  { getOnInit: true }
+);
+
 // Volume Profile display options (see chart/indicators/volume-profile.ts)
 export interface VPConfig {
   deltaMode: boolean; // split each bucket into buy (up-bar) vs sell (down-bar) volume
