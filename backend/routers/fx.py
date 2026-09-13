@@ -54,6 +54,11 @@ def fx_overview():
         data = {"pairs": pairs}
         _fx_cache.set(cache_key, data)
         return data
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         print(f"[fx] {exc}")
         raise HTTPException(status_code=500, detail=str(exc))

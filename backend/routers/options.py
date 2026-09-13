@@ -30,6 +30,7 @@ from greeks import compute_greeks, estimate_moments
 from providers.base_options import OptionContract
 from providers.yahoo_options import YahooOptionsProvider
 from sources import market_data
+from sources.errors import UpstreamRateLimited, recently_rate_limited
 
 router = APIRouter()
 
@@ -241,6 +242,12 @@ def get_options_chain(symbol: str, expiry: str | None = Query(None)):
         expirations = ticker.options
 
         if not expirations:
+            # An empty list means one of two very different things, and yfinance
+            # does not say which: this symbol has no options, or the request was
+            # throttled and answered with silence. Reporting the first when the
+            # second is true tells the reader a liquid name has no chain.
+            if recently_rate_limited():
+                raise UpstreamRateLimited("Yahoo Finance", symbol)
             raise HTTPException(status_code=404, detail=f"No options available for {symbol}")
 
         target_expiry = expiry if expiry and expiry in expirations else expirations[0]
@@ -316,6 +323,12 @@ async def get_options_surface(symbol: str):
         expirations = ticker.options
 
         if not expirations:
+            # An empty list means one of two very different things, and yfinance
+            # does not say which: this symbol has no options, or the request was
+            # throttled and answered with silence. Reporting the first when the
+            # second is true tells the reader a liquid name has no chain.
+            if recently_rate_limited():
+                raise UpstreamRateLimited("Yahoo Finance", symbol)
             raise HTTPException(status_code=404, detail=f"No options available for {symbol}")
 
         spot = ticker.info.get("regularMarketPrice") or ticker.info.get("currentPrice") or 0
@@ -529,6 +542,12 @@ def record_snapshot_now(
         ticker = market_data.get_ticker(symbol)
         expirations = ticker.options
         if not expirations:
+            # An empty list means one of two very different things, and yfinance
+            # does not say which: this symbol has no options, or the request was
+            # throttled and answered with silence. Reporting the first when the
+            # second is true tells the reader a liquid name has no chain.
+            if recently_rate_limited():
+                raise UpstreamRateLimited("Yahoo Finance", symbol)
             raise HTTPException(status_code=404, detail=f"No options available for {symbol}")
 
         target_expiry = (
@@ -648,6 +667,11 @@ async def get_sd_bands(
                 """,
                 (horizon_days, symbol, IV_SANITY_MIN, IV_SANITY_MAX, IV_SNAPSHOT_MIN_DTE),
             ).fetchall()
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read IV snapshots: {str(e)}")
 
@@ -705,6 +729,11 @@ async def get_sd_bands(
     try:
         frame = market_data.get_history(symbol, period=period, interval="1d")
         df = frame.df
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch price history: {str(e)}")
 

@@ -613,6 +613,10 @@ def get_compare(
 
     try:
         return _cache.get_or_set(key, compute)
+    except HTTPException:
+        # A 429 from the source layer is a vendor throttle, not our failure —
+        # re-raise it so it is not relabelled as an internal error below.
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -644,5 +648,9 @@ def get_rank(
 
     try:
         return _cache.get_or_set(key, compute)
+    except HTTPException:
+        # A 429 from the source layer is a vendor throttle, not our failure —
+        # re-raise it so it is not relabelled as an internal error below.
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
