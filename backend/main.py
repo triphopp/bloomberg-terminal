@@ -106,6 +106,13 @@ alert_scheduler.start_background_scan()
 # happening to open the right screen. See iv_scheduler for the gating rules.
 iv_scheduler.start_background_recorder()
 
+# ── Ticker crawl: warm the market/heatmap/FX caches it reads ──────────────────
+# Measured on this machine: /api/ticker took 23.5s cold and 0.21s warm. Nothing
+# above warms those caches, so the first reader paid the whole fan-out while the
+# crawl showed "MARKET DATA LOADING...". Runs on a worker thread — it must not
+# delay the port bind, for the same reason the sync pull does not.
+ticker.prewarm()
+
 # ── Mount routers ─────────────────────────────────────────────────────────────
 app.include_router(market.router)
 app.include_router(stock.router)

@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { tickerEnabledAtom } from "../atoms";
 import { useAlertNotifications } from "../hooks/useAlertNotifications";
 import { type AlertEvent, ruleDisplayName } from "../hooks/useAlertRules";
@@ -39,6 +39,11 @@ interface TickerResponse {
   alerts: TickerAlert[];
   has_critical: boolean;
   timestamp: string;
+  /** Served from cache while a refresh runs behind it — the numbers are real
+   *  but a minute or two old. */
+  stale?: boolean;
+  /** Not one market row came back: an upstream failure, not a quiet market. */
+  degraded?: boolean;
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -303,12 +308,24 @@ function AlertSegment({ alert }: { alert: TickerAlert }) {
 
 export function AlertTicker() {
   const [enabled] = useAtom(tickerEnabledAtom);
-  const { data } = useQuery<TickerResponse>({
+  const { data, isLoading, isError } = useQuery<TickerResponse>({
     queryKey: ["ticker"],
+    // Poll at 90s against a 45s server-side freshness window, so a poll that
+    // arrives on schedule always lands on a warm entry. At 60s against a 60s
+    // cache the two expired together and most polls paid the cold fan-out.
     queryFn: () => fetch("/api/ticker").then((r) => r.json()),
-    refetchInterval: 60_000,
-    staleTime: 30_000,
+    refetchInterval: 90_000,
+    staleTime: 45_000,
   });
+
+  // Last payload that actually carried market rows. A refetch that fails, or
+  // one the backend answers in a degraded state, must not blank a bar that is
+  // already showing real numbers — the crawl is ambient, and an old print reads
+  // better than an empty strip.
+  const lastGood = useRef<TickerResponse | null>(null);
+  useEffect(() => {
+    if (data && data.items.length > 0) lastGood.current = data;
+  }, [data]);
 
   // Also the app's single mount point for toast/sound delivery — the ticker
   // is always mounted, so the hook doesn't need a component of its own.
@@ -317,9 +334,12 @@ export function AlertTicker() {
 
   if (!enabled) return null;
 
-  const items = data?.items ?? [];
-  const alerts = data?.alerts ?? [];
-  const hasCritical = data?.has_critical ?? false;
+  const shown = data && data.items.length > 0 ? data : lastGood.current;
+  const items = shown?.items ?? [];
+  const alerts = shown?.alerts ?? [];
+  const hasCritical = shown?.has_critical ?? false;
+  // Dimmed, not blank: the data on screen is real but no longer current.
+  const isStale = Boolean(shown && (shown.stale || shown.degraded || isError || shown !== data));
 
   // ── Build content segments (alerts first, then market items) ───────────────
   const makeContent = () => {
@@ -347,14 +367,23 @@ export function AlertTicker() {
 
   const content = makeContent();
 
-  // ── Loading skeleton ───────────────────────────────────────────────────────
+  // ── Empty bar ──────────────────────────────────────────────────────────────
+  // Only reachable now when nothing has EVER arrived this session: once a
+  // payload with rows lands it is held in lastGood and kept on screen. The
+  // three cases read differently and used to be one undifferentiated
+  // "MARKET DATA LOADING..." that also covered outright failure.
   if (content.length === 0) {
+    const [msg, color] = isLoading
+      ? ["MARKET DATA LOADING...", "#333"]
+      : isError || data?.degraded
+        ? ["MARKET DATA UNAVAILABLE — RETRYING", "#884400"]
+        : ["NO MARKET DATA", "#333"];
     return (
       <div
         className="shrink-0 flex items-center px-2 font-mono border-t"
         style={{ height: 22, backgroundColor: "#000", borderColor: "#1f1f1f" }}
       >
-        <span style={{ color: "#333", fontSize: 9 }}>MARKET DATA LOADING...</span>
+        <span style={{ color, fontSize: 9 }}>{msg}</span>
       </div>
     );
   }
@@ -376,18 +405,21 @@ export function AlertTicker() {
       <span
         className="shrink-0 flex items-center justify-center h-full px-2 border-r font-bold tracking-widest"
         style={{
-          backgroundColor: hasCritical ? "#CC0000" : "#FF6600",
-          borderColor: hasCritical ? "#880000" : "#cc4400",
+          backgroundColor: hasCritical ? "#CC0000" : isStale ? "#665200" : "#FF6600",
+          borderColor: hasCritical ? "#880000" : isStale ? "#443300" : "#cc4400",
           color: "#000",
           fontSize: 8.5,
           minWidth: 38,
         }}
       >
-        {hasCritical ? "ALERT" : "LIVE"}
+        {hasCritical ? "ALERT" : isStale ? "STALE" : "LIVE"}
       </span>
 
       {/* Scrolling content — content duplicated for seamless loop via translateX(-50%) */}
-      <div className="flex-1 overflow-hidden h-full flex items-center pl-2">
+      <div
+        className="flex-1 overflow-hidden h-full flex items-center pl-2"
+        style={{ opacity: isStale ? 0.55 : 1 }}
+      >
         {/* Two identical halves; the keyframe translates exactly -50%, so the
             second half lands where the first started — no visible seam.
             `shrink-0 w-max` is load-bearing: as a flex child this div would

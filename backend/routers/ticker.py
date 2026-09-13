@@ -9,6 +9,9 @@ All data reused from existing caches — zero extra yfinance calls.
 """
 from __future__ import annotations
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -17,7 +20,44 @@ from fastapi import APIRouter, Query
 from cache import TTLCache
 
 router = APIRouter(prefix="/api/ticker", tags=["ticker"])
-_cache = TTLCache(ttl=60)
+
+# ── Cache policy ──────────────────────────────────────────────────────────────
+# Two ages, not one. FRESH_TTL is how long a payload is served with no work at
+# all; STALE_TTL is how long a payload that was once good keeps being served
+# WHILE a background thread refreshes it. Between the two, the crawl shows real
+# numbers a minute or two old instead of "MARKET DATA LOADING..." — it is
+# ambient context, and a slightly late S&P print beats an empty bar.
+#
+# FRESH_TTL sits deliberately UNDER the frontend's 60s poll. At 60 it matched
+# the poll exactly, and matched CACHE_TTL on the market and heatmap caches too,
+# so an entry expired at the instant the next request arrived and nearly every
+# poll paid the full cold path (measured: 23.5s cold vs 0.21s warm).
+FRESH_TTL = 45
+STALE_TTL = 900  # 15 min — past this, a payload is too old to show at all
+
+# A refresh that returned nothing is retried on this cadence rather than on
+# every request, so an upstream 429 does not turn into a stampede.
+REFRESH_MIN_INTERVAL = 15
+
+# Entries are (fetched_at_monotonic, payload). The timestamp lives in the value
+# because TTLCache.get() DELETES anything past the ttl it is handed — asking it
+# for a 45s view first would evict the 60s-old payload we still want to serve.
+_cache = TTLCache(ttl=STALE_TTL, maxsize=32)
+
+_refresh_lock = threading.Lock()
+_inflight: set[str] = set()
+_last_attempt: dict[str, float] = {}
+_build_locks: dict[str, threading.Lock] = {}
+
+
+def _build_lock_for(key: str) -> threading.Lock:
+    """One build lock per key, so N readers arriving on a cold process wait on
+    the single build instead of each starting their own fan-out."""
+    with _refresh_lock:
+        lock = _build_locks.get(key)
+        if lock is None:
+            lock = _build_locks[key] = threading.Lock()
+        return lock
 
 # ── Curated symbol → Bloomberg-style label maps ────────────────────────────
 
@@ -243,28 +283,48 @@ def _fetch_alerts(account_id: str) -> list[dict]:
     return alerts
 
 
-# ── Endpoint ──────────────────────────────────────────────────────────────────
+# ── Build ─────────────────────────────────────────────────────────────────────
 
-@router.get("")
-def get_ticker(account_id: str = Query("all")):
-    """
-    Bloomberg crawl data: indices + VIX + commodities + FX + active alerts.
-    All data served from existing 60s caches — no extra yfinance requests.
-    """
-    cache_key = f"ticker:{account_id}"
-    cached = _cache.get(cache_key)
-    if cached:
-        return cached
+def _build_ticker(account_id: str) -> tuple[dict, bool]:
+    """Assemble one ticker payload. Returns (payload, degraded).
 
-    indices     = _fetch_indices()
-    comms_vix   = _fetch_commodities_and_vix()
-    fx          = _fetch_fx()
-    regime      = _fetch_regime()
-    fear_greed  = _fetch_fear_greed()
-    al          = _fetch_alerts(account_id)
+    The six fetchers are independent and every one of them is network-bound on a
+    cold cache, so they run concurrently — serially they summed to the 23.5s a
+    user saw as "MARKET DATA LOADING...". Each already swallows its own errors
+    and returns empty; the try here only covers something escaping that.
+
+    `degraded` means not one market row came back (indices, commodities/VIX and
+    FX all empty) — an upstream failure, not a quiet market. The caller uses it
+    to avoid overwriting a good payload with an empty one.
+    """
+    jobs = {
+        "indices":    _fetch_indices,
+        "comms_vix":  _fetch_commodities_and_vix,
+        "fx":         _fetch_fx,
+        "regime":     _fetch_regime,
+        "fear_greed": _fetch_fear_greed,
+        "alerts":     lambda: _fetch_alerts(account_id),
+    }
+    out: dict[str, object] = {}
+    with ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="ticker") as pool:
+        futures = {name: pool.submit(fn) for name, fn in jobs.items()}
+        for name, fut in futures.items():
+            try:
+                out[name] = fut.result()
+            except Exception as e:  # a fetcher's own except should have caught this
+                print(f"[ticker] {name} fetcher raised: {e}")
+                out[name] = None
+
+    indices    = out.get("indices") or []
+    comms_vix  = out.get("comms_vix") or []
+    fx         = out.get("fx") or []
+    regime     = out.get("regime")
+    fear_greed = out.get("fear_greed")
+    alerts     = out.get("alerts") or []
 
     # Order: SPX NDX INDU VIX | XAU WTI | EUR/USD USD/JPY ... | REGIME | FEAR-GREED
-    items = indices + comms_vix + fx
+    items = list(indices) + list(comms_vix) + list(fx)
+    degraded = not items
     if regime:
         items.append(regime)
     if fear_greed:
@@ -274,11 +334,108 @@ def get_ticker(account_id: str = Query("all")):
     for item in items:
         item.pop("_rank", None)
 
-    result = {
+    payload = {
         "items":        items,
-        "alerts":       al,
-        "has_critical": any(a["severity"] == "critical" for a in al),
+        "alerts":       alerts,
+        "has_critical": any(a["severity"] == "critical" for a in alerts),
         "timestamp":    datetime.now(timezone.utc).isoformat(),
+        "stale":        False,
+        "degraded":     degraded,
     }
-    _cache.set(cache_key, result)
-    return result
+    return payload, degraded
+
+
+def _build_and_store(key: str, account_id: str) -> dict:
+    """Build, then keep the result only if it is worth keeping.
+
+    A degraded payload never replaces a payload that still has market rows in
+    it. Caching the empty one was what made a single upstream 429 blank the
+    crawl for a full minute: the empty result was stored like any other and
+    every reader for the next 60s got it back.
+    """
+    payload, degraded = _build_ticker(account_id)
+    if degraded:
+        prev = _cache.get(key)
+        if prev is not None:
+            return {**prev[1], "stale": True}
+    _cache.set(key, (time.monotonic(), payload))
+    return payload
+
+
+def _spawn_refresh(key: str, account_id: str) -> None:
+    """Refresh in the background, at most one thread per key."""
+    now = time.monotonic()
+    with _refresh_lock:
+        if key in _inflight:
+            return
+        if now - _last_attempt.get(key, float("-inf")) < REFRESH_MIN_INTERVAL:
+            return
+        _inflight.add(key)
+        _last_attempt[key] = now
+
+    def run() -> None:
+        try:
+            _build_and_store(key, account_id)
+        except Exception as e:
+            print(f"[ticker] background refresh failed: {e}")
+        finally:
+            with _refresh_lock:
+                _inflight.discard(key)
+
+    threading.Thread(target=run, name=f"ticker-refresh-{account_id}", daemon=True).start()
+
+
+def prewarm(account_id: str = "all") -> None:
+    """Fill the ticker cache — and, through it, the market, heatmap and FX
+    caches every other view reads — on a worker thread at startup.
+
+    Nothing warmed these before: startup warmed the regime model, the BC
+    calibration, the alert scan and the IV recorder, so the FIRST request for
+    any of them paid the whole cold fan-out while the user watched an empty bar.
+    """
+    key = f"ticker:{account_id}"
+
+    def run() -> None:
+        try:
+            t0 = time.monotonic()
+            # Through the same build lock as a cold request, so a user who opens
+            # the terminal mid-prewarm waits on this build and gets its result
+            # instead of racing it with a second full fan-out of their own.
+            with _build_lock_for(key):
+                if _cache.get(key) is None:
+                    _build_and_store(key, account_id)
+            print(f"[ticker] prewarm done in {time.monotonic() - t0:.1f}s")
+        except Exception as e:
+            print(f"[ticker] prewarm failed: {e}")
+
+    threading.Thread(target=run, name="ticker-prewarm", daemon=True).start()
+
+
+# ── Endpoint ──────────────────────────────────────────────────────────────────
+
+@router.get("")
+def get_ticker(account_id: str = Query("all")):
+    """
+    Bloomberg crawl data: indices + VIX + commodities + FX + active alerts.
+
+    Stale-while-revalidate: a payload older than FRESH_TTL is still returned
+    (flagged `stale`) while a background thread refreshes it, so the bar only
+    ever goes empty on the very first request of a cold process.
+    """
+    key = f"ticker:{account_id}"
+
+    entry = _cache.get(key)  # STALE_TTL view — see the _cache comment above
+    if entry is not None:
+        fetched_at, payload = entry
+        if time.monotonic() - fetched_at < FRESH_TTL:
+            return payload
+        _spawn_refresh(key, account_id)
+        return {**payload, "stale": True}
+
+    # Cold process, or nothing good for STALE_TTL. Build inline — there is
+    # nothing to serve in the meantime — but only one caller does the work.
+    with _build_lock_for(key):
+        entry = _cache.get(key)
+        if entry is not None:
+            return entry[1]  # another thread built it while we waited
+        return _build_and_store(key, account_id)
