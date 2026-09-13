@@ -136,10 +136,46 @@ def test_fit_endpoint_and_cache_use_supplied_observations_only(client, monkeypat
     {"series": [{"name": "otm", "points": sample_slice()}] * 2},
     {"series": [{"name": "unknown", "points": []}]},
     {"series": [{"name": "otm", "points": [{"strike": 100, "ivPercent": 30}] * 2001}]},
-    {"series": [{"name": "otm", "points": [{"strike": 0, "ivPercent": 30}]}]},
 ])
 def test_endpoint_rejects_invalid_or_unbounded_requests(client, override):
     assert client.post("/api/options/smile-fit", json={**body(), **override}).status_code == 422
+
+
+def test_a_dead_quote_is_dropped_rather_than_rejecting_the_whole_slice(client):
+    """Moved out of the rejection list above, where it used to assert a 422.
+
+    A real chain always carries dead rows — a strike with no quote comes back
+    with an implied volatility of 0 — and rejecting the request over one of
+    them made the panel show FIT ERROR for a slice that was perfectly fittable.
+    Point validity belongs to fit_raw_svi, which already drops non-finite,
+    non-positive and near-zero quotes and is tested on exactly that input; the
+    request model only guards the structure around them.
+    """
+    points = sample_slice() + [{"strike": 150.0, "ivPercent": 0.0}]
+    response = client.post(
+        "/api/options/smile-fit",
+        json={**body(), "series": [{"name": "otm", "points": points}]},
+    )
+    assert response.status_code == 200
+    fit = response.json()["series"]["otm"]
+    assert fit["status"] == "ok", "one dead strike must not cost the whole fit"
+    assert fit["usedPoints"] == len(sample_slice()), "the dead row is dropped, not fitted"
+    assert fit["rmseIvPct"] < 1e-5
+
+
+def test_a_slice_with_nothing_usable_reports_unavailable_not_a_validation_error(client):
+    # The honest failure: the endpoint accepted the observations, tried, and
+    # says it could not fit them — which tells the reader something about the
+    # data. A 422 would only have told them something about our API.
+    response = client.post(
+        "/api/options/smile-fit",
+        json={**body(), "series": [{"name": "otm", "points": [{"strike": 0, "ivPercent": 30}]}]},
+    )
+    assert response.status_code == 200
+    fit = response.json()["series"]["otm"]
+    assert fit["status"] != "ok"
+    assert fit["parameters"] is None, "an unfittable slice must never manufacture parameters"
+    assert fit["reason"]
 
 
 def test_chain_still_serves_explicit_expiry_after_threadpool_change(client, monkeypatch):

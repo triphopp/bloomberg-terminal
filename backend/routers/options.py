@@ -195,8 +195,28 @@ async def list_option_trades(account_id: str | None = Query(None), limit: int = 
 
 
 class SviSampleIn(BaseModel):
-    strike: float = Field(gt=0, le=1e12, allow_inf_nan=False)
-    ivPercent: float = Field(gt=0, le=10000, allow_inf_nan=False)
+    """One observed quote. Deliberately permissive about VALUES.
+
+    A real option chain always carries dead rows: strikes with no quote come
+    back with an implied volatility of 0, and deep-OTM strikes can print
+    absurd ones. Those are not observations, and analytics/svi.fit_raw_svi
+    already drops them — it skips anything non-finite, non-positive or below
+    0.01% and is tested on exactly that input.
+
+    Validating them again here, more strictly than the fitter does, meant a
+    single dead strike out of sixty rejected the whole request with a 422 and
+    the panel showed FIT ERROR for a chain that was perfectly fittable. Two
+    layers disagreeing about the same contract, with the stricter one winning
+    and the more capable one never getting to run.
+
+    So the bounds here are structural only — enough to stop a hostile payload,
+    not to second-guess the fitter. An unusable series now produces a fit with
+    `status != "ok"` and a reason, which is a real answer, instead of a
+    validation error that says nothing about the smile.
+    """
+
+    strike: float = Field(le=1e12)
+    ivPercent: float = Field(le=1e6)
 
 
 class SviSeriesIn(BaseModel):
