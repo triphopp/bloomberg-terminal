@@ -18,7 +18,7 @@ export { createBollingerB } from "./bollinger-b";
 export { createBollingerWidth } from "./bollinger-width";
 export { createVWAP } from "./vwap";
 export { createVolume } from "./volume";
-export { createRVOL } from "./rvol";
+export { createRVOL, RVOL_BASELINES, RVOL_MODES, RVOL_SCALES } from "./rvol";
 export { createRealizedVol } from "./realized-vol";
 export { createRVRank } from "./rv-rank";
 export { createRVRatio } from "./rv-ratio";
@@ -74,7 +74,7 @@ import { createRSI } from "./rsi";
 import { RV_ESTIMATOR_OPTIONS } from "./rv-core";
 import { createRVRank } from "./rv-rank";
 import { createRVRatio } from "./rv-ratio";
-import { createRVOL } from "./rvol";
+import { RVOL_BASELINES, RVOL_MODES, RVOL_SCALES, createRVOL } from "./rvol";
 import {
   SD_HEATMAP_MODES,
   SD_SIGMA_BASES,
@@ -405,15 +405,30 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     name: "RVOL",
     category: "volume",
     type: "pane",
-    description: "Relative Volume vs same time-of-day baseline (≥2 = abnormal)",
+    description: "Relative Volume / robust log z-score vs the same bar in prior sessions",
     defaultParams: [
       { key: "lookback", label: "Lookback", type: "number", default: 20, min: 5, max: 60, step: 1 },
+      { key: "scale", label: "Scale", type: "select", default: "ratio", options: RVOL_SCALES },
+      {
+        key: "baseline",
+        label: "Baseline",
+        type: "select",
+        default: "median",
+        options: RVOL_BASELINES,
+      },
+      { key: "mode", label: "Intraday", type: "select", default: "bar", options: RVOL_MODES },
     ],
     // No timeScalableParams: RVOL's lookback already counts SESSIONS, not bars
-    // (intraday it averages the same time-of-day across prior days), so it is
+    // (intraday it slots against the same point in prior sessions), so it is
     // interval-invariant as written and must not be rescaled.
     factory: createRVOL,
-    outputs: [{ key: "rvol", label: "RVOL", unbounded: true }],
+    // `z` is the output alerts should prefer: it is comparable across symbols,
+    // which a ratio is not. `rvol` stays so rules stored before z existed keep
+    // resolving against the same series they were calibrated on.
+    outputs: [
+      { key: "z", label: "Volume Z", range: [-4, 6] },
+      { key: "rvol", label: "RVOL", unbounded: true },
+    ],
     alertLabels: RVOL_LABELS,
   },
   {

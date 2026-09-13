@@ -5,6 +5,7 @@ import { AlertTriangle, ExternalLink, Filter, Layers, RefreshCw, Settings2, X } 
 import { useEffect, useMemo, useState } from "react";
 import { currentViewAtom, stockSearchSymbolAtom } from "../../atoms";
 import { BloombergButton } from "../../core/bloomberg-button";
+import { MarketStateTab } from "../stock/market-state";
 import { RateStressTab } from "../stock/rate-stress";
 import {
   ALL_SOURCE_IDS,
@@ -28,6 +29,8 @@ import type {
 import { useWatchlistNews, useWatchlistSymbols } from "./useWatchlistNews";
 
 type GroupMode = "sector" | "ticker" | "time";
+/** Which panel the right-hand column shows once a single company is in focus. */
+type NewsPanel = "headlines" | "rate-stress" | "regime";
 type SentFilter = "ALL" | Sentiment;
 
 type MatchMode = "direct" | "all";
@@ -236,16 +239,16 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
 
   // With one company in focus the panel can answer more than "what was written
-  // about it". Rate stress rides alongside the headlines rather than replacing
-  // them. The choice is stored against the company it was made for, so moving
-  // the focus falls back to the headlines without an effect having to notice.
+  // about it". Rate stress and the market-state model ride alongside the
+  // headlines rather than replacing them. The choice is stored against the
+  // company it was made for, so moving the focus falls back to the headlines
+  // without an effect having to notice.
   const [panelChoice, setPanelChoice] = useState<{
     symbol: string | null;
-    panel: "headlines" | "rate-stress";
+    panel: NewsPanel;
   }>({ symbol: null, panel: "headlines" });
   const panel = panelChoice.symbol === selectedSymbol ? panelChoice.panel : "headlines";
-  const setPanel = (next: "headlines" | "rate-stress") =>
-    setPanelChoice({ symbol: selectedSymbol, panel: next });
+  const setPanel = (next: NewsPanel) => setPanelChoice({ symbol: selectedSymbol, panel: next });
   const [filterText, setFilterText] = useState("");
   const [showSourcePicker, setShowSourcePicker] = useState(false);
 
@@ -688,6 +691,7 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
                   [
                     { id: "headlines", label: "HEADLINES" },
                     { id: "rate-stress", label: "RATE STRESS" },
+                    { id: "regime", label: "REGIME" },
                   ] as const
                 ).map((t) => (
                   <button
@@ -720,13 +724,27 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
           </div>
         )}
 
+        {/* Adaptive valuation lab — shared with stock-view so the model,
+            assumptions and audit trail are identical at both entry points. */}
+
+        {/* Market State — same panel the equity view mounts, for the same reason
+            rate stress is shared: two copies would drift. */}
+        {selectedSymbol && panel === "regime" && (
+          <div
+            className="flex-1 overflow-y-auto"
+            style={{ scrollbarWidth: "thin", scrollbarColor: "#333 #000" }}
+          >
+            <MarketStateTab symbol={selectedSymbol} colors={colors} />
+          </div>
+        )}
+
         {/* Stream */}
         <div
           className="flex-1 overflow-y-auto"
           style={{
             scrollbarWidth: "thin",
             scrollbarColor: "#333 #000",
-            display: selectedSymbol && panel === "rate-stress" ? "none" : undefined,
+            display: selectedSymbol && panel !== "headlines" ? "none" : undefined,
           }}
         >
           {error && (

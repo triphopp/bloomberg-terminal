@@ -22,6 +22,7 @@ import {
   chartRegressionOptsAtom,
   chartShowFootprintAtom,
   chartShowPEAtom,
+  chartShowVolumeEventsAtom,
   chartShowVolumeProfileAtom,
   chartVPConfigAtom,
   chartWindowUnitAtom,
@@ -40,6 +41,7 @@ import type {
   IndicatorRegistryEntry,
 } from "./types";
 import type { OhlcvBar } from "./types";
+import { createVolumeEventOverlay } from "./volume-event-overlay";
 import { type WindowUnit, scaleParamsToBars, specParamsKey } from "./windowUnits";
 
 export interface PeHistoryResponse {
@@ -161,6 +163,7 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
   const [showVolumeProfile, setShowVolumeProfile] = useAtom(chartShowVolumeProfileAtom);
   const [showFootprint, setShowFootprint] = useAtom(chartShowFootprintAtom);
   const [showPE, setShowPE] = useAtom(chartShowPEAtom);
+  const [showVolumeEvents, setShowVolumeEvents] = useAtom(chartShowVolumeEventsAtom);
   const [vpConfig, setVPConfig] = useAtom(chartVPConfigAtom);
   const [intradayData, setIntradayData] = useState<OhlcvBar[] | undefined>(undefined);
   const [regressionSel, setRegressionSel] = useAtom(chartRegressionAtom);
@@ -375,6 +378,11 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     if (regressionSel) {
       result.push(createRegressionChannelOverlay(regressionSel, regressionOpts));
     }
+    // Last, so the chips paint over the VP strip and the channel rather than
+    // under them — a label hidden behind an overlay is worse than no label.
+    if (showVolumeEvents) {
+      result.push(createVolumeEventOverlay());
+    }
     return result;
   }, [
     showVolumeProfile,
@@ -384,6 +392,7 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     footprintQuery.data,
     regressionSel,
     regressionOpts,
+    showVolumeEvents,
   ]);
 
   // ── Toggles ──────────────────────────────────────────────────────────────
@@ -393,6 +402,10 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     [setShowVolumeProfile]
   );
   const toggleFootprint = useCallback(() => setShowFootprint((v) => !v), [setShowFootprint]);
+  const toggleVolumeEvents = useCallback(
+    () => setShowVolumeEvents((v) => !v),
+    [setShowVolumeEvents]
+  );
   const toggleWindowUnit = useCallback(
     () => setWindowUnit((u) => (u === "bars" ? "days" : "bars")),
     [setWindowUnit]
@@ -490,6 +503,9 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     togglePE,
     peData: peQuery.data ?? null,
     peLoading: peQuery.isLoading,
+    // Volume events — chips on the price pane + <VolumeEventPanel data={bars}>
+    showVolumeEvents,
+    toggleVolumeEvents,
     // Footprint
     showFootprint,
     toggleFootprint,

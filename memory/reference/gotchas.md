@@ -1017,3 +1017,61 @@ IV/greeks/spot ณ อดีต **rebuild ไม่ได้** เพราะ p
 มา rebuild ถูก
 
 ---
+
+## Mean baseline ทำให้ indicator "ไม่ให้ข้อมูล" — เหตุการณ์สำคัญถูกกลบด้วยเหตุการณ์สำคัญ (2026-09-13)
+
+**อาการ:** เปิด volume pane / RVOL แล้วรู้สึกว่าดูไม่ได้ข้อมูลอะไร spike ที่รู้ว่าใหญ่กลับอ่านได้แค่ ~1.3×
+
+**สาเหตุ:** `rvol.ts` เดิม (และ `watchlist_signals._scan`, `alerts/operands._rvol_series`) ใช้
+**mean** เป็น baseline — mean มี breakdown point = 0% → earnings spike ครั้งเดียวดัน baseline ค้างไว้
+ทั้ง lookback แล้ว spike ครั้งถัดไปอ่านเป็นเรื่องธรรมดา
+
+**Pattern ที่ใช้ซ้ำได้ (ไม่ใช่แค่ volume):**
+
+| ปัญหา | ทางแก้ | เหตุผล |
+|-------|--------|--------|
+| baseline ถูก outlier ดึง | median + MAD×1.4826 | breakdown point 50% เทียบ 0% |
+| distribution เบ้ขวา (volume, turnover, dollar vol) | คิดบน `ln(x)` | z บน x ดิบทำให้ทุก spike อยู่แถว 4-8 เสมอ แยกแยะไม่ได้ |
+| ratio เทียบข้าม symbol ไม่ได้ | z-score | variance ต่างกัน → threshold เดียวหมายถึงคนละเรื่อง |
+| MAD = 0 (ค่าซ้ำเกินครึ่ง) | fallback เป็น σ แล้วถ้ายัง 0 → คืน null | float error ทิ้ง σ ไว้ ~1e-16 → หารแล้ว z ระเบิดเป็น 1e15 (`MIN_SIGMA` 1e-6) |
+
+**ที่อยู่:** `components/bloomberg/lib/volume-stats.ts` (frontend) + `backend/alerts/operands._vol_z_series`
+(daily bars, mirror กันเป๊ะ — มี pinned vector ใน `tests/test_alerts_operands.py` กันไม่ให้ drift)
+
+---
+
+## RVOL: ค่าบนชาร์ตกับค่าที่ alert ใช้ **ต่างกันโดยเจตนา** (2026-09-13)
+
+`operands.py` docstring ประกาศไว้ว่า math ต้อง mirror สิ่งที่ชาร์ตแสดง — ข้อยกเว้นเดียวคือ RVOL:
+
+| อ่านจาก | baseline | เหตุผล |
+|---------|----------|--------|
+| pane บนชาร์ต (`scale: ratio`) | **median** (default ใหม่) | เป็นค่าที่ถูก ไม่ถูก spike ก่อนหน้าดึง |
+| alert operand `output: "rvol"` | **mean** (frozen) | rule ที่ผู้ใช้เก็บไว้แล้วไม่มี key `baseline` — ถ้าเปลี่ยน default ทุก rule "RVOL ≥ 2" จะยิงบ่อยขึ้นทันทีโดยไม่มีใครสั่ง (median < mean → ratio สูงขึ้น) |
+| alert operand `output: "z"` | median/MAD บน ln V | สิ่งที่ `RVOL_LABELS` สร้างให้ rule ใหม่ทุกอัน — ตรงกับชาร์ตเป๊ะบน daily bars |
+
+⚠️ ห้ามเปลี่ยน default ของ `_rvol_series` เป็น median และห้ามลบ output `rvol` — มันคือสัญญาที่ให้ไว้กับ
+rule ที่เก็บอยู่ใน DB แล้ว การเพิ่ม output ใหม่ปลอดภัย การเปลี่ยนความหมายของ output เดิมไม่ปลอดภัย
+
+**ถ้าเพิ่ม output ใหม่:** ต้องใส่ใน `BACKEND_SUPPORTED` ที่ `lib/alerts/__tests__/labels.test.ts` ด้วย
+— มี guard test คอยจับ label ที่อ้าง output ที่ backend resolve ไม่ได้ (เจอจริงตอนเพิ่ม `z`)
+
+---
+
+## Volume z-score บน index พุ่งถึง +9…+13 — ไม่ใช่บั๊ก แต่ทำให้ threshold ใช้ไม่ได้ (2026-09-13)
+
+**อาการ:** เปิด VEVT บน `^DJI` → z ของ event อยู่ที่ +7 ถึง +12.8 และเกือบทุกแท่งที่ volume สูงกลายเป็น event
+ขณะที่หุ้นเดี่ยว (AMD) ให้ z อยู่ในช่วง +2.4…+4.0 ตามที่ควรเป็น
+
+**สาเหตุ:** volume ของ index = ผลรวมของ component หลายร้อยตัว → dispersion ของ `ln V` แคบมาก
+(MAD เล็ก) → z = (ln V − median) / σ ระเบิดขึ้นเพราะตัวหารเล็ก ไม่ใช่เพราะตัวตั้งใหญ่
+ทางสถิติถูกต้อง ("เทียบกับ dispersion ของตัวเองแล้วนี่คือ extreme จริง") แต่ threshold ที่ตั้งไว้สำหรับหุ้นเดี่ยว
+(`climaxZ` 2.5 / `notableZ` 1.5) ใช้กับซีรีส์ dispersion แคบไม่ได้
+
+**ข้อสรุปการใช้งาน:** อ่าน VEVT / VOL Z กับ **หุ้นเดี่ยวหรือ ETF** เป็นหลัก บน index ให้ถือว่า ranking
+(อันไหน z สูงกว่า) ยังใช้ได้ แต่ระดับสัมบูรณ์ใช้ไม่ได้ ถ้าจะใช้บน index จริงต้อง calibrate threshold
+ต่อ instrument class — ยังไม่ได้ทำ
+
+---
+
+---

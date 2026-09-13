@@ -9,6 +9,11 @@ components/bloomberg/chart/indicators/{bollinger,bollinger-b,bollinger-width}.ts
 (population std — divide by `period`, not `period - 1` — same as the
 frontend's manual variance calc) so a label's reading matches what the chart
 already shows for the same symbol.
+
+The `rvol` id serves two outputs: `rvol` (the classic mean-baseline ratio,
+frozen for rules stored before the z-score existed) and `z` (the robust
+log-volume z-score that mirrors lib/volume-stats.ts, which every label built
+from the chart now uses). See _rvol_series / _vol_z_series.
 """
 from __future__ import annotations
 
@@ -18,6 +23,11 @@ import numpy as np
 import pandas as pd
 
 from .eval import Bars, IndicatorResolver
+
+# Volume z-score constants — same values as lib/volume-stats.ts.
+_MIN_SAMPLES = 8
+_MAD_TO_SIGMA = 1.4826
+_MIN_SIGMA = 1e-6
 
 
 def _ema_series(values: pd.Series, period: int) -> pd.Series:
@@ -53,8 +63,53 @@ def _macd_hist_series(closes: pd.Series, fast: int, slow: int, signal: int) -> n
 def _rvol_series(volume: pd.Series, lookback: int) -> np.ndarray:
     # trailing average EXCLUDING today (shift(1)), same as watchlist_signals —
     # otherwise a spike bar dilutes its own baseline.
+    #
+    # Deliberately still the MEAN, even though the chart's RVOL pane now
+    # defaults to a median baseline: an alert rule stored before that change
+    # carries no baseline of its own, and quietly re-basing it would make every
+    # "RVOL >= 2" rule in the database fire more often than the user calibrated
+    # it to (a median baseline is normally lower than a mean one, so the ratio
+    # rises). New rules built from the chart use the `z` output below instead.
     baseline = volume.rolling(lookback).mean().shift(1)
     return (volume / baseline).to_numpy(dtype=float)
+
+
+def _vol_z_series(volume: pd.Series, lookback: int) -> np.ndarray:
+    """Robust log-volume z-score — mirrors volumeZ() in
+    components/bloomberg/lib/volume-stats.ts for DAILY bars.
+
+    z = (ln V - median(ln V_prior)) / (1.4826 * MAD(ln V_prior))
+
+    ln because volume is log-normal; median/MAD because a mean baseline lets
+    one spike hide the next one for a whole lookback. Unlike the ratio this is
+    comparable across symbols, which is what lets one threshold serve a whole
+    watchlist.
+
+    `Bars` carries no timestamps, so the frontend's intraday slotting (same
+    point in prior sessions) and its cumulative-session mode have no server-side
+    equivalent. Alerts scan daily bars, where the frontend takes this same
+    trailing-window path, so the two agree bar for bar.
+    """
+    v = volume.to_numpy(dtype=float)
+    out = np.full(len(v), np.nan)
+    logs = np.where(v > 0, np.log(np.where(v > 0, v, 1.0)), np.nan)
+
+    for i in range(len(v)):
+        if not (v[i] > 0):
+            continue
+        window = logs[max(0, i - lookback) : i]
+        window = window[~np.isnan(window)]
+        if len(window) < _MIN_SAMPLES:
+            continue
+        center = float(np.median(window))
+        sigma = _MAD_TO_SIGMA * float(np.median(np.abs(window - center)))
+        if not sigma >= _MIN_SIGMA:
+            # MAD collapses when most of the history is one repeated value.
+            sigma = float(np.std(window, ddof=1)) if len(window) > 1 else 0.0
+        if not sigma >= _MIN_SIGMA:
+            continue
+        out[i] = (logs[i] - center) / sigma
+    return out
 
 
 def _sma_series(values: pd.Series, period: int) -> pd.Series:
@@ -142,7 +197,10 @@ def make_resolver(bars: Bars) -> IndicatorResolver:
                 int(params.get("signal", 9)),
             )
         if indicator_id == "rvol":
-            return _rvol_series(volume, int(params.get("lookback", 20)))
+            lookback = int(params.get("lookback", 20))
+            if output == "z":
+                return _vol_z_series(volume, lookback)
+            return _rvol_series(volume, lookback)
         if indicator_id == "bollinger":
             period, std_dev = int(params.get("period", 20)), float(params.get("stdDev", 2))
             middle, upper, lower = _bollinger_bands(close, period, std_dev)

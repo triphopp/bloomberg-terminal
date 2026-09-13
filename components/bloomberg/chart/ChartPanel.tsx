@@ -24,6 +24,7 @@ import { IndicatorPicker } from "./IndicatorPicker";
 import { ModularChart } from "./ModularChart";
 import { PEPane } from "./PEPane";
 import { TimeframeRow } from "./TimeframeRow";
+import { VolumeEventPanel } from "./VolumeEventPanel";
 import type { BarInterval, OhlcvBar, TimePeriod } from "./types";
 import { useAutoExtendRange } from "./useAutoExtendRange";
 import { useChartIndicators } from "./useChartIndicators";
@@ -135,6 +136,8 @@ export function ChartPanel({
     toggleWindowUnit,
     showVolumeProfile,
     toggleVolumeProfile,
+    showVolumeEvents,
+    toggleVolumeEvents,
     regressionSel,
     regressionArmed,
     regressionPending,
@@ -321,6 +324,29 @@ export function ChartPanel({
             <button
               type="button"
               className="text-[8px] px-1 py-0 font-bold border"
+              disabled={!hasVolume}
+              title={
+                hasVolume
+                  ? "Volume Events — classify each bar's participation against its result (climax / absorption / vacuum / breakout / no-demand / dry-up) as chips on the bars plus a list below"
+                  : "Volume Events — this symbol reports no volume, so there is nothing to classify"
+              }
+              style={{
+                borderColor: showVolumeEvents && hasVolume ? "#26a69a" : colors.border,
+                color: !hasVolume
+                  ? colors.border
+                  : showVolumeEvents
+                    ? "#26a69a"
+                    : colors.textSecondary,
+                background: showVolumeEvents && hasVolume ? "#26a69a15" : "transparent",
+                cursor: hasVolume ? "pointer" : "not-allowed",
+              }}
+              onClick={toggleVolumeEvents}
+            >
+              VEVT
+            </button>
+            <button
+              type="button"
+              className="text-[8px] px-1 py-0 font-bold border"
               title={
                 regressionSel
                   ? "Clear regression channel"
@@ -441,6 +467,11 @@ export function ChartPanel({
               {showPE && peData?.history && peData.history.length > 0 && (
                 <div className="shrink-0">
                   <PEPane data={peData.history} stats={peData.stats} colors={colors} height={90} />
+                </div>
+              )}
+              {showVolumeEvents && hasVolume && ohlcv.length > 0 && (
+                <div className="shrink-0">
+                  <VolumeEventPanel data={ohlcv} colors={colors} />
                 </div>
               )}
             </div>
