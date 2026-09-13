@@ -7,6 +7,7 @@ import {
   BarChart2,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ChevronUp,
   GripVertical,
@@ -118,7 +119,13 @@ function loadLayout(): LayoutSettings {
     for (const id of ids) {
       if (typeof widths[id] !== "number" || widths[id] < 15) return DEFAULT_LAYOUT;
     }
-    return parsed;
+    // A collapsed panel is now zero-width with no rail of its own, and the only
+    // way back is the chip in the chart's header. A stored layout that folded
+    // the chart would therefore hide its own restore control, so drop it.
+    return {
+      ...parsed,
+      collapsedPanels: (parsed.collapsedPanels ?? []).filter((id: PanelId) => id !== "chart"),
+    };
   } catch {
     return DEFAULT_LAYOUT;
   }
@@ -1078,6 +1085,16 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
    * a wider watchlist or tick board just pads columns. Falls back to the last
    * open panel so the row never leaves a gap.
    */
+  // Folded panels, split by the side of the chart they will come back on.
+  const [collapsedLeft, collapsedRight] = useMemo(() => {
+    const chartIdx = layout.panelOrder.indexOf("chart");
+    const folded = (id: PanelId) => layout.collapsedPanels.includes(id);
+    return [
+      layout.panelOrder.filter((id, i) => i < chartIdx && folded(id)),
+      layout.panelOrder.filter((id, i) => i > chartIdx && folded(id)),
+    ];
+  }, [layout.panelOrder, layout.collapsedPanels]);
+
   const fillerPanel = useMemo(() => {
     const open = layout.panelOrder.filter((id) => !layout.collapsedPanels.includes(id));
     if (open.includes("chart")) return "chart";
@@ -1526,26 +1543,16 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   // ── Panel Renderers ─────────────────────────────────────────────────────────
 
   // Collapsed sidebar for any panel — vertical label + expand button
-  const renderCollapsedPanel = (panelId: PanelId) => (
-    <div
-      className="flex flex-col items-center h-full cursor-pointer hover:bg-[#111] transition-colors"
-      style={{ background: "#0a0a0a", borderRight: `1px solid ${colors.border}` }}
-      onClick={() => toggleCollapsed(panelId)}
-    >
-      <ChevronDown className="h-3 w-3 mt-1 mb-1 shrink-0" style={{ color: colors.textSecondary }} />
-      <div className="flex-1 flex items-start justify-center pt-1">
-        <span
-          className="text-[9px] font-bold tracking-widest"
-          style={{ color: colors.accent, writingMode: "vertical-rl", textOrientation: "mixed" }}
-        >
-          {PANEL_LABELS[panelId]}
-        </span>
-      </div>
-    </div>
-  );
-
+  /**
+   * Collapsing used to leave a 36px rail carrying the panel name sideways. Two
+   * folded panels cost 72px of chart for two words — the panel was closed
+   * precisely because the chart wanted the room, and handing most of it back
+   * but not all of it is the worst of both. A folded panel is now zero-width
+   * and renders nothing at all; the way back is a chip in the chart's own
+   * header row, which costs no width because that row already exists.
+   */
   const renderWatchlistPanel = (isCollapsed: boolean) => {
-    if (isCollapsed) return renderCollapsedPanel("watchlist");
+    if (isCollapsed) return null;
     return (
       <div className="flex flex-col overflow-hidden h-full">
         {/* ── Watchlist section ── */}
@@ -1618,7 +1625,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   };
 
   const renderTickDataPanel = (isCollapsed: boolean) => {
-    if (isCollapsed) return renderCollapsedPanel("tickdata");
+    if (isCollapsed) return null;
     return (
       <div className="flex flex-col overflow-hidden h-full">
         <div
@@ -1839,6 +1846,26 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     );
   };
 
+  /**
+   * A folded panel reappears from the side it lives on, so its chip sits on
+   * that side of the chart's header and points that way. `panelOrder` is
+   * user-reorderable, so the side is read from the order rather than assumed.
+   */
+  const renderRestoreChip = (panelId: PanelId, side: "left" | "right") => (
+    <button
+      key={panelId}
+      type="button"
+      className="shrink-0 flex items-center gap-0.5 px-1 py-0.5 text-[8px] font-bold tracking-widest border hover:opacity-70"
+      style={{ background: "#000", color: colors.accent, borderColor: colors.border }}
+      title={`Show ${PANEL_LABELS[panelId]}`}
+      onClick={() => toggleCollapsed(panelId)}
+    >
+      {side === "left" && <ChevronLeft className="h-2.5 w-2.5" />}
+      {PANEL_LABELS[panelId]}
+      {side === "right" && <ChevronRight className="h-2.5 w-2.5" />}
+    </button>
+  );
+
   const renderChartPanel = (_isCollapsed: boolean) => (
     <div className="flex flex-col h-full">
       {/* Search bar */}
@@ -1847,6 +1874,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
           className="flex items-center gap-1 px-1 py-0.5"
           style={{ background: "#0a0a0a", borderBottom: `1px solid ${colors.border}` }}
         >
+          {collapsedLeft.map((id) => renderRestoreChip(id, "left"))}
           <Search className="h-2.5 w-2.5" style={{ color: colors.accent }} />
           <input
             ref={searchRef}
@@ -1901,6 +1929,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
           >
             GO
           </button>
+          {collapsedRight.map((id) => renderRestoreChip(id, "right"))}
         </div>
 
         {/* Dropdown */}
@@ -2838,30 +2867,32 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
       <div ref={containerRef} className="flex-1 flex overflow-hidden min-h-0">
         {layout.panelOrder.map((panelId, idx) => {
           const isCollapsed = layout.collapsedPanels.includes(panelId);
-          const nextPanel = layout.panelOrder[idx + 1];
+          // Nothing is rendered for a folded panel — not a narrow one, none.
+          if (isCollapsed) return null;
+          // The next panel that is actually rendered — a folded one is not in
+          // the row at all, so a divider must reach past it to the next open
+          // panel or it would resize something invisible.
+          const nextPanel = layout.panelOrder
+            .slice(idx + 1)
+            .find((id) => !layout.collapsedPanels.includes(id));
           const isFiller = panelId === fillerPanel;
-          // A divider between an open panel and a folded rail would resize
-          // nothing, so it is only drawn between two open panels.
-          const showDivider =
-            !isCollapsed && nextPanel != null && !layout.collapsedPanels.includes(nextPanel);
+          const showDivider = nextPanel != null;
 
           return (
             <div
               key={panelId}
               className="flex"
               style={
-                isCollapsed
-                  ? { flex: "0 0 36px", minWidth: 36 }
-                  : isFiller
-                    ? // Explicit `minWidth: 0` rather than `auto`: a flex item
-                      // never shrinks below its min-content width by default,
-                      // and the chart's tables are wide enough to claim space
-                      // back off the panel widths.
-                      { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0 }
-                    : {
-                        flex: `0 0 ${layout.panelWidths[panelId]}%`,
-                        minWidth: panelId === "watchlist" ? 260 : 0,
-                      }
+                isFiller
+                  ? // Explicit `minWidth: 0` rather than `auto`: a flex item
+                    // never shrinks below its min-content width by default,
+                    // and the chart's tables are wide enough to claim space
+                    // back off the panel widths.
+                    { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0 }
+                  : {
+                      flex: `0 0 ${layout.panelWidths[panelId]}%`,
+                      minWidth: panelId === "watchlist" ? 260 : 0,
+                    }
               }
             >
               {/* Panel content */}
