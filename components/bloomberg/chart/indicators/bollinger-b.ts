@@ -6,27 +6,18 @@
  * Default: period=20, stdDev=2
  */
 
-import type { ChartIndicator, IndicatorFactory, OhlcvBar, IndicatorSeriesOutput } from "../types";
-import { calcSMA } from "./sma";
-
-function calcStdDev(values: number[], period: number, sma: (number | null)[]): (number | null)[] {
-  const result: (number | null)[] = [];
-  for (let i = 0; i < values.length; i++) {
-    if (i < period - 1 || sma[i] == null) {
-      result.push(null);
-    } else {
-      const slice = values.slice(i - period + 1, i + 1);
-      const mean = sma[i]!;
-      const variance = slice.reduce((sum, v) => sum + (v - mean) ** 2, 0) / period;
-      result.push(Math.sqrt(variance));
-    }
-  }
-  return result;
-}
+import {
+  BOLLINGER_FIT_PARAMS,
+  calcBollingerStats,
+  resolveBollingerParameters,
+} from "../bollinger-fit.ts";
+import type { ChartIndicator, IndicatorFactory, IndicatorSeriesOutput, OhlcvBar } from "../types";
 
 export const createBollingerB: IndicatorFactory = (overrides = {}) => {
   const period = (overrides.period as number) ?? 20;
   const stdDev = (overrides.stdDev as number) ?? 2;
+  const fitMode = overrides.fitMode === "sharpe" ? "sharpe" : "manual";
+  const fitCostBps = Number(overrides.fitCostBps ?? 5);
 
   const indicator: ChartIndicator = {
     id: `bb-b-${period}-${stdDev}`,
@@ -34,20 +25,34 @@ export const createBollingerB: IndicatorFactory = (overrides = {}) => {
     category: "volatility",
     type: "pane",
     description: `Bollinger %B: price position within ${period}-period ±${stdDev}σ bands`,
-    minBars: period,
+    minBars: fitMode === "sharpe" ? 5 : period,
     params: [
-      { key: "period", label: "Period", type: "number", default: period, min: 5, max: 200, step: 1 },
-      { key: "stdDev", label: "Std Dev", type: "number", default: stdDev, min: 0.5, max: 4, step: 0.5 },
+      {
+        key: "period",
+        label: "Period",
+        type: "number",
+        default: period,
+        min: 5,
+        max: 200,
+        step: 1,
+      },
+      {
+        key: "stdDev",
+        label: "Std Dev",
+        type: "number",
+        default: stdDev,
+        min: 0.5,
+        max: 4,
+        step: 0.25,
+      },
+      ...BOLLINGER_FIT_PARAMS,
     ],
-    config: { period, stdDev },
+    config: { period, stdDev, fitMode, fitCostBps },
 
     compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
-      const p = config.period as number;
-      const sd = config.stdDev as number;
-
-      const closes = data.map(d => d.close);
-      const sma = calcSMA(closes, p);
-      const stdDevValues = calcStdDev(closes, p, sma);
+      const { period: p, stdDev: sd } = resolveBollingerParameters(data, config);
+      const { middle: sma, deviation: stdDevValues } = calcBollingerStats(data, p);
+      const closes = data.map((d) => d.close);
 
       const scaleId = `bb-b-${p}-${sd}`;
       const bValues: { time: string | number; value: number }[] = [];
@@ -56,11 +61,13 @@ export const createBollingerB: IndicatorFactory = (overrides = {}) => {
       const lowerLine: { time: string | number; value: number }[] = [];
 
       for (let i = 0; i < data.length; i++) {
-        if (sma[i] == null || stdDevValues[i] == null) continue;
+        const m = sma[i];
+        const deviation = stdDevValues[i];
+        if (m == null || deviation == null) continue;
         const t = data[i].time;
-        const dev = stdDevValues[i]! * sd;
-        const upper = sma[i]! + dev;
-        const lower = sma[i]! - dev;
+        const dev = deviation * sd;
+        const upper = m + dev;
+        const lower = m - dev;
         const bandwidth = upper - lower;
         const b = bandwidth === 0 ? 0.5 : (closes[i] - lower) / bandwidth;
 
@@ -73,7 +80,7 @@ export const createBollingerB: IndicatorFactory = (overrides = {}) => {
       return [
         {
           id: `bb-b-${p}-${sd}-line`,
-          label: `%B`,
+          label: `%B (${p}, ${sd}σ)`,
           type: "line",
           color: "#26c6da",
           lineWidth: 1,

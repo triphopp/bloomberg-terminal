@@ -1,13 +1,16 @@
 import json
+import hashlib
 import math
 import uuid
 from bisect import bisect_left, bisect_right
 from datetime import date, datetime, timedelta
-from typing import Any, Optional, Sequence
+from typing import Any, Literal, Optional, Sequence
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from analytics.svi import fit_raw_svi
 
 from analytics.sd_bands import (
     BUCKET_PROBS,
@@ -33,6 +36,7 @@ router = APIRouter()
 _options_chain_cache = TTLCache(ttl=300, maxsize=100)
 _options_surface_cache = TTLCache(ttl=600, maxsize=100)
 _sd_bands_cache = TTLCache(ttl=600, maxsize=60)
+_svi_fit_cache = TTLCache(ttl=300, maxsize=200)
 
 # Swap provider here — nothing else changes
 _provider = YahooOptionsProvider()
@@ -74,6 +78,16 @@ def clean_df(df: pd.DataFrame) -> list[dict]:
         "change", "percentChange",
     ]
     df = df[[c for c in columns if c in df.columns]].copy()
+
+    # Preserve source availability before legacy numeric zero-filling. Existing
+    # consumers keep openInterest:number; the OI chart can distinguish missing/0.
+    if "openInterest" in df.columns:
+        oi = pd.to_numeric(df["openInterest"], errors="coerce")
+        valid = oi.notna() & oi.ge(0) & oi.le(2 ** 53 - 1) & oi.mod(1).eq(0)
+        df["openInterestAvailable"] = valid.astype(bool)
+        df["openInterest"] = oi.where(valid, 0)
+    else:
+        df["openInterestAvailable"] = False
 
     float_cols = ["strike", "lastPrice", "bid", "ask", "impliedVolatility", "change", "percentChange"]
     int_cols = ["volume", "openInterest"]
@@ -179,8 +193,41 @@ async def list_option_trades(account_id: str | None = Query(None), limit: int = 
     return [dict(r) for r in rows]
 
 
+class SviSampleIn(BaseModel):
+    strike: float = Field(gt=0, le=1e12, allow_inf_nan=False)
+    ivPercent: float = Field(gt=0, le=10000, allow_inf_nan=False)
+
+
+class SviSeriesIn(BaseModel):
+    name: Literal["call", "put", "otm"]
+    points: list[SviSampleIn] = Field(max_length=2000)
+
+
+class SviFitIn(BaseModel):
+    referencePrice: float = Field(gt=0, le=1e12, allow_inf_nan=False)
+    timeYears: float = Field(gt=0, le=10, allow_inf_nan=False)
+    series: list[SviSeriesIn] = Field(min_length=1, max_length=2)
+
+
+@router.post("/api/options/smile-fit")
+def fit_options_smile(body: SviFitIn):
+    """CPU-bound, threadpool endpoint: calibrate supplied observations, never fetch Yahoo."""
+    payload = body.model_dump()
+    if len({item.name for item in body.series}) != len(body.series):
+        raise HTTPException(status_code=422, detail="Duplicate series names")
+    key = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    return _svi_fit_cache.get_or_set(key, lambda: {
+        "model": "raw_svi", "coordinate": "log(K/S)",
+        "objective": "soft_l1_total_variance",
+        "series": {
+            item["name"]: fit_raw_svi(item["points"], body.referencePrice, body.timeYears)
+            for item in payload["series"]
+        },
+    })
+
+
 @router.get("/api/options/{symbol}")
-async def get_options_chain(symbol: str, expiry: str | None = Query(None)):
+def get_options_chain(symbol: str, expiry: str | None = Query(None)):
     """Get options chain with data freshness metadata."""
     symbol = symbol.upper()
     cache_key = f"chain:{symbol}:{expiry or 'default'}"

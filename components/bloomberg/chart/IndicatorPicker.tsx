@@ -2,8 +2,11 @@
 
 import { Check, ChevronDown, ChevronRight, Plus, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { BollingerFitSummary } from "./BollingerFitSummary";
+import { resolveBollingerParameters } from "./bollinger-fit";
 import { INDICATOR_REGISTRY } from "./indicators";
-import type { ChartColors, ChartIndicator, IndicatorRegistryEntry } from "./types";
+import { ATR_REGIME_COLORS, calcAtrRegime, validAtrInputs } from "./indicators/atr";
+import type { ChartColors, ChartIndicator, IndicatorRegistryEntry, OhlcvBar } from "./types";
 
 interface IndicatorPickerProps {
   colors: ChartColors;
@@ -16,7 +19,21 @@ interface IndicatorPickerProps {
   /** Unit lookback windows are entered in. Omit to hide the unit switch. */
   windowUnit?: "bars" | "days";
   onToggleWindowUnit?: () => void;
+  /** Same immutable bars as ModularChart, used for Bollinger/ATR diagnostics. */
+  data?: OhlcvBar[];
 }
+
+const EMPTY_BARS: OhlcvBar[] = [];
+const isBollingerEntry = (id: string) => id === "bollinger" || id === "bollinger-b";
+function bollingerEntryId(ind: ChartIndicator): string | null {
+  if (/^bb-b-\d/.test(ind.id)) return "bollinger-b";
+  if (/^bb-\d/.test(ind.id)) return "bollinger";
+  return null;
+}
+const hasSettings = (id: string) => isBollingerEntry(id) || id === "atr-regime";
+const settingsEntryId = (ind: ChartIndicator) =>
+  ind.id === "atr-regime" ? ind.id : bollingerEntryId(ind);
+const ATR_STATE_LABEL = { accumulate: "ACCUMULATE", avoid: "AVOID", unknown: "NO SIGNAL" };
 
 const CATEGORY_LABELS: Record<string, string> = {
   trend: "Trend",
@@ -35,6 +52,7 @@ export function IndicatorPicker({
   onRemove,
   windowUnit = "bars",
   onToggleWindowUnit,
+  data = EMPTY_BARS,
 }: IndicatorPickerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -58,12 +76,10 @@ export function IndicatorPicker({
     return () => document.removeEventListener("mousedown", handler);
   }, [isOpen]);
 
-  // Reset the filters on open so the list never comes back pre-narrowed by a
-  // search the user has since forgotten about.
+  // Focus after opening. The add button resets filters; a BB settings shortcut
+  // deliberately filters to the indicator being edited.
   useEffect(() => {
     if (!isOpen) return;
-    setQuery("");
-    setCategoryFilter(null);
     searchRef.current?.focus();
   }, [isOpen]);
 
@@ -92,7 +108,10 @@ export function IndicatorPicker({
       const v = p.default;
       defaults[p.key] = typeof v === "boolean" ? (v ? 1 : 0) : v;
     }
-    return saved ? { ...defaults, ...saved } : defaults;
+    const active = hasSettings(entry.id)
+      ? activeIndicators.find((ind) => settingsEntryId(ind) === entry.id)
+      : undefined;
+    return { ...defaults, ...(active?.config.inputParams ?? {}), ...saved };
   }
 
   function handleAdd(entry: IndicatorRegistryEntry) {
@@ -101,11 +120,47 @@ export function IndicatorPicker({
       return;
     }
     if (expandedId === entry.id) {
+      if (isBollingerEntry(entry.id) && !validBollingerParams(getParams(entry))) return;
+      if (entry.id === "atr-regime" && !validAtrInputs(getParams(entry))) return;
       onAdd(entry, getParams(entry) as Record<string, number | boolean | string>);
       setExpandedId(null);
     } else {
       setExpandedId(entry.id);
     }
+  }
+
+  function validBollingerParams(params: Record<string, number | string>) {
+    const n = Number(params.period);
+    const k = Number(params.stdDev);
+    const cost = Number(params.fitCostBps);
+    return (
+      params.fitCostBps !== "" &&
+      Number.isInteger(n) &&
+      n >= 5 &&
+      n <= 200 &&
+      Number.isFinite(k) &&
+      k >= 0.5 &&
+      k <= 4 &&
+      Number.isFinite(cost) &&
+      cost >= 0 &&
+      cost <= 100
+    );
+  }
+
+  function openIndicatorSettings(ind: ChartIndicator) {
+    const entryId = settingsEntryId(ind);
+    if (!entryId) return;
+    setParamValues((prev) => ({ ...prev, [entryId]: ind.config.inputParams ?? ind.config }));
+    setIsOpen(true);
+    setQuery(
+      entryId === "atr-regime"
+        ? "ATR Accumulation"
+        : entryId === "bollinger-b"
+          ? "Bollinger %B"
+          : "Bollinger Bands"
+    );
+    setCategoryFilter("volatility");
+    setExpandedId(entryId);
   }
 
   function setParam(entryId: string, key: string, value: number | string) {
@@ -117,29 +172,61 @@ export function IndicatorPicker({
 
   return (
     <div className="flex items-center gap-1 flex-wrap" ref={dropdownRef}>
-      {activeIndicators.map((ind) => (
-        <button
-          key={ind.id}
-          type="button"
-          className="flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-mono font-bold border cursor-pointer transition-colors hover:opacity-70"
-          style={{
-            borderColor: `${colors.accent ?? colors.positive}44`,
-            backgroundColor: `${colors.accent ?? colors.positive}11`,
-            color: colors.accent ?? colors.positive,
-          }}
-          onClick={() => onRemove(ind.id)}
-          title={`Remove ${ind.name}`}
-        >
-          {ind.name}
-          <X className="h-2.5 w-2.5" />
-        </button>
-      ))}
+      {activeIndicators.map((ind) => {
+        const isBB = bollingerEntryId(ind) != null;
+        const isATR = ind.id === "atr-regime";
+        const atr = isATR ? calcAtrRegime(data, ind.config).at(-1) : null;
+        const accent = isATR
+          ? ATR_REGIME_COLORS[atr?.state ?? "unknown"]
+          : (colors.accent ?? colors.positive);
+        const resolved = isBB ? resolveBollingerParameters(data, ind.config) : null;
+        const label = resolved?.fit
+          ? `${ind.id.startsWith("bb-b-") ? "%B" : "BB"} (${resolved.period}, ${resolved.stdDev}σ) · ${resolved.fit.best ? "FIT" : "FIT N/A · MANUAL"}`
+          : isATR
+            ? `${ind.name} · ${ATR_STATE_LABEL[atr?.state ?? "unknown"]}`
+            : ind.name;
+        return (
+          <div key={ind.id} className="flex items-center">
+            <button
+              key={ind.id}
+              type="button"
+              className="flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-mono font-bold border cursor-pointer transition-colors hover:opacity-70"
+              style={{
+                borderColor: `${accent}44`,
+                backgroundColor: `${accent}11`,
+                color: accent,
+              }}
+              onClick={() => onRemove(ind.id)}
+              title={`Remove ${ind.name}`}
+            >
+              {label}
+              <X className="h-2.5 w-2.5" />
+            </button>
+            {(isBB || isATR) && (
+              <button
+                type="button"
+                onClick={() => openIndicatorSettings(ind)}
+                className="text-[9px] font-mono px-1 py-0.5 border hover:opacity-70"
+                style={{ borderColor: colors.border, color: colors.textSecondary }}
+                aria-label={`Settings for ${ind.name}`}
+                title={
+                  isATR ? "ATR settings · color definition" : "Bollinger settings · Manual / Fit"
+                }
+              >
+                ⚙
+              </button>
+            )}
+          </div>
+        );
+      })}
 
       <div className="relative">
         <button
           type="button"
           onClick={() => {
             setIsOpen(!isOpen);
+            setQuery("");
+            setCategoryFilter(null);
             setExpandedId(null);
           }}
           className="flex items-center gap-0.5 px-1.5 py-0.5 text-[9px] font-mono border transition-colors hover:opacity-70"
@@ -269,7 +356,11 @@ export function IndicatorPicker({
                   {label}
                 </div>
                 {items.map((entry) => {
-                  const isActive = activeIndicators.some((a) => a.id.startsWith(entry.id));
+                  const isActive = activeIndicators.some((a) =>
+                    isBollingerEntry(entry.id)
+                      ? bollingerEntryId(a) === entry.id
+                      : a.id.startsWith(entry.id)
+                  );
                   const isExpanded = expandedId === entry.id;
                   const hasParams = entry.defaultParams.length > 0;
                   const params = getParams(entry);
@@ -335,6 +426,10 @@ export function IndicatorPicker({
                               >
                                 <span className="text-[9px] font-mono opacity-60 min-w-[60px]">
                                   {p.label}
+                                  {isBollingerEntry(entry.id) &&
+                                    ["period", "stdDev"].includes(p.key) &&
+                                    params.fitMode === "sharpe" &&
+                                    " (manual)"}
                                   {scaled && <span style={{ color: colors.positive }}> (d)</span>}
                                 </span>
                                 {p.type === "select" ? (
@@ -364,7 +459,13 @@ export function IndicatorPicker({
                                     max={p.max}
                                     step={p.step ?? 1}
                                     onChange={(e) =>
-                                      setParam(entry.id, p.key, Number.parseFloat(e.target.value))
+                                      setParam(
+                                        entry.id,
+                                        p.key,
+                                        hasSettings(entry.id) && e.target.value === ""
+                                          ? ""
+                                          : Number.parseFloat(e.target.value)
+                                      )
                                     }
                                     className="w-16 text-right text-[9px] font-mono px-1 py-0.5 border bg-transparent outline-none"
                                     style={{ borderColor: colors.border, color: colors.text }}
@@ -373,6 +474,101 @@ export function IndicatorPicker({
                               </label>
                             );
                           })}
+                          {isBollingerEntry(entry.id) && !validBollingerParams(params) && (
+                            <p
+                              role="alert"
+                              className="text-[9px] font-mono"
+                              style={{ color: colors.negative }}
+                            >
+                              Use a whole period 5–200, deviation 0.5–4 and cost 0–100 bps.
+                            </p>
+                          )}
+                          {isBollingerEntry(entry.id) &&
+                            params.fitMode === "sharpe" &&
+                            validBollingerParams(params) && (
+                              <BollingerFitSummary
+                                data={data}
+                                costBps={Number(params.fitCostBps)}
+                                colors={colors}
+                              />
+                            )}
+                          {isBollingerEntry(entry.id) && (
+                            <button
+                              type="button"
+                              disabled={!validBollingerParams(params)}
+                              onClick={() => handleAdd(entry)}
+                              className="text-[9px] font-mono border px-2 py-1 disabled:opacity-40"
+                              style={{
+                                color: colors.accent ?? colors.positive,
+                                borderColor: colors.border,
+                              }}
+                            >
+                              {params.fitMode === "sharpe" ? "APPLY FIT" : "APPLY MANUAL"}
+                            </button>
+                          )}
+                          {entry.id === "atr-regime" && (
+                            <div className="text-[9px] font-mono flex flex-col gap-1.5 max-w-[300px]">
+                              <div style={{ color: ATR_REGIME_COLORS.accumulate }}>
+                                GREEN · ATR% ≤ prior baseline × limit AND close &gt; EMA AND EMA
+                                above its value one slope span ago.
+                              </div>
+                              <div style={{ color: ATR_REGIME_COLORS.avoid }}>
+                                RED · Accumulation filter not met.
+                              </div>
+                              <div style={{ color: ATR_REGIME_COLORS.unknown }}>
+                                GRAY · History incomplete or baseline has no range.
+                              </div>
+                              <div style={{ color: colors.textSecondary }}>
+                                Wilder ATR; ATR% = 100 × ATR / close. Baseline = SMA of prior ATR%
+                                values, excluding the current bar. Thin gray line = low-volatility
+                                threshold.
+                              </div>
+                              {(() => {
+                                const active = activeIndicators.find(
+                                  (ind) => ind.id === "atr-regime"
+                                );
+                                const latest = active
+                                  ? calcAtrRegime(data, active.config).at(-1)
+                                  : null;
+                                if (!latest) return null;
+                                return (
+                                  <div style={{ color: colors.text }}>
+                                    APPLIED · {ATR_STATE_LABEL[latest.state]}
+                                    <br />
+                                    ATR% {latest.atrPercent?.toFixed(3) ?? "—"} · LIMIT{" "}
+                                    {latest.thresholdPercent?.toFixed(3) ?? "—"}%<br />
+                                    TREND{" "}
+                                    {latest.uptrend == null
+                                      ? "—"
+                                      : latest.uptrend
+                                        ? "UP"
+                                        : "NOT UP"}
+                                  </div>
+                                );
+                              })()}
+                              <div style={{ color: colors.textSecondary }}>
+                                A configurable volatility/trend filter; low ATR alone does not prove
+                                accumulation. Current-bar color may change until close.
+                              </div>
+                              {!validAtrInputs(params) && (
+                                <p role="alert" style={{ color: colors.negative }}>
+                                  Enter valid periods and an ATR/base limit from 0.1 to 3.
+                                </p>
+                              )}
+                              <button
+                                type="button"
+                                disabled={!validAtrInputs(params)}
+                                onClick={() => handleAdd(entry)}
+                                className="border px-2 py-1 disabled:opacity-40"
+                                style={{
+                                  borderColor: colors.border,
+                                  color: colors.accent ?? colors.positive,
+                                }}
+                              >
+                                APPLY ATR
+                              </button>
+                            </div>
+                          )}
                           <p className="text-[8px] opacity-40 font-mono mt-0.5">
                             click name again to confirm
                           </p>

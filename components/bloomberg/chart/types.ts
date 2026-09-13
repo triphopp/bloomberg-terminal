@@ -88,6 +88,14 @@ export interface IndicatorParam {
 export interface SeriesDataPoint {
   time: string | number;
   value: number;
+  /** Optional per-point line color, forwarded directly to lightweight-charts. */
+  color?: string;
+}
+
+/** A timestamp with no value. Line factories must also suppress bridging strokes. */
+export interface WhitespaceDataPoint {
+  time: string | number;
+  value?: never;
 }
 
 export interface HistogramDataPoint {
@@ -189,7 +197,7 @@ export interface IndicatorSeriesOutput {
   id: string;
   label: string;
   type: IndicatorSeriesType;
-  data: SeriesDataPoint[] | HistogramDataPoint[];
+  data: (SeriesDataPoint | HistogramDataPoint | WhitespaceDataPoint)[];
   color?: string;
   lineWidth?: number;
   priceScaleId?: string; // separate scale for pane indicators

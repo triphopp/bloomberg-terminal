@@ -88,10 +88,15 @@ export function itemsFromActiveIndicators(
 ): QuickAlertItem[] {
   const items: QuickAlertItem[] = [];
   for (const spec of specs) {
+    // A chart fit is local to its loaded history; the daily alert evaluator
+    // cannot reproduce it from the saved manual fallback n/k.
+    if ((spec.id === "bollinger" || spec.id === "bollinger-b") && spec.params?.fitMode === "sharpe")
+      continue;
     const entry = getIndicatorEntry(spec.id);
     if (!entry?.alertLabels?.length) continue;
     const indParams: Record<string, number> = {};
     for (const p of entry.defaultParams) {
+      if (p.key === "fitCostBps") continue; // simulation assumption, not a signal parameter
       const v = spec.params?.[p.key] ?? p.default;
       if (typeof v === "number") indParams[p.key] = v;
     }
@@ -136,6 +141,7 @@ export function allQuickAlertItems(signal: WatchlistSignal | undefined): QuickAl
     if (!entry.alertLabels?.length) continue;
     const indParams: Record<string, number> = {};
     for (const p of entry.defaultParams) {
+      if (p.key === "fitCostBps") continue;
       if (typeof p.default === "number") indParams[p.key] = p.default;
     }
     for (const label of entry.alertLabels) {

@@ -25,7 +25,15 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r backend/requirements.txt
-          pip install pytest pytest-anyio
+          # httpx2 backs starlette.testclient, which tests/test_svi.py uses to
+          # drive the HTTP layer itself. FastAPI's 422 request validation only
+          # exists at that layer, so those assertions cannot be made by calling
+          # the router function directly — the dependency is the price of
+          # testing the contract rather than the handler. starlette 1.2 imports
+          # httpx2 first and treats plain httpx as deprecated; a developer whose
+          # environment happens to carry httpx sees the suite pass locally while
+          # CI, which installs only what is declared, fails at collection.
+          pip install pytest pytest-anyio httpx2
 
       - name: Run greeks unit tests
         working-directory: backend

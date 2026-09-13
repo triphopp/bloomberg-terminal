@@ -58,6 +58,15 @@ memory/
 
 | ต้องการ | ไฟล์ |
 |---------|------|
+| **Adaptive DCF Valuation Lab** — multi-model quant DCF ใน NEWS/stock-view ✅ done 2026-09-13 | `plans/completed/dcf-valuation-lab.md` |
+| **DCF valuation risks** — currency mismatch, WACC missingness, terminal guard and symbol identity | `reports/dcf-valuation-risk-report.md` |
+| **MKT IV Open Interest** — optional OI strike profile ✅ done 2026-09-13 | `plans/completed/mkt-iv-open-interest.md` |
+| **MKT IV OI risks** — source missingness, units and dense-grid bars | `reports/mkt-iv-oi-risk-report.md` |
+| **MKT SVI Fit and Tenors** — optional Raw SVI and multiple monthly expiries ✅ done 2026-09-13 | `plans/completed/mkt-svi-fit-tenors.md` |
+| **MKT SVI Fit risks** — query identity, variance units and slice limitations | `reports/mkt-svi-fit-risk-report.md` |
+| **MKT IV Smile** — REGIME IV tab following chart symbol ✅ done 2026-09-13 | `plans/completed/mkt-iv-smile.md` |
+| **ATR Accumulation Pane** — optional green/red ATR with volatility + trend definition ✅ done 2026-09-13 | `plans/completed/atr-accumulation-pane.md` |
+| **Bollinger Sharpe Fit** — optional Breakout %B grid fit ✅ done 2026-09-13 | `plans/completed/bollinger-sharpe-fit.md` |
 | **กฎการเขียน report / format / workflow** | **`AGENTS.md`** |
 | วิธี run app (2 terminals, env vars) | `reference/architecture.md` → "Running the app" |
 | Tech stack, API endpoints ทั้งหมด, DB schema | `project_summary.md` |
@@ -91,7 +100,10 @@ memory/
 | **Corporate IR Stress Testing (CIRST)** (bottom-up firm-level rate shock: EaR → Merton PD → ΔWACC/ΔEV, ES/Euler, IR-Stress Score) 📋 planned | `plans/corporate-ir-stress-testing.md` |
 | **CIRST Validation Harness** (5-yr PIT backtest, null models, float-share inference, calibration/IC/DM gates) 📋 planned | `plans/cirst-validation-harness.md` |
 | **CIRST RATE STRESS tab** (stock-view sub-tab 5 อัน: EXPOSURE/SCENARIO/DURATION/HISTORY/DIAGNOSTICS — เข้าจาก NEWS, มีตารางทฤษฎี-vs-จริง) 📋 planned | `plans/cirst-stock-rate-tab.md` |
+| **Adaptive DCF Valuation Lab** (3-stage FCFF default + growth/FCFE/excess-return/AFFO/cycle adapters; quant assumptions, sensitivity and audit; shared NEWS/stock panel) ✅ done 2026-09-13 | `plans/completed/dcf-valuation-lab.md` |
 | **Data Source Contract** (canonical models + OHLCVFrame migration fix + Dividends fix + cache clear) | ✅ Phase A+B partial done — `plans/completed/data-source-contract.md`; Phase B remainder in `plans/data-source-contract.md` |
+| **Quant Market State (per-symbol REGIME)** (OHLCV → HMM → regime probability + trend/momentum/volatility score + strategy compatibility; panel ใน NEWS ข้าง RATE STRESS) ✅ done 2026-09-13 | `plans/completed/market-state-regime.md` |
+| **Volume Z-Score + Volume Event Classifier** (RVOL baseline mean→median/MAD บน ln(V) + cum-session mode; classifier 6 event types เป็น chip บน price pane + ตาราง fwd return) ✅ done 2026-09-13 | `plans/completed/volume-zscore-events.md` |
 | **Pane Height Persistence Fix** (pane ยุบ 0 + drag ไม่ persist ข้าม reload) 📋 | `plans/pane-height-persistence-fix.md` |
 | **TICK DATA Consolidation** (RATES·US/JP curve + FX เข้า MKT tick board, ลบ CRYP/FX views) ✅ done 2026-08-01 | `plans/completed/tickdata-rates-fx-consolidation.md` |
 | **Analytics Charts Risk Assessment (F2 critical issues)** | `reports/analytics-charts-risk-assessment.md` |

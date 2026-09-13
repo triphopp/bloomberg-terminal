@@ -7,6 +7,55 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### Adaptive DCF currency and terminal-value guards (2026-09-13)
+
+| Symptom | Root Cause | Fix |
+|---|---|---|
+| Intrinsic value and market price look comparable but use different currencies | Yahoo `financialCurrency` and quote `currency` can differ for ADR/cross-listed instruments | Do not compare without FX. The DCF normalizer omits price/market cap/upside and emits an AUDIT warning. See [DCF risk report](../reports/dcf-valuation-risk-report.md). |
+| WACC collapses toward after-tax debt cost when market cap is missing | Debt/equity weighting was attempted with only one valid side | Fall back to cost of equity unless both market cap and debt are positive; never manufacture a debt-only capital structure from missing data. |
+| Gordon terminal value is negative or explodes | Terminal growth is at/above the applicable discount rate | Cap `g` 50bp below rate, report the adjustment, and return null for invalid sensitivity cells. |
+| Custom assumptions from the previous symbol briefly run on a newly selected symbol | React effect reset runs after the first render of the new symbol | Include symbol in request state and use AUTO/Base until request symbol matches the selected symbol. |
+
+### IV + OI overlay (2026-09-13)
+
+| Symptom | Root Cause | Fix |
+|---|---|---|
+| OI bars vanish when SVI is enabled | Recharts bar width follows the smallest spacing of the dense fitted K grid (live0.129px) | Center fixed3px/5px rectangles on actual OI observations; do not widen the X spacing or create extra OI points. See [OI risk report](../reports/mkt-iv-oi-risk-report.md). |
+| OI changes when switching IV quote quality, or missing OI looks like0 | OI derived from IV samples; cleaner loses source availability | Build OI directly from chain with K-range only. `openInterestAvailable` preserves missingness before legacy zero-fill; valid0 remains known. |
+| Large OI flattens IV, or values carry the wrong units | Series assigned the same Y axis / tooltip formatter | Explicit `iv` left and `oi` right axes, contract-count tooltip for OI, percentage for IV. |
+
+### Multi-expiry SVI calibration (2026-09-13)
+
+| Symptom | Root Cause | Fix |
+|---|---|---|
+| `QueriesObserver: Duplicate Queries found` during symbol switches / missing tenors | Multiple disabled fit queries share `expiry:null` and otherwise identical keys before discovery | Include missing-tenor months in disabled query keys too. Deduplicate actual expiries separately. Verified AAPL→AMD→^DJI with MULTI enabled. See [SVI risk report](../reports/mkt-svi-fit-risk-report.md). |
+| SVI IV scale changes incorrectly with expiry | Fitting IV directly to a total-variance formula, or treating percent as fraction | Fit `w=(IV%/100)^2*T`; render `100*sqrt(w/T)`. Test reference translation and time scaling. |
+| A five-parameter line appears despite insufficient quotes | Duplicate strikes counted as independent points or unsuccessful optimizer results rendered | Median duplicate strikes, require 8 distinct strikes and log-span>=0.05; only render converged, positive fits inside observed K span. Keep actual points on failure. |
+| Smooth curve mistaken for an arbitrage-free surface | Independent positive SVI slices lack butterfly/calendar constraints | State the limitation in SVI DETAILS; a may be negative if total-variance minimum stays positive. |
+
+### IV smile strike geometry and symbol identity (2026-09-13)
+
+| Symptom | Root Cause | Fix |
+|---|---|---|
+| Put-only strikes disappear; spot line is absent; unequal K spacing looks uniform | Call-only join plus categorical strike X axis | Build numeric union of call/put strikes and use numeric K axis with exact S reference. New MKT IV uses this; old stock SurfaceView remains outside scope. See [risk report](../reports/mkt-iv-smile-risk-report.md). |
+| No-options stock looks like a backend outage | Next.js proxy converts404 to502 | Preserve backend status/detail; distinguish no options from fetch failure. |
+| IV from another symbol or expiry remains visible | Previous-query data reused without matching identity, or backend silently selects a fallback expiry | Key query by symbol+expiry and verify both before drawing; never substitute prior symbol's curve while loading. |
+| Heatmap dimensions stale after returning from IV/ROT | ResizeObserver remained on the unmounted matrix element | Reattach whenever matrix mode remounts. |
+
+### ATR pane line colors and missing history (2026-09-13)
+
+| Symptom | Root Cause | Fix |
+|---|---|---|
+| A regime line bridges a missing candle, or missing history receives a trading color | Native line rendering connects valued points even across whitespace; treating missing inputs as false mislabels unknown history | Emit native `{time}` whitespace points and make the preceding valued point's outgoing segment transparent; keep classification unknown/gray until all windows exist. ATR resets recursive state after invalid HLC. See [ATR risk report](../reports/atr-regime-rendering-risk-report.md). |
+| A low-ATR downtrend looks like an accumulation zone | ATR measures range without price direction | Require both close above EMA and EMA rising over the configured slope span. Threshold uses prior ATR% values only; zero baseline remains unknown. |
+
+### Chart fit vs persisted alert parameters (2026-09-13)
+
+| Symptom | Root Cause | Fix |
+|---|---|---|
+| A “From chart” alert disagrees with fitted BB/%B bands | Persisted n/k are the manual fallback; chart-local fitted n/k depend on loaded bars, unlike the daily alert evaluator | Fitted BB/%B are omitted from active-chart quick alerts. Fixed catalog/custom rules remain available; never pass `fitCostBps` as a signal parameter. See [integration risk report](../reports/bollinger-fit-integration-risk-report.md). |
+| Turning Fit off restores the wrong manual window in DAYS mode | Factory config already contains scaled bar counts | Reopen from `config.inputParams` (original spec) and keep raw manual n/k independent of the fitted grid, which always counts bars. |
+
 ### Backtest / Statistical Evaluation
 
 | Symptom | Root Cause | Fix |
@@ -1123,5 +1172,45 @@ curl -s localhost:9317/api/sync/status | python3 -m json.tool | grep -E "last_pu
 ตรวจ manifest ทุก 20 วินาทีและอัปเดต timestamp ทุกครั้งที่สำเร็จ
 
 Regression test: `backend/tests/test_sync_surrogate_id.py` (5 เคส)
+
+## `.claude/launch.json` ไม่ถูก env-doctor ตรวจ — port ค้างที่ 3000 (fixed 2026-09-13)
+
+`npm run doctor` อ่าน port จาก `package.json`, `.env.local`, `backend/.env`, `lib/constants.ts`,
+`backend/config.py` — **ไม่รวม `.claude/launch.json`** ตอนย้าย 3000/8000 → 9317/9318 ไฟล์นี้จึงค้างที่
+`"port": 3000` เงียบๆ ผลคือ preview/browser tool เปิดพอร์ตผิด (แก้เป็น 9318 แล้ว)
+
+ถ้าย้าย port อีกครั้ง: `.claude/launch.json` เป็นที่ที่ **4** ที่ต้องแก้ นอกเหนือจาก 3 ที่ที่ `CLAUDE.md` ระบุ
+
+---
+
+## `?? []` ใน render body = identity ใหม่ทุกครั้ง → effect วน (NEWS WATCHLIST, 2026-09-13)
+
+**อาการ:** console ยิง `Maximum update depth exceeded` ~50-67 ครั้งทุกครั้งที่เปิดแท็บ NEWS
+(React หยุดเองที่ depth 50 จึงไม่ค้าง แต่กลบ error จริงทั้งหมดใน console)
+
+**สาเหตุ:** `components/bloomberg/views/news/watchlist-tab.tsx:269-286`
+
+```tsx
+const sectors = data?.sectors ?? [];   // data ยังไม่มา → [] ใหม่ทุก render
+useEffect(() => { onMarketsChange(...); }, [..., sectors, symbolMeta, ...]);
+```
+
+effect ส่งค่าขึ้น parent → parent `setState` → re-render → `[]` ใหม่ → effect วนอีก
+หยุดเองเมื่อ data มาถึงเพราะ identity นิ่ง อาการจึงเป็น **burst ตอนเข้าแท็บ** ไม่ใช่ค้างถาวร
+
+**กฎ:** `?? []` / `?? {}` ใน render body ห้ามเข้า dependency array เด็ดขาด ใช้ค่าคงที่นอก component
+(`const EMPTY: T[] = []`) หรือ `useMemo` — เหมือนกับที่ `useChartIndicators` ทำกับ `EMPTY_MARKERS`
+
+**วิธีจับว่าใครเป็นต้นเหตุ** (console buffer ไม่เคลียร์ตอน navigate จึงนับจาก log ตรงๆ ไม่ได้):
+
+```js
+window.__loopCount = 0;
+const orig = console.error;
+console.error = (...a) => { if (String(a[0]).includes("Maximum update depth")) window.__loopCount++; return orig(...a); };
+```
+
+แล้วกดทีละ view / เปิดทีละ panel แล้วอ่าน `window.__loopCount` — ตัวเลขกระโดดตรงไหน ต้นเหตุอยู่ตรงนั้น
+
+รายละเอียด + วิธีแก้: `memory/reports/news-watchlist-render-loop-risk-report.md` (ยังไม่แก้ — นอก scope)
 
 ---

@@ -98,6 +98,11 @@ export {
   createMACD,
   createRSI,
   createBollingerBands,
+  createATR,
+  calcAtrRegime,
+  resolveAtrConfig,
+  ATR_REGIME_PARAMS,
+  ATR_REGIME_COLORS,
   createVWAP,
   createVolume,
   createStochastic,
@@ -108,3 +113,5 @@ export {
   createSessionVPOverlay,
   createCompositeVPOverlay,
 } from "./indicators";
+
+export type { AtrRegimeConfig, AtrRegimePoint } from "./indicators";

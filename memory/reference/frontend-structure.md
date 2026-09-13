@@ -18,10 +18,11 @@ components/bloomberg/
 │
 ├── views/
 │   ├── market-view.tsx          ← MKT: watchlist + chart + global indices + Regime panel
+│   ├── iv-smile-panel.tsx       ← REGIME IV: selected chart symbol, optional Raw SVI, single/multiple monthly expiries, K vs IV%
 │   ├── news-view.tsx            ← barrel → views/news/index.tsx (kept for the dynamic import path)
 │   ├── news/                    ← NEWS view (2026-08-15 redesign)
 │   │   ├── index.tsx            ← shell: WATCHLIST | NEWSFEED | SOCIAL tabs + shared Polymarket column
-│   │   ├── watchlist-tab.tsx    ← sector rail (click sector → symbol chips) + article stream
+│   │   ├── watchlist-tab.tsx    ← sector rail + article stream + per-symbol HEADLINES/RATE STRESS/DCF/REGIME panels
 │   │   │                          (group: SECTOR/TICKER/TIME · match: NAMED/ALL NEWS · sentiment · source toggles)
 │   │   ├── newsfeed-tab.tsx     ← topic newswire (was the FEED tab)
 │   │   ├── social-tab.tsx       ← X/YouTube/Reddit/RSS handles
@@ -35,7 +36,9 @@ components/bloomberg/
 │   ├── macro/shared.tsx         ← SectionHeader (shared across macro tabs)
 │   ├── macro/country-tab.tsx    ← CountryMacroTab + World Bank charts + country constants (POPULAR_COUNTRIES, WB_CATEGORIES, fmtWbVal)
 │   ├── credit-view.tsx          ← CRDT: 4 tabs (overview/spreads/stress/consumer)
-│   ├── stock-view.tsx           ← Equity analysis (9 tabs) — no nav button, via search/heatmap
+│   ├── stock-view.tsx           ← Equity analysis tabs incl. DCF/RATE STRESS/REGIME — no nav button, via search/heatmap
+│   ├── stock/dcf/index.tsx      ← shared adaptive DCF lab: model/scenario controls + 5 quant sub-tabs
+│   ├── stock/dcf/types.ts       ← DcfModel/DcfScenario and API response contracts
 │   ├── pinned-assets.tsx        ← Pinned assets sidebar
 │   ├── rotation-tab.tsx         ← COUNTRY EQUITY ROTATION tab (inside macro-view SIGNALS)
 │   ├── sector-tab.tsx           ← SECTOR SELECTION tab (inside macro-view SIGNALS)
@@ -81,10 +84,14 @@ components/bloomberg/
 │   ├── event-rail-overlay.ts    ← CanvasOverlay drawing icon chips on a fixed 18px row at the bottom of the price pane — **no background band or divider** (removed 2026-08-31; each chip paints its own ~87% pane-colour backdrop so wicks pass behind it and the row is invisible where nothing sits on it): banknote = dividend, trending up/down = beat/miss, clock = no surprise reported, split, `···N` cluster (still text — a count is the one thing an icon cannot say). Dashed border = `upcoming`, queued right of the last bar. `clusterChips()` + `eventChipStyle()` are pure and tested
 │   ├── EventDetailPopover.tsx   ← detail card for clicked events: EST vs ACTUAL EPS + BEAT/MISS, dividend amount + yield, split ratio, gap/close/D+1/D+5 reaction. An `upcoming` event shows EX-DATE/PAY DATE and "Scheduled — no price reaction yet" in place of the reaction block. Opens on a list when a cluster is clicked. Closes on Escape or an outside click
 │   ├── event-reaction.ts        ← pure helpers: `earningsSession()` (BMO/AMC off `reportedAt`), `findEventBarIndex()` / `placeEvents()` (single placement rule shared by the rail and the card; future-dated events are kept with `future: true` + `daysAhead`, capped at `MAX_FUTURE_DAYS` 200), `daysPastLastBar()`, `computeEventReaction()`. Tested in `__tests__/event-reaction.test.ts`
+│   ├── volume-event-overlay.ts  ← CanvasOverlay (`mode: "full"`, `zOrder: "top"`) drawing a 2-char chip per classified volume event (`CX AB VC BO ND DU`) **anchored to the bar**, above the high when the up side owned it and below the low when the down side did — the opposite choice from the corporate-event rail, because direction is half of what a volume event says, and it also keeps the two rows from stacking. One hue per TYPE, never per direction. Classifies inside `draw` (the only place the bar array exists) and caches on that array's identity, so it runs once per data change and not once per frame. Collisions are resolved strongest-|z|-first and the loser is DROPPED, not clustered — a `···N` would hide the one thing a chip exists to name, and the panel lists every event anyway. `resolveCollisions()` is pure and tested in `__tests__/volume-event-overlay.test.ts`
+│   ├── VolumeEventPanel.tsx     ← the event list under the chart: DATE · EVENT (code + ▲/▼ + `×N` run length) · Z · RET · +1 · +5. The forward-return columns are the point rather than decoration — a label is only worth reading if its outcomes separate from the symbol's unconditional behaviour. Classifies the same bars the overlay does with the same defaults, so the two agree with nothing passed between them
+│   ├── bollinger-fit.ts         ← pure 209-pair grid search (n=10..100 step 5, k=1..3.5 step .25); long/cash breakout %B > 1 enter / <= .5 exit at next open, net per-bar Sharpe, common warmup + train/holdout. WeakMap cache per immutable OHLCV array and cost.
+│   ├── BollingerFitSummary.tsx  ← picker diagnostics: selected n/k, train/holdout Sharpe, net returns, trades, date ranges, assumptions and explicit unavailable/manual fallback.
 │   ├── ChartTimeframeBar.tsx    ← period selector (1D/1W/1M/3M/YTD/1Y/5Y/MAX)
 │   ├── TimeframeRow.tsx         ← THE timeframe control, shared by the MKT panel and every chart window: period buttons (invalid ones for the current interval greyed) + `IntervalPicker` — the TF dropdown, listing all nine intervals with a `→period` hint on the ones that would move the range. `trailing` slot carries the row's right-hand controls (chart type, POP, window buttons). Was defined inline in market-view; a popped-out chart had a nine-button row instead until it moved here
 │   ├── useAnchoredPanel.ts      ← open state + fixed-viewport coords for a dropdown that must escape a clipping toolbar. Listeners bind to the trigger's OWN document/window, so the panel also closes correctly inside a detached chart window
-│   ├── ChartPanel.tsx           ← the MKT chart panel packaged for reuse: quote header · indicator bar (IndicatorPicker + VP/REG/P·E/FP — **no EVT button**: the event rail is always on for an equity candle chart, see `useChartIndicators`) · `TimeframeRow` · ModularChart (+ F&G / P/E sub-panes, EventDetailPopover) · OHLC footer. Owns its queries; `paused` skips the history fetch and body (minimized window) while keeping the quote. market-view still renders its own inline copy of the whole panel — it is entangled with the symbol search and layout splitters — but both now share `TimeframeRow`
+│   ├── ChartPanel.tsx           ← the MKT chart panel packaged for reuse: quote header · indicator bar (IndicatorPicker + VP/VEVT/REG/P·E/FP — **no EVT button**: the event rail is always on for an equity candle chart, see `useChartIndicators`) · `TimeframeRow` · ModularChart (+ F&G / P/E sub-panes, EventDetailPopover) · OHLC footer. Owns its queries; `paused` skips the history fetch and body (minimized window) while keeping the quote. market-view still renders its own inline copy of the whole panel — it is entangled with the symbol search and layout splitters — but both now share `TimeframeRow`
 │   ├── DetachedChartWindow.tsx  ← chart in a REAL `window.open` window, portalled into the child document so it stays one React tree (same atoms, same React Query cache). Parent stylesheets are cloned into the child head. **Window name is unique per detach** — Chrome remembers a named popup's geometry (including maximized, which script cannot resize) and would pin the chart there forever. Saved bounds are re-applied at 0/60/300/800/1500ms because a freshly opened popup ignores `resizeTo` until it settles. Screen bounds sampled every 2s → `chartWindowNativeBoundsAtom`. Closing the native window closes the entry; closing the terminal tab closes the window
 │   ├── ChartWindowLayer.tsx     ← renders every chart window — docked in-page, detached as real windows; docks everything on mount (a native window cannot be reopened without a user gesture); portalled to <body>, `fixed inset-0 pointer-events-none z-[60]`, mounted once in `layout/bloomberg-terminal.tsx` so windows survive view switches. Carries the CHARTS n/10 + CLOSE ALL manager strip (bottom-left, above the alert ticker)
 │   ├── FloatingChartWindow.tsx  ← one draggable/resizable in-page chart popup: `<ChartPanel>` plus window controls (detach ⧉ / minimize / close) in the panel's header row, which doubles as the drag handle, and a resize grip. Per-window state = symbol + timePeriod + barInterval + geometry ONLY — indicators still come from the global spec atoms, so every chart (incl. the MKT panel) shares one indicator set. Minimized ⇒ history query disabled + chart unmounted; the quote stays so the collapsed bar keeps its price. **Clamping is display-only** — the stored x/y/w/h is the user's intent and is never rewritten to fit the viewport; an earlier version committed the clamped value on mount and on every browser resize, which permanently "reset" any window near an edge whenever the browser was resized or moved to another monitor. **Resize freeze**: ModularChart rebuilds its whole lightweight-charts instance whenever its measured height changes, so while `isResizing` the chart body is pinned at the height it had at gesture start and re-measures once, on release — without it a resize drag tore the chart down ~18 times
@@ -95,6 +102,7 @@ components/bloomberg/
 │   ├── PEPane.tsx               ← recharts sub-pane: trailing P/E line + p10/p90 valuation bands + percentile label (consumes /api/stock/pe-history)
 │   ├── useChartIndicators.ts    ← indicator/overlay state; exposes vpConfig, showPE via atoms, plus `selectedEvent`/`clearSelectedEvent` for the detail card. Regression arming wins the click when both could claim it
 │   ├── indicators/volume-profile.ts ← session+composite VP (gap-based sessions, delta, naked POC, HVN/LVN, VRVP)
+│   ├── indicators/atr.ts            ← Wilder ATR / ATR% pane with native green/red per-bar line colors; prior ATR% SMA threshold + rising EMA trend filter; configurable settings and explicit gray warmup.
 │   ├── indicators/rv-core.ts        ← realized-vol math shared by the 3 RV panes: `calcRealizedVol(bars, period, estimator, periodsPerYear)` (cc/parkinson/gk/rs/yz, returns ANNUALISED %), `inferPeriodsPerYear()` (median bar spacing → 252/52/12 or 252×bars-per-session), `rollingPercentRank()`. Tested in `__tests__/rv-core.test.ts`
 │   ├── indicators/realized-vol.ts   ← RV pane: 3 windows at once (5/21/63 default, 0 hides a line), estimator select
 │   ├── indicators/rv-rank.ts        ← RV percentile rank pane (RV window 21 vs 252-bar lookback), zone-coloured histogram + 50 midline
@@ -133,6 +141,7 @@ components/bloomberg/
 ├── hooks/
 │   ├── useTerminalUI.ts         ← view navigation handlers
 │   ├── useMarketData.ts / useMarketDataQuery.ts
+│   ├── useIvSmile.ts           ← on-demand single/multi-expiry chains + optional SVI fit, guarded identity and shared controls
 │   ├── useStockData.ts
 │   ├── useSectorSelection.ts    ← sector selection signal hook
 │   ├── useWatchlistSignals.ts   ← batch daily technical scan for the watchlist
@@ -149,6 +158,8 @@ components/bloomberg/
 └── lib/
     ├── theme-config.ts          ← bloombergColors (dark/light)
     ├── marketData.ts            ← static fallback market data
+    ├── volume-stats.ts          ← `volumeZ()` (robust log-volume z-score: median/MAD of ln V) + `volumeRatio()` (baseline `median` | `mean`). Intraday bars are SLOTTED against the same point in prior sessions — by **bar index since the session's first bar** when >1 session is loaded (DST-proof; UTC time-of-day keying empties every slot for a lookback after each DST change), by UTC time-of-day on a single 24h session (crypto). Sessions split on a >4h gap, same constant as vwap.ts. `mode: "cum"` compares the session's volume SO FAR against the same point in prior sessions, which is what makes a live partial bar read honestly instead of "quiet". `MIN_SAMPLES` 8, `MIN_SIGMA` 1e-6 (a repeated-value history leaves σ at ~1e-16 — dividing by it turns one share into z=1e15). Mirrored server-side by `backend/alerts/operands._vol_z_series` for daily bars. Tests: `npm run test:session`
+    ├── volume-events.ts         ← `classifyVolumeEvents(bars, cfg)` → `VolumeEvent[]`: volume as countable events rather than a series. Six types, one label per bar, priority `climax > vacuum > breakout > absorption > noDemand` (+ `dryUp`, run-based, emitted at the run's END and only when that bar is otherwise unlabelled). Every rule is a joint threshold on z (participation) × retSigma (result) × range/closePos (who won the bar). `dir` is **never a forecast** — which side owned the bar. `forwardReturnPct(bars, i, h)` is null past the data, deliberately (a 0 there biases every eye that reads the table). `EVENT_CODE` / `EVENT_NAME` / `EVENT_DOC` maps. Tests: `npm run test:session`
     ├── market-utils.ts / currency-utils.ts / time-utils.ts
     └── constants.ts             ← shared constants (ALL_COLS etc.)
 ```
@@ -165,6 +176,13 @@ components/bloomberg/
 | `chart/ChartWindowLayer.tsx` | `ChartWindowLayer` |
 | `chart/FloatingChartWindow.tsx` | `FloatingChartWindow` |
 | `chart/ChartPanel.tsx` | `ChartPanel`, `ChartPanelProps` |
+| `chart/bollinger-fit.ts` | `BOLLINGER_PERIOD_GRID`, `BOLLINGER_DEVIATION_GRID`, `BOLLINGER_FIT_MIN_BARS`, `BOLLINGER_FIT_PARAMS`, `calcBollingerStats`, `bollingerPercentB`, `evaluateBollingerBreakout`, `fitBollingerSharpe`, `resolveBollingerParameters`; types `BollingerStats`, `BollingerBacktest`, `BollingerFitCandidate`, `BollingerFitResult` |
+| `chart/indicators/atr.ts` | `createATR`, `calcAtrRegime`, `resolveAtrConfig`, `validAtrInputs`, `ATR_REGIME_PARAMS`, `ATR_REGIME_COLORS`; types `AtrRegimeConfig`, `AtrRegimePoint`. Public chart/indicator barrels re-export all except picker-only `validAtrInputs`. |
+| `chart/types.ts` (indicator points) | `SeriesDataPoint` accepts optional native line `color`; `WhitespaceDataPoint` supplies an explicit missing time; both are accepted by `IndicatorSeriesOutput.data`. |
+| `chart/IndicatorPicker.tsx` (ATR settings) | `INDICATOR → ATR Accumulation → APPLY ATR`; gear reopens raw BARS/DAYS inputs; colored chip and applied diagnostics share the chart calculator. |
+| `chart/BollingerFitSummary.tsx` | `BollingerFitSummary({data, costBps, colors})` |
+| `chart/IndicatorPicker.tsx` (Bollinger settings) | `data` prop must be the same immutable bars passed to ModularChart. BB/%B default Manual; Parameters → Fit + Apply opts in. Gear reopens raw persisted inputs; chips show effective n/k and Fit / unavailable status. `useChartIndicators.instantiate` adds transient `config.inputParams` to preserve DAYS inputs after reopening. |
+
 | `chart/DetachedChartWindow.tsx` | `DetachedChartWindow` |
 | `chart/TimeframeRow.tsx` | `TimeframeRow`, `IntervalPicker`, `TimeframeRowProps` |
 | `chart/useAnchoredPanel.ts` | `useAnchoredPanel()` → `{ open, setOpen, toggle, pos, wrapRef, triggerRef }` |
@@ -174,6 +192,9 @@ components/bloomberg/
 | `chartkit/` (lib ของเราเอง) | `buildLadder`, `nextWider`, `needsExtend`, `planExtend`, types `LogicalRange`/`TimeRange`/`ViewportSample`; `chartkit/adapters/lightweight-charts` → `watchLogicalRange`, `captureVisibleRange`, `applyVisibleRange`. **กฎ:** core บริสุทธิ์ (ห้าม import engine/React), engine อยู่ใน `adapters/` เท่านั้น — ดู `chartkit/README.md` |
 | `chart/ModularChart.tsx` (perf contract) | props `indicators`/`overlays`/`eventMarkers` = **โครงสร้าง** (ต้อง memo ที่ call site); `data` ไม่ใช่ — บาร์ใหม่ถูก push เข้า series เดิมผ่าน refill path, rebuild เฉพาะเมื่อ refill ทำไม่ได้ |
 | `chart/useWindowDrag.ts` | `useWindowDrag()` → `{ x, y, w, h, isGesturing, isResizing, beginDrag, beginResize }` |
+| `views/iv-smile-panel.tsx` | `IvSmilePanel`, `IvSmilePanelProps` — compact/expanded K vs IV%, Raw SVI/points/RMSE, multiple tenors; optional stacked Call/Put OI with separate contracts axis and selected-expiry control |
+| `hooks/useIvSmile.ts` | `useIvSmile(symbol, enabled)` — discovery + single/multiple expiry + optional fit queries; shared OI on/off and symbol-scoped expiry selection without new requests; guarded identity and refresh |
+| `lib/iv-smile.ts` | `buildIvSmile`, `buildIvSmileOi`, `chooseSmileExpiry`, `expiryDays`, `smileTenorDate`, `selectSmileTenors`, `smileSamples`, `sviIvAtStrike`, `smilePlotRows`, `SMILE_TENOR_MONTHS`; types `IvSmileOption`, `IvSmileChain`, `IvSmilePoint`, `IvSmileOiPoint`, `SmileSide`, `SmileFitMode`, `SviSample`, `RawSviParameters`, `RawSviFit`, `SviFitResponse`, `SmileTenor` |
 | `hooks/useTerminalUI.ts` | `useTerminalUI()` → `{ currentView, handleKeyPress, ... }` |
 | `layout/bloomberg-terminal.tsx` | `BloombergTerminal` (default) |
 | `layout/terminal-header.tsx` | `TerminalHeader` |
@@ -221,6 +242,17 @@ components/bloomberg/
 | `hooks/usePortfolioPrewarm.ts` | `usePortfolioPrewarm()` — 4s after terminal mount, on idle, fills the PORT caches so opening PORT paints from cache instead of a ~10s cold fetch chain |
 | `core/boot-screen.tsx` | `BootScreen` — loading fallback for the `dynamic(ssr:false)` terminal import; reloads once after 12s if the chunk never arrives (`sessionStorage["bloomberg_boot_retry_at"]` guards the loop), RETRY button after that |
 | `core/us-market-clock.tsx` | `UsMarketClock` — ET clock + session phase strip at the top of the TICK DATA board (presentation only) |
+| `views/stock/market-state/index.tsx` | `MarketStateTab` (props `symbol` `colors`) — the REGIME panel, mounted by BOTH `news/watchlist-tab.tsx` (panel toggle beside RATE STRESS) and `stock-view.tsx` (REGIME tab), exactly like `RateStressTab`, so the two entry points cannot drift. Six sub-tabs in reading order: SUMMARY (A) · REGIME (B, price + regime shading) · EVOLUTION (C, scores + d/dt) · PROBABILITY (D, stacked posterior) · STRATEGY (E, decision layer + walk-forward button) · DIAGNOSTICS (feature redundancy + model card). **Interpretation tabs come before the decision tab on purpose** — a reader must be able to reject the recommendation without rejecting the description |
+| `views/stock/dcf/index.tsx` | `DcfTab` (props `symbol` `colors`) — one shared component mounted in NEWS beside RATE STRESS and in stock-view. Sub-tabs: OVERVIEW · FORECAST · ASSUMPTIONS · SENSITIVITY · AUDIT; supports AUTO/manual model, Bear/Base/Bull, editable numeric assumptions and source lineage. |
+| `views/stock/dcf/types.ts` | `DcfModel`, `DcfScenario`, `DcfForecastRow`, `DcfLineageRow`, `DcfResponse` |
+| `views/stock/market-state/regime-runs.ts` | `toRuns()` + `Run` — collapses per-bar labels into contiguous runs for the chart's `<ReferenceArea>` bands (one rect per RUN, not per bar) and makes regime DURATION visible. Kept out of the `.tsx` because node's type stripping cannot load JSX. Tests: `npm run test:views` |
+| `views/stock/market-state/SummarySubTab.tsx` | `SummarySubTab`, `fmtProb` (never prints 100% for a posterior — ">99%") |
+| `views/stock/market-state/types.ts` | `MarketStateResponse` `ValidationResponse` `StateSlice` `ScoreBlock` `StrategyItem` `RedundancyReport` |
+| `lib/volume-stats.ts` | `volumeZ()` `volumeRatio()` `median()` `mean()` `madSigma()` `stdev()` `isIntraday()` + `MIN_SAMPLES` `SESSION_GAP_SEC`; types `VolumeBar` `VolBaseline` (`"median"｜"mean"`) `VolMode` (`"bar"｜"cum"`) `VolStatsOpts` |
+| `lib/volume-events.ts` | `classifyVolumeEvents()` `forwardReturnPct()` `EVENT_CODE` `EVENT_NAME` `EVENT_DOC`; types `EventBar` `VolumeEvent` `VolumeEventType` (`climax｜absorption｜vacuum｜breakout｜noDemand｜dryUp`) `VolumeEventConfig` |
+| `chart/volume-event-overlay.ts` | `createVolumeEventOverlay()` `resolveCollisions()` `EVENT_COLOR`; type `PlacedChip` |
+| `chart/VolumeEventPanel.tsx` | `VolumeEventPanel` (props `data` `colors` `height`) |
+| `chart/indicators/rvol.ts` | `createRVOL` + `RVOL_SCALES` `RVOL_BASELINES` `RVOL_MODES` (select options re-exported through `indicators/index.ts` for the registry) |
 | `lib/us-market-session.ts` | `computeSession` `fmtClock` `fmtCountdown` + `NYSE_HOLIDAYS` `NYSE_HALF_DAYS` — pure session maths, no React. **US markets have no lunch break**; the model is pre/regular/after + 13:00 ET half-days. Tests: `npm run test:session` (21) |
 | `views/macro-view.tsx` | `MacroView` (default) |
 | `views/rotation-tab.tsx` | `RotationTab` (default) |
@@ -293,3 +325,35 @@ Things that will bite:
 - **`fmtQuote(symbol, n)`** decides the unit in the chart panel: `%` for `^IRX/^FVX/^TNX/^TYX`,
   `fmtFxPrice` for `*=X` (5 dp, 3 dp for JPY crosses), `$` otherwise. `/api/stock` serves both
   `EURUSD=X` and `^TNX` directly — verified, no special-casing needed in `useStockHistory`.
+
+## Bollinger Fit — 2026-09-13
+
+- MKT, stock analysis and shared `ChartPanel` (floating/detached windows) all pass chart bars into the picker. Factories and diagnostics share one calculator; enabling BB and %B with equal costs fits identical parameters.
+- `period` / `stdDev` remain manual fallbacks. Fit always searches **bars**, regardless of global DAYS/BARS input setting. Mode and cost persist in the existing `chart:indicator-specs` atom; the selected n/k and fitted returns never persist across symbols or datasets.
+- Uses all loaded history, not only the visible viewport. Search recomputes when the dataset/cost changes; cash rate and risk-free rate are zero and Sharpe is **per bar**, without an annualization calendar assumption. The last candle is conservatively excluded. Minimum 201 input bars; first 100 are warmup; remaining closed bars split chronologically 70/30. At least 3 completed training trades and finite nonzero return SD qualify a candidate. Ties select smaller n, then k; negative best scores remain negative.
+- Manual chart behavior is preserved when fitting is unavailable, with a visible `FIT N/A · MANUAL` chip and reason in settings. Historical fitted bands redraw using the winning parameters, so the display is not a walk-forward signal history.
+- `alerts/quickAlerts.ts` omits fitted BB/%B from the active-chart suggestions because the daily alert backend cannot reproduce a chart-local fit. Fixed-parameter alert catalog/custom rules remain available. `quickAlerts.ts` and `customCondition.ts` exclude `fitCostBps` from signal params.
+
+
+## ATR Accumulation Pane — 2026-09-13
+
+- Optional registry entry `atr-regime` in Volatility. Stable pane ID preserves pane identity when settings change. Available through the shared picker/hook in MKT, stock analysis and chart windows; default indicator specs are unchanged.
+- Defaults: Wilder ATR14, prior ATR% baseline50, limit1.0, trend EMA50, slope span5, display `percent`. `ATR% = 100 × ATR / close`. First TR uses high-low; later TR includes gaps from previous close. ATR and EMA use full-window SMA seeds.
+- Green (`accumulate`) requires ATR% <= the **previous** lookback ATR% SMA × limit AND close > EMA AND EMA > its value slope-bars ago. Red (`avoid`) means the complete-data rule is false. Gray (`unknown`) covers incomplete history/invalid HLC and zero baseline. With default BARS settings the first possible classification is the 64th valid bar; ATR values exist earlier and draw gray.
+- The thin gray threshold line uses ATR% units by default. In absolute display it is converted with current close (`thresholdPercent × close / 100`), so threshold crossings agree with the same normalized classification.
+- Window lengths follow the shared BARS/DAYS setting; ratio and display do not scale. `config.inputParams` retains raw spec values for gear edits, while calculator config receives bar counts. Applying changes replaces the existing ATR pane.
+- Calculator is O(N), cached by immutable OHLCV array/settings. It uses only current/past bars, so appending future bars preserves existing values. A forming candle can change until close; prepending older history can change recursive seeds. Invalid HLC resets ATR/EMA; explicit `{time}` whitespace retains missing timestamps, while a transparent outgoing segment before each gap prevents the native renderer from joining across it.
+- Colors describe the user's configurable low-volatility/uptrend filter, not observed institutional accumulation. This entry has no backend alert outputs or alert labels; it must not be offered as a backend-evaluated operand.
+
+
+## MKT REGIME IV Smile — 2026-09-13
+
+- **OI overlay (2026-09-13):** OI OFF/ON (defaultOFF), stacked Call cyan/Put amber contracts on right `oi` axis, every IV/SVI line on left `iv` axis. ComposedChart shares numeric K grid; custom centered3px compact/5px expanded rectangles keep OI visible despite dense SVI samples. Tooltip uses contracts for OI and% for IV. One labeled actual expiry is shown at a time, selected among active maturities in MULTI; removed expiry/new symbol safely falls back to first selected expiry. OI totals/P-C reflect selected K range and all contracts regardless of IV/quote filter; unknowns show PARTIAL/unavailable. No extra fetch or refit for OI toggles/expiry selection. Current reported OI only, no daily history. OI can draw when IV has too few points, with explicit insufficient-IV note. Shared compact/expanded hook state, no new persistence.
+
+- `market-view.tsx` passes its main-chart `selectedSymbol` to `SectorRegimeHeatmap`. The lower-left REGIME adds **IV** alongside CORR/GEOM/ROT and also in its expanded modal. It follows main MKT chart selection (watchlist, symbol GO or tick row); floating-window focus does not replace the main chart symbol.
+- `views/iv-smile-panel.tsx` keeps numeric `K (strike)` X, `IV (%)` Y and S reference. FIT defaults OFF (observed quotes); Raw SVI is optional. Single-expiry Call cyan/Put amber; multi-expiry color identifies maturity and Put is dashed. Call+Put, Call, Put or OTM selector (OTM uses put below S, call at/above S, never substitutes missing quotes from ITM side). POINTS toggles original observations over fitted lines; unavailable fits keep their observed dots visible. OFF joins actual observations, and missing quotes never become zeros.
+- `hooks/useIvSmile.ts` uses existing `/api/options?symbol=&expiry=` only while IV is active. Discovery provides expirations; single default is nearest30 days preferring >=7 DTE. MULTI selects nearest actual expiries to calendar targets 1/3/5/7/9 months, clamps month-end, requires >=7 DTE and max45-day distance, deduplicates shared expiries, labels actual date/DTE with ≈. Month buttons select at least one. Queries reuse `options/chain/symbol/expiry` cache (5min); cancellation and symbol+expiry identity guards prevent stale plots. Per-expiry errors do not remove other available slices.
+- Raw SVI fits request `/api/options/smile-fit` only when selected, S>0 and T>0; keys include symbol/expiry/chain dataUpdatedAt/range/quality/side/T. Fits use displayed observations only. `smilePlotRows` makes a shared numeric K grid for aligned tooltips, evaluates each fit only inside its observed strike span and preserves raw dots at exact quoted strikes. Show per-series RMSE (IV percentage points), sample counts via tooltip, and expandable `a,b,rho,m,sigma` or unavailable reason. Positive total variance alone does not guarantee an arbitrage-free surface; UI details say so. Use k=ln(K/S), ACT/365 date-only T because Yahoo does not supply a reliable forward. This is descriptive curve fitting, not a trading signal.
+- Expiry/range/quality/fit/points/side/multi/month state is shared across compact and expanded views, without new localStorage keys. Symbol changes reset single expiry to the preferred maturity; other display preferences remain. Range defaults to K±25% (±50% and ALL K available). QUOTED requires positive bid and finite ask>=bid; ALL IV includes unquoted rows. IV<=0.0001/nonfinite stays missing. Chart requires >=3 distinct strikes; SVI requires >=8 per series and log-strike span>=0.05. 0DTE or missing S keeps observed quotes only.
+- No options (HTTP404), loading, errors, unexpired-data absence and too few valid points have explicit UI states. Footer displays provider delay (metadata says ~15min) and fetched-at tooltip; this timestamp is not a quote/trade timestamp. Current chain only, no historical strike-level smile.
+- CORR/GEOM queries and trend strip are disabled/hidden for IV and ROT. The matrix ResizeObserver reattaches when returning to a matrix view after its DOM was unmounted. Existing hydration-safe mode persistence also accepts `iv`.

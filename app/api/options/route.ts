@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 
 import { PYTHON_API } from "@/lib/constants";
 
@@ -19,7 +19,13 @@ export async function GET(req: NextRequest) {
       signal: AbortSignal.timeout(30_000),
       cache: "no-store",
     });
-    if (!res.ok) throw new Error(`Backend ${res.status}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return NextResponse.json(
+        { error: typeof body.detail === "string" ? body.detail : `Backend ${res.status}` },
+        { status: res.status }
+      );
+    }
     return NextResponse.json(await res.json());
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 502 });

@@ -40,12 +40,13 @@ BOT data path:
              → BOT API (gateway.api.bot.or.th) — each category has its own token
 ```
 
-## 27 Backend Routers (all in `backend/routers/`)
+## Backend Routers (all in `backend/routers/`)
 
 | Router | Prefix | Source |
 |--------|--------|--------|
 | market.py | /api/market-data, /api/heatmap | yfinance |
 | stock.py | /api/stock/* | yfinance |
+| dcf.py | /api/dcf/* | yfinance statements/quotes + pure `analytics/dcf.py` |
 | options.py | /api/options/*, positions + Greeks | yfinance + greeks.py |
 | pins.py | /api/pins/* | SQLite |
 | clippings.py | /api/clippings/* | filesystem + Ollama |
@@ -123,10 +124,13 @@ BOT data path:
 - `backend/greeks.py` — Black-Scholes + Gram-Charlier fat-tail Greeks (added 2026-06-03); see memory/reports/options-greeks-math-report.md
 - `backend/providers/` — OptionsProvider abstraction: `base_options.py` (abstract class + DataFreshness + OptionContract), `yahoo_options.py`. Swap by changing 1 line in options.py:26
 - `backend/analytics/` — Signal computation modules (imported by routers, NOT mounted directly):
+  - `dcf.py` — deterministic adaptive valuation engine (2026-09-13): 3-stage FCFF, revenue→FCFF, FCFE, excess-return, AFFO and normalized-cycle adapters; Bear/Base/Bull transforms, terminal-growth guard, valuation bridge and 5×5 sensitivity. It receives normalized inputs only and performs no provider/network work.
   - `layer_a.py`, `layer_b.py`, `layer_c.py`, `confluence.py` — Equity Allocation Signal (3-layer)
   - `country_rotation.py` — Country Equity Rotation scoring (14 ETFs)
   - `sector_bc.py` (business cycle), `sector_mom.py` (momentum), `sector_val.py` (valuation), `sector_factor.py` (macro APT), `sector_confluence.py` — Sector Selection Signal (11 SPDR ETFs)
   - `regime_calibration.py` — Regime Detection calibration math
+  - `market_state/` — **per-symbol** latent-state model (2026-09-13), distinct from `regime_v2.py` which is market-wide. `features.py` (5 model features + 7 candidates kept only for the redundancy report) · `hmm.py` (Gaussian HMM + `filtered_posterior`, a ONE-PASS forward recursion that equals hmmlearn's prefix `predict_proba` to 1e-9 — same causal quantity `regime_v2` gets from O(n) forward-backward passes, verified in `tests/test_market_state.py`; archetype naming via Hungarian assignment so two states can never share a name) · `scores.py` (Trend/Momentum/Volatility + derivatives, tanh not clip) · `interpret.py` (the sentence; knows nothing about trading) · `strategy.py` (the decision layer; knows nothing about phrasing) · `validate.py` (walk-forward refit, overlap-adjusted t). **Interpretation and decision are separate modules on purpose** — see the package docstring
+  - `svi.py` — optional Raw SVI smile slices: supplied percentage IV → total variance, deterministic multistart SciPy soft-L1 fit with positive minimum variance; parameters + IV RMSE and explicit unavailable states. `POST /api/options/smile-fit` runs in FastAPI's threadpool with a bounded payload cache. `GET /api/options/{symbol}` also uses the threadpool for independent multi-expiry Yahoo calls. No new provider, package or database schema.
 - `backend/tests/` — 58 unit tests (pytest): `test_greeks.py` (BS price/GC correction/Greeks/moments), `test_sec_api.py` (10 SEC legacy endpoints), `conftest.py` (sys.path setup)
 - `.github/workflows/tests.yml` — CI/CD on push/PR to main: `backend-tests` (Python 3.11 → pytest) + `frontend-typecheck` (Node 20 → tsc --noEmit)
 - `backend/routers/bot.py` — BOT API: bond auctions + interest rates + FX + statistics; uses `_bot_get()` + `_cached()` helpers

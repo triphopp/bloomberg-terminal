@@ -291,6 +291,7 @@ export function ChartPanel({
             style={{ borderBottom: `1px solid ${colors.border}` }}
           >
             <IndicatorPicker
+              data={ohlcv}
               colors={colors}
               activeIndicators={indicators}
               onAdd={addIndicator}

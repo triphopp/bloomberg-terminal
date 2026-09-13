@@ -67,6 +67,7 @@ import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import { displayName, displaySymbol } from "../lib/symbol-display";
 import { bloombergColors } from "../lib/theme-config";
 import { OptionsTab } from "./options-tab";
+import { DcfTab } from "./stock/dcf";
 import { MarketStateTab } from "./stock/market-state";
 import { RateStressTab } from "./stock/rate-stress";
 
@@ -162,6 +163,7 @@ type AnalysisTab =
   | "quality"
   | "grid"
   | "strategy-fit"
+  | "dcf"
   | "rate-stress"
   | "market-state";
 
@@ -4959,6 +4961,7 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                     style={{ color: colors.textSecondary }}
                   >
                     <IndicatorPicker
+                      data={ohlcvData}
                       colors={colors}
                       activeIndicators={chartIndicators}
                       onAdd={addChartIndicator}
@@ -5264,6 +5267,7 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                 { id: "quality", label: "EARNINGS QUALITY" },
                 { id: "grid", label: "GRID TRADING" },
                 { id: "strategy-fit", label: "STRATEGY FIT" },
+                { id: "dcf", label: "DCF" },
                 { id: "rate-stress", label: "RATE STRESS" },
                 { id: "market-state", label: "REGIME" },
               ] as { id: AnalysisTab; label: string }[]
@@ -5292,6 +5296,9 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
               activeSymbol={activeSymbol}
               colors={colors}
             />
+          )}
+          {analysisTab === "dcf" && activeSymbol && (
+            <DcfTab symbol={activeSymbol} colors={colors} />
           )}
           {analysisTab === "rate-stress" && activeSymbol && (
             <RateStressTab symbol={activeSymbol} colors={colors} />
