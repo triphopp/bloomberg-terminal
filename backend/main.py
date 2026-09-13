@@ -60,6 +60,7 @@ from analytics.regime_v2 import ensure_v2_fresh
 from analytics.bc_calibration import ensure_calibrated
 from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, ir_stress, market_state, dcf
 import sync
+from sources.errors import UpstreamRateLimited, is_rate_limit
 from sync.gate import is_synced_write, should_gate
 from alerts import scheduler as alert_scheduler
 import iv_scheduler
@@ -202,9 +203,29 @@ async def _http_exception_handler(request: Request, exc: StarletteHTTPException)
     )
 
 
+def _rate_limited_response(request: Request, exc: BaseException) -> JSONResponse:
+    """A vendor throttle is not our failure — say so, with something actionable.
+
+    Most rate limits are converted at the source layer (see
+    sources/yfinance_source._RateLimitAwareTicker) and never reach here. This
+    catches the paths that bypass a Ticker entirely — `yf.download` called
+    directly inside an analytics module, for instance — so no code path can
+    report a throttle as an internal error.
+    """
+    logger.warning("%s %s -> upstream rate limit: %s", request.method, request.url.path, exc)
+    err = UpstreamRateLimited("Yahoo Finance")
+    return JSONResponse(status_code=err.status_code, content={"detail": err.detail},
+                        headers=err.headers)
+
+
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception):
     """Catch-all for uncaught exceptions — log full trace, return generic 500."""
+    # A throttle reaching this point would be logged as an unhandled error and
+    # returned as "Internal server error", which is the exact confusion this
+    # module exists to remove.
+    if is_rate_limit(exc):
+        return _rate_limited_response(request, exc)
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 

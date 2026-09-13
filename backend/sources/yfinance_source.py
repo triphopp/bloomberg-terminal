@@ -13,6 +13,8 @@ from typing import Optional
 import pandas as pd
 import yfinance as yf
 
+from .errors import UpstreamRateLimited, is_rate_limit, note_rate_limit
+
 from .base import MarketDataSource
 from .models import (
     QuoteSnapshot,
@@ -34,8 +36,56 @@ from .models import (
 # Do NOT inject a custom session: yfinance already reuses one connection pool
 # internally (singleton YfData) and *requires* a curl_cffi session — passing a
 # plain requests.Session raises YFDataException. Let yfinance manage it.
+class _RateLimitAwareTicker:
+    """Wraps a yfinance Ticker so a vendor throttle surfaces as a 429.
+
+    A Ticker is lazy: `.info`, `.options` and `.option_chain` each fetch on
+    access, so a rate limit is raised inside whatever router touched the
+    attribute — far from anything the source layer could wrap around the call
+    that handed the Ticker out. This proxy is the one place that sees all of
+    those accesses, which is why the conversion lives here instead of in the
+    twelve modules that use a Ticker.
+
+    Anything that is not a throttle propagates untouched. A wrapper that
+    swallowed real errors would be worse than the problem it fixes.
+    """
+
+    __slots__ = ("_ticker", "_symbol")
+
+    def __init__(self, ticker, symbol: str):
+        object.__setattr__(self, "_ticker", ticker)
+        object.__setattr__(self, "_symbol", symbol)
+
+    def __getattr__(self, name: str):
+        ticker = object.__getattribute__(self, "_ticker")
+        symbol = object.__getattribute__(self, "_symbol")
+        try:
+            value = getattr(ticker, name)
+        except Exception as exc:
+            if is_rate_limit(exc):
+                note_rate_limit()
+                raise UpstreamRateLimited("Yahoo Finance", symbol) from exc
+            raise
+        if not callable(value):
+            return value
+
+        def _guarded(*args, **kwargs):
+            try:
+                return value(*args, **kwargs)
+            except Exception as exc:
+                if is_rate_limit(exc):
+                    note_rate_limit()
+                    raise UpstreamRateLimited("Yahoo Finance", symbol) from exc
+                raise
+
+        return _guarded
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<RateLimitAwareTicker {object.__getattribute__(self, '_symbol')}>"
+
+
 def _ticker(symbol: str):
-    return yf.Ticker(symbol)
+    return _RateLimitAwareTicker(yf.Ticker(symbol), symbol)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────────

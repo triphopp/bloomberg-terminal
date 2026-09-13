@@ -501,6 +501,11 @@ def get_sector_detail(etf: str = Query("XLK"), limit: int = Query(10)):
                     })
         info = market_data.get_info(etf)
         sector_name = info.get("shortName") or info.get("longName", etf.upper())
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         print(f"[sector-detail] holdings for {etf}: {exc}")
 

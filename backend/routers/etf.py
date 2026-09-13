@@ -86,6 +86,10 @@ def etf_info(symbol: str):
         }
         _etf_cache.set(cache_key, data)
         return data
+    except HTTPException:
+        # A 429 from the source layer is a vendor throttle, not our failure —
+        # re-raise it so it is not relabelled as an internal error below.
+        raise
     except Exception as exc:
         print(f"[etf] {symbol}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))

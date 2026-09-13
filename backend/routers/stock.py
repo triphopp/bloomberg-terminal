@@ -736,6 +736,11 @@ def stock_history(symbol: str, period: str = "1y", interval: str = ""):
         _stock_cache.set(cache_key, data)
         return data
 
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         print(f"[history] {symbol}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -777,6 +782,11 @@ def stock_financials(symbol: str):
         _stock_cache.set(cache_key, data)
         return data
 
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         print(f"[financials] {symbol}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -798,6 +808,11 @@ def stock_balance_sheet(symbol: str):
         data = {"annual": ann, "quarterly": qtr}
         _stock_cache.set(cache_key, data)
         return data
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         print(f"[balance-sheet] {symbol}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -886,6 +901,11 @@ def stock_dividends(symbol: str):
         }
         _stock_cache.set(cache_key, data)
         return data
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         print(f"[dividends] {symbol}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -943,6 +963,11 @@ def stock_analyst(symbol: str):
         }
         _stock_cache.set(cache_key, data)
         return data
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         print(f"[analyst] {symbol}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -1004,6 +1029,11 @@ def stock_estimates(symbol: str):
 
         _stock_cache.set(cache_key, data)
         return data
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         print(f"[estimates] {symbol}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -1083,6 +1113,11 @@ def stock_ownership(symbol: str):
         }
         _stock_cache.set(cache_key, data)
         return data
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         print(f"[ownership] {symbol}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -1113,6 +1148,11 @@ def stock_earnings_calendar(symbol: str):
         data = {"earningsDates": dates}
         _stock_cache.set(cache_key, data)
         return data
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         print(f"[earnings-calendar] {symbol}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -1223,6 +1263,11 @@ def stock_pe_history(symbol: str):
         _stock_cache.set(cache_key, data)
         return data
 
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         print(f"[pe-history] {symbol}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -1252,6 +1297,11 @@ def stock_sec_filings(symbol: str):
         data = {"filings": filings}
         _stock_cache.set(cache_key, data)
         return data
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         print(f"[sec-filings] {symbol}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -1320,6 +1370,11 @@ def stock_ratios(symbol: str):
         }
         _stock_cache.set(cache_key, data)
         return data
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         print(f"[ratios] {symbol}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -1358,6 +1413,11 @@ def stock_management(symbol: str):
         }
         _stock_cache.set(cache_key, data)
         return data
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         print(f"[management] {symbol}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))

@@ -321,6 +321,11 @@ def get_watchlist_signals(
 
     try:
         frames = _download(sym_list)
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         logger.exception("watchlist signal download failed")
         raise HTTPException(status_code=502, detail=f"Price download failed: {exc}")

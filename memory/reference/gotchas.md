@@ -1214,3 +1214,40 @@ console.error = (...a) => { if (String(a[0]).includes("Maximum update depth")) w
 รายละเอียด + วิธีแก้: `memory/reports/news-watchlist-render-loop-risk-report.md` (ยังไม่แก้ — นอก scope)
 
 ---
+
+## Rate limit ของ vendor ถูกรายงานเป็น "Internal server error" (fixed 2026-09-13)
+
+**อาการ:** UI ขึ้น `Could not load MSFT IV. Internal server error` เหมือนโค้ดพัง ทั้งที่ไม่มีอะไรพัง
+
+**สาเหตุ:** สองชั้นที่ทำงานถูกต้องทั้งคู่ แต่รวมกันแล้วให้ผลผิด
+
+1. `routers/*.py` จับ `except Exception` แล้วโยนเป็น **500** — รวมถึง `YFRateLimitError`
+2. `main.py` handler เห็น ≥500 เลยแทนข้อความด้วย `"Internal server error"` (ถูกต้อง — กัน internal path รั่ว)
+
+ผลคือ **เรื่องชั่วคราวของ upstream ถูกรายงานว่าเป็นความผิดพลาดภายในระบบเรา** ข้อความจริงอยู่แค่ใน log
+ฝั่งผู้ใช้จึงไม่มีทางรู้ว่าต้องแค่รอ ไม่ใช่ไปหาบั๊ก
+
+**Fix:** `sources/errors.py` — `UpstreamRateLimited(HTTPException)` status **429** + `Retry-After`
+429 อยู่ต่ำกว่า 500 ข้อความจึงผ่าน handler กลางไปถึง client ได้
+
+จุดแปลง 3 ชั้น:
+- `sources/yfinance_source._RateLimitAwareTicker` — Ticker เป็น lazy (`.info` / `.options` /
+  `.option_chain` ยิงตอนเข้าถึง) error จึงโผล่ใน router ไม่ใช่ใน source layer proxy จึงเป็นที่เดียว
+  ที่เห็นทุก access
+- `main.py::_rate_limited_response` — ตาข่ายรับสำหรับ path ที่ไม่ผ่าน Ticker (`yf.download` ตรงๆ)
+- guard `except HTTPException: raise` ก่อน `except Exception` ใน 7 router (19 จุด) —
+  ไม่งั้น 429 จะถูก relabel เป็น 500/422/404
+
+**กับดักที่สอง — throttled into silence:** yfinance บางครั้งตอบ **list ว่าง** แทนที่จะ raise
+ทำให้ `if not expirations → 404 "No options available for MSFT"` ซึ่งผิดพอๆ กัน (MSFT มี option แน่นอน)
+แก้ด้วย `note_rate_limit()` / `recently_rate_limited()` — ถ้าเพิ่งโดน throttle ภายใน 45 วิ
+ให้ตีความ "ว่าง" เป็น 429 แทน 404 heuristic นี้**อัปเกรดเฉพาะผลลัพธ์ที่ว่าง** ไม่แตะผลที่มีข้อมูล
+จึงบังข้อมูลจริงไม่ได้ และ window (45s) สั้นกว่า `Retry-After` (60s) เพื่อให้หุ้นที่ไม่มี option จริง
+กลับไปเป็น 404 ก่อนที่ client จะ retry
+
+**กฎ:** error ของ upstream ที่ retry ได้ ห้ามเป็น 5xx — 5xx แปลว่า "ระบบเราพัง" ซึ่งสื่อสารผิด
+และทำให้ข้อความที่ช่วยได้ถูกกรองทิ้ง
+
+Tests: `backend/tests/test_upstream_rate_limit.py` (12 เคส)
+
+---

@@ -588,6 +588,10 @@ def export_portfolio_to_obsidian(req: PortfolioExportRequest):
         filepath = portfolio_dir / "holdings.md"
         filepath.write_text("\n".join(lines), encoding="utf-8")
         return {"success": True, "path": str(filepath)}
+    except HTTPException:
+        # A 429 from the source layer is a vendor throttle, not our failure —
+        # re-raise it so it is not relabelled as an internal error below.
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

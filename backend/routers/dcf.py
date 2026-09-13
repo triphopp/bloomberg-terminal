@@ -124,6 +124,11 @@ def _normalize_inputs(symbol: str) -> dict[str, Any]:
     ticker = market_data.get_ticker(symbol)
     try:
         info = ticker.info or {}
+    except HTTPException:
+        # Already a deliberate response — a 429 from the source layer means the
+        # vendor is throttling us, and relabelling it below would report a
+        # transient upstream limit as our own failure.
+        raise
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Company data unavailable for {symbol}") from exc
 
