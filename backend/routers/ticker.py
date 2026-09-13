@@ -9,6 +9,7 @@ All data reused from existing caches — zero extra yfinance calls.
 """
 from __future__ import annotations
 
+import atexit
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -48,6 +49,37 @@ _refresh_lock = threading.Lock()
 _inflight: set[str] = set()
 _last_attempt: dict[str, float] = {}
 _build_locks: dict[str, threading.Lock] = {}
+
+# Set once the process is on its way out. Every background thread here is a
+# daemon, so the interpreter will not wait for it — and a daemon caught part-way
+# through building a ThreadPoolExecutor during shutdown does not fail politely:
+# Python raises "cannot schedule new futures after interpreter shutdown" and the
+# process aborts with a core dump (seen in CI, after the whole suite had passed).
+# So: refuse to start new work once this is set, and give whatever is already
+# running a moment to unwind.
+_stopping = threading.Event()
+_threads: set[threading.Thread] = set()
+
+
+def _shutdown() -> None:
+    _stopping.set()
+    with _refresh_lock:
+        live = [t for t in _threads if t.is_alive()]
+    for t in live:
+        t.join(timeout=2)
+
+
+atexit.register(_shutdown)
+
+
+def _start(target, name: str) -> None:
+    """Start a tracked daemon thread, unless the process is already stopping."""
+    if _stopping.is_set():
+        return
+    thread = threading.Thread(target=target, name=name, daemon=True)
+    with _refresh_lock:
+        _threads.add(thread)
+    thread.start()
 
 
 def _build_lock_for(key: str) -> threading.Lock:
@@ -306,6 +338,12 @@ def _build_ticker(account_id: str) -> tuple[dict, bool]:
         "alerts":     lambda: _fetch_alerts(account_id),
     }
     out: dict[str, object] = {}
+    if _stopping.is_set():
+        return {
+            "items": [], "alerts": [], "has_critical": False,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "stale": False, "degraded": True,
+        }, True
     with ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="ticker") as pool:
         futures = {name: pool.submit(fn) for name, fn in jobs.items()}
         for name, fut in futures.items():
@@ -381,8 +419,9 @@ def _spawn_refresh(key: str, account_id: str) -> None:
         finally:
             with _refresh_lock:
                 _inflight.discard(key)
+                _threads.discard(threading.current_thread())
 
-    threading.Thread(target=run, name=f"ticker-refresh-{account_id}", daemon=True).start()
+    _start(run, f"ticker-refresh-{account_id}")
 
 
 def prewarm(account_id: str = "all") -> None:
@@ -407,8 +446,11 @@ def prewarm(account_id: str = "all") -> None:
             print(f"[ticker] prewarm done in {time.monotonic() - t0:.1f}s")
         except Exception as e:
             print(f"[ticker] prewarm failed: {e}")
+        finally:
+            with _refresh_lock:
+                _threads.discard(threading.current_thread())
 
-    threading.Thread(target=run, name="ticker-prewarm", daemon=True).start()
+    _start(run, "ticker-prewarm")
 
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────

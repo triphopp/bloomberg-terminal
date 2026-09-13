@@ -5,6 +5,7 @@ swallows its own errors and returns empty, and the empty result was cached
 like any other, so one upstream 429 blanked the crawl for a full minute.
 These cover the three rules that replaced that.
 """
+import threading
 import time
 
 import pytest
@@ -102,3 +103,82 @@ def test_fresh_window_sits_under_the_frontend_poll():
     # next request arrived, so nearly every poll paid the full cold fan-out.
     assert tk.FRESH_TTL < 90, "frontend polls /api/ticker every 90s"
     assert tk.FRESH_TTL < tk.STALE_TTL
+
+
+# ── Process shutdown ──────────────────────────────────────────────────────────
+# The whole suite passed and the process then aborted with a core dump:
+#   [ticker] heatmap commodities error: cannot schedule new futures after
+#            interpreter shutdown
+#   terminate called without an active exception
+# One test does `import main` for a single helper, which used to fire the
+# prewarm at module scope. Its daemon thread outlived the suite and was still
+# building thread pools while the interpreter tore itself down.
+
+
+def test_prewarm_hangs_off_the_lifespan_not_module_scope():
+    """Read main.py rather than importing it: importing runs the sync pull and
+    three schedulers, and re-running those to prove a point about side effects
+    would be the same mistake in a smaller font."""
+    import ast
+    import pathlib
+
+    source = pathlib.Path(__file__).resolve().parents[1] / "main.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+
+    def calls_prewarm(node) -> bool:
+        return any(
+            isinstance(n, ast.Attribute)
+            and n.attr == "prewarm"
+            and isinstance(n.value, ast.Name)
+            and n.value.id == "ticker"
+            for n in ast.walk(node)
+        )
+
+    module_level = [n for n in tree.body if isinstance(n, ast.Expr)]
+    assert not any(calls_prewarm(n) for n in module_level), (
+        "ticker.prewarm() at module scope means `import main` pulls the market"
+    )
+
+    lifespans = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "lifespan"
+    ]
+    assert lifespans, "main.py has no lifespan to hang startup work off"
+    assert calls_prewarm(lifespans[0]), "the lifespan should be what warms the ticker"
+
+
+def test_no_new_work_starts_once_the_process_is_stopping(monkeypatch):
+    monkeypatch.setattr(tk._stopping, "is_set", lambda: True)
+    started: list[threading.Thread] = []
+    monkeypatch.setattr(
+        threading, "Thread", lambda **kw: started.append(kw) or pytest.fail("started a thread")
+    )
+    tk._start(lambda: None, "should-not-run")
+    assert started == []
+
+
+def test_a_build_during_shutdown_reports_degraded_without_a_pool(monkeypatch):
+    """`ThreadPoolExecutor` raises at shutdown; the abort came from building one
+    anyway. The build has to answer without touching a pool."""
+    monkeypatch.setattr(tk._stopping, "is_set", lambda: True)
+
+    def boom(*a, **kw):
+        raise AssertionError("must not build a thread pool while stopping")
+
+    monkeypatch.setattr(tk, "ThreadPoolExecutor", boom)
+    payload, degraded = tk._build_ticker("all")
+    assert degraded is True
+    assert payload["items"] == []
+
+
+def test_shutdown_joins_the_threads_it_started():
+    done = threading.Event()
+    tk._start(lambda: done.wait(5), "ticker-test-join")
+    try:
+        assert any(t.name == "ticker-test-join" for t in tk._threads)
+    finally:
+        done.set()
+    tk._shutdown()
+    assert not any(t.is_alive() for t in tk._threads if t.name == "ticker-test-join")
+    tk._stopping.clear()  # other tests still need to start threads
