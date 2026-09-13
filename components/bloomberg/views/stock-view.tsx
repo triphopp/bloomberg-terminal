@@ -67,6 +67,7 @@ import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import { displayName, displaySymbol } from "../lib/symbol-display";
 import { bloombergColors } from "../lib/theme-config";
 import { OptionsTab } from "./options-tab";
+import { MarketStateTab } from "./stock/market-state";
 import { RateStressTab } from "./stock/rate-stress";
 
 // ─── Pin helpers (shared with global-search) ─────────────────────────────────────
@@ -161,7 +162,8 @@ type AnalysisTab =
   | "quality"
   | "grid"
   | "strategy-fit"
-  | "rate-stress";
+  | "rate-stress"
+  | "market-state";
 
 type FinancialBar = { label: string; value: number | null };
 
@@ -5263,6 +5265,7 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                 { id: "grid", label: "GRID TRADING" },
                 { id: "strategy-fit", label: "STRATEGY FIT" },
                 { id: "rate-stress", label: "RATE STRESS" },
+                { id: "market-state", label: "REGIME" },
               ] as { id: AnalysisTab; label: string }[]
             ).map(({ id, label }) => (
               <button
@@ -5292,6 +5295,9 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
           )}
           {analysisTab === "rate-stress" && activeSymbol && (
             <RateStressTab symbol={activeSymbol} colors={colors} />
+          )}
+          {analysisTab === "market-state" && activeSymbol && (
+            <MarketStateTab symbol={activeSymbol} colors={colors} />
           )}
           {analysisTab === "outlook" && activeSymbol && (
             <CompanyOutlookPanel symbol={activeSymbol} colors={colors} />
