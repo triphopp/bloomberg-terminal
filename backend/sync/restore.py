@@ -29,7 +29,15 @@ def _upsert(conn: sqlite3.Connection, table: str, pk: list[str], rows: list[dict
         return 0
     applied = 0
     for row in rows:
-        cols = list(row.keys())
+        # A surrogate `id` must never cross devices. When the merge key is
+        # something else (trade_audit_log keys on the uuid `event_id`, not on
+        # its AUTOINCREMENT id), sending the peer's id inserts a value that
+        # collides with a DIFFERENT local row — the peer's id 7 is not our id 7
+        # — and ON CONFLICT(event_id) cannot catch a collision on id. Dropping
+        # the column lets SQLite assign a fresh local id, which is what a
+        # surrogate key is for. Tables whose natural key IS `id` (trades,
+        # transactions, paper_option_positions) keep it.
+        cols = [c for c in row.keys() if not (c == "id" and "id" not in pk)]
         collist = ", ".join(cols)
         placeholders = ", ".join("?" for _ in cols)
         conflict = ", ".join(pk)
@@ -53,8 +61,14 @@ def _upsert(conn: sqlite3.Connection, table: str, pk: list[str], rows: list[dict
         try:
             cur = conn.execute(sql, [row[c] for c in cols])
             applied += cur.rowcount or 0
-        except sqlite3.OperationalError:
-            # column/shape drift between schema versions — skip this row
+        except (sqlite3.OperationalError, sqlite3.IntegrityError):
+            # OperationalError = column/shape drift between schema versions.
+            # IntegrityError = this row cannot be placed (a constraint the merge
+            # key does not cover). Both are per-ROW problems, but `restore` wraps
+            # every table in one transaction, so letting either escape discards
+            # the whole merge — which is how one bad audit-log row silently
+            # stopped every option trade from ever arriving. Skip the row; the
+            # rest of the snapshot still lands.
             continue
     return applied
 

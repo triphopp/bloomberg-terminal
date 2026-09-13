@@ -1074,4 +1074,54 @@ rule ที่เก็บอยู่ใน DB แล้ว การเพิ�
 
 ---
 
+## 🔴 sync pull ตายเงียบ 2 วัน — surrogate `id` ข้ามเครื่อง (fixed 2026-09-13)
+
+**อาการ:** pull ข้อมูลจากอีกเครื่องไม่เข้าเลย แต่ **push ออกได้ปกติ** ข้อมูลไหลทางเดียว
+เปิด PORT → OPTIONS แล้วว่างเปล่าทั้งที่อีกเครื่องกรอกไว้แล้ว และ `git pull` ก็ครบ
+
+```
+WARNING sync: sync_startup failed (continuing local-only):
+              UNIQUE constraint failed: trade_audit_log.id
+GET /api/sync/status → last_pull: 2026-09-11 · last_push: 2026-09-13   ← ห่างกัน 2 วัน
+```
+
+**สาเหตุ:** `trade_audit_log` ใช้ `id INTEGER PRIMARY KEY AUTOINCREMENT` เป็น PK แต่ประกาศ
+natural key ใน `SYNC_TABLES` เป็น `event_id` (uuid) — `restore._upsert` ส่ง **`id` ของเครื่องอื่น**
+เข้ามาใน INSERT ด้วย → ชนกับ `id` ของ **แถวคนละแถว** ในเครื่องปลายทาง และ `ON CONFLICT(event_id)`
+ดักไม่ได้เพราะมันคนละคอลัมน์
+
+ส่วนที่ทำให้เป็นหายนะ: `except` ดักแค่ `sqlite3.OperationalError` → `IntegrityError` หลุดออกจาก
+`with _guarded(conn)` ซึ่งครอบ **ทั้ง `SYNC_TABLES` ไว้ใน transaction เดียว** → **rollback ทั้งก้อน**
+option ที่ upsert สำเร็จไปแล้ว (บรรทัด 45-60 ของลิสต์) หายไปพร้อมกัน เพราะ `trade_audit_log`
+อยู่บรรทัด 106 คือพังทีหลัง
+
+**Fix** (`backend/sync/restore.py`):
+
+```python
+# 1. surrogate id ห้ามข้ามเครื่อง — ปล่อยให้ SQLite แจก id ใหม่
+cols = [c for c in row.keys() if not (c == "id" and "id" not in pk)]
+
+# 2. แถวเดียววางไม่ได้ ต้องเสียแค่แถวนั้น ไม่ใช่ทั้ง snapshot
+except (sqlite3.OperationalError, sqlite3.IntegrityError):
+    continue
+```
+
+เงื่อนไข `"id" not in pk` ทำให้ตารางที่ใช้ `id` เป็น natural key จริง (`trades`, `transactions`,
+`paper_option_positions`) ไม่กระทบ
+
+**กฎทั่วไป:** ถ้าเพิ่มตารางเข้า `SYNC_TABLES` ด้วย natural key ที่ **ไม่ใช่ `id`** ต้องแน่ใจว่า
+`id` เดิมเป็น surrogate ที่ไม่ถูกส่งข้ามเครื่อง — comment ใน `sync/config.py:27` เตือนเรื่อง
+"auto-increment ids collide across devices" ไว้แล้ว แต่ `_upsert` ไม่ได้ทำตาม
+
+**วิธีตรวจว่า sync ยังดีอยู่ไหม (ทำเป็นนิสัยหลัง pull):**
+
+```bash
+curl -s localhost:9317/api/sync/status | python3 -m json.tool | grep -E "last_pull|last_push"
+```
+
+`last_pull` ที่เก่ากว่า `last_push` มากๆ = pull พังอยู่ ไม่ใช่ "ไม่มีอะไรใหม่" — เพราะ pull
+ตรวจ manifest ทุก 20 วินาทีและอัปเดต timestamp ทุกครั้งที่สำเร็จ
+
+Regression test: `backend/tests/test_sync_surrogate_id.py` (5 เคส)
+
 ---
