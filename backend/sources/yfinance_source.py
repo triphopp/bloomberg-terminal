@@ -7,6 +7,7 @@ Each method maps yfinance raw responses → canonical models from ``sources.mode
 To swap providers: create a new adapter (e.g. polygon_source.py) implementing
 the same interface, then change ``sources/__init__.py`` one line.
 """
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional
 
@@ -256,15 +257,14 @@ class YFinanceSource(MarketDataSource):
             return BatchQuoteResult(quotes={})
         try:
             tickers = yf.Tickers(" ".join(symbols))
-            quotes: dict[str, QuoteSnapshot] = {}
-            for sym in symbols:
+
+            def one(sym: str) -> QuoteSnapshot:
                 try:
                     t = tickers.tickers.get(sym)
                     if t is None:
-                        quotes[sym] = QuoteSnapshot(symbol=sym)
-                        continue
+                        return QuoteSnapshot(symbol=sym)
                     fi = t.fast_info
-                    quotes[sym] = QuoteSnapshot(
+                    return QuoteSnapshot(
                         symbol=sym,
                         last_price=_safe_float(getattr(fi, "last_price", None)),
                         previous_close=_safe_float(getattr(fi, "previous_close", None)),
@@ -278,8 +278,17 @@ class YFinanceSource(MarketDataSource):
                         market_cap=_safe_float(getattr(fi, "market_cap", None)),
                     )
                 except Exception:
-                    quotes[sym] = QuoteSnapshot(symbol=sym)
-            return BatchQuoteResult(quotes=quotes)
+                    return QuoteSnapshot(symbol=sym)
+
+            # `yf.Tickers` only looks like a batch: `fast_info` is lazy, so every
+            # symbol is its own HTTP round-trip and the old serial loop cost
+            # ~0.9s each — 18.7s for the 20 FX pairs, which was almost the whole
+            # cold cost of /api/ticker. Same worker count as build_market_data.
+            with ThreadPoolExecutor(
+                max_workers=min(8, len(symbols)), thread_name_prefix="quotes"
+            ) as pool:
+                snaps = list(pool.map(one, symbols))
+            return BatchQuoteResult(quotes={s.symbol: s for s in snaps})
         except Exception:
             return BatchQuoteResult(quotes={s: QuoteSnapshot(symbol=s) for s in symbols})
 

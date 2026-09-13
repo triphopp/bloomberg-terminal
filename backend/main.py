@@ -57,6 +57,8 @@ from db import (
 )
 from analytics.regime_calibration import ensure_model_fresh
 from analytics.regime_v2 import ensure_v2_fresh
+from contextlib import asynccontextmanager
+
 from analytics.bc_calibration import ensure_calibrated
 from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, stoploss, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, ir_stress, market_state, dcf
 import sync
@@ -65,7 +67,23 @@ from sync.gate import is_synced_write, should_gate
 from alerts import scheduler as alert_scheduler
 import iv_scheduler
 
-app = FastAPI(title="Market Data API")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Work that belongs to a server actually serving, not to importing this
+    module.
+
+    The other background starts below run at import. That is fine for a process
+    whose only reason to import main.py is to run it, but a unit test that does
+    `import main` for a single helper gets them too — and the ticker prewarm is
+    a live market fan-out that then runs through the rest of the suite and into
+    interpreter shutdown, where building a thread pool aborts the process. It
+    hangs off the lifespan instead, which only a real server enters.
+    """
+    ticker.prewarm()
+    yield
+
+
+app = FastAPI(title="Market Data API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

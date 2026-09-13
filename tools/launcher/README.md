@@ -79,6 +79,25 @@ The start-up registration runs the exe with `--no-browser`, so logging into
 Windows brings the terminal up quietly in the tray rather than throwing a
 browser window at you.
 
+## After pulling backend changes
+
+The launcher runs Python without `--reload` by default. Next.js development
+mode picks up frontend changes automatically, but the backend keeps its old
+imports and routes until restarted. After a `git pull` that changes Python
+files, use the tray menu's **Restart servers**, then refresh the browser.
+Opening the exe a second time only opens the browser; it does not restart
+the existing backend.
+
+A stale backend can show **Not Found** in newly added DCF/REGIME panels and
+**FIT ERROR** for Raw SVI (`POST /api/options/smile-fit` returns 405 when only
+the older `GET /api/options/{symbol}` route is loaded). Check the running
+`http://127.0.0.1:9317/openapi.json` for the new routes before changing model
+code or reinstalling dependencies. `/health` alone only confirms liveness.
+
+For automatic Python reload during development, quit the existing tray
+launcher first, then start `BloombergTerminal.exe --reload`. Passing the flag
+to a second copy while the first is running does not reconfigure it.
+
 ## Starting it automatically
 
 Two mechanisms, both per-user, neither needing administrator rights. Pick one —
