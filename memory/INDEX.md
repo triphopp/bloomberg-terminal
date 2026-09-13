@@ -58,6 +58,9 @@ memory/
 
 | ต้องการ | ไฟล์ |
 |---------|------|
+| **Heatmap tile silent drop** — a throttled quote disappears instead of erroring | `reports/heatmap-tile-silent-drop-risk-report.md` |
+| **Windows NEWS API recovery** — stale backend caused DCF/REGIME 404 and SVI 405 ✅ done 2026-09-13 | `plans/completed/windows-news-api-reload.md` |
+| **Windows stale-backend risk** — restart Python after pulling backend changes | `reports/windows-news-stale-backend-risk-report.md` |
 | **Adaptive DCF Valuation Lab** — multi-model quant DCF ใน NEWS/stock-view ✅ done 2026-09-13 | `plans/completed/dcf-valuation-lab.md` |
 | **DCF valuation risks** — currency mismatch, WACC missingness, terminal guard and symbol identity | `reports/dcf-valuation-risk-report.md` |
 | **MKT IV Open Interest** — optional OI strike profile ✅ done 2026-09-13 | `plans/completed/mkt-iv-open-interest.md` |

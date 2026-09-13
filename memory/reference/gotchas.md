@@ -7,6 +7,48 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### ALERT crawl stuck on "MARKET DATA LOADING..." / slowest thing on the page (fixed 2026-09-13)
+
+| Symptom | Root Cause | Fix |
+|---|---|---|
+| Bottom crawl shows `MARKET DATA LOADING...` for ~25s on every boot | Nothing warmed the market/heatmap/FX caches at startup, so the first reader paid the whole cold fan-out. Measured `/api/ticker`: **23.5s cold, 0.21s warm** | `ticker.prewarm()` in `backend/main.py`, on a worker thread (must not delay the port bind) |
+| Crawl goes BACK to `MARKET DATA LOADING...` mid-session, for about a minute | Every fetcher in `routers/ticker.py` catches its own errors and returns `[]`; the assembled empty result was then `_cache.set()` like any other. One upstream 429 blanked the bar for the full TTL | A degraded build (no index/commodity/FX row at all) never replaces a payload that still has rows. Plus stale-while-revalidate: past `FRESH_TTL` the old payload goes out flagged `stale` while a thread refreshes behind it |
+| Nearly every 60s poll is slow, not just the first | Ticker TTL 60s == frontend `refetchInterval` 60s == `CACHE_TTL` 60s on market+heatmap. The whole chain expired at the instant the next request arrived | `FRESH_TTL = 45` against a 90s poll. **Keep the server window strictly under the client interval** |
+| Any `download_quotes()` call is ~0.9s per symbol | `yf.Tickers(...)` *looks* batched, but `fast_info` is lazy — each symbol is its own HTTP round-trip. 20 FX pairs = 18.7s, almost the entire cold cost of the endpoint | `ThreadPoolExecutor` over the symbols in `sources/yfinance_source.py:download_quotes`. 18.7s → 3.5s. Benefits `fx.py` and `crypto.py` alike |
+
+**Anti-pattern — negative caching.** A fetcher that returns `[]` on error makes
+"upstream failed" indistinguishable from "there is nothing". Caching that result
+turns a one-second blip into a full-TTL outage. Either do not store the empty
+result, or refuse to let it overwrite a good one.
+
+**Anti-pattern — one loading state for three situations.** The old bar used
+`content.length === 0` for first-load, outright failure, and an empty market
+alike. A reader could not tell "not here yet" from "broken". It now keeps the
+last payload that had rows and renders it dimmed under a `STALE` badge rather
+than blanking.
+
+**`TTLCache.get()` DELETES anything past the ttl it is handed** — so you cannot
+ask for a short "fresh" view first and fall back to a long "stale" view: the
+first call evicts the entry the second one wanted. `routers/ticker.py` keeps the
+timestamp inside the cached value (`(fetched_at, payload)`) and compares ages
+itself, asking the cache only for the outer `STALE_TTL` window.
+
+Tests: `backend/tests/test_ticker_cache.py` (5). Related:
+[heatmap tile silent-drop report](../reports/heatmap-tile-silent-drop-risk-report.md).
+
+### Windows NEWS DCF/REGIME 404 and Raw SVI 405 after a pull (2026-09-13)
+
+| Symptom | Root Cause | Fix |
+|---|---|---|
+| New NEWS DCF/REGIME panels say `Not Found`; IV Raw SVI says `FIT ERROR`, while Mac works | Windows tray launcher defaults to Python without `--reload`; Next.js loads new UI but the older Python process has no new routes. Verified backend PID 20596 started 18:22, before source updates at 19:39. Running OpenAPI omitted all three routes. | Tray → **Restart servers**, then refresh the browser after pulling backend changes. Starting another copy of the exe only opens the browser. For development, quit the launcher and start it with `--reload`. |
+| SVI returns `405 Method Not Allowed` before calibration | In the stale runtime, `/api/options/smile-fit` matches the older GET-only `/api/options/{symbol}` path; the POST endpoint exists only on disk | Check `/openapi.json` for `POST /api/options/smile-fit`, `GET /api/dcf/{symbol}` and `GET /api/market-state/{symbol}`. `/health` being OK does not prove current code is loaded. Restart before diagnosing SciPy or quote validation. |
+
+Recovery verified through Next.js port 9318: DCF SNDK and REGIME AAPL returned
+HTTP 200 / `status: ok`; live SNDK 2026-10-16 SVI returned `ok` for 56 call and
+56 put points. Related tests: 61 passed. See
+[runtime risk report](../reports/windows-news-stale-backend-risk-report.md) and
+[launcher instructions](../../tools/launcher/README.md#after-pulling-backend-changes).
+
 ### Adaptive DCF currency and terminal-value guards (2026-09-13)
 
 | Symptom | Root Cause | Fix |

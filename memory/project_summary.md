@@ -316,6 +316,8 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026
 
 ## What Could Be Built Next
 
+- [x] **Windows NEWS API recovery** — done 2026-09-13 — restarted stale Windows backend; DCF/REGIME/SVI live HTTP checks OK, 61 tests passed (`plans/completed/windows-news-api-reload.md`)
+
 - [x] **MKT IV Open Interest** — done 2026-09-13 — optional Call/Put OI bars on IV/SVI, separate contracts axis, one selected actual expiry, range totals/P-C and source availability (`plans/completed/mkt-iv-open-interest.md`)
 
 - [x] **MKT SVI Fit and Tenors** — done 2026-09-13 — optional Raw SVI, observed points/RMSE/parameters, actual expiries near1/3/5/7/9 months and Call/Put/OTM selection (`plans/completed/mkt-svi-fit-tenors.md`)
