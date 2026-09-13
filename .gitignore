@@ -98,3 +98,6 @@ next-env.d.ts
 /BloombergTerminal.exe
 /logs/
 tools/launcher/*.res
+
+# macOS
+.DS_Store
