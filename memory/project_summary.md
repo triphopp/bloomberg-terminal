@@ -3,7 +3,7 @@
 > **BBW study audit 2026-09-09:** ข้อสรุป study เดิมต้องอ่านคู่กับ [audit](reports/bbw-squeeze-2026-09-09-risk-report.md): พบ unknown labels, benchmark drift, final purge gap และการตีความ coefficient/survival median ผิด ผล E2 ranking ยังอยู่ในการคำนวณตรวจซ้ำ แต่ยังไม่มี trading validation
 
 **Repo:** `bloomberg-terminal` — macOS `~/bloomberg-terminal`, Windows `D:\Agents\Claude\bloomberg-terminal-main`
-**Last updated:** 2026-08-01 (TICK DATA consolidation + rates router)
+**Last updated:** 2026-09-13 (Adaptive DCF Valuation Lab)
 
 > Slim core reference. Navigate via [memory/INDEX.md](INDEX.md).
 > - [reference/api-endpoints.md](reference/api-endpoints.md) — all endpoints, caching table, Next.js proxy routes
@@ -122,7 +122,8 @@ OPENAI_API_KEY      — optional
 |-------------|--------|--------|
 | `market.py` | `/api/market-data`, `/api/heatmap` | yfinance |
 | `stock.py` | `/api/stock/*` | yfinance |
-| `options.py` | `/api/options/*`, positions + Greeks | yfinance + greeks.py |
+| `dcf.py` | `/api/dcf/*` (adaptive valuation + sensitivity + audit lineage) | yfinance + `analytics/dcf.py` |
+| `options.py` | `/api/options/*`, positions + Greeks + `POST smile-fit` | yfinance + greeks.py + SciPy Raw SVI |
 | `pins.py` | `/api/pins/*` (groups, assets, tags CRUD) | SQLite |
 | `clippings.py` | `/api/clippings/*` | filesystem + Ollama |
 | `news.py` | `/api/news/facebook`, `/api/news/feed` | RSSHub / Graph API + yfinance + RSS |
@@ -157,6 +158,7 @@ OPENAI_API_KEY      — optional
 | `country_rotation.py` | `/api/country-rotation/*` (scores, history, universe) | yfinance + World Bank |
 | `sector.py` (sector selection) | `/api/sector/*` (signal, factors, history) | FRED + yfinance |
 | `regime.py` | `/api/regime/correlation` | yfinance (5min cache) |
+| `market_state.py` | `/api/market-state/{sym}` (dashboard, 1h) · `/{sym}/validation` (walk-forward, 24h) | yfinance + hmmlearn |
 | `rotation.py` | `/api/rotation/table` (theme/sector momentum + RRG quadrant vs SPY) | yfinance batch (15min cache) |
 | `stoploss.py` | `/api/stoploss/{regime,atr,compute}` | yfinance (5min cache) |
 | `fear_greed.py` | `/api/fear-greed`, `/api/fear-greed/history` | yfinance ^VIX/SPY/TLT/HYG/LQD/RSP (5min/60min cache) |
@@ -280,7 +282,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 | Key | Button | View | Component |
 |-----|--------|------|-----------|
 | `1` | MKT | Market View (default) | `market-view.tsx` — watchlist + chart + Regime Detection + TICK DATA board (7 collapsible sections: AMERICAS/EMEA/ASIA PACIFIC + RATES·US + RATES·JP + VOLATILITY + FX) |
-| `2` | NEWS | News | `news-view.tsx` → barrel for `views/news/` — WATCHLIST (default, sector rail + per-ticker stream) / NEWSFEED / SOCIAL tabs + Polymarket right column (256px fixed; watchlist-matched markets on top of macro signals) |
+| `2` | NEWS | News | `news-view.tsx` → barrel for `views/news/` — WATCHLIST (default, sector rail + per-ticker stream; HEADLINES/RATE STRESS/DCF/REGIME panels) / NEWSFEED / SOCIAL tabs + Polymarket right column |
 | `3` | GMOV | Market Movers | `market-movers-view.tsx` — indices table + heatmap treemap |
 | `4` | CLIP | Clippings + AI | `clippings-view.tsx` |
 | `5` | MACRO | Macro Economics | `macro-view.tsx` — 7 tabs: dashboard, yield, indicators, fed, country, compare, **signals** |
@@ -314,12 +316,25 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026
 
 ## What Could Be Built Next
 
+- [x] **MKT IV Open Interest** — done 2026-09-13 — optional Call/Put OI bars on IV/SVI, separate contracts axis, one selected actual expiry, range totals/P-C and source availability (`plans/completed/mkt-iv-open-interest.md`)
+
+- [x] **MKT SVI Fit and Tenors** — done 2026-09-13 — optional Raw SVI, observed points/RMSE/parameters, actual expiries near1/3/5/7/9 months and Call/Put/OTM selection (`plans/completed/mkt-svi-fit-tenors.md`)
+
+- [x] **MKT IV Smile** — done 2026-09-13 — Yahoo chain smile in REGIME IV tab, numeric K vs IV%, follows main chart symbol with expiry and quote filters (`plans/completed/mkt-iv-smile.md`)
+
+- [x] **ATR Accumulation Pane** — done 2026-09-13 — optional Wilder ATR/ATR% pane with low-volatility + rising EMA green/red filter and persistent settings (`plans/completed/atr-accumulation-pane.md`)
+
+- [x] **Bollinger Sharpe Fit** — done 2026-09-13 — optional Breakout %B grid search (209 n/k pairs), max net per-bar Sharpe, separate holdout and preserved Manual settings (`plans/completed/bollinger-sharpe-fit.md`)
+
 ### Urgent
 - [ ] **Migrate Fund legacy → v2** before **2026-06-30** (SEC old portal closes)
 - [ ] Seed sector data: POST /api/sectors/fetch for TH/KR/HK/EU/US
 
 ### Features
+- [x] **Adaptive DCF Valuation Lab** — done 2026-09-13 — multi-model valuation engine (3-stage FCFF default; growth/FCFE/excess-return/AFFO/normalized-cycle adapters), quant assumptions+sensitivity+audit UI, shared NEWS/stock panel (`plans/completed/dcf-valuation-lab.md`)
 - [x] **BBW Squeeze Hazard Study** — done 2026-09-09 — ตอบว่า BB Width ต้องบีบเท่าไหร่ถึงยก P(volatility expansion ภายใน h วัน) เหนือ base rate และโมเดล rank+duration+RV-term ชนะกฎ `BBW ≤ 1.05×min125` เดิมหรือไม่; S&P500 500 ตัว, purged walk-forward, holdout แตะครั้งเดียว (`plans/completed/bbw-squeeze-hazard.md`, ผล: `D:/Agents/Claude/backtest-idea/05_bbw_squeeze/results/2026-09-09/report.md`)
+- [x] **Quant Market State (per-symbol REGIME)** — done 2026-09-13 — latent-state framework ต่อหุ้น: OHLCV → feature + redundancy check → Gaussian HMM → `MarketState_t = [RegimeProbability, Trend, Momentum, Volatility]` + ประโยคสรุป + strategy compatibility ที่คำนวณจากสถิติ conditional ของ symbol เอง; panel REGIME ใน NEWS (ข้าง RATE STRESS) + tab ใน stock-view; แยก market interpretation ออกจาก trading decision และแยก dashboard mode (fit in-sample, label causal) ออกจาก validation mode (walk-forward) (`plans/completed/market-state-regime.md`)
+- [x] **Volume Z-Score + Volume Event Classifier** — done 2026-09-13 — volume ดิบไม่ให้ข้อมูลเพราะเป็น level ที่ไม่มีสเกลอ้างอิงและไม่มีผลลัพธ์ติดมา; แก้ baseline RVOL จาก mean → median/MAD บน ln(V) (spike เดิมไม่ดัน baseline ค้าง 20 แท่ง) + cumulative-session mode แก้แท่งที่ยังเปิดอ่านเป็น quiet + classifier 6 event types (climax/absorption/vacuum/breakout/noDemand/dryUp) เป็น chip บน price pane + ตาราง event ที่มีคอลัมน์ forward return (`plans/completed/volume-zscore-events.md`)
 - [ ] **Corporate Interest Rate Stress Testing (CIRST)** — วัดผลกระทบ shock ดอกเบี้ยระดับบริษัท (QERM): repricing ladder + fixed/float จาก XBRL → Earnings-at-Risk + breaking-point bp → Merton PD → spread → ΔWACC/ΔEV/equity duration → ES + Euler contribution → IR-Stress Score 0–100; tab ใหม่ใน stock-view + screener ใน CRDT (`plans/corporate-ir-stress-testing.md`)
 - [ ] **CIRST Validation Harness** — backtest 5 ปี point-in-time (20 as-of, XBRL first-filed revision + FRED daily curve), เทียบ predicted vs realized 5 tier, บังคับชนะ null models (persist / full-reprice / debt×Δy) ด้วย Diebold-Mariano ก่อนเปิด Score; ได้ implied float-share ต่อบริษัทเป็นผลพลอยได้ (`plans/cirst-validation-harness.md`)
 - [ ] **CIRST RATE STRESS tab** — แท็บที่ 13 ใน stock-view (เข้าจาก NEWS → คลิกหุ้น) 5 sub-tab: EXPOSURE (ladder+refi gap) · SCENARIO (ตาราง ΔI bound / ICR / DDM vs empirical) · DURATION (Gordon inverted + θ) · HISTORY (20 as-of ย้อน 5 ปี + error summary + attribution) · DIAGNOSTICS; 4 แท็บแรก ship ได้ทันที HISTORY รอ harness (`plans/cirst-stock-rate-tab.md`)

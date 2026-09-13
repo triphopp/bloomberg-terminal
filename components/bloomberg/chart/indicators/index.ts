@@ -9,11 +9,21 @@
  * That's it. The indicator will appear in the chart's indicator picker UI.
  */
 
+import { BOLLINGER_FIT_PARAMS } from "../bollinger-fit";
+
 export { createEMA, calcEMA } from "./ema";
 export { createSMA, calcSMA } from "./sma";
 export { createMACD } from "./macd";
 export { createRSI } from "./rsi";
 export { createBollingerBands } from "./bollinger";
+export {
+  createATR,
+  calcAtrRegime,
+  resolveAtrConfig,
+  ATR_REGIME_PARAMS,
+  ATR_REGIME_COLORS,
+} from "./atr";
+export type { AtrRegimeConfig, AtrRegimePoint } from "./atr";
 export { createBollingerB } from "./bollinger-b";
 export { createBollingerWidth } from "./bollinger-width";
 export { createVWAP } from "./vwap";
@@ -62,6 +72,7 @@ import {
   SMA_LABELS,
   STOCHASTIC_LABELS,
 } from "./alertLabels";
+import { ATR_REGIME_PARAMS, createATR } from "./atr";
 import { createBollingerBands } from "./bollinger";
 import { createBollingerB } from "./bollinger-b";
 import { createBollingerWidth } from "./bollinger-width";
@@ -173,6 +184,19 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
 
   // ─── Volatility ───
   {
+    id: "atr-regime",
+    name: "ATR Accumulation",
+    category: "volatility",
+    type: "pane",
+    description:
+      "ATR% low-volatility + rising EMA filter: green accumulation conditions, red avoid, gray unknown",
+    defaultParams: ATR_REGIME_PARAMS,
+    timeScalableParams: ["period", "lookback", "trendPeriod", "slopeBars"],
+    factory: createATR,
+    // No alert outputs: this regime is local to chart history; the backend
+    // does not implement this definition yet.
+  },
+  {
     id: "bollinger",
     name: "Bollinger Bands",
     category: "volatility",
@@ -180,7 +204,8 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     description: "SMA ± N standard deviations",
     defaultParams: [
       { key: "period", label: "Period", type: "number", default: 20, min: 5, max: 200, step: 1 },
-      { key: "stdDev", label: "Std Dev", type: "number", default: 2, min: 0.5, max: 4, step: 0.5 },
+      { key: "stdDev", label: "Std Dev", type: "number", default: 2, min: 0.5, max: 4, step: 0.25 },
+      ...BOLLINGER_FIT_PARAMS,
     ],
     timeScalableParams: ["period"],
     factory: createBollingerBands,
@@ -199,7 +224,8 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     description: "Price position within Bollinger Bands (0=lower, 0.5=mid, 1=upper)",
     defaultParams: [
       { key: "period", label: "Period", type: "number", default: 20, min: 5, max: 200, step: 1 },
-      { key: "stdDev", label: "Std Dev", type: "number", default: 2, min: 0.5, max: 4, step: 0.5 },
+      { key: "stdDev", label: "Std Dev", type: "number", default: 2, min: 0.5, max: 4, step: 0.25 },
+      ...BOLLINGER_FIT_PARAMS,
     ],
     timeScalableParams: ["period"],
     factory: createBollingerB,

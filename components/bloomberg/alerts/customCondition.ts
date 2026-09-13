@@ -48,6 +48,7 @@ export function indicatorsWithOutputs(): IndicatorRegistryEntry[] {
 export function defaultParamsFor(entry: IndicatorRegistryEntry): Record<string, number> {
   const out: Record<string, number> = {};
   for (const p of entry.defaultParams) {
+    if (p.key === "fitCostBps") continue; // chart simulation cost, not an alert parameter
     if (typeof p.default === "number") out[p.key] = p.default;
   }
   return out;

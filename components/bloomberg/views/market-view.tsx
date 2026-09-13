@@ -1611,7 +1611,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
 
         {/* ── Regime Heatmap section — fills remaining space ── */}
         <div className="flex-1 min-h-0 overflow-hidden">
-          <SectorRegimeHeatmap colors={colors} isDark={isDark} />
+          <SectorRegimeHeatmap colors={colors} isDark={isDark} symbol={selectedSymbol} />
         </div>
       </div>
     );
@@ -2250,6 +2250,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
           style={{ background: "#050505", borderBottom: `1px solid ${colors.border}` }}
         >
           <IndicatorPicker
+            data={heatmapOhlcv}
             colors={colors}
             activeIndicators={heatmapIndicators}
             onAdd={addHeatmapIndicator}

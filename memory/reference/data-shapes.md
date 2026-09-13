@@ -48,15 +48,72 @@
 - EPS = adjusted/street (Yahoo) ไม่ใช่ GAAP → absolute P/E ต่ำกว่า TrendSpider, trend เหมือน
 - `PEPane.tsx` consume shape นี้; frontend clip Y domain กัน early-stage spike (max 788x)
 
-## Options Chain (`GET /api/options?symbol=AAPL&expiry=2026-07-18`)
+## Adaptive DCF (`GET|POST /api/dcf/{symbol}`)
+
 ```json
 {
-  "symbol": "AAPL", "expiry": "2026-07-18",
-  "freshness": { "source": "yahoo_finance", "delay_minutes": 15, "is_realtime": false },
-  "calls": [{ "strike": 190.0, "bid": 5.0, "ask": 5.2, "last": 5.1, "volume": 1200, "openInterest": 8000, "impliedVol": 0.28, "delta": 0.52 }],
-  "puts": [...]
+  "status": "ok", "symbol": "AAPL", "currency": "USD", "as_of": "2025-09-27",
+  "scenario": "base", "model": "fcff", "model_label": "3-STAGE FCFF",
+  "model_router": {
+    "model": "fcff", "label": "3-STAGE FCFF", "reason": "...",
+    "overrideable": true, "alternatives": ["growth", "fcfe", "excess_return", "affo", "normalized_cycle"]
+  },
+  "summary": {
+    "market_price": 332.27, "enterprise_value": 2800000000000,
+    "equity_value": 2850000000000, "intrinsic_value_per_share": 190.0,
+    "upside_downside": -0.428, "pv_explicit": 700000000000,
+    "pv_terminal": 2100000000000, "terminal_value_share": 0.75
+  },
+  "bridge": {"cash": 50000000000, "debt": 0, "minority_interest": 0, "preferred_stock": 0, "shares": 15000000000},
+  "assumptions": {
+    "forecast_years": 7, "high_growth_years": 5, "revenue_growth": 0.08,
+    "target_margin": 0.30, "tax_rate": 0.16, "sales_to_capital": 2.0,
+    "wacc": 0.09, "cost_of_equity": 0.095, "terminal_growth": 0.025,
+    "terminal_roic": 0.10, "equity_model": false
+  },
+  "forecast": [{
+    "year": 1, "stage": "HIGH GROWTH", "revenue": 420000000000,
+    "growth": 0.08, "ebit_margin": 0.30, "nopat": 105000000000,
+    "reinvestment": 15500000000, "cash_flow": 89500000000,
+    "discount_rate": 0.09, "present_value": 82110000000
+  }],
+  "terminal": {"cash_flow": 120000000000, "undiscounted_value": 1846153846154, "method": "Gordon growth"},
+  "sensitivity": {
+    "discount_rate_key": "wacc", "discount_rates": [0.07, 0.08, 0.09, 0.10, 0.11],
+    "terminal_growth_rates": [0.015, 0.02, 0.025, 0.03, 0.035],
+    "values_per_share": [[250.0, 270.0, 295.0, 330.0, 380.0]]
+  },
+  "data_quality": {
+    "completeness": 0.93, "warnings": [],
+    "lineage": [{"key": "revenue", "value": 391035000000, "source": "yfinance statement", "tag": "Total Revenue", "period": "2025-09-27", "status": "STATEMENT"}]
+  }
 }
 ```
+
+- Rates and growth assumptions are decimal fractions. Statement/valuation figures stay in `currency`; values in this example are illustrative.
+- Corporate forecast rows carry revenue/margin/NOPAT/reinvestment. FCFE/AFFO rows omit unavailable corporate fields; excess-return rows use `roe`, `book_equity`, and `earnings`.
+- `values_per_share` is a 5×5 matrix indexed by `discount_rates` then `terminal_growth_rates`; invalid cells where `g >= rate` are `null`.
+- If statement and quote currencies differ, `summary.market_price` and `summary.upside_downside` are `null`. Never restore an unconverted quote in the frontend.
+- POST body: `{ "model": "growth", "scenario": "bull", "assumptions": { "target_margin": 0.25, "wacc": 0.09 } }`.
+
+## Options Chain (`GET /api/options?symbol=AAPL&expiry=2026-10-16`)
+
+Next.js proxies the existing Python `GET /api/options/{symbol}?expiry=`. IV is a decimal fraction (0.28 = 28%); field names are `lastPrice` and **`impliedVolatility`**, not `last` / `impliedVol`.
+
+```json
+{
+  "symbol": "AAPL", "spot": 332.27, "expiry": "2026-10-16",
+  "expirations": ["2026-10-09", "2026-10-16", "2026-11-20"],
+  "freshness": { "source": "yahoo_finance", "delay_minutes": 15, "is_realtime": false, "fetched_at": "2026-09-12T18:36:30Z" },
+  "calls": [{ "contractSymbol": "AAPL261016C00330000", "strike": 330, "bid": 15, "ask": 16, "lastPrice": 15.5, "volume": 1200, "openInterest": 8000, "impliedVolatility": 0.28, "inTheMoney": true, "change": 1, "percentChange": 6.9 }],
+  "puts": [],
+  "ivCurrent": 0.28, "ivCall": 0.28, "ivPut": 0.27, "ivMid": 0.275,
+  "atmStrike": 330, "pcRatio": 0.8, "callOI": 8000, "putOI": 6400,
+  "callVolume": 1200, "putVolume": 1000
+}
+```
+
+Illustrative values; `calls`/`puts` rows do not include Greeks. Backend `clean_df` rounds IV to4 decimals and fills missing numeric quotes with0, so chart consumers must validate positive/finite IV and usable bid/ask. No chain schema changed for MKT IV Smile. The Next.js proxy now preserves backend status and string detail as `{error: string}`:404 means no options, transport failures remain502.
 
 ## SD Bands (`GET /api/options/{sym}/sd-bands?mode=occupancy&horizonDays=30`)
 ```json
@@ -712,6 +769,136 @@ interface EventPriceReaction { gapPct: number|null; sameDayPct: number|null; nex
 - **Upcoming events** (`upcoming: true`) have no bar to sit on. `placeEvents()` anchors them on the last bar with `future: true` + `daysAhead` (dropped past `MAX_FUTURE_DAYS` = 200); the rail queues them past the right edge with a dashed chip (`$?` / `E?`), and the popover shows "Scheduled — no price reaction yet".
 - `label` (`$` / `$?` / `E+` / `E-` / `E?` / `x10`) is no longer drawn on the rail — since 2026-08-31 chips carry a `lucide` icon (`EventChipStyle.icon`, see `chart/event-icons.ts`) and `label` survives as the accessible name for it.
 
+## Market State (`GET /api/market-state/AMD`)
+
+```jsonc
+{
+  "symbol": "AMD", "status": "ok", "as_of": "2026-09-11", "bars": 4118, "period": "10y",
+  "basis": {                       // ⚠️ read this before quoting any number below
+    "labels": "causal — filtered posterior, no bar uses data after itself",
+    "parameters": "in-sample — the model is fitted on the whole history",
+    "claim": "Describes what state the symbol is in. For what FOLLOWS a state, use the validation endpoint"
+  },
+  "regime": {
+    "key": "quiet", "label": "QUIET RANGE", "color": "#5c9ead",
+    "probability": 0.9892, "confidence": "clear",   // clear ≥0.75 · leaning ≥0.50 · unclear below
+    "bars_in_state": 8, "expected_duration": 28.4,  // 1/(1−p_ii) from the transition matrix
+    "states": [ { "key", "label", "color", "blurb", "probability", "expected_duration", "share" } ],
+    "transition_note": "Quiet Range gaining (19% → 99% over 10 bars), Turbulent giving way (73% → 0%)"
+  },
+  "scores": {
+    "trend":      { "score": -0.415, "change": 0.142, "word": "Bearish", "direction": "Rising" },
+    "momentum":   { "score": 0.182, "change": 0.525, "sign": "Positive", "word": "Accelerating" },
+    "volatility": { "sigma": -0.68, "change": 0.615, "level": "Normal", "direction": "Expanding" }
+  },
+  "summary": "Quiet Range 99% — Bearish Trend Rising — Positive Momentum and Accelerating — Volatility Expanding",
+  "vector": { "regime_probability": {"bull":0.0,"sideway":0.011,"quiet":0.989,"turbulent":0.0},
+              "trend": -0.415, "momentum": 0.182, "volatility": -0.68 },
+  "history": { "times": [...], "close": [...], "state": [2,2,3,...],   // int index into regime.states
+               "posterior": [[0.0,0.01,0.99,0.0], ...],                 // n × k, never smoothed
+               "trend": [...], "momentum": [...], "volatility": [...],
+               "trend_change": [...], "momentum_change": [...], "volatility_change": [...] },
+  "strategy": { "horizon": 10, "state_bars": 565, "state": "quiet", "state_label": "QUIET RANGE",
+                "basis": "in-sample state labels — descriptive, not a backtest",
+                "items": [ { "id": "trend_following", "name", "metric", "value", "baseline": 0.5,
+                             "detail", "score": 53.0, "edge": 0.0072, "n": 556, "z": 0.34,
+                             "reliable": true } ] },
+  "diagnostics": { "redundancy": { /* see below */ }, "model": { "family": "gaussian_hmm", "n_states": 4,
+                   "covariance": "full", "features": [...], "dropped_features": [],
+                   "hysteresis": 3, "state_labels": [...], "expected_durations": [...],
+                   "transition_matrix": [[...]] } }
+}
+```
+
+- `history.state` indexes `regime.states`; `history.posterior[i][k]` is the probability of
+  `regime.states[k]` at bar i. The two are in **canonical archetype order**
+  (bull → sideway → quiet → bear → turbulent), never in hmmlearn's arbitrary state order.
+- `status` is `"insufficient"` with a `detail` string (and nothing else) for a symbol with under
+  300 usable bars — SKHY returns exactly that. The panel renders `detail`; a component that assumes
+  the other fields exist crashes instead of explaining.
+- `vol_z` is dropped from `features` for a symbol that reports no volume (an index, a yield, an FX
+  cross). Four features remain; `diagnostics.model.dropped_features` names it.
+
+### Redundancy report (`diagnostics.redundancy`)
+
+```jsonc
+{
+  "status": "ok", "bars": 2106, "threshold": 0.80, "max_model_abs_corr": 0.491,
+  "model_features": ["ret_z","slope_z","mom_delta","rvol_z","vol_z"],
+  "vif": { "ret_z": 2.17, "slope_z": 1.76, "mom_delta": 1.91, "rvol_z": 1.04, "vol_z": 1.07 },
+  "matrix": { "names": [...12 candidates...], "values": [[...]] },
+  "model_matrix": { "names": [...5...], "values": [[...]] },
+  "redundant_pairs": [ { "a": "ret_z", "b": "rsi", "r": 0.877, "both_in_model": false } ],
+  "rejected_vs_model": [ { "feature": "rsi", "closest_model_feature": "ret_z", "r": 0.877,
+                           "verdict": "redundant", "reason": "..." } ]
+}
+```
+
+⚠️ `verdict` has exactly two values and they mean different things: **`"redundant"`** is measured
+(|r| ≥ 0.80 with a feature already in the model — RSI↔ret_z 0.88, MACD-hist↔mom_delta 0.82,
+vol_chg↔vol_z 0.85), while **`"same axis, kept out for parsimony"`** is a judgement — ATR%, Bollinger
+width, high-low range and ADX correlate 0.35-0.75 and are *not* duplicates; they are excluded because
+a 4-state full-covariance fit already estimates 60 covariance parameters on 5 features. The
+DIAGNOSTICS tab prints both so the choice can be argued with.
+
+## Market State validation (`GET /api/market-state/AMD/validation`)
+
+```jsonc
+{
+  "status": "ok",
+  "method": { "refits": 25, "failed_fits": 0, "step": 126, "embargo": 21, "min_train": 500,
+              "labelled_bars": 3093, "total_bars": 3614, "n_states": 4, "min_state_bars": 100,
+              "overlap_note": "...raw Welch t is inflated by roughly √horizon...",
+              "note": "...a residual input overlap remains inside that embargo..." },
+  "forward_returns": [ { "state": "turbulent", "label": "TURBULENT", "horizon": 10, "n": 666,
+                         "mean_pct": 0.317, "median_pct": 0.432, "hit_rate": 0.518, "vol_pct": 11.06,
+                         "baseline_pct": 1.565,
+                         "t_vs_rest": -3.39,   // raw Welch t — INFLATED by overlapping windows
+                         "t_adj": -1.07,       // ÷√horizon — the one the verdict uses
+                         "counts": true } ],   // false when n < min_state_bars
+  "separation_pct": { "5": 3.6, "10": 3.97, "21": 8.69 },
+  "strategy_by_state": [ { "state", "label", "bars", "best", "best_score", "best_z", "items": [...] } ],
+  "verdict": { "states_separate": false, "separating_states": [],
+               "strategy_choice_varies": true, "strategy_edge_significant": false,
+               "reading": "Forward returns do not separate, yet the best-scoring strategy differs..." }
+}
+```
+
+⚠️ **`t_adj`, not `t_vs_rest`, is the number that means anything.** Forward returns measured every
+bar over an h-bar horizon share h−1 bars with their neighbours, so the raw Welch t is inflated by
+≈√h. Measured on AMD, TURBULENT at h=10 goes from t=−3.39 (looks significant) to t_adj=−1.07 (is
+not). The verdict ignores raw t entirely and also ignores any state with fewer than
+`min_state_bars`=100 labelled bars.
+
+### `VolumeEvent` (`lib/volume-events.ts`)
+```ts
+type VolumeEventType = "climax" | "absorption" | "vacuum" | "breakout" | "noDemand" | "dryUp";
+interface VolumeEvent {
+  index: number;            // bar index in the array that was classified
+  time: string | number;    // same shape as OhlcvBar.time
+  type: VolumeEventType;
+  dir: 1 | -1 | 0;          // which side OWNED the bar — never a forecast. climax/vacuum/breakout: sign
+                            // of the bar's return. absorption: +1 = close held the upper half (selling
+                            // absorbed). noDemand/dryUp: 0, nothing was decided
+  z: number;                // robust log-volume z-score (lib/volume-stats.ts)
+  retSigma: number;         // the bar's log return in units of its trailing return σ (centred on ZERO,
+                            // not on the sample mean — a drifting mean re-bases "big" inside a trend)
+  retPct: number;           // the bar's return, %
+  closePos: number;         // 0 at the low, 1 at the high; 0.5 for a zero-range bar
+  close: number;
+  runLength?: number;       // dryUp only — bars in the run
+}
+```
+- **Derived entirely client-side** from the OHLCV already on the chart — no endpoint, nothing cached.
+  `classifyVolumeEvents(bars)` with defaults is called in two places (the overlay and the panel) and
+  they agree because both use the same defaults, not because anything is passed between them.
+- One label per bar. Priority `climax > vacuum > breakout > absorption > noDemand`; `dryUp` is
+  run-based, emitted at the run's **end** and only onto a bar nothing else claimed.
+- `forwardReturnPct(bars, i, h)` returns **null** past the loaded data, deliberately — the newest
+  events have no outcome yet, and a 0 there would bias every eye that read the table.
+- No reading exists for the first ~8 bars (`MIN_SAMPLES`) or for a symbol whose volume is 0 on every
+  bar (VIX, yields, FX): `volumeZ` is null there and the classifier emits nothing.
+
 ### `PolySignal` (news-view.tsx)
 ```ts
 interface PolySignal { type: string; label: string; color: string; question: string; probability: number; volume: number; status: "LIKELY"|"UNCERTAIN"|"UNLIKELY"; direction: "UP"|"DOWN"|"STABLE"; delta_24h: number|null; implied_odds: number; regime_flag: "HIGH_CONVICTION"|"UNCERTAIN"; event_slug: string; slug: string; description: string; end_date: string; is_open: boolean; }
@@ -752,3 +939,145 @@ Row:
 yield is meaningless (0.05% → 0.10% is not a "+100%" event). The frontend `RateRow` therefore renders
 `—` in the %CHG column and colours yield-up red (bond price down), matching MACRO's convention.
 TS interface: `RateRowData` in `hooks/useRatesCurve.ts`.
+
+
+## Bollinger chart fitting — frontend only (2026-09-13)
+
+No endpoint or backend response changes. Existing `IndicatorSpec` persists these optional scalar params in `chart:indicator-specs`:
+
+```ts
+{ id: "bollinger" | "bollinger-b", params: {
+  period: 20, stdDev: 2,        // preserved manual settings, period follows BARS/DAYS
+  fitMode: "manual" | "sharpe", // absent means manual
+  fitCostBps: 5                 // per-side proportional cost, 0..100 bps
+} }
+```
+
+Runtime-only types from `components/bloomberg/chart/bollinger-fit.ts`:
+
+```ts
+interface BollingerStats {
+  middle: (number | null)[]; deviation: (number | null)[];
+}
+interface BollingerBacktest {
+  sharpe: number | null; // per bar, sample SD, rf=0; null if undefined
+  totalReturn: number;   // fractional compounded net price return
+  trades: number;        // completed exits, including forced end-of-window liquidation
+  bars: number; returns: number[]; // includes flat/cash bars
+}
+interface BollingerFitCandidate {
+  period: number; stdDev: number; train: BollingerBacktest;
+}
+interface BollingerFitResult {
+  status: "ok" | "unavailable"; reason?: string;
+  best: BollingerFitCandidate | null; holdout: BollingerBacktest | null;
+  candidates: number; eligible: number;
+  trainStart: number; split: number; end: number; // indices; end is exclusive
+}
+```
+
+`ChartIndicator.config.inputParams` is transient raw user input injected during instantiation, for reopening settings without treating DAYS-scaled bar counts as user-entered days. The effective fitted period is always raw bars. UI falls back to saved manual settings with an explicit unavailable status; no fit result is persisted or transferred into alert rules.
+
+
+## ATR accumulation pane — frontend only (2026-09-13)
+
+No API/DB shape changes. Optional persisted `IndicatorSpec` uses existing `chart:indicator-specs` storage:
+
+```ts
+{ id: "atr-regime", params: {
+  period: 14, lookback: 50, maxRatio: 1,
+  trendPeriod: 50, slopeBars: 5, display: "percent"
+} }
+```
+
+`display` is `percent` or `absolute`. Window params use the global BARS/DAYS input unit and are converted to bars before computation; `maxRatio` never scales. Transient `ChartIndicator.config.inputParams` preserves raw settings for gear edits. Runtime types from `components/bloomberg/chart/indicators/atr.ts`:
+
+```ts
+interface AtrRegimeConfig {
+  period: number; lookback: number; maxRatio: number;
+  trendPeriod: number; slopeBars: number;
+  display: "percent" | "absolute";
+}
+interface AtrRegimePoint {
+  time: string | number;
+  atr: number | null; atrPercent: number | null;
+  baselinePercent: number | null; thresholdPercent: number | null;
+  thresholdAbsolute: number | null; ema: number | null;
+  lowVolatility: boolean | null; uptrend: boolean | null;
+  state: "accumulate" | "avoid" | "unknown";
+}
+```
+
+Percent values are percentage points (1 = 1%), not fractions. `baselinePercent` excludes the current bar. `thresholdPercent = baselinePercent × maxRatio`; `thresholdAbsolute = thresholdPercent × close / 100`. Null means unavailable; complete zero-baseline history also yields unknown classification. These diagnostics are derived locally and not persisted.
+
+`components/bloomberg/chart/types.ts` additionally defines native line point colors and explicit missing points:
+
+```ts
+interface SeriesDataPoint { time: string | number; value: number; color?: string }
+interface WhitespaceDataPoint { time: string | number; value?: never }
+// IndicatorSeriesOutput.data:
+// (SeriesDataPoint | HistogramDataPoint | WhitespaceDataPoint)[]
+```
+
+The ATR factory returns `atr-regime-line` and `atr-regime-threshold` line series on the same pane/scale. A missing value is `{time}`, never zero. Native lines still connect valued points across whitespace, so the last valued point before a gap gets `color: "transparent"` to suppress its outgoing segment on both lines.
+
+
+## MKT IV Smile runtime types — 2026-09-13
+
+`components/bloomberg/lib/iv-smile.ts` describes the consumed chain subset, chart rows and optional fit response. No new persisted schema:
+
+```ts
+interface IvSmileOption {
+  contractSymbol?: string;
+  strike: number; impliedVolatility: number; // fractional IV
+  openInterest?: number | null;
+  openInterestAvailable?: boolean;
+  bid?: number | null; ask?: number | null;
+}
+interface IvSmileChain {
+  symbol: string; spot: number; expiry: string; expirations: string[];
+  calls: IvSmileOption[]; puts: IvSmileOption[];
+  freshness?: { source: string; fetched_at?: string; delay_minutes?: number; is_realtime?: boolean };
+}
+interface IvSmilePoint {
+  strike: number; callIV: number | null; putIV: number | null; // percentage points
+}
+interface IvSmileOiPoint {
+  strike: number; callOI: number | null; putOI: number | null; // contract counts
+}
+```
+
+`buildIvSmile` returns `{points, callCount, putCount, strikeCount, excluded, sufficient}`; numeric ascending union of strikes preserves put-only contracts and missing IV in either side. `excluded` counts rows inside the selected strike range rejected for unusable IV or the active quote filter. `sufficient` requires >=3 distinct valid strikes.
+
+`buildIvSmileOi(chain,rangePercent=25)` returns `{points:IvSmileOiPoint[],callTotal:number|null,putTotal:number|null,missing:number,available:boolean,putCallRatio:number|null}`. Independent of IV and bid/ask filters; only selected K range applies. Deduplicate contractSymbol per side (fallback side+strike), sum distinct contracts at same strike. A known0 stays0; unknown/invalid OI staysnull; partial totals are labeled and P/C suppressed if missing or callTotal<=0. P/C is Put OI / Call OI across the selected strike range for one expiry, not a directional signal. `smilePlotRows(series,fitted,oiPoints?)` adds exact-strike `callOI`/`putOI` fields and unions known OI-only strikes; interpolated SVI grid rows have null OI.
+
+Backend chain rows now add `openInterestAvailable:boolean` without changing legacy numeric `openInterest`/aggregate fields. Cleaner flags source missing/invalid before zero-fill; valid finite nonnegative safe integers include0. New frontend can still read older rows without the flag by validating `openInterest` (prior cached zero-fill cannot reconstruct missingness; cache refresh supplies the flag). OI as-of date is not supplied: fetched-at is retrieval time, and OI is latest reported, not live flow or stored daily history.
+
+`IvSmilePanelProps` in `views/iv-smile-panel.tsx` contains `model: ReturnType<typeof useIvSmile>`, terminal `colors` and optional `compact`. `SectorRegimeHeatmapProps` now accepts optional `symbol: string|null` from the main MKT chart. Existing `bloomberg_regime_defaults.mode` additionally accepts `iv`; expiry/range/quote selection is component state shared with the expanded panel, not a new storage key.
+
+### Raw SVI fit / tenor types and API
+
+`POST /api/options/smile-fit` (Next.js and Python path) accepts `{referencePrice:number, timeYears:number, series:Array<{name:"call"|"put"|"otm", points:SviSample[]}>}`. Input IV is percentage units (30 means30%, not0.30); each fit models total variance `w=(ivPercent/100)^2*timeYears`. Payload limits and errors are in `api-endpoints.md`.
+
+```ts
+type SmileSide = "both" | "otm" | "call" | "put";
+type SmileFitMode = "observed" | "raw_svi";
+interface SviSample { strike: number; ivPercent: number }
+interface RawSviParameters { a: number; b: number; rho: number; m: number; sigma: number }
+interface RawSviFit {
+  status: "ok" | "unavailable";
+  reason: string | null;
+  parameters: RawSviParameters | null;
+  rmseIvPct: number | null; // Root mean squared IV error, percentage points
+  usedPoints: number; // distinct usable strikes after duplicate medians
+  minStrike: number | null; maxStrike: number | null;
+  referencePrice: number; timeYears: number;
+}
+interface SviFitResponse {
+  model: "raw_svi"; coordinate: "log(K/S)"; objective: "soft_l1_total_variance";
+  series: Partial<Record<"call" | "put" | "otm", RawSviFit>>;
+}
+interface SmileTenor { months: number[]; expiry: string | null; days: number | null }
+```
+
+Successful HTTP200 can contain unavailable series (too few strikes, narrow coverage, no convergence), always with `parameters:null` and `reason`. `a` may be negative: the constrained minimum is `a+b*sigma*sqrt(1-rho²)>0`. These are independent slices, not an arbitrage-free surface. `smileTenorDate` uses calendar months; `selectSmileTenors` merges months sharing one expiry, or returns null expiry/DTE for an unavailable target. `smileSamples` returns named observed series by side. `smilePlotRows` returns shared numeric strike rows with dynamic `<id>_observed` and `<id>_fit` fields (missing/null, never zero-filled); `sviIvAtStrike` returns percent IV only within each fit's observed K span.

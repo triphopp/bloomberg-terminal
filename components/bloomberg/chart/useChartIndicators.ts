@@ -78,7 +78,13 @@ function instantiate(spec: IndicatorSpec, ctx: WindowCtx): ChartIndicator | null
       ctx.interval,
       ctx.isCrypto
     );
-    return entry.factory(params);
+    const indicator = entry.factory(params);
+    // Keep the user's original units for reopening BB/ATR settings (the factory
+    // receives scaled bar counts in DAYS mode).
+    if (spec.id === "bollinger" || spec.id === "bollinger-b" || spec.id === "atr-regime") {
+      indicator.config.inputParams = spec.params ?? {};
+    }
+    return indicator;
   } catch {
     return null;
   }

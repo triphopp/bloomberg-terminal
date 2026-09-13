@@ -3,7 +3,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Maximize2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useIvSmile } from "../hooks/useIvSmile";
 import type { bloombergColors } from "../lib/theme-config";
+import { IvSmilePanel } from "./iv-smile-panel";
 import { RotationTable } from "./rotation-table";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -14,10 +16,11 @@ const MODES = [
   { key: "corr", label: "CORR", desc: "Pearson Correlation Matrix" },
   { key: "geom", label: "GEOM", desc: "Geometric: Wedge Product / Gram Determinant" },
   { key: "rot", label: "ROT", desc: "Theme/Sector rotation table vs SPY (RRG quadrants)" },
+  { key: "iv", label: "IV", desc: "IV smile for the symbol selected on the MKT chart" },
 ] as const;
 
 type Period = (typeof PERIODS)[number];
-type Mode = "corr" | "geom" | "rot";
+type Mode = "corr" | "geom" | "rot" | "iv";
 type GeomView = "matrix" | "space";
 
 // One distinct vivid colour per sector (dark-background safe)
@@ -74,6 +77,14 @@ interface RegimeData {
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 
+/** What the server renders. The client must start here too and only adopt the
+ *  stored view after mount — see the restore effect in SectorRegimeHeatmap. */
+const VIEW_DEFAULTS: { mode: Mode; period: Period; geomView: GeomView } = {
+  mode: "corr",
+  period: "3m",
+  geomView: "matrix",
+};
+
 function loadDefaults(): { mode: Mode; period: Period; geomView: GeomView } {
   try {
     const s = localStorage.getItem(LS_DEFAULTS);
@@ -89,7 +100,7 @@ function loadDefaults(): { mode: Mode; period: Period; geomView: GeomView } {
   } catch {
     /* ignore */
   }
-  return { mode: "corr", period: "3m", geomView: "matrix" };
+  return VIEW_DEFAULTS;
 }
 
 function saveDefaults(mode: Mode, period: Period, geomView: GeomView) {
@@ -662,24 +673,47 @@ function RegimeTrendStrip({ mode, colors, onPeriodClick, activePeriod }: RegimeT
 // ── Main Component ────────────────────────────────────────────────────────────
 
 interface SectorRegimeHeatmapProps {
+  symbol?: string | null;
   colors: typeof bloombergColors.dark;
   isDark: boolean;
 }
 
-export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
-  const [mode, setMode] = useState<Mode>(() => loadDefaults().mode);
-  const [period, setPeriod] = useState<Period>(() => loadDefaults().period);
-  const [geomView, setGeomView] = useState<GeomView>(() => loadDefaults().geomView);
+export function SectorRegimeHeatmap({ colors, symbol = null }: SectorRegimeHeatmapProps) {
+  // Start from the same view the server rendered. Reading localStorage in the
+  // state initializer instead made the first client render disagree with the
+  // server HTML (stored mode "rot" vs server "corr"), which React reports as a
+  // hydration mismatch and recovers from by throwing the whole tree away.
+  const [mode, setMode] = useState<Mode>(VIEW_DEFAULTS.mode);
+  const [period, setPeriod] = useState<Period>(VIEW_DEFAULTS.period);
+  const [geomView, setGeomView] = useState<GeomView>(VIEW_DEFAULTS.geomView);
+  const [restored, setRestored] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [cSize, setCSize] = useState({ w: 240, h: 220 });
 
   useEffect(() => {
-    saveDefaults(mode, period, geomView);
-  }, [mode, period, geomView]);
+    const d = loadDefaults();
+    setMode(d.mode);
+    setPeriod(d.period);
+    setGeomView(d.geomView);
+    setRestored(true);
+  }, []);
 
   useEffect(() => {
+    // Skip the pre-restore pass, or it would write the defaults back over
+    // whatever the user had stored.
+    if (!restored) return;
+    saveDefaults(mode, period, geomView);
+  }, [restored, mode, period, geomView]);
+
+  const isRot = mode === "rot";
+  const isSmile = mode === "iv";
+  const isMatrix = mode === "corr" || mode === "geom";
+  const smile = useIvSmile(symbol, isSmile);
+
+  useEffect(() => {
+    if (!isMatrix) return;
     const el = containerRef.current;
     if (!el) return;
     const obs = new ResizeObserver(([entry]) => {
@@ -687,7 +721,7 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
     });
     obs.observe(el);
     return () => obs.disconnect();
-  }, []);
+  }, [isMatrix]);
 
   useEffect(() => {
     if (!expanded) return;
@@ -698,8 +732,6 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
     return () => window.removeEventListener("keydown", h);
   }, [expanded]);
 
-  const isRot = mode === "rot";
-
   const { data, isLoading, isError, refetch } = useQuery<RegimeData>({
     queryKey: ["regime-correlation", mode, period],
     queryFn: async () => {
@@ -709,10 +741,10 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
     },
     staleTime: 5 * 60 * 1000,
     retry: 1,
-    enabled: !isRot,
+    enabled: isMatrix,
   });
 
-  const hasData = !isRot && !!data && !data.error && data.matrix.length > 0;
+  const hasData = isMatrix && !!data && !data.error && data.matrix.length > 0;
   const isGeom = mode === "geom";
   const hasGeom = isGeom && hasData && !!data.positions_2d?.length;
   const showSpace = isGeom && geomView === "space" && hasGeom;
@@ -785,7 +817,7 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
             </div>
           )}
 
-          {!isRot && (
+          {isMatrix && (
             <div className="flex ml-auto gap-px">
               {PERIODS.map((p) => (
                 <button
@@ -800,7 +832,7 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
               ))}
             </div>
           )}
-          {isRot && <div className="ml-auto" />}
+          {!isMatrix && <div className="ml-auto" />}
 
           <button
             type="button"
@@ -813,7 +845,7 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
         </div>
 
         {/* Regime badge */}
-        {!isRot && (
+        {isMatrix && (
           <div
             className="flex items-center gap-2 px-1 py-0.5 shrink-0"
             style={{ background: "#080808", borderBottom: `1px solid ${colors.border}` }}
@@ -887,7 +919,7 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
         )}
 
         {/* Trend strip — all periods + direction */}
-        {!isRot && (
+        {isMatrix && (
           <RegimeTrendStrip
             mode={mode}
             colors={colors}
@@ -897,7 +929,11 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
         )}
 
         {/* Visualisation area */}
-        {isRot ? (
+        {isSmile ? (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <IvSmilePanel model={smile} colors={colors} compact />
+          </div>
+        ) : isRot ? (
           <div className="flex-1 min-h-0 overflow-hidden">
             <RotationTable colors={colors} compact />
           </div>
@@ -990,7 +1026,7 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
               style={{ borderBottom: `1px solid ${colors.border}`, background: "#0c0c0c" }}
             >
               <span className="text-[10px] font-bold tracking-widest" style={{ color: "#FF9800" }}>
-                US SECTOR REGIME DETECTION
+                {isSmile ? "IV SMILE" : "US SECTOR REGIME DETECTION"}
               </span>
 
               <div
@@ -1015,7 +1051,7 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
                 ))}
               </div>
 
-              {!isRot && (
+              {isMatrix && (
                 <div className="flex gap-1 ml-2">
                   {PERIODS.map((p) => (
                     <button
@@ -1120,12 +1156,14 @@ export function SectorRegimeHeatmap({ colors }: SectorRegimeHeatmapProps) {
 
             {/* Content area — always single view, full width */}
             <div className="overflow-hidden" style={{ height: modalContentH, background: "#000" }}>
-              {!isRot && isLoading && (
+              {isMatrix && isLoading && (
                 <div className="flex items-center justify-center h-full">
                   <Loader2 className="h-6 w-6 animate-spin" style={{ color: "#FF9800" }} />
                 </div>
               )}
-              {isRot ? (
+              {isSmile ? (
+                <IvSmilePanel model={smile} colors={colors} />
+              ) : isRot ? (
                 <RotationTable colors={colors} compact={false} />
               ) : showSpace ? (
                 <div className="p-3 h-full">

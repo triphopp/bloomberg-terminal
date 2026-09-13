@@ -381,6 +381,7 @@ export function ModularChart({
         textColor: colors.textSecondary,
         fontFamily: "monospace",
         fontSize: 10,
+        attributionLogo: false,
       },
       // The library's grid is chart-wide — every pane or none — so it is off,
       // and the price pane draws its own (`createPriceGridOverlay`, attached

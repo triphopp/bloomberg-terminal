@@ -20,8 +20,20 @@
 - `GET /api/stock/earnings-calendar/{symbol}` — earnings dates + EPS estimate/reported/surprise%; **includes the next scheduled report** (reportedEPS `null`)
 - `GET /api/stock/pe-history/{symbol}` — trailing (TTM) P/E weekly series (adj-EPS) + percentile stats + earnings list; cache 1h. Next.js proxy: `type=pe-history`
 
+## Adaptive DCF (`routers/dcf.py`)
+
+- `GET /api/dcf/{symbol}?model=auto|fcff|growth|fcfe|excess_return|affo|normalized_cycle&scenario=bear|base|bull` — normalizes Yahoo statements/market inputs, selects an industry-aware model when `model=auto`, and returns the forecast, valuation bridge, 5×5 rate/g sensitivity, warnings and input lineage. Normalized inputs cache 1h; default/query runs cache 15min.
+- `POST /api/dcf/{symbol}` — uncached analyst run. Body `{model, scenario, assumptions}`; assumption rates are decimal fractions. Model/scenario inputs are validated by the pure engine and invalid combinations return 422.
+- `DELETE /api/dcf/cache/{symbol}` — clears that symbol's normalized-input and result caches.
+- Next.js catch-all proxy: `app/api/dcf/[...path]/route.ts`, 90s timeout, preserves backend status. Browser code never calls Yahoo directly.
+- `AUTO` routes banks/insurers to excess-return, REIT/real estate to AFFO, volatile energy/material issuers to normalized-cycle, high-growth or non-positive-FCFF issuers to revenue→FCFF, and ordinary corporates to 3-stage FCFF. It is a recommendation only; the UI always permits an override.
+- Statement currency is the valuation currency. If it differs from quote currency, market price/market cap/upside are intentionally omitted rather than compared without FX conversion. Statement lineage is `STATEMENT`, not an assertion that the value came directly from a filing.
+
 ## Options (`routers/options.py`)
-- `GET /api/options` — options chain (calls + puts). Also returns `ivCall`/`ivPut`/`ivMid`/`atmStrike` (median ATM IV within 3% of spot, per side) and **upserts today's `iv_snapshots` row as a side effect** — `ivCurrent` stays call-only for back-compat
+- `GET /api/options?symbol=&expiry=` (Next.js) → Python `GET /api/options/{symbol}?expiry=` — options chain (calls + puts). Also returns `ivCall`/`ivPut`/`ivMid`/`atmStrike` (median ATM IV within 3% of spot, per side) and **upserts today's `iv_snapshots` row as a side effect** — `ivCurrent` stays call-only for back-compat
+- MKT REGIME IV Smile reuses the chain endpoint for discovery then one selected expiry or deduplicated actual expiries nearest 1/3/5/7/9 calendar months (within ±45 days, at least 7 DTE). No full-surface request. The chain handler is synchronous so blocking Yahoo fetches use FastAPI's threadpool when multiple expiries load. Next.js preserves backend errors as `{error: string}` with original status, including404 for no options; transport failures remain502. Chain row IV field is `impliedVolatility` (fraction).
+- OI overlay reuses the same chain response, no new endpoint/fetch: row `openInterest` is contract count. `clean_df` now adds `openInterestAvailable:boolean` before legacy numeric filling: false for missing/invalid/negative/fractional/unsafe integer OI, true for reported0. Existing numeric `openInterest` and aggregate fields remain compatible. OI chart consumes one explicitly selected expiry in MULTI, independent of IV/quoted filters, and shows latest reported OI rather than daily OI history.
+- `POST /api/options/smile-fit` — optional Raw SVI calibration from supplied observations; no market fetch. Body `{referencePrice, timeYears, series:[{name:"call"|"put"|"otm",points:[{strike,ivPercent}]}]}`. IV input is **percent**, T is ACT/365 years. At most 2 unique series and 2000 points each; finite positive S/K/IV/T, T<=10, S/K<=1e12, IV<=10000. Invalid schema or duplicate names →422. A series with <8 distinct usable strikes, log-strike span<0.05 or failed convergence returns200 with `status:"unavailable"`, reason and no parameters. Successful series returns Raw SVI parameters, IV RMSE in percentage points and observed strike span. Synchronous SciPy optimizer, robust soft-L1 total-variance residuals, positive global minimum variance, six deterministic starts; no cross-expiry arbitrage constraints. Payload SHA-256 TTL cache300s/max200. Next proxy `app/api/options/smile-fit/route.ts` preserves status,30s timeout,502 transport errors. See `data-shapes.md` for exact result.
 - `GET /api/options/surface` — implied volatility surface
 - `POST /api/options/{symbol}/iv-snapshot?expiry=&targetDte=30` — record today's ATM IV explicitly (for a daily cron; the chain endpoint already does it on read). Picks the expiry nearest `targetDte` and **skips anything under 7 DTE** — `expirations[0]` is often 0DTE, whose ATM call/put pair can disagree by 40 vol points (see gotchas). 422 if no usable ATM IV
 - `GET /api/options/{symbol}/sd-bands?period=&mode=&horizonDays=&rvWindow=&occWindow=` — Black-Scholes lognormal σ-bands per day for the SD heatmap pane. `mode=occupancy` (default) = realized bucket frequency vs the band projected `horizonDays` earlier; `mode=cheapness` = `P_rv − P_iv` on the same price edges. History depth is bounded by `iv_snapshots`, NOT by `period` — a fresh symbol returns `snapshotCount: 0` + a `note`, never an error (plus `rawSnapshotCount` when rows exist but are all under 7 DTE and therefore excluded). Per day it picks the expiry closest to `horizonDays`, not the nearest one. **`cheapness` works from the FIRST snapshot** (realized vol comes from price history); `occupancy` cannot draw until outcomes exist ~`horizonDays` later — hence `cheapness` is the default mode. Math: `backend/analytics/sd_bands.py`
@@ -341,6 +353,20 @@ Auth: static token in `Authorization` header (no "Bearer" prefix — IBM API Con
   - Used by: MKT view Regime Detection panel (CORR mode = correlation, GEOM mode = geometric)
   - Calibration math: `backend/analytics/regime_calibration.py`
 - `GET /api/regime/calibrated?period=3m|6m|1y|1m` — CORR + GEOM both, with conflict detection
+
+## Market State — per-symbol regime (`routers/market_state.py`)
+
+Two endpoints because they answer two different questions and only one is cheap.
+
+- `GET /api/market-state/{symbol}?period=10y&n_states=4&history=504` — the dashboard payload
+  - OHLCV → 5 features → Gaussian HMM (full covariance) → filtered posterior + Trend/Momentum/Volatility scores + summary sentence + strategy compatibility + redundancy report
+  - **Labels are causal** (filtered posterior — no bar uses data after itself); **parameters are in-sample** (one fit on the whole history). The payload carries this in `basis` and the UI prints it. Do NOT quote numbers from here as evidence that a state predicts anything
+  - ~1s cold for 10y of daily bars; TTL 1h, and a failed fit is deliberately NOT cached
+  - Used by: NEWS → WATCHLIST → REGIME panel · stock-view → REGIME tab (same component)
+- `GET /api/market-state/{symbol}/validation?period=max&n_states=4` — walk-forward refit
+  - Refits every `step` bars (default 126) on data ending `EMBARGO`=21 sessions before each block, labels only that block → out-of-sample forward return per state (horizons 5/10/21), Welch t **and an overlap-adjusted t = t/√h**, plus the best-scoring strategy per state
+  - Tens of fits (3-10s typical, capped at `MAX_REFITS`=40); TTL 24h; the UI only calls it when the user presses RUN
+  - This is the ONLY endpoint allowed to claim what follows a state
 
 ## Theme/Sector Rotation (`routers/rotation.py`)
 - `GET /api/rotation/table?market=US|TH&bench=SPY` — momentum table; US: 24 theme ETF proxies (ARKG, IBB, CIBR, SMH, MAGS…) + 11 SPDR sectors vs SPY; TH: 13 equal-weight sector baskets (Banking, Energy, ICT, Commerce…) vs ^SET.BK; per row: d1/w1/m1/m3 %, m1_vs_bench, RRG quadrant + mom_dir; 15min cache, one batch yf.download 9mo

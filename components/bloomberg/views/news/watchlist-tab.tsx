@@ -5,6 +5,7 @@ import { AlertTriangle, ExternalLink, Filter, Layers, RefreshCw, Settings2, X } 
 import { useEffect, useMemo, useState } from "react";
 import { currentViewAtom, stockSearchSymbolAtom } from "../../atoms";
 import { BloombergButton } from "../../core/bloomberg-button";
+import { DcfTab } from "../stock/dcf";
 import { MarketStateTab } from "../stock/market-state";
 import { RateStressTab } from "../stock/rate-stress";
 import {
@@ -30,7 +31,7 @@ import { useWatchlistNews, useWatchlistSymbols } from "./useWatchlistNews";
 
 type GroupMode = "sector" | "ticker" | "time";
 /** Which panel the right-hand column shows once a single company is in focus. */
-type NewsPanel = "headlines" | "rate-stress" | "regime";
+type NewsPanel = "headlines" | "rate-stress" | "dcf" | "regime";
 type SentFilter = "ALL" | Sentiment;
 
 type MatchMode = "direct" | "all";
@@ -239,7 +240,7 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
 
   // With one company in focus the panel can answer more than "what was written
-  // about it". Rate stress and the market-state model ride alongside the
+  // about it". Rate stress, DCF and the market-state model ride alongside the
   // headlines rather than replacing them. The choice is stored against the
   // company it was made for, so moving the focus falls back to the headlines
   // without an effect having to notice.
@@ -691,6 +692,7 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
                   [
                     { id: "headlines", label: "HEADLINES" },
                     { id: "rate-stress", label: "RATE STRESS" },
+                    { id: "dcf", label: "DCF" },
                     { id: "regime", label: "REGIME" },
                   ] as const
                 ).map((t) => (
@@ -726,6 +728,14 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
 
         {/* Adaptive valuation lab — shared with stock-view so the model,
             assumptions and audit trail are identical at both entry points. */}
+        {selectedSymbol && panel === "dcf" && (
+          <div
+            className="flex-1 overflow-y-auto"
+            style={{ scrollbarWidth: "thin", scrollbarColor: "#333 #000" }}
+          >
+            <DcfTab symbol={selectedSymbol} colors={colors} />
+          </div>
+        )}
 
         {/* Market State — same panel the equity view mounts, for the same reason
             rate stress is shared: two copies would drift. */}
