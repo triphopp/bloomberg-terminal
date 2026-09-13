@@ -1251,3 +1251,34 @@ console.error = (...a) => { if (String(a[0]).includes("Maximum update depth")) w
 Tests: `backend/tests/test_upstream_rate_limit.py` (12 เคส)
 
 ---
+
+## Raw SVI ขึ้น "FIT ERROR" เพราะ validation สองชั้นขัดกันเอง (fixed 2026-09-13)
+
+**อาการ:** IV smile panel ขึ้น `FIT ERROR` ทั้งที่ chain โหลดมาปกติและ smile ดูฟิตได้สบาย
+
+**สาเหตุ:** สองชั้นในโค้ดเดียวกัน "ตกลงสัญญา" ไม่ตรงกัน และชั้นที่เข้มกว่าชนะ
+
+| ชั้น | ทำอะไรกับ point ที่ใช้ไม่ได้ |
+|------|------------------------------|
+| `SviSampleIn` (pydantic, `routers/options.py`) | `ivPercent: Field(gt=0, le=10000)` → **422 ทั้ง request** |
+| `analytics/svi.fit_raw_svi` | **ข้ามทิ้ง** (`iv_pct > 0.01`, `math.isfinite`) — มี test ยืนยันอยู่แล้ว |
+
+option chain จริงมีแถวตายเสมอ — strike ที่ไม่มี quote Yahoo คืน `impliedVolatility = 0` แถวเดียวจาก 60
+ทำให้ทั้ง request ถูกปฏิเสธก่อนที่ fitter จะได้ทำงาน ทั้งที่ fitter จัดการเคสนี้ได้อยู่แล้ว
+
+**Fix:** ให้ pydantic คุมแค่ **โครงสร้าง** (จำนวน series, จำนวน point, ขอบบนกัน payload ระเบิด)
+ส่วนความถูกต้องของ *ค่า* เป็นหน้าที่ fitter ซึ่งทำได้ดีกว่าและถูกทดสอบไว้แล้ว
+ผลคือ slice ที่ฟิตไม่ได้จะคืน `status: "unavailable"` + `reason` (คำตอบจริงเกี่ยวกับข้อมูล)
+แทน 422 (คำตอบเกี่ยวกับ API ของเรา)
+
+**หลักการ:** ถ้ามีสองชั้นตรวจเรื่องเดียวกัน ให้ชั้นที่ **รู้บริบทมากที่สุด** เป็นเจ้าของ แล้วอีกชั้นถอยออก —
+การตรวจซ้ำที่เข้มกว่าจะกลายเป็นตัวปิดกั้นไม่ให้ตัวที่เก่งกว่าได้ทำงาน
+
+`test_svi.py::test_endpoint_rejects_invalid_or_unbounded_requests[override7]` (strike=0)
+เคยยืนยันพฤติกรรมเดิมไว้ — ย้ายออกมาเป็น test ของพฤติกรรมใหม่พร้อมเหตุผล ไม่ได้ลบทิ้งเงียบๆ
+
+**ยังไม่ได้แก้:** IV สูงผิดปกติ (เช่น 15000%) ผ่าน filter ของ fitter ได้ (finite และ > 0.01)
+แล้วทำให้ optimizer ไม่ converge → ทั้ง expiry เป็น `unavailable` repo มี `IV_SANITY_MAX = 5.0` (500%)
+ใช้อยู่แล้วกับ IV snapshot ถ้าจะปิดช่องนี้ควรใช้ค่าเดียวกันเพื่อความสม่ำเสมอ
+
+---
