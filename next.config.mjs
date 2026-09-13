@@ -1,11 +1,47 @@
+import { networkInterfaces } from "node:os";
+
 import bundleAnalyzer from "@next/bundle-analyzer";
 
 const withBundleAnalyzer = bundleAnalyzer({
   enabled: process.env.ANALYZE === "true",
 });
 
+/**
+ * Hosts the dev server will serve its internal assets to.
+ *
+ * Next 16 refuses `/_next/*` for a request whose Host is not one it recognises.
+ * Opening the terminal from a phone at `http://<lan-ip>:9318` therefore returned
+ * the page HTML (200) and then nothing else: the client bundle was blocked, the
+ * terminal never mounted, and the static BootScreen markup sat there until the
+ * boot watchdog reloaded into exactly the same wall. Nothing in the browser said
+ * why — the dev server logged the refusal on this machine, not on the phone.
+ *
+ * Read live instead of hardcoded, because DHCP hands this machine a different
+ * address on a different network and a pinned IP would silently stop working.
+ * `DEV_ORIGINS` (comma-separated) covers anything this cannot see: a tunnel
+ * host, a container bridge, a second NIC.
+ */
+const lanHosts = Object.values(networkInterfaces())
+  .flat()
+  .filter((n) => n && n.family === "IPv4" && !n.internal)
+  .map((n) => n.address);
+
+const allowedDevOrigins = [
+  ...new Set([
+    "localhost",
+    "127.0.0.1",
+    "bloomberg.localhost",
+    ...lanHosts,
+    ...(process.env.DEV_ORIGINS ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  ]),
+];
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  allowedDevOrigins,
   experimental: {
     optimizePackageImports: [
       "@radix-ui/react-accordion",

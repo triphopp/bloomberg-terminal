@@ -323,9 +323,16 @@ export function AlertTicker() {
   // already showing real numbers — the crawl is ambient, and an old print reads
   // better than an empty strip.
   const lastGood = useRef<TickerResponse | null>(null);
+  // `data` is whatever the proxy returned, NOT necessarily a TickerResponse: on
+  // an upstream failure `app/api/ticker/route.ts` answers `{ error, detail }`
+  // with no `items` at all, and React Query hands that body over as data rather
+  // than as an error. Reaching into `.items.length` there throws during render,
+  // and the ticker sits above every view with no error boundary over it — one
+  // 502 took down the whole terminal.
+  const rows = Array.isArray(data?.items) ? data.items : null;
   useEffect(() => {
-    if (data && data.items.length > 0) lastGood.current = data;
-  }, [data]);
+    if (data && rows && rows.length > 0) lastGood.current = data;
+  }, [data, rows]);
 
   // Also the app's single mount point for toast/sound delivery — the ticker
   // is always mounted, so the hook doesn't need a component of its own.
@@ -334,7 +341,7 @@ export function AlertTicker() {
 
   if (!enabled) return null;
 
-  const shown = data && data.items.length > 0 ? data : lastGood.current;
+  const shown = rows && rows.length > 0 ? data : lastGood.current;
   const items = shown?.items ?? [];
   const alerts = shown?.alerts ?? [];
   const hasCritical = shown?.has_critical ?? false;
@@ -375,7 +382,7 @@ export function AlertTicker() {
   if (content.length === 0) {
     const [msg, color] = isLoading
       ? ["MARKET DATA LOADING...", "#333"]
-      : isError || data?.degraded
+      : isError || data?.degraded || !rows
         ? ["MARKET DATA UNAVAILABLE — RETRYING", "#884400"]
         : ["NO MARKET DATA", "#333"];
     return (

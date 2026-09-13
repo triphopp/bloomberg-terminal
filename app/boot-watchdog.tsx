@@ -14,12 +14,26 @@
  * once — the same refresh the user was doing — and then stands down so a page
  * that is genuinely broken cannot reload-loop.
  *
+ * It reloads only for a page that has STOPPED, never for one that is merely
+ * slow: see PROGRESS_GRACE_MS below.
+ *
  * `window.__BT_MOUNTED__` is set by the terminal on mount (see
  * `components/bloomberg/layout/bloomberg-terminal.tsx`).
  */
 
 const RELOAD_AFTER_MS = 12_000;
 const RETRY_WINDOW_MS = 60_000;
+// A slow client is not a stalled one. A phone on wifi pulling the unminified
+// dev bundle needs far longer than a desktop on loopback: measured over the LAN,
+// this page is 161 resources and 65 scripts, done at ~2.7s on a laptop — an
+// iPhone was 19 resources in at the 12s mark and still climbing. Reloading there
+// threw away everything it had fetched and restarted the same race, so the
+// terminal could never finish booting no matter how many times it tried. Every
+// beacon from that phone said "timeout" and not one said ChunkLoadError: nothing
+// was broken, it simply had not arrived yet. So before reloading, check whether
+// resources are still landing, and if they are, give it another window.
+const PROGRESS_GRACE_MS = 8_000;
+const MAX_GRACE_ROUNDS = 8; // ~76s of genuine progress before giving up
 
 const script = `
 (function () {
@@ -66,7 +80,24 @@ const script = `
     console.warn("[boot] terminal did not mount (" + why + ") — reloading");
     window.location.reload();
   }
-  function arm() { setTimeout(function () { retry("timeout"); }, ${RELOAD_AFTER_MS}); }
+  function resourceCount() {
+    try { return performance.getEntriesByType("resource").length; } catch (e) { return 0; }
+  }
+  // Reload only when the page has stopped making progress. While the resource
+  // count is still climbing the bundle is downloading, not stuck.
+  function watch(seen, rounds) {
+    var now = resourceCount();
+    if (window.__BT_MOUNTED__) return;
+    if (now > seen && rounds < ${MAX_GRACE_ROUNDS}) {
+      console.info("[boot] still loading (" + now + " resources) — waiting");
+      setTimeout(function () { watch(now, rounds + 1); }, ${PROGRESS_GRACE_MS});
+      return;
+    }
+    retry(now > seen ? "slow" : "timeout");
+  }
+  function arm() {
+    setTimeout(function () { watch(resourceCount(), 0); }, ${RELOAD_AFTER_MS});
+  }
   // A prerendered document (Chrome starts one while you type the URL in the
   // omnibox) is not on screen yet and may sit half-loaded for a long time —
   // that is not a stall, and reloading there would throw the prerender away.
