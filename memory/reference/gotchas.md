@@ -1026,6 +1026,19 @@ ticker payload → สแกนทุก position ที่เปิดอยู
 **กฎทั่วไป:** loop ที่วนของหลายชิ้น ต้อง try/except **รายชิ้น** ไม่ใช่รอบนอกสุด และต้อง log
 id ของชิ้นที่พังด้วย. ถ้าชิ้นนั้นพังซ้ำๆ ให้ปิดมันเอง (`enabled = 0`) แทนที่จะลากทั้ง batch ลงไป
 
+**แก้แล้ว 2026-09-15 (`ddf313d`)** — `run_scan` build rule ทีละแถว, `engine.scan` ครอบ
+try/except รายกฎ (callback `on_rule_error`), เก็บเหตุผลลง `alert_rules.last_error`
+แล้วโชว์ ⚠ ข้างชื่อกฎใน bell menu + context menu
+
+**นโยบายแยก 2 แบบ — สำคัญ:**
+- **parse ไม่ผ่าน** = พังถาวร → `enabled = 0` เลย จะได้เลิก retry ทุก 15 นาที
+- **พังตอน evaluate** (bars เพี้ยน, indicator throw) = อาจหายเอง → คง enabled ไว้ บันทึกแค่ error
+
+`last_error` ล้างเองเมื่อ scan ผ่าน หรือเมื่อผู้ใช้แก้กฎ (PATCH)
+
+**บทเรียนที่แพงกว่าตัวบั๊ก:** "ไม่มี alert" กับ "engine พัง" หน้าตาเหมือนกันเป๊ะบน UI
+ทุก background job ที่ข้ามงานไป ต้องมีที่ให้ผู้ใช้เห็นว่าข้ามเพราะอะไร ไม่ใช่แค่ log
+
 > รายละเอียด + วิธี reproduce → `memory/sessions/reports/alert-scan-dead-since-2026-08-25-risk-report.md`
 
 ## FastAPI: literal path ถูก `{param}` route จับก่อน ถ้าประกาศทีหลัง

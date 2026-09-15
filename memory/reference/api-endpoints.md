@@ -435,6 +435,27 @@ import) is a different thing and still exists.
 **Next.js proxy:** `app/api/alerts/route.ts` (GET + DELETE)
 **Frontend:** `components/bloomberg/layout/alert-ticker.tsx` — polls every 60s, renders 24px strip at bottom
 
+## Alert Rule Engine (`routers/alert_rules.py`) — user-defined rules
+Design: `memory/plans/alert-rule-engine.md`. Scanned every 15 min by
+`backend/alerts/scheduler.py` (`ALERT_SCAN_INTERVAL=0` disables).
+
+- `GET /api/alerts/rules` · `POST` · `PATCH /rules/{id}` · `DELETE /rules/{id}`
+- `POST /api/alerts/rules/preview` — dry-run, saves nothing
+- `POST /api/alerts/scan` — evaluate now. Returns `{events, count, delivery, skipped}`
+- `GET /api/alerts/events` · `POST /api/alerts/events/ack`
+
+**Rule shape adds 2 fields (2026-09-15):** `lastError` / `lastErrorAt` — why the
+last scan skipped this rule, or null. `enabled: false` **with** a `lastError` means
+the scanner disabled it, not the user. Rendered as ⚠ beside the rule name by
+`components/bloomberg/alerts/RuleErrorMark.tsx`.
+
+⚠️ **Fault-isolation contract — do not undo:** one rule failing must never end the
+scan. `run_scan` parses rules per row, `engine.scan` wraps each rule's evaluation.
+A rule that does not parse is disabled (permanent); one that raises at runtime keeps
+`enabled` (may be transient) and only records the error. Wrapping the batch in one
+try/except instead is what killed the scanner for three weeks —
+`memory/sessions/reports/alert-scan-dead-since-2026-08-25-risk-report.md`.
+
 ---
 
 ## Quote Providers (`routers/providers.py`)
