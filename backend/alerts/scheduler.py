@@ -75,6 +75,14 @@ def run_once() -> dict:
         logger.info(
             "alert scan: %d event(s) fired, delivery=%s", result["count"], result.get("delivery")
         )
+    # Loud, and per rule. run_scan no longer lets one bad rule end the tick, so
+    # without this line a rule that never evaluates is invisible: the scan
+    # "succeeds", the ticker stays empty, and that reads as "no alerts".
+    for skip in result.get("skipped", []):
+        logger.warning(
+            "alert scan: rule %s (%s) skipped — %s",
+            skip.get("ruleId"), skip.get("name"), skip.get("error"),
+        )
     return result
 
 
@@ -84,7 +92,13 @@ def _loop(interval: int) -> None:
         try:
             run_once()
         except Exception as e:  # noqa: BLE001 — a bad tick must not kill the loop
-            logger.warning("alert scan tick failed (will retry next interval): %s", e)
+            # Last resort only. run_scan isolates per-rule failures itself, so
+            # anything reaching here is a fault in the scan as a whole (DB,
+            # network, a bug) — not one user's rule. If this line starts
+            # repeating, every rule is going unevaluated; see
+            # memory/sessions/reports/alert-scan-dead-since-2026-08-25-risk-report.md
+            # for the last time that happened and went unnoticed for three weeks.
+            logger.exception("alert scan tick failed (will retry next interval): %s", e)
         time.sleep(interval)
 
 

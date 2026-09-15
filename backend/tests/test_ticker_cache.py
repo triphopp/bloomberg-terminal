@@ -33,13 +33,13 @@ def _payload(n_items: int) -> tuple[dict, bool]:
 
 def test_degraded_build_does_not_replace_a_good_payload(monkeypatch):
     key = "ticker:test"
-    monkeypatch.setattr(tk, "_build_ticker", lambda acct: _payload(3))
-    good = tk._build_and_store(key, "test")
+    monkeypatch.setattr(tk, "_build_ticker", lambda: _payload(3))
+    good = tk._build_and_store(key)
     assert len(good["items"]) == 3
 
     # Upstream now fails: every fetcher returns empty.
-    monkeypatch.setattr(tk, "_build_ticker", lambda acct: _payload(0))
-    after = tk._build_and_store(key, "test")
+    monkeypatch.setattr(tk, "_build_ticker", lambda: _payload(0))
+    after = tk._build_and_store(key)
 
     assert len(after["items"]) == 3, "an empty build must not blank the crawl"
     assert after["stale"] is True
@@ -47,25 +47,25 @@ def test_degraded_build_does_not_replace_a_good_payload(monkeypatch):
 
 
 def test_degraded_build_is_stored_when_there_is_nothing_better(monkeypatch):
-    monkeypatch.setattr(tk, "_build_ticker", lambda acct: _payload(0))
-    out = tk._build_and_store("ticker:empty", "empty")
+    monkeypatch.setattr(tk, "_build_ticker", lambda: _payload(0))
+    out = tk._build_and_store("ticker:empty")
     assert out["items"] == []
     assert out["degraded"] is True
 
 
 def test_stale_entry_is_served_and_refreshed_in_background(monkeypatch):
-    key = "ticker:all"
-    monkeypatch.setattr(tk, "_build_ticker", lambda acct: _payload(2))
-    tk._build_and_store(key, "all")
+    key = tk._CACHE_KEY
+    monkeypatch.setattr(tk, "_build_ticker", lambda: _payload(2))
+    tk._build_and_store(key)
 
     # Age the entry past FRESH_TTL without waiting for it.
     fetched_at, payload = tk._cache.get(key)
     tk._cache.set(key, (fetched_at - tk.FRESH_TTL - 1, payload))
 
-    calls: list[str] = []
+    calls: list[int] = []
 
-    def slower(acct):
-        calls.append(acct)
+    def slower():
+        calls.append(1)
         return _payload(5)
 
     monkeypatch.setattr(tk, "_build_ticker", slower)
@@ -82,20 +82,39 @@ def test_stale_entry_is_served_and_refreshed_in_background(monkeypatch):
         if calls:
             break
         time.sleep(0.02)
-    assert calls == ["all"], "a stale read must trigger exactly one refresh"
+    assert len(calls) == 1, "a stale read must trigger exactly one refresh"
 
 
 def test_fresh_entry_triggers_no_refresh(monkeypatch):
-    key = "ticker:all"
-    monkeypatch.setattr(tk, "_build_ticker", lambda acct: _payload(2))
-    tk._build_and_store(key, "all")
+    key = tk._CACHE_KEY
+    monkeypatch.setattr(tk, "_build_ticker", lambda: _payload(2))
+    tk._build_and_store(key)
 
-    def boom(acct):
+    def boom():
         raise AssertionError("a fresh entry must be served with no work at all")
 
     monkeypatch.setattr(tk, "_build_ticker", boom)
     out = tk.get_ticker(account_id="all")
     assert out["stale"] is False
+
+
+def test_every_account_id_reads_the_same_entry(monkeypatch):
+    """The payload used to vary by account because the alert list carried that
+    account's stop-loss breaches. With the stop engine gone nothing in the crawl
+    is account-scoped, so a caller passing ?account_id=X must read the entry the
+    startup prewarm filled instead of paying its own cold build."""
+    builds: list[int] = []
+
+    def counted():
+        builds.append(1)
+        return _payload(2)
+
+    monkeypatch.setattr(tk, "_build_ticker", counted)
+    tk.get_ticker(account_id="all")
+    tk.get_ticker(account_id="dime")
+    tk.get_ticker(account_id="finansia")
+
+    assert len(builds) == 1, "a per-account key would rebuild for each caller"
 
 
 def test_fresh_window_sits_under_the_frontend_poll():
@@ -167,7 +186,7 @@ def test_a_build_during_shutdown_reports_degraded_without_a_pool(monkeypatch):
         raise AssertionError("must not build a thread pool while stopping")
 
     monkeypatch.setattr(tk, "ThreadPoolExecutor", boom)
-    payload, degraded = tk._build_ticker("all")
+    payload, degraded = tk._build_ticker()
     assert degraded is True
     assert payload["items"] == []
 

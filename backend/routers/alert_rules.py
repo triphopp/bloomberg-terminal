@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 import uuid
 from typing import Any
 
@@ -34,6 +35,8 @@ from alerts import engine, notify, operands
 from alerts.ast import AstValidationError, normalize_node, to_dict, validate
 from alerts.eval import Bars, evaluate, fires
 from routers.watchlist_signals import _download
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/alerts", tags=["Alert Rules"])
 
@@ -166,7 +169,19 @@ def _row_to_dict(row) -> dict[str, Any]:
         "schemaVersion": row["schema_version"],
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
+        # Why the last scan skipped this rule, or None. A rule disabled with a
+        # lastError set was switched off by the scanner, not by the user.
+        "lastError": _opt_col(row, "last_error"),
+        "lastErrorAt": _opt_col(row, "last_error_at"),
     }
+
+
+def _opt_col(row, name: str):
+    """Read a column that older databases may predate the ALTER for."""
+    try:
+        return row[name]
+    except (IndexError, KeyError):
+        return None
 
 
 def _row_to_engine_rule(row) -> engine.AlertRule:
@@ -350,6 +365,11 @@ def patch_rule(rule_id: str, body: AlertRulePatch):
             return result
 
         updates["updated_at"] = datetime.datetime.utcnow().isoformat()
+        # Any edit clears the scanner's complaint. The user is re-stating the
+        # rule, and a stale lastError next to a rule they just fixed reads as
+        # "still broken". The next scan writes a fresh one if it still is.
+        updates["last_error"] = None
+        updates["last_error_at"] = None
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         conn.execute(f"UPDATE alert_rules SET {set_clause} WHERE id = ?", [*updates.values(), rule_id])
         conn.commit()
@@ -448,6 +468,27 @@ def preview_rule(body: PreviewRequest):
 # ── Scan ─────────────────────────────────────────────────────────────────────
 
 
+def _record_rule_error(conn, rule_id: str, message: str, now: str, *, disable: bool) -> None:
+    """Park the reason on the row so a broken rule is visible in the UI.
+
+    `disable` separates the two kinds of failure. A rule whose stored AST does
+    not parse can never succeed, so it is switched off and stops being retried
+    every 15 minutes; a rule that blew up while evaluating (bad bars, an
+    indicator that raised) may well work on the next tick, so it keeps its
+    enabled flag and only carries the error.
+    """
+    if disable:
+        conn.execute(
+            "UPDATE alert_rules SET enabled = 0, last_error = ?, last_error_at = ? WHERE id = ?",
+            (message[:500], now, rule_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE alert_rules SET last_error = ?, last_error_at = ? WHERE id = ?",
+            (message[:500], now, rule_id),
+        )
+
+
 @router.post("/scan")
 def run_scan(body: ScanRequest = ScanRequest()):
     now = datetime.datetime.utcnow().isoformat()
@@ -457,9 +498,33 @@ def run_scan(body: ScanRequest = ScanRequest()):
             wanted = set(body.rule_ids)
             rows = [r for r in rows if r["id"] in wanted]
         if not rows:
-            return {"events": [], "count": 0}
+            return {"events": [], "count": 0, "skipped": []}
 
-        rules = [_row_to_engine_rule(r) for r in rows]
+        # Per row, not one comprehension over all of them. `_row_to_engine_rule`
+        # calls validate(), and a single row whose stored expr_json does not
+        # parse used to raise straight out of run_scan — up through the
+        # scheduler's one try/except-per-tick, which meant EVERY other rule went
+        # unevaluated. That is not hypothetical: a leftover test row
+        # ({"kind": "const"}, no "op") silenced the scanner from 2026-08-25 to
+        # 2026-09-15, and the only symptom was a WARNING line.
+        skipped: list[dict[str, str]] = []
+        rules = []
+        for row in rows:
+            try:
+                rules.append(_row_to_engine_rule(row))
+            except Exception as e:  # noqa: BLE001 — a bad row must not end the scan
+                message = f"{type(e).__name__}: {e}"
+                logger.warning(
+                    "alert scan: rule %s (%s) does not parse, disabling it: %s",
+                    row["id"], row["name"], message,
+                )
+                _record_rule_error(conn, row["id"], message, now, disable=True)
+                skipped.append({"ruleId": row["id"], "name": row["name"], "error": message})
+
+        if not rules:
+            conn.commit()  # keep the disable + last_error we just wrote
+            return {"events": [], "count": 0, "skipped": skipped}
+
         watchlist_symbols = _live_watchlist_symbols(conn)
 
         needed: set[str] = set()
@@ -478,10 +543,30 @@ def run_scan(body: ScanRequest = ScanRequest()):
                 resolvers[symbol] = operands.make_resolver(bars_by_symbol[symbol])
             return resolvers[symbol]
 
+        failed_at_runtime: set[str] = set()
+
+        def on_rule_error(rule: engine.AlertRule, exc: Exception) -> None:
+            message = f"{type(exc).__name__}: {exc}"
+            failed_at_runtime.add(rule.id)
+            _record_rule_error(conn, rule.id, message, now, disable=False)
+            skipped.append({"ruleId": rule.id, "name": rule.name, "error": message})
+
         events = engine.scan(
             conn, rules, bars_by_symbol, times_by_symbol,
             resolver_for_symbol, watchlist_symbols, now,
+            on_rule_error=on_rule_error,
         )
+
+        # A rule that ran clean this tick clears whatever error it was carrying,
+        # so `last_error` always describes the latest scan rather than the worst
+        # one the rule ever had.
+        recovered = [r.id for r in rules if r.id not in failed_at_runtime]
+        if recovered:
+            conn.executemany(
+                "UPDATE alert_rules SET last_error = NULL, last_error_at = NULL "
+                "WHERE id = ? AND last_error IS NOT NULL",
+                [(rid,) for rid in recovered],
+            )
         # Deliver *after* the rows exist: a webhook that hangs or 500s must
         # cost us the ping, never the event (alerts/notify.py).
         delivery = notify.dispatch(conn, events, {r.id: r for r in rules}, now)
@@ -494,6 +579,7 @@ def run_scan(body: ScanRequest = ScanRequest()):
         ],
         "count": len(events),
         "delivery": delivery,
+        "skipped": skipped,
     }
 
 

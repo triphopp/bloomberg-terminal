@@ -69,6 +69,12 @@ def create_alert_tables(conn: sqlite3.Connection) -> None:
     _add_column(conn, "alert_events", "notified_at", "TEXT")
     _add_column(conn, "alert_events", "notify_error", "TEXT")
 
+    # Why a rule was skipped on the last scan, so a broken rule is visible in
+    # the UI instead of only in a log line. Written by routers/alert_rules.py's
+    # scan; cleared when the rule next scans cleanly or the user edits it.
+    _add_column(conn, "alert_rules", "last_error", "TEXT")
+    _add_column(conn, "alert_rules", "last_error_at", "TEXT")
+
     # Rules deleted before delete_rule learned to ack their events left unacked
     # orphans behind, and an orphan alerts forever: the events endpoint gives a
     # row with no rule the default notify=["ticker"], so the ticker and the

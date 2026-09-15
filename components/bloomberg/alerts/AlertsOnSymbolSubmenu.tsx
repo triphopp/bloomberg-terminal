@@ -11,6 +11,7 @@ import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { type AlertRule, useAlertRules } from "../hooks/useAlertRules";
 import type { bloombergColors } from "../lib/theme-config";
+import { RuleErrorMark } from "./RuleErrorMark";
 import { menuItemClass } from "./SymbolContextMenu";
 
 interface AlertsOnSymbolSubmenuProps {
@@ -55,7 +56,10 @@ export function AlertsOnSymbolSubmenu({ symbol, colors, rules }: AlertsOnSymbolS
               )
             }
           >
-            <span className="truncate">{rule.name}</span>
+            <span className="flex min-w-0 items-center gap-1">
+              <span className="truncate">{rule.name}</span>
+              <RuleErrorMark rule={rule} />
+            </span>
             <button
               type="button"
               title="Delete rule"

@@ -19,12 +19,15 @@ Trigger semantics, restated from the plan:
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from .ast import AndNode, NotNode, OrNode, Predicate, RuleNode, SustainedNode, WithinNode, operand_key
 from .eval import Bars, BoolResult, IndicatorResolver, evaluate, resolve_operand
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -218,6 +221,7 @@ def scan(
     resolver_for_symbol: Callable[[str], IndicatorResolver],
     watchlist_symbols: list[str],
     now_iso: str,
+    on_rule_error: Callable[[AlertRule, Exception], None] | None = None,
 ) -> list[Event]:
     """Evaluate every enabled rule against its scope's symbols.
 
@@ -226,21 +230,35 @@ def scan(
     per-symbol data, so a single shared resolver would be wrong. Cross-rule
     memoization of repeated (indicator, params) computations for the SAME
     symbol is the resolver's own job (plan §6's O(distinct operands ×
-    symbols) budget), not this loop's."""
+    symbols) budget), not this loop's.
+
+    One rule failing does not end the scan. The scheduler wraps a whole tick in
+    a single try/except, so anything escaping this loop silences EVERY rule
+    until someone reads the log — which is exactly what happened from
+    2026-08-25 to 2026-09-15 (see
+    memory/sessions/reports/alert-scan-dead-since-2026-08-25-risk-report.md).
+    A failure is isolated to its own rule, reported through `on_rule_error` so
+    the caller can surface it, and the remaining rules still run.
+    """
     events: list[Event] = []
     for rule in rules:
         if not rule.enabled:
             continue
-        for symbol in resolve_scope_symbols(rule, watchlist_symbols):
-            bars = bars_by_symbol.get(symbol)
-            bar_times = bar_times_by_symbol.get(symbol)
-            if bars is None or not bar_times:
-                continue
-            resolve_indicator = resolver_for_symbol(symbol)
-            result = evaluate(rule.expr, bars, resolve_indicator)
-            event = decide_and_record(
-                conn, rule, symbol, result, bar_times, bars, resolve_indicator, now_iso
-            )
-            if event:
-                events.append(event)
+        try:
+            for symbol in resolve_scope_symbols(rule, watchlist_symbols):
+                bars = bars_by_symbol.get(symbol)
+                bar_times = bar_times_by_symbol.get(symbol)
+                if bars is None or not bar_times:
+                    continue
+                resolve_indicator = resolver_for_symbol(symbol)
+                result = evaluate(rule.expr, bars, resolve_indicator)
+                event = decide_and_record(
+                    conn, rule, symbol, result, bar_times, bars, resolve_indicator, now_iso
+                )
+                if event:
+                    events.append(event)
+        except Exception as e:  # noqa: BLE001 — one bad rule must not end the scan
+            logger.warning("alert scan: rule %s (%s) failed: %s", rule.id, rule.name, e)
+            if on_rule_error is not None:
+                on_rule_error(rule, e)
     return events
