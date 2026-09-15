@@ -6,8 +6,8 @@ import type { Trade } from "./types";
  * Query definitions for the PORT view.
  *
  * These used to be `useEffect` + `fetch` inside the tabs, which meant every
- * visit to PORT started from nothing: the positions call, then the two slow
- * derived calls (`stoploss/compute` ~8s cold, `premarket` ~4s cold) ran again
+ * visit to PORT started from nothing: the positions call, then the slow
+ * derived call (`premarket` ~4s cold) ran again
  * from scratch and the table sat empty until they landed. Going through React
  * Query gives three things the hand-rolled version could not: the second visit
  * paints from cache immediately, duplicate mounts share one request, and the
@@ -27,23 +27,10 @@ async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 const acctParam = (accountId: string) =>
   accountId !== "all" ? `?account_id=${encodeURIComponent(accountId)}` : "";
 
-/** The stop engine has no "all accounts" mode; the table falls back to dime. */
-export const stoplossAccount = (accountId: string) => (accountId === "all" ? "dime" : accountId);
-
 export type OpenPositionsPayload = {
   positions: Trade[];
   options?: OptionLot[];
   thb_per_usd: number;
-};
-
-export type StopPayload = {
-  regime_label: string;
-  vix_percentile: number;
-  stops: Record<
-    string,
-    | { stop_dynamic: number; dist_pct: number; dynamic_mult: number; n_bars_trigger: number }
-    | { error: string }
-  >;
 };
 
 export const portfolioQueries = {
@@ -69,18 +56,6 @@ export const portfolioQueries = {
       return getJson<OpenPositionsPayload>(`/api/v2/portfolio/open-positions?${qs}`, signal);
     },
     staleTime: 60_000,
-  }),
-
-  /** ~8s cold on a full book — backend caches it for 5 min, so match that. */
-  stoploss: (symbols: string[], accountId: string) => ({
-    queryKey: ["portfolio", "stoploss", [...symbols].sort().join(","), accountId] as const,
-    queryFn: ({ signal }: { signal?: AbortSignal }) =>
-      getJson<StopPayload>(
-        `/api/stoploss/compute?symbols=${encodeURIComponent(symbols.join(","))}&account_id=${stoplossAccount(accountId)}`,
-        signal
-      ),
-    staleTime: 5 * 60_000,
-    enabled: symbols.length > 0,
   }),
 
   /** Heavy `.info` sweep; the backend only holds it for 30s. */
@@ -118,9 +93,9 @@ export const portfolioQueries = {
 /**
  * Fill the PORT caches while the user is still looking at another view.
  *
- * Ordering matters: the two slow calls need the symbol list, so positions has
- * to land first. Failures are swallowed — this is opportunistic warming, and
- * the tab will fetch for itself if a warm-up did not make it.
+ * Ordering matters: the slow `premarket` call needs the symbol list, so
+ * positions has to land first. Failures are swallowed — this is opportunistic
+ * warming, and the tab will fetch for itself if a warm-up did not make it.
  */
 export async function prewarmPortfolio(
   qc: QueryClient,
@@ -140,11 +115,7 @@ export async function prewarmPortfolio(
     )?.positions;
     if (!positions?.length) return;
 
-    const symbols = [...new Set(positions.map((p) => p.symbol))];
-    await Promise.all([
-      qc.prefetchQuery(portfolioQueries.stoploss(symbols, accountId)),
-      qc.prefetchQuery(portfolioQueries.premarket(accountId)),
-    ]);
+    await qc.prefetchQuery(portfolioQueries.premarket(accountId));
   } catch {
     /* opportunistic — the tab still fetches on its own */
   }

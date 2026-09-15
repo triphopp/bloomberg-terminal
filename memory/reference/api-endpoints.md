@@ -373,11 +373,15 @@ Two endpoints because they answer two different questions and only one is cheap.
 - `GET /api/rotation/constituents?market=US|TH&id=X` — drill-down stocks in a group with same return columns; US id=ETF symbol → yf funds_data top-10 holdings (1d cache); TH id=group name → basket members
   - Used by: MKT view REGIME panel → ROT mode (`rotation-table.tsx`) — US|TH toggle, click row to expand constituents
 
-## Stop Loss Engine (`routers/stoploss.py`)
-- `GET /api/stoploss/regime` — exceedance correlation regime (CRISIS/RISK-OFF/TRENDING/DIVERGENT), 5min cache
-- `GET /api/stoploss/atr?symbols=X,Y&account_id=dime` — adaptive ATR + vol percentile + trend factor
-- `GET /api/stoploss/compute?symbols=X,Y&account_id=dime&entry_prices=100,200` — final stop prices
-  - Returns: `{regime_label, vix_percentile, stops: {sym: {current_price, stop_dynamic, dist_pct, ...}}}`
+## Stop Loss Engine — REMOVED 2026-09-15
+`routers/stoploss.py`, the `/api/stoploss/*` endpoints and the `app/api/stoploss/` proxy
+are gone. The ATR engine was never used for a trading decision but sat on the cold path of
+**every** page load: `/api/ticker` scanned every open position for breaches on each cold
+build (15 symbols × one sequential `yf.download` each = 6.8s measured). Removing it took the
+cold ticker build 17.2s → 7.2s. Math + audit kept for reference in
+`memory/reports/stoploss_math.md` and `memory/reports/stoploss-verification-2026-06-10-report.md`.
+The manually entered `trades.price_stoploss` column (PORT "S/L" column, ENTRY form, CSV
+import) is a different thing and still exists.
 
 ## Analytics / Terminal Functions (`routers/analytics.py`)
 - `GET /api/analytics/corr?a=A&b=B&period=3m` — Pearson correlation + p-value
@@ -423,8 +427,7 @@ Two endpoints because they answer two different questions and only one is cheap.
 - Failure returns `{ok: false, error, detail, signals: [], ...}` — never a bare `{}` (that used to crash the view).
 
 ## Alert Ticker (`routers/alerts.py`)
-- `GET /api/alerts?account_id=all` — all active alerts (stop loss + regime change), 60s cache
-  - Stop loss: persistent, state-based — fires when `current_price < stop_dynamic`
+- `GET /api/alerts?account_id=all` — all active alerts (regime change), 60s cache. `account_id` only splits the cache; nothing in the payload is account-scoped since the stop engine was removed
   - Regime change: event-based — stored in `regime_alerts` table, expires 15 min after detection
   - Returns: `{alerts: [{type, severity, symbol, message, persistent, expires_at?}], count, has_critical, timestamp}`
 - `DELETE /api/alerts/regime/clear` — remove expired rows from `regime_alerts` table
@@ -480,7 +483,7 @@ Per symbol: `trend` (EMA20/50/200 stack), `rsi` (Wilder 14), `rvol` (vs 20d avg)
 | FX overview | 60s | Python in-memory |
 | Central banks | 5min mem + disk (4hr) | `central_banks_cache.json` |
 | Polymarket signals | 5min | Python in-memory |
-| Alerts (stop loss + regime) | 60s | Python TTLCache |
+| Alerts (regime) | 60s | Python TTLCache |
 | Polymarket market pool | 10min | Python in-memory (3,000 markets) |
 | Polymarket slugs + history | SQLite | persistent |
 | BOT Bond Auction | 5min mem + disk (1hr) | `bot_cache.json` |

@@ -413,11 +413,9 @@ export function OpenPositionsTab({
 
   const symbols = useMemo(() => [...new Set((data?.positions ?? []).map((p) => p.symbol))], [data]);
 
-  // Both of these hang off the positions list and are slow on a cold backend
-  // (stoploss ~8s, premarket ~4s), which is exactly why the terminal shell
-  // warms them in the background — see `prewarmPortfolio`.
-  const { data: stopData = null } = useQuery(portfolioQueries.stoploss(symbols, accountId));
-
+  // Hangs off the positions list and is slow on a cold backend (~4s), which is
+  // exactly why the terminal shell warms it in the background — see
+  // `prewarmPortfolio`.
   const { data: premarketData } = useQuery({
     ...portfolioQueries.premarket(accountId),
     enabled: symbols.length > 0,
@@ -1147,30 +1145,6 @@ export function OpenPositionsTab({
                           ) : (
                             <span style={{ color: colors.textSecondary }}>—</span>
                           ),
-                        "DYN SL": (() => {
-                          const s = stopData?.stops?.[p.symbol];
-                          if (!s || "error" in s)
-                            return <span style={{ color: colors.textSecondary }}>—</span>;
-                          const stopNative = toBase(s.stop_dynamic, acc);
-                          return (
-                            <span style={{ color: "#fb923c" }}>
-                              {sym}
-                              {fmt(stopNative)}
-                            </span>
-                          );
-                        })(),
-                        "SL DIST%": (() => {
-                          const s = stopData?.stops?.[p.symbol];
-                          if (!s || "error" in s)
-                            return <span style={{ color: colors.textSecondary }}>—</span>;
-                          const dist = s.dist_pct;
-                          const color = dist > 5 ? "#4ade80" : dist > 2 ? "#fbbf24" : "#f87171";
-                          return (
-                            <span className="font-bold" style={{ color }}>
-                              {dist.toFixed(1)}%
-                            </span>
-                          );
-                        })(),
                         STRATEGY: (
                           <span className="text-[8px]" style={{ color: colors.textSecondary }}>
                             {p.strategy_name || "—"}

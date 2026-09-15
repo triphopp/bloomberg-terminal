@@ -15,8 +15,6 @@ export const ALL_COLS = [
   "% RTN",
   "TARGET",
   "S/L",
-  "DYN SL",
-  "SL DIST%",
   "STRATEGY",
 ] as const;
 export type ColName = (typeof ALL_COLS)[number];

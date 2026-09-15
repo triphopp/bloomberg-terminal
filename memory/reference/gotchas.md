@@ -978,6 +978,56 @@ promise ที่ค้างเงียบไม่ใช่ error, และ�
 **กฎทั่วไป:** view ที่ช้าเพราะ request chain (A → ต้องได้ผลก่อนถึงยิง B ที่ช้า)
 แก้ด้วยการ prewarm ตอน idle ได้ผลกว่าการ optimize ตัว request — ผู้ใช้ไม่ได้อยู่หน้านั้นตอนมันโหลด
 
+> **ภาคต่อ 2026-09-15:** `stoploss/compute` ที่เป็นตัวช้าที่สุดในหัวข้อนี้ **ถูกลบทิ้งทั้งระบบ**
+> (ไม่เคยใช้ตัดสินใจเทรดจริง) — ดูหัวข้อถัดไป
+
+---
+
+## Feature ที่ไม่ได้ใช้ ซ่อนตัวอยู่บน cold path ของ *ทุก* หน้า (removed 2026-09-15)
+
+**อาการ:** ทั้งเว็บ boot ช้า ~17s ก่อน crawl bar ล่างจะมีตัวเลข — ดูเผินๆ เหมือนตลาดข้อมูลช้า
+
+**สาเหตุ:** stop-loss ATR engine (`routers/stoploss.py`) ถูกมองว่าเป็น "ฟีเจอร์ของหน้า PORT"
+แต่จริงๆ `routers/ticker.py::_fetch_alerts` เรียก `_get_stoploss_breaches()` ทุกครั้งที่ build
+ticker payload → สแกนทุก position ที่เปิดอยู่ → `get_atr()` วน `yf.download()` **ทีละ symbol
+แบบ sequential** (15 symbol = 6.8s วัดจริง). `alert-ticker.tsx` อยู่ใน layout ไม่ใช่ใน PORT
+→ ทุก view จ่ายค่านี้ ไม่ว่าจะเปิด PORT หรือไม่
+
+**วัดจริง (เครื่องเดียวกัน รันติดกัน):**
+
+| | cold ticker build |
+|---|---|
+| ก่อนลบ | **17.2s** |
+| หลังลบ | **7.2s** (ซ้ำ 2 ครั้งได้เท่ากัน) |
+
+หลังลบแล้ว longest pole กลายเป็น `indices=7.2s` — `alerts` เหลือ 2.0s (เช็ค regime change อย่างเดียว)
+
+**กฎทั่วไป:**
+1. ก่อนจะ optimize อะไร ให้ log **เวลาแยกราย job** ก่อน — job ที่รันขนานกัน มีแค่ตัวช้าที่สุดที่สำคัญ
+   (`_build_ticker` มี `[ticker] build Xs — name=Ys …` ให้แล้ว, log เฉพาะตอน build ≥ 1s)
+2. "ฟีเจอร์นี้อยู่หน้าไหน" ตอบจาก UI ไม่ได้ — ต้อง grep ว่าใครเรียก backend function นั้นบ้าง
+   ตัวที่แพงที่สุดมักถูกเรียกจาก layout-level component ที่ mount ตลอดเวลา
+3. ลบฟีเจอร์ต้องแยกให้ออกระหว่าง **engine** กับ **ข้อมูลที่ผู้ใช้กรอกเอง** — `trades.price_stoploss`
+   (คอลัมน์ S/L ใน PORT + ฟอร์ม ENTRY + CSV import) ไม่ได้ยิง network เลย จึงเก็บไว้;
+   ที่ลบคือ `DYN SL` / `SL DIST%` ที่คำนวณจาก ATR
+
+**Bonus:** `ticker._cache` เคยแยก key ตาม `account_id` เพราะ payload มี breach ของ account นั้น
+พอลบ stop engine แล้ว payload ไม่ขึ้นกับ account อีก → ยุบเหลือ key เดียว (`_CACHE_KEY`)
+คนที่ยิง `?account_id=X` เลยได้ cache ที่ prewarm ตอน startup แทนที่จะ build ใหม่เอง
+
+## Batch job ที่ครอบ try/except ทั้งก้อน = แถวเดียวเสียก็ดับทั้งระบบเงียบๆ
+
+**เคส:** `backend/alerts/scheduler.py:81-87` ครอบ `run_once()` ทั้งตัวด้วย try/except
+เดียว. แถว `alert_rules` ที่ `expr_json` ผิด format แถวเดียว (`{"kind":"const"}` ไม่มี key
+`op` → `ast.py:166` โยน `AstValidationError`) ทำให้ scan รอบนั้นตายทั้งรอบ →
+**rule อื่นทุกตัวไม่ถูก evaluate** ตั้งแต่ 2026-08-25 (479 warning ใน log) โดย UI ไม่มีสัญญาณ
+อะไรเลย — ticker ว่าง ดูเหมือน "ไม่มี alert" ไม่ใช่ "engine พัง"
+
+**กฎทั่วไป:** loop ที่วนของหลายชิ้น ต้อง try/except **รายชิ้น** ไม่ใช่รอบนอกสุด และต้อง log
+id ของชิ้นที่พังด้วย. ถ้าชิ้นนั้นพังซ้ำๆ ให้ปิดมันเอง (`enabled = 0`) แทนที่จะลากทั้ง batch ลงไป
+
+> รายละเอียด + วิธี reproduce → `memory/sessions/reports/alert-scan-dead-since-2026-08-25-risk-report.md`
+
 ## FastAPI: literal path ถูก `{param}` route จับก่อน ถ้าประกาศทีหลัง
 
 **อาการ:** `GET /api/options/trades` ตอบ `{"detail":"No options available for TRADES"}`

@@ -160,9 +160,8 @@ OPENAI_API_KEY      — optional
 | `regime.py` | `/api/regime/correlation` | yfinance (5min cache) |
 | `market_state.py` | `/api/market-state/{sym}` (dashboard, 1h) · `/{sym}/validation` (walk-forward, 24h) | yfinance + hmmlearn |
 | `rotation.py` | `/api/rotation/table` (theme/sector momentum + RRG quadrant vs SPY) | yfinance batch (15min cache) |
-| `stoploss.py` | `/api/stoploss/{regime,atr,compute}` | yfinance (5min cache) |
 | `fear_greed.py` | `/api/fear-greed`, `/api/fear-greed/history` | yfinance ^VIX/SPY/TLT/HYG/LQD/RSP (5min/60min cache) |
-| `alerts.py` | `/api/alerts` | stoploss + regime + SQLite (60s cache) |
+| `alerts.py` | `/api/alerts` | regime + SQLite (60s cache) |
 | `alert_rules.py` | `/api/alerts/rules*` (CRUD, preview, scan, events) | SQLite + boolean-AST engine |
 | `ticker.py` | `/api/ticker` (crawl-strip items + alerts) | reuses existing caches, TTL 60s |
 | `tail_risk.py` | `/api/tail-risk/{signals,vix-term}` | **v2 (2026-08-16)**: `vol_indices.py` (CBOE CSV) + yfinance SPY/AGG/DCC + in-process calls to crisis/fear_greed/ticker. 6 risk dimensions, tri-state signals |
@@ -370,7 +369,7 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026
 - [ ] BOT: activate Stat-ExchangeRate → add THB FX view
 - [ ] Central banks: comparison chart across banks
 - [ ] Clippings: auto-reload (file watcher)
-- [x] **Alert Ticker** — Bloomberg-style scrolling bar: stop loss breach (persistent) + regime change (15-min event) done 2026-06-05 (`plans/completed/alert-ticker.md`)
+- [x] **Alert Ticker** — Bloomberg-style scrolling bar: regime change (15-min event) done 2026-06-05 (`plans/completed/alert-ticker.md`); the stop-loss breach pill was removed with the stop engine 2026-09-15
 - [x] **Fear & Greed Index** — chart pane indicator + FEAR-GREED searchable symbol + F&G/VIX prominent pills in alert ticker done 2026-06-06 (`plans/completed/fear-greed-index.md`)
 - [ ] Alerts: price alert when stock hits threshold (price target, separate from stop loss)
 - [ ] Sovereign: map visualization

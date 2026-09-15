@@ -238,7 +238,7 @@ components/bloomberg/
 | `hooks/useCompanyOutlook.ts` | `useCompanyOutlook()`, `useCompanyXbrl()`, `useCompanyFilings()`, `isUsListing()`, `shortMetric()` |
 | `core/company-outlook-panel.tsx` | `CompanyOutlookPanel` (`variant="full"` = stock-view OUTLOOK tab · `"compact"` = NEWS column strip) |
 | `app/boot-watchdog.tsx` | `BootWatchdog` — inline `<script>` in the root layout; reloads once after 12s unless `window.__BT_MOUNTED__` is set (runs without the client bundle, which the React-side watchdog cannot) |
-| `views/portfolio/queries.ts` | `portfolioQueries` (summary · accounts · openPositions · stoploss · premarket · costOverrides · thesesSummary — React Query defs, `staleTime` mirrors each backend TTL) + `prewarmPortfolio(queryClient)` |
+| `views/portfolio/queries.ts` | `portfolioQueries` (summary · accounts · openPositions · premarket · costOverrides · thesesSummary — React Query defs, `staleTime` mirrors each backend TTL) + `prewarmPortfolio(queryClient)` |
 | `hooks/usePortfolioPrewarm.ts` | `usePortfolioPrewarm()` — 4s after terminal mount, on idle, fills the PORT caches so opening PORT paints from cache instead of a ~10s cold fetch chain |
 | `core/boot-screen.tsx` | `BootScreen` — loading fallback for the `dynamic(ssr:false)` terminal import; reloads once after 12s if the chunk never arrives (`sessionStorage["bloomberg_boot_retry_at"]` guards the loop), RETRY button after that |
 | `core/us-market-clock.tsx` | `UsMarketClock` — ET clock + session phase strip at the top of the TICK DATA board (presentation only) |
