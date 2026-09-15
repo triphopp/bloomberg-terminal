@@ -11,7 +11,7 @@
 |---------|--------|
 | `ALERT ON` | Show Bloomberg ticker crawl (bottom strip) |
 | `ALERT OFF` | Hide Bloomberg ticker crawl |
-| `ALERT CLEAR` | Clear all regime change alert events (stop loss alerts persist until price recovers) |
+| `ALERT CLEAR` | Clear all regime change alert events |
 
 ---
 
@@ -72,7 +72,6 @@ Alert items prepended when active:
 
 | Type | Trigger | Duration | Badge color |
 |------|---------|----------|-------------|
-| Stop Loss | `current_price < stop_dynamic` | Persistent (until price recovers) | 🔴 `#CC0000` |
 | Regime Change | CORR label transitions | 15 minutes, then auto-expire | 🟠 `#CC6600` |
 
 **Regime pill colors:**

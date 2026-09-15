@@ -31,6 +31,11 @@ export interface AlertRule {
   schemaVersion: number;
   createdAt: string;
   updatedAt: string;
+  /** Why the last scan skipped this rule, or null. A rule that is `enabled:
+   *  false` WITH a lastError was switched off by the scanner (its stored
+   *  expression no longer parses), not by the user. */
+  lastError: string | null;
+  lastErrorAt: string | null;
 }
 
 export interface AlertRuleWithWarnings extends AlertRule {

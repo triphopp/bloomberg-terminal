@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { rulesForSymbol, useAlertRules } from "../hooks/useAlertRules";
 import type { bloombergColors } from "../lib/theme-config";
 import { AlertPickerDialog } from "./AlertPickerDialog";
+import { RuleErrorMark } from "./RuleErrorMark";
 
 const itemClass = "text-[10px] font-mono px-2 py-1 cursor-pointer rounded-none";
 
@@ -111,7 +112,10 @@ export function AlertBellCell({
                     )
                   }
                 >
-                  <span className="truncate">{rule.name}</span>
+                  <span className="flex min-w-0 items-center gap-1">
+                    <span className="truncate">{rule.name}</span>
+                    <RuleErrorMark rule={rule} />
+                  </span>
                   <button
                     type="button"
                     title="Delete rule"

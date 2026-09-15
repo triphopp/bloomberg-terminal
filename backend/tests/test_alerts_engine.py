@@ -266,3 +266,65 @@ def test_scan_gives_each_symbol_its_own_resolver(conn):
     events = scan(conn, [rule], bars, bar_times, resolver_for_symbol, [], "t1")
     fired_symbols = {e.symbol for e in events}
     assert fired_symbols == {"UP"}  # only UP's indicator is positive
+
+
+# ── scan() fault isolation ───────────────────────────────────────────────────
+#
+# Regression tests for the outage recorded in
+# memory/sessions/reports/alert-scan-dead-since-2026-08-25-risk-report.md: one
+# rule that raised took the whole tick with it, so every other rule went
+# unevaluated for three weeks with nothing but a WARNING line to show for it.
+
+
+def test_one_failing_rule_does_not_stop_the_others(conn):
+    """The rule that raises must not cost the rules after it in the list."""
+    boom = gt_one_rule(id="r-boom", scope={"type": "symbols", "symbols": ["BOOM"]})
+    good = gt_one_rule(id="r-good", trigger="level", scope={"type": "symbols", "symbols": ["AAPL"]})
+    seed_rule(conn, boom)
+    seed_rule(conn, good)
+
+    bars = {"BOOM": make_bars([2, 2]), "AAPL": make_bars([2, 2])}
+    bar_times = {"BOOM": ["2026-01-01", "2026-01-02"], "AAPL": ["2026-01-01", "2026-01-02"]}
+
+    def resolver_for_symbol(symbol):
+        if symbol == "BOOM":
+            raise RuntimeError("indicator exploded")
+        return no_indicator
+
+    events = scan(conn, [boom, good], bars, bar_times, resolver_for_symbol, [], "t1")
+
+    # "level" fires on every scan where the rule is true, so the good rule
+    # producing an event is proof the loop carried on past the failure.
+    assert [e.rule_id for e in events] == ["r-good"]
+
+
+def test_scan_reports_which_rule_failed(conn):
+    rule = gt_one_rule(id="r-boom", scope={"type": "symbols", "symbols": ["BOOM"]})
+    seed_rule(conn, rule)
+    bars = {"BOOM": make_bars([2, 2])}
+    bar_times = {"BOOM": ["2026-01-01", "2026-01-02"]}
+
+    def resolver_for_symbol(_symbol):
+        raise RuntimeError("indicator exploded")
+
+    seen = []
+    events = scan(
+        conn, [rule], bars, bar_times, resolver_for_symbol, [], "t1",
+        on_rule_error=lambda r, e: seen.append((r.id, str(e))),
+    )
+
+    assert events == []
+    assert seen == [("r-boom", "indicator exploded")]
+
+
+def test_scan_swallows_a_rule_failure_with_no_callback(conn):
+    """on_rule_error is optional — the isolation itself is not."""
+    rule = gt_one_rule(id="r-boom", scope={"type": "symbols", "symbols": ["BOOM"]})
+    seed_rule(conn, rule)
+    bars = {"BOOM": make_bars([2, 2])}
+    bar_times = {"BOOM": ["2026-01-01", "2026-01-02"]}
+
+    def resolver_for_symbol(_symbol):
+        raise RuntimeError("indicator exploded")
+
+    assert scan(conn, [rule], bars, bar_times, resolver_for_symbol, [], "t1") == []

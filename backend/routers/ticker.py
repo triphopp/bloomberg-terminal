@@ -1,7 +1,7 @@
 """
 Bloomberg-style market crawl endpoint.
 
-GET /api/ticker?account_id=all
+GET /api/ticker
 Returns curated market data (indices, FX, commodities) + active alerts
 for the bottom scrolling ticker strip.
 
@@ -44,6 +44,13 @@ REFRESH_MIN_INTERVAL = 15
 # because TTLCache.get() DELETES anything past the ttl it is handed — asking it
 # for a 45s view first would evict the 60s-old payload we still want to serve.
 _cache = TTLCache(ttl=STALE_TTL, maxsize=32)
+
+# One key for everyone. The payload used to vary by account because the alert
+# list carried that account's stop-loss breaches; with the stop engine gone
+# nothing in the crawl is account-scoped, so a caller passing ?account_id=X now
+# reads the same entry the startup prewarm filled instead of paying its own
+# cold build for an identical payload.
+_CACHE_KEY = "ticker"
 
 _refresh_lock = threading.Lock()
 _inflight: set[str] = set()
@@ -285,12 +292,12 @@ def _fetch_regime() -> dict | None:
         return None
 
 
-def _fetch_alerts(account_id: str) -> list[dict]:
+def _fetch_alerts() -> list[dict]:
     alerts: list[dict] = []
     try:
-        from routers.alerts import check_regime_change, _get_stoploss_breaches, _get_active_regime_alerts
+        from routers.alerts import check_regime_change, _get_active_regime_alerts
         check_regime_change()
-        alerts = _get_stoploss_breaches(account_id) + _get_active_regime_alerts()
+        alerts = _get_active_regime_alerts()
     except Exception as e:
         print(f"[ticker] alerts error: {e}")
 
@@ -317,7 +324,7 @@ def _fetch_alerts(account_id: str) -> list[dict]:
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
-def _build_ticker(account_id: str) -> tuple[dict, bool]:
+def _build_ticker() -> tuple[dict, bool]:
     """Assemble one ticker payload. Returns (payload, degraded).
 
     The six fetchers are independent and every one of them is network-bound on a
@@ -335,7 +342,7 @@ def _build_ticker(account_id: str) -> tuple[dict, bool]:
         "fx":         _fetch_fx,
         "regime":     _fetch_regime,
         "fear_greed": _fetch_fear_greed,
-        "alerts":     lambda: _fetch_alerts(account_id),
+        "alerts":     _fetch_alerts,
     }
     out: dict[str, object] = {}
     if _stopping.is_set():
@@ -344,14 +351,37 @@ def _build_ticker(account_id: str) -> tuple[dict, bool]:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "stale": False, "degraded": True,
         }, True
+    timings: dict[str, float] = {}
+
+    def timed(name: str, fn):
+        def run():
+            t0 = time.monotonic()
+            try:
+                return fn()
+            finally:
+                timings[name] = time.monotonic() - t0
+        return run
+
+    t_all = time.monotonic()
     with ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="ticker") as pool:
-        futures = {name: pool.submit(fn) for name, fn in jobs.items()}
+        futures = {name: pool.submit(timed(name, fn)) for name, fn in jobs.items()}
         for name, fut in futures.items():
             try:
                 out[name] = fut.result()
             except Exception as e:  # a fetcher's own except should have caught this
                 print(f"[ticker] {name} fetcher raised: {e}")
                 out[name] = None
+
+    # Per-job timing, not just the total. The jobs run concurrently, so only the
+    # slowest one is worth optimising — without this line a regression in the
+    # build time says nothing about which fetcher caused it. Warm builds are all
+    # sub-second, so only log when a build was actually slow.
+    total = time.monotonic() - t_all
+    if total >= 1.0:
+        detail = "  ".join(
+            f"{n}={timings[n]:.1f}s" for n in sorted(timings, key=timings.get, reverse=True)
+        )
+        print(f"[ticker] build {total:.1f}s — {detail}")
 
     indices    = out.get("indices") or []
     comms_vix  = out.get("comms_vix") or []
@@ -383,7 +413,7 @@ def _build_ticker(account_id: str) -> tuple[dict, bool]:
     return payload, degraded
 
 
-def _build_and_store(key: str, account_id: str) -> dict:
+def _build_and_store(key: str) -> dict:
     """Build, then keep the result only if it is worth keeping.
 
     A degraded payload never replaces a payload that still has market rows in
@@ -391,7 +421,7 @@ def _build_and_store(key: str, account_id: str) -> dict:
     crawl for a full minute: the empty result was stored like any other and
     every reader for the next 60s got it back.
     """
-    payload, degraded = _build_ticker(account_id)
+    payload, degraded = _build_ticker()
     if degraded:
         prev = _cache.get(key)
         if prev is not None:
@@ -400,7 +430,7 @@ def _build_and_store(key: str, account_id: str) -> dict:
     return payload
 
 
-def _spawn_refresh(key: str, account_id: str) -> None:
+def _spawn_refresh(key: str) -> None:
     """Refresh in the background, at most one thread per key."""
     now = time.monotonic()
     with _refresh_lock:
@@ -413,7 +443,7 @@ def _spawn_refresh(key: str, account_id: str) -> None:
 
     def run() -> None:
         try:
-            _build_and_store(key, account_id)
+            _build_and_store(key)
         except Exception as e:
             print(f"[ticker] background refresh failed: {e}")
         finally:
@@ -421,10 +451,10 @@ def _spawn_refresh(key: str, account_id: str) -> None:
                 _inflight.discard(key)
                 _threads.discard(threading.current_thread())
 
-    _start(run, f"ticker-refresh-{account_id}")
+    _start(run, "ticker-refresh")
 
 
-def prewarm(account_id: str = "all") -> None:
+def prewarm() -> None:
     """Fill the ticker cache — and, through it, the market, heatmap and FX
     caches every other view reads — on a worker thread at startup.
 
@@ -432,7 +462,7 @@ def prewarm(account_id: str = "all") -> None:
     calibration, the alert scan and the IV recorder, so the FIRST request for
     any of them paid the whole cold fan-out while the user watched an empty bar.
     """
-    key = f"ticker:{account_id}"
+    key = _CACHE_KEY
 
     def run() -> None:
         try:
@@ -442,7 +472,7 @@ def prewarm(account_id: str = "all") -> None:
             # instead of racing it with a second full fan-out of their own.
             with _build_lock_for(key):
                 if _cache.get(key) is None:
-                    _build_and_store(key, account_id)
+                    _build_and_store(key)
             print(f"[ticker] prewarm done in {time.monotonic() - t0:.1f}s")
         except Exception as e:
             print(f"[ticker] prewarm failed: {e}")
@@ -463,15 +493,18 @@ def get_ticker(account_id: str = Query("all")):
     Stale-while-revalidate: a payload older than FRESH_TTL is still returned
     (flagged `stale`) while a background thread refreshes it, so the bar only
     ever goes empty on the very first request of a cold process.
+
+    `account_id` is accepted and ignored — see `_CACHE_KEY`. It is kept so an
+    older frontend build still gets a 200 rather than a 422.
     """
-    key = f"ticker:{account_id}"
+    key = _CACHE_KEY
 
     entry = _cache.get(key)  # STALE_TTL view — see the _cache comment above
     if entry is not None:
         fetched_at, payload = entry
         if time.monotonic() - fetched_at < FRESH_TTL:
             return payload
-        _spawn_refresh(key, account_id)
+        _spawn_refresh(key)
         return {**payload, "stale": True}
 
     # Cold process, or nothing good for STALE_TTL. Build inline — there is
@@ -480,4 +513,4 @@ def get_ticker(account_id: str = Query("all")):
         entry = _cache.get(key)
         if entry is not None:
             return entry[1]  # another thread built it while we waited
-        return _build_and_store(key, account_id)
+        return _build_and_store(key)

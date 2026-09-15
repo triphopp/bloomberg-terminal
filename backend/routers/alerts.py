@@ -1,5 +1,5 @@
 """
-Alert engine — stop loss breaches (persistent) + regime changes (15-min event).
+Alert engine — regime changes (15-min event).
 
 GET /api/alerts?account_id=all
 POST /api/alerts/regime/check   — called internally to detect regime changes
@@ -19,78 +19,10 @@ from db import get_db
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
-_cache = TTLCache(ttl=60)    # 60s default — matches STOPLOSS_CACHE_TTL
+_cache = TTLCache(ttl=60)
 _regime_lock = threading.Lock()
 
 REGIME_ALERT_MINUTES = 15   # event-based alerts expire after this
-
-
-# ---------------------------------------------------------------------------
-# Stop loss breach detection
-# ---------------------------------------------------------------------------
-
-def _get_stoploss_breaches(account_id: str) -> list[dict]:
-    """
-    Fetch current stop levels and detect breaches.
-    Returns list of alert dicts for positions where current_price < stop_dynamic.
-    """
-    try:
-        from routers.stoploss import get_regime, get_atr, REGIME_PARAMS
-
-        # Get all open positions
-        with get_db() as conn:
-            rows = conn.execute("""
-                SELECT t.symbol, AVG(t.price_entry) as avg_entry
-                FROM trades t
-                WHERE t.win_loss = 'P'
-                  AND (? = 'all' OR t.account_id = ?)
-                GROUP BY t.symbol
-            """, (account_id, account_id)).fetchall()
-
-        if not rows:
-            return []
-
-        sym_list    = [r["symbol"] for r in rows]
-        symbols_str = ",".join(sym_list)
-
-        regime_data = get_regime()
-        atr_data    = get_atr(symbols=symbols_str, account_id=account_id)
-
-        base_mult    = regime_data.get("base_mult", 2.5)
-        buffer_mult  = regime_data.get("buffer", 0.5)
-        vix_pct      = regime_data.get("vix_percentile", 0.5)
-
-        alerts = []
-        for r in rows:
-            sym      = r["symbol"]
-            atr_info = atr_data.get("results", {}).get(sym, {})
-            if "error" in atr_info or not atr_info:
-                continue
-
-            atr       = atr_info.get("atr", 0)
-            vol_pct   = atr_info.get("vol_percentile", 0.5)
-            trend_f   = atr_info.get("trend_factor", 1.0)
-            cur_price = atr_info.get("current_price", 0)
-
-            dynamic_mult = base_mult * (1.0 + vix_pct) * (0.5 + vol_pct) * trend_f
-            stop_dynamic = cur_price - atr * dynamic_mult - atr * buffer_mult
-
-            if cur_price > 0 and stop_dynamic > 0 and cur_price < stop_dynamic:
-                pct_below = round((stop_dynamic - cur_price) / stop_dynamic * 100, 2)
-                alerts.append({
-                    "type":          "stoploss",
-                    "severity":      "critical",
-                    "symbol":        sym,
-                    "message":       f"⚠ {sym}: STOP HIT  {cur_price:.2f} < {stop_dynamic:.2f}  ({pct_below}% below)",
-                    "persistent":    True,
-                    "current_price": cur_price,
-                    "stop_price":    round(stop_dynamic, 4),
-                })
-        return alerts
-
-    except Exception as e:
-        print(f"[alerts] stoploss breach error: {e}")
-        return []
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +132,6 @@ def _get_active_regime_alerts() -> list[dict]:
 def get_alerts(account_id: str = Query("all")):
     """
     Returns all active alerts:
-      - Stop loss breaches (persistent, state-based, current_price < stop_dynamic)
       - Regime changes (event-based, expire after 15 min)
     """
     cache_key = f"alerts:{account_id}"
@@ -211,10 +142,7 @@ def get_alerts(account_id: str = Query("all")):
     # Check for new regime change (also stores to DB if changed)
     check_regime_change()
 
-    stoploss_alerts = _get_stoploss_breaches(account_id)
-    regime_alerts   = _get_active_regime_alerts()
-
-    all_alerts = stoploss_alerts + regime_alerts
+    all_alerts = _get_active_regime_alerts()
 
     result = {
         "alerts":  all_alerts,

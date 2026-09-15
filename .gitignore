@@ -101,3 +101,7 @@ tools/launcher/*.res
 
 # macOS
 .DS_Store
+
+# pytest scratch — backend/tests use a repo-local temp root because this box
+# denies access to the system temp directory (tests/test_iv_snapshots_sync.py)
+backend/tests/_tmp/

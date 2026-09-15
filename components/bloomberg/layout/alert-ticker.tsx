@@ -24,13 +24,11 @@ interface TickerItem {
 }
 
 interface TickerAlert {
-  type: "stoploss" | "regime" | "dcc";
+  type: "regime" | "dcc";
   severity: "critical" | "warning";
   symbol: string | null;
   message: string;
   persistent: boolean;
-  current_price?: number;
-  stop_price?: number;
   expires_at?: string;
 }
 
@@ -257,7 +255,7 @@ function groupRuleEvents(events: AlertEvent[]): SymbolAlertGroup[] {
 }
 
 /** Alert-rule pill (backend/alerts) — cyan, so it reads as distinct from the
- *  stoploss/regime/DCC alerts that share this ticker. One pill per symbol,
+ *  regime/DCC alerts that share this ticker. One pill per symbol,
  *  listing every condition that symbol currently satisfies. */
 function RuleEventSegment({ group }: { group: SymbolAlertGroup }) {
   return (
@@ -275,20 +273,6 @@ function RuleEventSegment({ group }: { group: SymbolAlertGroup }) {
 }
 
 function AlertSegment({ alert }: { alert: TickerAlert }) {
-  // ── Stop loss ─────────────────────────────────────────────────────────────
-  if (alert.type === "stoploss" && alert.current_price != null && alert.stop_price != null) {
-    const distPct = (((alert.stop_price - alert.current_price) / alert.stop_price) * 100).toFixed(
-      2
-    );
-    return (
-      <SignalPill tag="STOP BREACH" value={alert.symbol}>
-        <span>CUR {alert.current_price.toFixed(2)}</span>
-        <span>SL {alert.stop_price.toFixed(2)}</span>
-        <span style={{ color: C.down }}>▼{distPct}%</span>
-      </SignalPill>
-    );
-  }
-
   // ── DCC correlation spike ─────────────────────────────────────────────────
   if (alert.type === "dcc") {
     return <SignalPill tag="CORR-SPIKE" value={alert.message} />;
@@ -353,7 +337,7 @@ export function AlertTicker() {
     const parts: React.ReactNode[] = [];
 
     // Rule events lead: they're the ones the user explicitly asked to be told
-    // about, unlike the standing stoploss/regime watches behind them.
+    // about, unlike the standing regime watches behind them.
     for (const group of ruleGroups) {
       parts.push(<RuleEventSegment key={`re${group.symbol}`} group={group} />);
       parts.push(<span key={`res${group.symbol}`}>{SEP}</span>);
