@@ -32,7 +32,6 @@ const VIEW_LABELS: Record<string, string> = {
   volatility: "VOLATILITY",
   stock: "EQUITY",
   clippings: "CLIPPINGS",
-  macro: "MACRO",
   credit: "CREDIT",
   portfolio: "PORTFOLIO",
 };

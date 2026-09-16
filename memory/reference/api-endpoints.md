@@ -418,6 +418,7 @@ import) is a different thing and still exists.
 |----------|---------|
 | `GET /signals` | 6 risk dimensions + tri-state signals + vol board + 90d history + `data_health` |
 | `GET /vix-term` | VIX9D / VIX / VIX3M / VIX6M + backwardation flags + freshness |
+| `GET /macro-context` | **Context only, `counted_in_composite: false`** (2026-09-17). `calendar` (from `backend/event_calendar.py`: FOMC decisions hardcoded 2026–2027 from federalreserve.gov + FRED `release/dates` for CPI 10 / NFP 50 / PCE 54 / GDP 53, 12h cache, parallel + 1 retry, fail-soft `releases_ok`) with `upcoming`, `past` (135d, chart markers), `event_window` (±1 business day), `next_fomc` (days_until 0 on decision day), `fomc_calendar_stale/expiring`; plus `fed {rate, stance}`, `yield_curve` (+`inverted_10y_2y/3m`), `regime` (growth/inflation/labor/policy `{state, tone}` — thresholds from the retired MACRO dashboard), `indicators` (latest value/prev/date, no series), `event_sensitive_signals` (`vix_level`, `vix_momentum`, `vix_term_inversion`). Cache 10 min when complete, 60 s when degraded |
 
 **Data sources (v2, 2026-08-16):**
 - Vol indices → `backend/vol_indices.py`, **CBOE daily CSVs** (`cdn.cboe.com/api/global/us_indices/daily_prices/{NAME}_History.csv`, keyless): VIX, VIX9D, VIX3M, VIX6M, VVIX, SKEW, OVX, GVZ, VXN. yfinance is a fallback for the five non-term-structure names only — its term-structure feed froze on 2026-07-17 and is what v1 was silently reading.

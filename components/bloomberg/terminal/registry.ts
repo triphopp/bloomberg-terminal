@@ -170,15 +170,6 @@ const NAV: CommandDef[] = [
     },
   },
   {
-    name: "MACRO",
-    group: "nav",
-    description: "Go to Macro Economics",
-    handler: (_, ctx) => {
-      ctx.setView("macro");
-      return { kind: "navigate", view: "macro" };
-    },
-  },
-  {
     name: "CRDT",
     group: "nav",
     description: "Go to Credit view",

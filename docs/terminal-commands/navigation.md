@@ -12,7 +12,6 @@
 | `NEWS` | news-view | Financial news + social feed + Polymarket |
 | `GMOV` | market-movers | Global indices table + heatmap treemap |
 | `CLIP` | clippings-view | Obsidian markdown notes + Ollama AI |
-| `MACRO` | macro-view | 7 tabs: dashboard, yield, indicators, fed, country, compare, signals |
 | `CRDT` | credit-view | 4 tabs: overview, spreads, stress, consumer |
 | `PORT` | portfolio-view | 8 tabs: positions, options, trades, analytics, cash, import, theses, risk |
 

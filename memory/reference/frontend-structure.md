@@ -32,16 +32,13 @@ components/bloomberg/
 │   │   ├── constants.ts / helpers.ts / types.ts
 │   ├── market-movers-view.tsx   ← GMOV: global indices table + heatmap treemap
 │   ├── clippings-view.tsx       ← CLIP: Obsidian reader + Ollama AI panel
-│   ├── macro-view.tsx           ← MACRO shell (911 ln): dashboard/yield/indicators/fed inline + country/signals imported. (2026-06-10: split, dead MarketQualityTab cluster deleted)
-│   ├── macro/shared.tsx         ← SectionHeader (shared across macro tabs)
-│   ├── macro/country-tab.tsx    ← CountryMacroTab + World Bank charts + country constants (POPULAR_COUNTRIES, WB_CATEGORIES, fmtWbVal)
+│   ├── tail-risk-view.tsx       ← TAIL: 6 dimensions + macro context (EventStrip under HealthStrip, MacroPanel in left column, EVENT tag on VIX signals, event ReferenceLines on 90D chart)
+│   ├── tail/macro-context.tsx   ← useMacroContext() + EventStrip + MacroPanel + KIND_COLOR (2026-09-17)
 │   ├── credit-view.tsx          ← CRDT: 4 tabs (overview/spreads/stress/consumer)
 │   ├── stock-view.tsx           ← Equity analysis tabs incl. DCF/RATE STRESS/REGIME — no nav button, via search/heatmap
 │   ├── stock/dcf/index.tsx      ← shared adaptive DCF lab: model/scenario controls + 5 quant sub-tabs
 │   ├── stock/dcf/types.ts       ← DcfModel/DcfScenario and API response contracts
 │   ├── pinned-assets.tsx        ← Pinned assets sidebar
-│   ├── rotation-tab.tsx         ← COUNTRY EQUITY ROTATION tab (inside macro-view SIGNALS)
-│   ├── sector-tab.tsx           ← SECTOR SELECTION tab (inside macro-view SIGNALS)
 │   ├── options-tab.tsx          ← stock-view OPTIONS tab: chain, strategies (10 auto-scan), builder, greeks, vol surface
 │   ├── strategy-builder.tsx    ← Strategy Builder: 19 templates, multi-expiry (Calendar/Diagonal), BS payoff, leg editor
 │   ├── ui-primitives.tsx        ← shared UI primitives (created, not yet migrated to all views)
@@ -143,7 +140,6 @@ components/bloomberg/
 │   ├── useMarketData.ts / useMarketDataQuery.ts
 │   ├── useIvSmile.ts           ← on-demand single/multi-expiry chains + optional SVI fit, guarded identity and shared controls
 │   ├── useStockData.ts
-│   ├── useSectorSelection.ts    ← sector selection signal hook
 │   ├── useWatchlistSignals.ts   ← batch daily technical scan for the watchlist
 │   ├── useRatesCurve.ts         ← /api/rates → UST + JGB curves for the TICK DATA board (`RateRowData`)
 │   ├── useFxTicks.ts            ← /api/fx overview for the TICK DATA FX section (`FxPair`)
@@ -256,10 +252,7 @@ components/bloomberg/
 | `chart/VolumeEventPanel.tsx` | `VolumeEventPanel` (props `data` `colors` `height`) |
 | `chart/indicators/rvol.ts` | `createRVOL` + `RVOL_SCALES` `RVOL_BASELINES` `RVOL_MODES` (select options re-exported through `indicators/index.ts` for the registry) |
 | `lib/us-market-session.ts` | `computeSession` `fmtClock` `fmtCountdown` + `NYSE_HOLIDAYS` `NYSE_HALF_DAYS` — pure session maths, no React. **US markets have no lunch break**; the model is pre/regular/after + 13:00 ET half-days. Tests: `npm run test:session` (21) |
-| `views/macro-view.tsx` | `MacroView` (default) |
-| `views/rotation-tab.tsx` | `RotationTab` (default) |
-| `views/sector-tab.tsx` | `SectorTab` (default) |
-| `hooks/useSectorSelection.ts` | `useSectorSelection()` → `{ signal, isLoading, error }` |
+| `views/tail/macro-context.tsx` | `useMacroContext()` `EventStrip` `MacroPanel` `KIND_COLOR`; types `MacroEvent` `EventKind` `MacroContextData` |
 | `hooks/useWatchlistSignals.ts` | `useWatchlistSignals(symbols)` → `{ signals, errors, isLoading, refetch }`; types `WatchlistSignal`, `TrendState`, `RsiState`, `MacdState`, `BreakoutState` |
 | `lib/constants.ts` | `PYTHON_API` (base URL) |
 | `lib/theme-config.ts` | `bloombergColors`, `darkTheme`, `lightTheme` |

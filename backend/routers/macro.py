@@ -14,6 +14,7 @@ import requests
 from fastapi import APIRouter
 
 from config import ALPHA_VANTAGE_KEY, FRED_API_KEY, MEM_CACHE_TTL
+from event_calendar import next_fomc
 from sources import market_data
 
 router = APIRouter()
@@ -101,12 +102,6 @@ _YIELD_SYMBOLS: dict[str, str] = {
     "30y": "^TYX",
 }
 
-# 2026 FOMC meeting end dates
-_FOMC_2026 = [
-    "2026-01-29", "2026-03-19", "2026-05-01",
-    "2026-06-18", "2026-07-29", "2026-09-17",
-    "2026-10-29", "2026-12-10",
-]
 
 
 # ── Data fetching functions ──────────────────────────────────────────────────
@@ -269,12 +264,12 @@ def _get_yield_realtime(sym: str) -> float | None:
 
 
 def _next_fomc(today: str) -> dict:
-    for d in _FOMC_2026:
-        if d > today:
-            dt = datetime.strptime(d, "%Y-%m-%d")
-            now = datetime.strptime(today, "%Y-%m-%d")
-            return {"date": d, "days_until": (dt - now).days}
-    return {"date": "TBA", "days_until": None}
+    # Single source: event_calendar (federalreserve.gov dates). The old local
+    # list used the day AFTER each decision, so decision day read "tomorrow".
+    nxt = next_fomc(datetime.strptime(today, "%Y-%m-%d").date())
+    if nxt is None:
+        return {"date": "TBA", "days_until": None}
+    return {"date": nxt["date"], "days_until": nxt["days_until"]}
 
 
 # ── Compact series helpers ────────────────────────────────────────────────────

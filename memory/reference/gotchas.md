@@ -1397,3 +1397,12 @@ option chain จริงมีแถวตายเสมอ — strike ที�
 - UPDATE ที่เปลี่ยนแค่ `updated_at` ไม่ log (sync trigger stamp ซ้ำทุก write → จะได้ event ซ้อน)
 - ใส่เหตุผล: `with audit_reason(conn, reason):` บน connection เดียวกับ write — อย่าเปิด `get_db()` ใหม่
 - **ห้าม** รัน `python -c "import main"` เพื่อ smoke test — init รันกับ DB จริงและ start sync thread
+
+## 🟡 FRED release 101 "FOMC Press Release" มีวันที่ทุกวัน — ใช้หาวันประชุมไม่ได้ (2026-09-16)
+
+`fred/releases/dates` คืน release 101 ทุกวัน (series รายวันอย่าง DFEDTAR). วันประชุมที่เชื่อได้จาก FRED
+มีแค่ release 326 (Summary of Economic Projections) = 4 ครั้ง/ปี. ส่วน CPI (10), Employment Situation (50),
+PCE (54), GDP (53) ใช้ได้ตรง. `_FOMC_2026` ใน `macro.py` เคยช้าไป 1 วัน — **fixed 2026-09-17**: วันประชุมย้ายไป
+`backend/event_calendar.py` (`FOMC_DECISIONS` = วันที่ 2 ของการประชุม ตาม federalreserve.gov, ถึง 2027-12-08; UI เตือนเองเมื่อ <60 วัน).
+ปีใหม่ → เพิ่มวันใน tuple นั้น ที่เดียว. `api.stlouisfed.org` read-timeout เป็นพักๆ → fetch มี retry 1 ครั้ง + cache ผลที่ degraded แค่ 60 s
+
