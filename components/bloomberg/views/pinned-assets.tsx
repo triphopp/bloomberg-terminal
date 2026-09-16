@@ -221,6 +221,7 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (hex: strin
         <button
           type="button"
           key={hex}
+          data-frame
           title={label}
           onClick={() => onChange(hex)}
           className="w-4 h-4 border-2 transition-all"

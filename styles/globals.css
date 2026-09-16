@@ -144,3 +144,41 @@
     color: black;
   }
 }
+
+/* ── Text-only controls ─────────────────────────────────────────────────────
+ * Design rule: every button/chip/toggle is bare text — no frame, no fill.
+ * State is carried by text colour alone. !important is needed because most
+ * controls set borderColor/background inline. Opt out with data-frame
+ * (colour swatches, heatmap tiles — where the fill IS the content).
+ */
+@layer base {
+  button:not([data-frame]),
+  button:not([data-frame]):hover,
+  button:not([data-frame]):focus,
+  button:not([data-frame]):active,
+  /* badges / pills / status tags: text-bearing spans. Empty spans are bars and
+   * colour dots whose fill is the content, so they keep it. */
+  span:not(:empty):not([data-frame]),
+  kbd:not([data-frame]) {
+    border-color: transparent !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  /* Segmented-control wrappers (CORR|GEOM, AREA|CANDLE): a bordered row of
+   * buttons. Only the frame goes — any wrapper fill (modals, panels) stays. */
+  div.border:has(> button + button):not([data-frame]) {
+    border-color: transparent !important;
+  }
+
+  /* Filled controls used dark/light text on a coloured fill; with the fill gone
+   * that text would vanish into the page. Re-point it at the accent. */
+  body.dark :is(button, span):not([data-frame]).text-black,
+  body.dark :is(button, span):not([data-frame])[style*="color: rgb(0, 0, 0)"] {
+    color: #ff6600 !important;
+  }
+  body.light :is(button, span):not([data-frame]).text-white,
+  body.light :is(button, span):not([data-frame])[style*="color: rgb(255, 255, 255)"] {
+    color: #e68a00 !important;
+  }
+}

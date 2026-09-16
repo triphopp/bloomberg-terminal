@@ -219,7 +219,7 @@ export function PaperTradeTab({ colors }: { colors: Colors }) {
             onClick={submit}
             disabled={submitting}
             className="flex items-center gap-0.5 px-3 py-0.5 text-[9px] font-bold"
-            style={{ background: side === "buy" ? "#00AA00" : "#CC0000", color: "#fff" }}
+            style={{ color: side === "buy" ? "#00AA00" : "#CC0000" }}
           >
             {submitting ? (
               <Loader2 className="h-2.5 w-2.5 animate-spin" />

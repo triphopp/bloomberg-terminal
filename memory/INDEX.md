@@ -40,6 +40,7 @@ memory/
 > ```
 > plans/alert-rule-engine.md                          🔄 phase 4+6/7 done
 > plans/pane-height-persistence-fix.md                📋 planned
+> plans/mobile-responsive.md                         🔄 step 1-2 in progress (2026-09-17)
 > plans/completed/tail-macro-context.md               ✅ done 2026-09-17
 > plans/completed/tickdata-rates-fx-consolidation.md  ✅ done 2026-08-01
 > ```
