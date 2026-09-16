@@ -10,6 +10,7 @@ export const ALL_COLS = [
   "CURRENT",
   "VOL",
   "COST",
+  "% PORT",
   "DAY P&L",
   "UNREAL",
   "% RTN",
@@ -25,11 +26,12 @@ export const DEFAULT_COLS: ColName[] = [
   "CURRENT",
   "VOL",
   "COST",
+  "% PORT",
   "DAY P&L",
   "UNREAL",
   "% RTN",
 ];
-export const DENSE_COLS: ColName[] = ["SYMBOL", "ENTRY", "CURRENT", "UNREAL", "% RTN"];
+export const DENSE_COLS: ColName[] = ["SYMBOL", "ENTRY", "CURRENT", "% PORT", "UNREAL", "% RTN"];
 
 // ── Persisted column selection atom ─────────────────────────────────────────
 export const portfolioColsAtom = atomWithStorage<ColName[]>(

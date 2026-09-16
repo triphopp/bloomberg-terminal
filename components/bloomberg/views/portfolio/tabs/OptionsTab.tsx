@@ -8,6 +8,8 @@ import { PayoffModal } from "../modals/PayoffModal";
 import { type OptionTrade, OptionTradeLog } from "../ui/OptionTradeLog";
 import { PayoffChart } from "../ui/PayoffChart";
 import { type PayoffLeg, usePayoff } from "../ui/usePayoff";
+import { usePortfolioNav } from "../ui/usePortfolioNav";
+import { fmtWeight } from "../weights";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -524,7 +526,7 @@ function ClosePrompt({
 
   return (
     <tr style={{ background: `${colors.accent}0d` }}>
-      <td colSpan={14} className="px-2 py-2">
+      <td colSpan={17} className="px-2 py-2">
         <div className="flex flex-wrap items-end gap-2 text-[10px] font-mono">
           <span className="font-bold" style={{ color: colors.accent }}>
             CLOSE {lot.symbol}
@@ -689,6 +691,7 @@ function Greek({
 function PositionRow({
   lot,
   colors,
+  pct,
   onClose,
   onEdit,
   onPayoff,
@@ -696,6 +699,7 @@ function PositionRow({
 }: {
   lot: OptionLot;
   colors: Colors;
+  pct: (v: number | null | undefined) => number | null;
   onClose: () => void;
   onEdit: () => void;
   onPayoff: () => void;
@@ -789,6 +793,26 @@ function PositionRow({
           <span style={{ color: pnlColor(lot.theta_exp_usd) }}>{fmt(lot.theta_exp_usd, 1)}</span>
         )}
       </td>
+      <td
+        className="px-2 py-1.5 text-right font-bold"
+        style={{ color: colors.text }}
+        title="Premium market value ÷ NAV (equities + options + cash) of the selected account"
+      >
+        {fmtWeight(pct(lot.market_value_base))}
+      </td>
+      <td
+        className="px-2 py-1.5 text-right"
+        style={{
+          color: lot.delta_notional_base == null ? "#444" : pnlColor(lot.delta_notional_base),
+        }}
+        title={
+          lot.delta_notional_base == null
+            ? "No IV — delta undefined, exposure unknown (not zero)"
+            : "Delta notional ÷ NAV — the stock-equivalent exposure this lot carries, signed"
+        }
+      >
+        {fmtWeight(pct(lot.delta_notional_base))}
+      </td>
       <td className="px-2 py-1.5">
         <div className="flex items-center gap-1">
           <button
@@ -853,6 +877,10 @@ export function OptionsTab({
   // LOTS is what you hold; TRADES is what you did. A lot is derived from its
   // trades, so the two views cannot disagree.
   const [view, setView] = useState<"lots" | "trades">("lots");
+  const { breakdown: navParts, pct: navPct } = usePortfolioNav(
+    accountId,
+    currency === "USD" ? "USD" : "THB"
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1053,7 +1081,7 @@ export function OptionsTab({
       {/* Book totals — the same figures the account rollup in PORT now counts */}
       {view === "lots" && lots.length > 0 && (
         <div
-          className="grid grid-cols-3 md:grid-cols-7 gap-2 mb-2 border rounded px-2 py-1.5 text-[10px] font-mono"
+          className="grid grid-cols-3 md:grid-cols-9 gap-2 mb-2 border rounded px-2 py-1.5 text-[10px] font-mono"
           style={{ borderColor: colors.border }}
         >
           {[
@@ -1069,6 +1097,22 @@ export function OptionsTab({
               value: `${totalUnreal >= 0 ? "+" : "-"}$${fmtK(Math.abs(totalUnreal))}`,
               color: pnlColor(totalUnreal),
               title: undefined,
+            },
+            {
+              label: "% OF NAV",
+              value: fmtWeight(navPct(navParts?.options)),
+              color: colors.text,
+              title:
+                "Option premium market value ÷ NAV (equities + options + cash) of the selected account",
+            },
+            {
+              label: "Δ EXP % NAV",
+              value: fmtWeight(navPct(sum((l) => l.delta_notional_base))),
+              color: colors.textSecondary,
+              title:
+                noGreeks > 0
+                  ? `Delta notional ÷ NAV — stock-equivalent exposure. ${noGreeks} lot(s) without IV are not counted.`
+                  : "Delta notional ÷ NAV — stock-equivalent exposure, signed",
             },
             {
               label: "DELTA EXP",
@@ -1169,6 +1213,8 @@ export function OptionsTab({
                   "Θ/day",
                   "Δ exp",
                   "Θ exp",
+                  "% PORT",
+                  "Δ % NAV",
                   "",
                 ].map((h) => (
                   <th
@@ -1187,6 +1233,7 @@ export function OptionsTab({
                   <PositionRow
                     lot={lot}
                     colors={colors}
+                    pct={navPct}
                     onClose={() => setClosingId(lot.id)}
                     onEdit={() => openEditor(lot.id)}
                     onPayoff={() => setPayoffLot(lot)}
