@@ -87,7 +87,9 @@ export function PayoffChart({
 
   return (
     <div>
-      <div className={`grid gap-2 mb-2 font-mono ${compact ? "grid-cols-3" : "grid-cols-6"}`}>
+      <div
+        className={`grid gap-2 mb-2 font-mono ${compact ? "grid-cols-3" : "grid-cols-3 md:grid-cols-6"}`}
+      >
         {stat(
           "BREAKEVEN",
           data.breakevens.length === 0

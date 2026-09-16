@@ -129,7 +129,7 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
     >
       <div
         role="presentation"
-        className="border p-4 w-[360px] max-h-[90vh] overflow-y-auto"
+        className="border p-4 w-[360px] max-w-[95vw] max-h-[90vh] overflow-y-auto"
         style={{ background: "#0a0a0a", borderColor: colors.border }}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}

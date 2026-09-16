@@ -244,7 +244,7 @@ function AddPositionForm({
         <Plus className="w-3 h-3" /> ADD OPTION POSITION
       </div>
 
-      <div className="grid grid-cols-4 gap-2 mb-2">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
         <div>
           <label
             htmlFor="opt-underlying"
@@ -312,7 +312,7 @@ function AddPositionForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-2 mb-2">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
         <div>
           <label htmlFor="opt-qty" className={labelCls} style={{ color: colors.textSecondary }}>
             Qty (contracts)
@@ -375,7 +375,7 @@ function AddPositionForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-2 mb-2">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
         <div>
           <label htmlFor="opt-fees" className={labelCls} style={{ color: colors.textSecondary }}>
             Fees / commission
@@ -1053,7 +1053,7 @@ export function OptionsTab({
       {/* Book totals — the same figures the account rollup in PORT now counts */}
       {view === "lots" && lots.length > 0 && (
         <div
-          className="grid grid-cols-7 gap-2 mb-2 border rounded px-2 py-1.5 text-[10px] font-mono"
+          className="grid grid-cols-3 md:grid-cols-7 gap-2 mb-2 border rounded px-2 py-1.5 text-[10px] font-mono"
           style={{ borderColor: colors.border }}
         >
           {[

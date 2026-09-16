@@ -785,10 +785,7 @@ export function ImportTab({
             )}
           </div>
 
-          <div
-            className="grid gap-2"
-            style={{ gridTemplateColumns: side === "sell" ? "1fr 1fr 1fr 1fr" : "1fr 1fr" }}
-          >
+          <div className={`grid gap-2 grid-cols-2 ${side === "sell" ? "md:grid-cols-4" : ""}`}>
             <div>
               <div
                 className="text-[8px] mb-0.5 font-bold tracking-wider"
@@ -862,10 +859,7 @@ export function ImportTab({
           </div>
 
           <div
-            className="grid gap-2"
-            style={{
-              gridTemplateColumns: side === "sell" ? "1fr 1fr 1fr 1fr 1fr" : "1fr 1fr 1fr 1fr",
-            }}
+            className={`grid gap-2 grid-cols-2 ${side === "sell" ? "md:grid-cols-5" : "md:grid-cols-4"}`}
           >
             <div>
               <div

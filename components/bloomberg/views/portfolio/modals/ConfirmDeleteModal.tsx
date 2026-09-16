@@ -35,7 +35,7 @@ export function ConfirmDeleteModal({ title, message, colors, onCancel, onConfirm
     >
       <div
         role="presentation"
-        className="border p-4 w-[320px]"
+        className="border p-4 w-[320px] max-w-[95vw]"
         style={{ background: "#0a0a0a", borderColor: colors.border }}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}

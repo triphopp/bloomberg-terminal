@@ -56,7 +56,7 @@ export function PayoffModal({
       style={{ background: "rgba(0,0,0,0.7)" }}
     >
       <div
-        className="border rounded w-[54rem] max-h-[88vh] overflow-y-auto"
+        className="border rounded w-[54rem] max-w-[95vw] max-h-[88vh] overflow-y-auto"
         style={{ background: "#0a0a0a", borderColor: colors.border }}
       >
         <div

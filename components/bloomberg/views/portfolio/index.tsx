@@ -138,7 +138,7 @@ function SubTabBar<T extends string>({
 }) {
   return (
     <div
-      className="flex items-center gap-px px-3 py-0.5 border-b"
+      className="flex items-center gap-px px-3 py-0.5 border-b overflow-x-auto"
       style={{ borderColor: colors.border, background: "#050505" }}
     >
       {tabs.map((t) => (
@@ -368,7 +368,8 @@ export function PortfolioView() {
             </button>
             <button
               type="button"
-              className="hidden group-hover:flex items-center justify-center absolute -top-1 -right-1 h-3 w-3 rounded-full text-[8px] font-bold leading-none"
+              // Hover reveals it with a mouse; a touch screen has no hover, so it stays.
+              className="hidden group-hover:flex [@media(hover:none)]:flex items-center justify-center absolute -top-1 -right-1 h-3 w-3 rounded-full text-[8px] font-bold leading-none"
               style={{ background: colors.border, color: colors.text }}
               title={`Delete ${acc.name}`}
               onClick={(e) => {
@@ -478,7 +479,13 @@ export function PortfolioView() {
       )}
 
       {/* Summary bar */}
-      <SummaryBar summary={summary} currency={currency} colors={colors} accountId={activeAccount} />
+      <SummaryBar
+        summary={summary}
+        currency={currency}
+        colors={colors}
+        accountId={activeAccount}
+        onToggleCurrency={() => setCurrency((c) => (c === "THB" ? "USD" : "THB"))}
+      />
 
       {/* Top tab bar */}
       <TopTabBar topTab={topTab} setTopTab={setTopTab} colors={colors} />

@@ -180,7 +180,7 @@ export function OptionAttributionCard({
 
           {/* Portfolio split */}
           {p && (
-            <div className="grid grid-cols-6 gap-2 mb-2 text-[10px] font-mono">
+            <div className="grid grid-cols-3 md:grid-cols-6 gap-2 mb-2 text-[10px] font-mono">
               {LEGS.map((leg) => {
                 const v = p[leg.key] as number;
                 return (

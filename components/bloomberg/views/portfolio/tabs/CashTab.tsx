@@ -503,7 +503,7 @@ export function CashTab({
           <div className="text-[9px] font-bold mb-1.5" style={{ color: colors.accent }}>
             {editId ? "EDIT CASH FLOW" : "ADD CASH FLOW"}
           </div>
-          <div className="grid grid-cols-6 gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
             <div>
               <label
                 htmlFor="cash-account"
@@ -626,7 +626,7 @@ export function CashTab({
           <div className="text-[9px] font-bold mb-1.5" style={{ color: "#60a5fa" }}>
             TRANSFER BETWEEN ACCOUNTS
           </div>
-          <div className="grid grid-cols-6 gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
             <div>
               <label
                 htmlFor="tr-from"
@@ -755,7 +755,7 @@ export function CashTab({
           <div className="text-[9px] font-bold mb-1.5" style={{ color: colors.accent }}>
             {editId ? "EDIT DIVIDEND" : "ADD DIVIDEND"}
           </div>
-          <div className="grid grid-cols-6 gap-2 mb-1.5">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mb-1.5">
             <div>
               <label
                 htmlFor="div-account"
@@ -865,7 +865,7 @@ export function CashTab({
               />
             </div>
           </div>
-          <div className="grid grid-cols-5 gap-2 mb-1.5">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-1.5">
             <div>
               <label
                 htmlFor="div-total"

@@ -123,7 +123,7 @@ export function ThesisEditor({
 
   return (
     <div className="flex-1 overflow-y-auto p-3">
-      <div className="grid gap-2 mb-2" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
         {field(fieldId("symbol"), "SYMBOL", text("symbol", "PLTR"))}
         {field(fieldId("status"), "STATUS", select("status", STATUSES, false))}
         {field(fieldId("category"), "CATEGORY", select("category", CATEGORIES))}

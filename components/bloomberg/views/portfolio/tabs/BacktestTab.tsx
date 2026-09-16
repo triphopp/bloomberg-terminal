@@ -197,7 +197,7 @@ export function BacktestTab({
 
       {/* Metrics grid */}
       {m && (
-        <div className="grid grid-cols-4 gap-1.5">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5">
           {(
             [
               ["Total P&L", `${csym}${fmtK(m.total_pnl ?? 0)}`, pnlColor(m.total_pnl)],

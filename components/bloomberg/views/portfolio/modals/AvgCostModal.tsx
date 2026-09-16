@@ -82,7 +82,7 @@ export function AvgCostModal({
       role="presentation"
     >
       <div
-        className="border p-4 w-[360px]"
+        className="border p-4 w-[360px] max-w-[95vw]"
         style={{ background: "#0a0a0a", borderColor: "#f59e0b" }}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}

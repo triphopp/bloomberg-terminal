@@ -1,4 +1,5 @@
 "use client";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { BookOpen, FlaskConical, Loader2, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Colors } from "../../helpers";
@@ -54,6 +55,10 @@ export function ThesesTab({
   const [streaming, setStreaming] = useState(false);
   const [streamText, setStreamText] = useState("");
   const [banner, setBanner] = useState<string | null>(null);
+  // Phone: rail and detail can't share 375px (the detail got ~160px), so it is
+  // one or the other. A hand-off from the positions table goes straight to detail.
+  const isMobile = useIsMobile();
+  const [mobileList, setMobileList] = useState(!initialSymbol);
   const textRef = useRef<HTMLDivElement>(null);
 
   const loadList = useCallback(async (signal?: AbortSignal) => {
@@ -148,6 +153,7 @@ export function ThesesTab({
   );
 
   const startNew = () => {
+    setMobileList(false);
     setIsNew(true);
     setEditing(true);
     setDraft(emptyDraft());
@@ -359,7 +365,7 @@ export function ThesesTab({
     <div className="flex" style={{ minHeight: "400px", height: "100%" }}>
       {/* Rail */}
       <div
-        className="w-52 border-r flex flex-col flex-shrink-0"
+        className={`${isMobile ? (mobileList ? "w-full" : "hidden") : "w-52 border-r"} flex flex-col flex-shrink-0`}
         style={{ borderColor: colors.border }}
       >
         <div
@@ -388,6 +394,7 @@ export function ThesesTab({
           selectedId={selectedId}
           onSelect={(id) => {
             setSelectedId(id);
+            setMobileList(false);
             setEditing(false);
             setSubTab("thesis");
             setStreamText("");
@@ -405,7 +412,17 @@ export function ThesesTab({
       </div>
 
       {/* Detail */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className={`flex-1 flex flex-col min-w-0 ${isMobile && mobileList ? "hidden" : ""}`}>
+        {isMobile && (
+          <button
+            type="button"
+            onClick={() => setMobileList(true)}
+            className="px-3 py-2 text-[10px] text-left border-b tracking-widest shrink-0"
+            style={{ borderColor: colors.border, color: colors.textSecondary }}
+          >
+            ← THESES
+          </button>
+        )}
         {banner && (
           <button
             type="button"
