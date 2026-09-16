@@ -1414,3 +1414,15 @@ PCE (54), GDP (53) ใช้ได้ตรง. `_FOMC_2026` ใน `macro.py` �
 - ปุ่มที่โผล่เฉพาะ `group-hover:` ใช้ไม่ได้บนจอสัมผัส → เพิ่ม `[@media(hover:none)]:flex`
 - action ที่มีแค่ keyboard shortcut (เช่น PORT `Y` สลับสกุลเงิน) ต้องมีปุ่มให้กดด้วย — มือถือไม่มีคีย์บอร์ด
 - modal `w-[NNNpx]` ต้องมี `max-w-[95vw]`
+
+## `useState` initializer ห้ามมี side effect — StrictMode เรียกสองรอบ (2026-09-17)
+
+column migration ของ POSITIONS (`% PORT`) เคย `localStorage.setItem(flag)` ใน initializer: รอบแรกแทรก column + ตั้ง flag,
+รอบที่สอง (StrictMode dev) เห็น flag → ไม่แทรก → state ที่ใช้จริงไม่มี column. แก้: initializer อ่านอย่างเดียว,
+เขียน flag ใน persist `useEffect`. ใช้กับ migration ทุกตัวที่อ่าน localStorage ตอน mount.
+
+## % PORT = ส่วนของ NAV **รวม cash** ตาม scope บัญชีที่เลือก (2026-09-17)
+
+`views/portfolio/weights.ts`. ALL → เทียบทั้งพอร์ต, เลือกบัญชี → เทียบ NAV ของบัญชีนั้น (ตัวเลขแถวเดียวกันจึงต่างกันระหว่าง scope โดยเจตนา).
+Option มีสองตัว: `% PORT` จาก premium MV (short lot = ลบ, เป็นหนี้) และ `Δ % NAV` จาก `delta_notional_base` (signed, null เมื่อไม่มี IV → แสดง — ไม่ใช่ 0).
+

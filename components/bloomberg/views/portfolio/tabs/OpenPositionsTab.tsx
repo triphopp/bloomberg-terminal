@@ -17,6 +17,8 @@ import { TradeEditModal } from "../modals/TradeEditModal";
 import { portfolioQueries } from "../queries";
 import type { Trade } from "../types";
 import { AccBadge } from "../ui/AccBadge";
+import { usePortfolioNav } from "../ui/usePortfolioNav";
+import { fmtWeight } from "../weights";
 import type { OptionLot } from "./OptionsTab";
 
 // ── Inline derivatives summary (read-only, no form) ──────────────────────────
@@ -59,7 +61,16 @@ function activeSession(
   return null;
 }
 
-function DerivativesSection({ lots, colors }: { lots: OptionLot[]; colors: Colors }) {
+function DerivativesSection({
+  lots,
+  colors,
+  pct,
+}: {
+  lots: OptionLot[];
+  colors: Colors;
+  /** value (display currency) → % of NAV for the selected scope. */
+  pct: (v: number | null | undefined) => number | null;
+}) {
   const [collapsed, setCollapsed] = useState(false);
 
   if (lots.length === 0) return null;
@@ -130,8 +141,20 @@ function DerivativesSection({ lots, colors }: { lots: OptionLot[]; colors: Color
                 "Δ",
                 "Θ/day",
                 "Δ exp",
+                "% PORT",
+                "Δ % NAV",
               ].map((h) => (
-                <th key={h} className="px-2 py-0.5 text-left font-bold">
+                <th
+                  key={h}
+                  className="px-2 py-0.5 text-left font-bold"
+                  title={
+                    h === "% PORT"
+                      ? "Premium market value ÷ NAV (holdings + options + cash)"
+                      : h === "Δ % NAV"
+                        ? "Delta notional ÷ NAV — stock-equivalent exposure, signed"
+                        : undefined
+                  }
+                >
                   {h}
                 </th>
               ))}
@@ -214,6 +237,23 @@ function DerivativesSection({ lots, colors }: { lots: OptionLot[]; colors: Color
                     ) : (
                       fmtK(l.delta_exp_usd)
                     )}
+                  </td>
+                  <td className="px-2 py-1 text-right" style={{ color: colors.text }}>
+                    {fmtWeight(pct(l.market_value_base))}
+                  </td>
+                  <td
+                    className="px-2 py-1 text-right"
+                    style={{
+                      color:
+                        l.delta_notional_base == null ? "#444" : pnlColor(l.delta_notional_base),
+                    }}
+                    title={
+                      l.delta_notional_base == null
+                        ? "No IV — delta undefined, exposure unknown"
+                        : undefined
+                    }
+                  >
+                    {fmtWeight(pct(l.delta_notional_base))}
                   </td>
                 </tr>
               );
@@ -388,6 +428,18 @@ export function OpenPositionsTab({
         const valid = parsed.filter((c): c is ColName =>
           (ALL_COLS as readonly string[]).includes(c)
         );
+        // "% PORT" arrived after users had saved a selection. Add it once, next
+        // to COST; if they untick it afterwards the flag keeps it off. The flag
+        // is written by the persist effect below, NOT here: StrictMode runs this
+        // initializer twice, and a flag set on the first run made the second
+        // skip the insert.
+        if (
+          !valid.includes("% PORT") &&
+          !localStorage.getItem("bloomberg_portfolio_cols_port_added")
+        ) {
+          const i = valid.indexOf("COST");
+          valid.splice(i >= 0 ? i + 1 : valid.length, 0, "% PORT");
+        }
         if (valid.length > 0) return valid;
       }
     } catch {
@@ -433,6 +485,7 @@ export function OpenPositionsTab({
   useEffect(() => {
     try {
       localStorage.setItem("bloomberg_portfolio_cols", JSON.stringify(showCols));
+      localStorage.setItem("bloomberg_portfolio_cols_port_added", "1");
     } catch {
       /* ignore */
     }
@@ -440,6 +493,7 @@ export function OpenPositionsTab({
 
   const positions = data?.positions ?? [];
   const thb_per_usd = data?.thb_per_usd ?? 33.5;
+  const { breakdown: navParts, pct: navPct } = usePortfolioNav(accountId, currency);
   const csym = currency === "THB" ? "฿" : "$";
 
   // Auto PRE/POST column: appears only while ≥1 position is in a live pre- or
@@ -566,6 +620,7 @@ export function OpenPositionsTab({
     const prior = mv - pnl;
     return prior > 0 ? (pnl / prior) * 100 : null;
   })();
+  const maxWeight = Math.max(1e-9, ...filtered.map((p) => navPct(marketValueOf(p)) ?? 0));
   const totalCost = positions.reduce((a, p) => {
     if (p.cost_basis_base != null) return a + p.cost_basis_base;
     return a + toBase(p.price_entry * p.volume, posCcy(p));
@@ -601,6 +656,28 @@ export function OpenPositionsTab({
               {fmtK(totalCost)}
             </span>
           </span>
+          {navParts && navParts.nav > 0 && (
+            <span
+              style={{ color: colors.textSecondary }}
+              title={`NAV = equities ${csym}${fmtK(navParts.equity)} + options ${csym}${fmtK(navParts.options)} + cash ${csym}${fmtK(navParts.cash)}${accountId === "all" ? " (all accounts)" : ""}. Every % PORT is a share of this.${navParts.cashKnown ? "" : " Cash not loaded yet — counted as 0."}${navParts.unpriced ? ` ${navParts.unpriced} position(s) have no price and are left out.` : ""}`}
+            >
+              NAV{" "}
+              <span className="font-bold" style={{ color: colors.text }}>
+                {csym}
+                {fmtK(navParts.nav)}
+              </span>
+              <span className="ml-1">
+                EQ {fmtWeight(navPct(navParts.equity))}
+                {navParts.options !== 0 && ` · OPT ${fmtWeight(navPct(navParts.options))}`}
+                {` · CASH ${fmtWeight(navPct(navParts.cash))}`}
+              </span>
+              {(!navParts.cashKnown || navParts.unpriced > 0) && (
+                <span className="ml-0.5" style={{ color: "#f59e0b" }}>
+                  *
+                </span>
+              )}
+            </span>
+          )}
           {hasDayData && (
             <span>
               Today{" "}
@@ -764,6 +841,10 @@ export function OpenPositionsTab({
               const groupCost = groupPositions.reduce((a: number, p: MergedPosition) => {
                 return a + (p.cost_basis_base ?? toBase(p.price_entry * p.volume, posCcy(p)));
               }, 0);
+              const groupMv = groupPositions.reduce(
+                (a: number, p: MergedPosition) => a + marketValueOf(p),
+                0
+              );
 
               return (
                 <tbody key={gk}>
@@ -807,6 +888,18 @@ export function OpenPositionsTab({
                           Cost {csym}
                           {fmtK(groupCost)}
                         </span>
+                        {navPct(groupMv) != null && (
+                          <span
+                            className="text-[8px]"
+                            style={{ color: colors.textSecondary }}
+                            title="This account's equity market value ÷ NAV of the selected scope"
+                          >
+                            <span className="font-bold" style={{ color: colors.text }}>
+                              {fmtWeight(navPct(groupMv))}
+                            </span>{" "}
+                            of NAV
+                          </span>
+                        )}
                         <span
                           className="ml-auto text-[9px] font-bold"
                           style={{ color: pnlColor(groupPnl) }}
@@ -1039,6 +1132,29 @@ export function OpenPositionsTab({
                             {fmtK(costVal)}
                           </span>
                         ),
+                        "% PORT": (() => {
+                          const mv = marketValueOf(p);
+                          const w = navPct(mv);
+                          if (w == null)
+                            return <span style={{ color: colors.textSecondary }}>—</span>;
+                          return (
+                            <span
+                              className="flex items-center gap-1"
+                              title={`${csym}${fmtK(mv)} market value ÷ NAV ${csym}${fmtK(navParts?.nav ?? 0)}`}
+                            >
+                              <span
+                                className="inline-block h-1.5"
+                                style={{
+                                  width: `${Math.max(1, Math.round((w / maxWeight) * 30))}px`,
+                                  background: `${groupColor}aa`,
+                                }}
+                              />
+                              <span className="font-bold" style={{ color: colors.text }}>
+                                {fmtWeight(w)}
+                              </span>
+                            </span>
+                          );
+                        })(),
                         "DAY P&L": (() => {
                           const dayPnl =
                             p.day_pnl_base != null
@@ -1300,7 +1416,7 @@ export function OpenPositionsTab({
       )}
 
       {/* Derivatives section — below equities, collapsible */}
-      <DerivativesSection lots={data?.options ?? []} colors={colors} />
+      <DerivativesSection lots={data?.options ?? []} colors={colors} pct={navPct} />
 
       {sellCtx && (
         <SellModal
