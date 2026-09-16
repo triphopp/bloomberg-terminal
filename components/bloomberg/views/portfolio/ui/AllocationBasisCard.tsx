@@ -333,7 +333,7 @@ export function AllocationBasisCard({
       {totals && (
         <>
           {/* Summary strip — the four numbers the rebalance decision hangs on */}
-          <div className="grid grid-cols-4 gap-px mb-2">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-px mb-2">
             {[
               { label: "COST BASIS", value: `${sym}${fmtK(totals.cost_base)}`, color: colors.text },
               {

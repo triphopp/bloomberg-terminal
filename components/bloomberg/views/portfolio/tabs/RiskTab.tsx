@@ -1157,7 +1157,10 @@ function OverviewSection({
   return (
     <div className="space-y-1.5">
       {/* ── HEADER: Score · Regime · Vol · Horizon · Today · Trim ── */}
-      <div className="flex items-center gap-2 px-2 py-1 rounded" style={{ background: "#111" }}>
+      <div
+        className="flex flex-wrap items-center gap-2 px-2 py-1 rounded"
+        style={{ background: "#111" }}
+      >
         {/* Risk score */}
         <div className="flex items-baseline gap-1 shrink-0">
           <span className="text-base font-bold font-mono" style={{ color: scoreColor }}>
@@ -1403,7 +1406,7 @@ function OverviewSection({
         })()}
 
       {/* ── ROW 2: 9-col compact stats ── */}
-      <div className="grid grid-cols-9 gap-px">
+      <div className="grid grid-cols-3 md:grid-cols-9 gap-px">
         {(
           [
             {
@@ -1468,7 +1471,7 @@ function OverviewSection({
       </div>
 
       {/* ── ROW 3: 2-col layout — Left: VaR detail | Right: Chart + Correlation ── */}
-      <div className="grid grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
         {/* LEFT 2/5: VaR table + backtest block */}
         <div className="col-span-2 space-y-1.5">
           <div

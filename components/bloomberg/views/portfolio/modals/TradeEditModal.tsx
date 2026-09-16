@@ -219,7 +219,7 @@ export function TradeEditModal({
       role="presentation"
     >
       <div
-        className="border p-4 w-[440px] max-h-[90vh] overflow-y-auto"
+        className="border p-4 w-[440px] max-w-[95vw] max-h-[90vh] overflow-y-auto"
         style={{ background: "#0a0a0a", borderColor: colors.accent }}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}

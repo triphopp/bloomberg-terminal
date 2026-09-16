@@ -533,7 +533,7 @@ export function AnalyticsTab({
   return (
     <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 220px)" }}>
       {/* Per-account summary */}
-      <div className="grid gap-px p-2" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-px p-2">
         {filteredStats.map((s) => (
           <div
             key={s.account.id}
@@ -694,7 +694,7 @@ export function AnalyticsTab({
               {ts.closed} closed trades{openPos.length > 0 ? ` · ${openPos.length} open` : ""}
             </span>
           </div>
-          <div className="grid gap-px" style={{ gridTemplateColumns: "repeat(6, 1fr)" }}>
+          <div className="grid grid-cols-3 md:grid-cols-6 gap-px">
             {[
               {
                 label: "WIN RATE",
@@ -796,7 +796,7 @@ export function AnalyticsTab({
           >
             CAPITAL BREAKDOWN
           </div>
-          <div className="grid gap-px" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-px">
             {capitalTiles.map((t) => {
               const color =
                 t.tone === "pnl" ? pnlColor(t.value) : t.tone === "pos" ? "#4ade80" : "#e5e5e5";
@@ -1434,7 +1434,7 @@ export function AnalyticsTab({
 
       {/* Monthly + Cumulative P&L side by side for a tighter aspect ratio */}
       {monthData.length > 0 && (
-        <div className="grid gap-2 mx-2 mb-2" style={{ gridTemplateColumns: "1fr 1fr" }}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mx-2 mb-2">
           <div className="border p-2" style={{ borderColor: colors.border }}>
             <div
               className="text-[9px] font-bold tracking-widest mb-2"
@@ -1628,7 +1628,7 @@ export function AnalyticsTab({
       )}
 
       {/* Dividend Trend + Allocation */}
-      <div className="grid gap-2 mx-2 mb-2" style={{ gridTemplateColumns: "1fr 1fr" }}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mx-2 mb-2">
         {divByMonth.length > 0 && (
           <div className="border p-2" style={{ borderColor: colors.border }}>
             <div className="flex items-center justify-between mb-2">
@@ -1686,7 +1686,7 @@ export function AnalyticsTab({
 
       <OptionAttributionCard accountId={accountId} colors={colors} />
 
-      <div className="grid gap-2 p-2" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 p-2">
         {(analytics?.by_sector ?? []).length > 0 && (
           <div className="border p-2" style={{ borderColor: colors.border }}>
             <div

@@ -10,11 +10,14 @@ export function SummaryBar({
   currency,
   colors,
   accountId,
+  onToggleCurrency,
 }: {
   summary: Summary | null;
   currency: "THB" | "USD";
   colors: Colors;
   accountId?: string;
+  /** Same flip as the "Y" key — the only way to do it without a keyboard. */
+  onToggleCurrency?: () => void;
 }) {
   const [editCash, setEditCash] = useState(false);
   if (!summary) return null;
@@ -43,7 +46,7 @@ export function SummaryBar({
 
   return (
     <div
-      className="flex flex-wrap items-center gap-4 px-3 py-1.5 border-b text-[10px] font-mono"
+      className="flex flex-wrap items-center gap-x-3 md:gap-x-4 gap-y-1 px-3 py-1.5 border-b text-[10px] font-mono"
       style={{ background: "#080808", borderColor: colors.border }}
     >
       <div>
@@ -123,8 +126,11 @@ export function SummaryBar({
       <div style={{ color: colors.textSecondary }}>
         FX: <span style={{ color: colors.text }}>1 USD = ฿{summary.thb_per_usd.toFixed(2)}</span>
       </div>
-      <div
-        className="ml-auto flex items-center gap-1 text-[8px] px-2 py-0.5 border font-bold"
+      <button
+        type="button"
+        onClick={onToggleCurrency}
+        title="Switch display currency (Y)"
+        className="ml-auto flex items-center gap-1 text-[8px] px-2 py-0.5 border font-bold hover:opacity-80"
         style={{ borderColor: "#ff990044", color: "#ff9900" }}
       >
         <kbd
@@ -136,7 +142,7 @@ export function SummaryBar({
         <span style={{ letterSpacing: "0.05em" }}>
           VIEW IN {currency === "THB" ? "USD" : "THB"}
         </span>
-      </div>
+      </button>
     </div>
   );
 }

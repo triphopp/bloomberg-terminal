@@ -222,7 +222,7 @@ export function PaperDashboardTab({ colors }: { colors: Colors }) {
 
       {/* Summary cards */}
       {s && (
-        <div className="grid grid-cols-4 gap-1">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-1">
           {[
             { label: "EQUITY", value: fmtK(s.equity), sub: s.currency },
             {

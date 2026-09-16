@@ -138,7 +138,7 @@ export function OptionTradeEditModal({
       style={{ background: "rgba(0,0,0,0.7)" }}
     >
       <div
-        className="border rounded w-[46rem] max-h-[85vh] overflow-y-auto"
+        className="border rounded w-[46rem] max-w-[95vw] max-h-[85vh] overflow-y-auto"
         style={{ background: "#0a0a0a", borderColor: colors.border }}
       >
         <div
@@ -167,7 +167,7 @@ export function OptionTradeEditModal({
             was not re-matched would keep reporting the old profit.
           </div>
 
-          <div className="grid grid-cols-4 gap-2 mb-2">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
             <div>
               <label
                 htmlFor="ote-date"
@@ -247,7 +247,7 @@ export function OptionTradeEditModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-4 gap-2 mb-2">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
             <div>
               <label
                 htmlFor="ote-underlying"
@@ -344,7 +344,7 @@ export function OptionTradeEditModal({
             </div>
           )}
 
-          <div className="grid grid-cols-4 gap-2 mb-2">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
             <div>
               <label
                 htmlFor="ote-mult"

@@ -1406,3 +1406,11 @@ PCE (54), GDP (53) ใช้ได้ตรง. `_FOMC_2026` ใน `macro.py` �
 `backend/event_calendar.py` (`FOMC_DECISIONS` = วันที่ 2 ของการประชุม ตาม federalreserve.gov, ถึง 2027-12-08; UI เตือนเองเมื่อ <60 วัน).
 ปีใหม่ → เพิ่มวันใน tuple นั้น ที่เดียว. `api.stlouisfed.org` read-timeout เป็นพักๆ → fetch มี retry 1 ครั้ง + cache ผลที่ degraded แค่ 60 s
 
+
+## 🟡 Mobile: inline `gridTemplateColumns` / hover-only / keyboard-only controls (2026-09-17)
+
+- `style={{ gridTemplateColumns: "repeat(6, 1fr)" }}` ชนะ class `md:grid-cols-*` เสมอ (inline > class) → ถ้าต้อง responsive ให้ใช้ class `grid-cols-2 md:grid-cols-6` แทน inline style
+- breakpoint มือถือ = 768px ทั้ง `useIsMobile()` (`hooks/use-mobile.tsx`) และ Tailwind `md:` — ใช้ `md:` สำหรับ layout ล้วน, ใช้ hook เมื่อต้องเปลี่ยนโครง (list/detail, แท็บ)
+- ปุ่มที่โผล่เฉพาะ `group-hover:` ใช้ไม่ได้บนจอสัมผัส → เพิ่ม `[@media(hover:none)]:flex`
+- action ที่มีแค่ keyboard shortcut (เช่น PORT `Y` สลับสกุลเงิน) ต้องมีปุ่มให้กดด้วย — มือถือไม่มีคีย์บอร์ด
+- modal `w-[NNNpx]` ต้องมี `max-w-[95vw]`
