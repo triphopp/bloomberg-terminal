@@ -50,6 +50,7 @@ from db import (
     init_db,
     init_portfolio_v2,
     init_sync_layer,
+    init_audit_layer,
     init_alerts_schema,
     init_thesis_schema,
     seed_symbol_lists,
@@ -97,6 +98,7 @@ init_db()
 init_portfolio_v2()
 init_thesis_schema()   # must precede init_sync_layer(): it adds updated_at + triggers
 init_sync_layer()
+init_audit_layer()     # after sync layer: needs _sync_guard + final column set
 init_alerts_schema()
 seed_symbol_lists()
 sync_symbol_lists()

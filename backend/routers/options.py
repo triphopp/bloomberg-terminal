@@ -24,7 +24,7 @@ from analytics.sd_bands import (
 )
 from cache import TTLCache
 from analytics.option_payoff import build_payoff
-from db import get_db, occ_symbol
+from db import audit_reason, get_db, occ_symbol
 from portfolio_options import _chain_rows
 from greeks import compute_greeks, estimate_moments
 from providers.base_options import OptionContract
@@ -1535,13 +1535,14 @@ async def edit_option_trade(trade_id: str, body: OptionTradeEditIn):
             "close_reason": new_reason,
             "note": body.note if body.note is not None else old["note"],
         }
-        conn.execute(
-            """UPDATE option_trades
-               SET trade_date = ?, price = ?, quantity = ?, fees = ?,
-                   close_reason = ?, note = ?, contract_id = ?
-               WHERE trade_id = ?""",
-            (*new_values.values(), contract_id, trade_id),
-        )
+        with audit_reason(conn, body.reason):
+            conn.execute(
+                """UPDATE option_trades
+                   SET trade_date = ?, price = ?, quantity = ?, fees = ?,
+                       close_reason = ?, note = ?, contract_id = ?
+                   WHERE trade_id = ?""",
+                (*new_values.values(), contract_id, trade_id),
+            )
 
         rematched = _rematch_trade(conn, trade_id)
         if contract_siblings:

@@ -1387,3 +1387,13 @@ option chain จริงมีแถวตายเสมอ — strike ที�
 ใช้อยู่แล้วกับ IV snapshot ถ้าจะปิดช่องนี้ควรใช้ค่าเดียวกันเพื่อความสม่ำเสมอ
 
 ---
+
+## ⚠️ ตาราง "เงิน" ใหม่ต้องเข้า `AUDITED_TABLES` ไม่งั้น edit ไม่ถูกบันทึก (2026-09-16)
+
+`audit_events` เขียนด้วย SQLite trigger เท่านั้น (`db.init_audit_layer`) ครอบคลุมเฉพาะตารางใน
+`db.AUDITED_TABLES`. เพิ่มตารางที่เก็บเงิน/เทรดใหม่ → ต้องเพิ่มชื่อใน tuple นั้น (และใน `SYNC_TABLES`
+ถ้าต้อง sync). คอลัมน์ใหม่จาก `_ensure_column` ไม่ต้องทำอะไร — trigger ถูก DROP/CREATE ใหม่ทุก start.
+- `init_audit_layer()` ต้องรัน **หลัง** `init_sync_layer()` (ต้องมี `_sync_guard`); test fixture ที่อยากได้ log ต้องเรียกเองด้วย
+- UPDATE ที่เปลี่ยนแค่ `updated_at` ไม่ log (sync trigger stamp ซ้ำทุก write → จะได้ event ซ้อน)
+- ใส่เหตุผล: `with audit_reason(conn, reason):` บน connection เดียวกับ write — อย่าเปิด `get_db()` ใหม่
+- **ห้าม** รัน `python -c "import main"` เพื่อ smoke test — init รันกับ DB จริงและ start sync thread
