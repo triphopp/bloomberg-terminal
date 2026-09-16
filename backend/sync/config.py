@@ -34,6 +34,9 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     ("trades",                  ["id"]),
     ("cash_ledger",             ["id"]),
     ("dividends",               ["id"]),
+    # Cash reconciliation offsets. uuid PK; rows are created and deleted, never
+    # edited, so last-write-wins is a union.
+    ("cash_adjustments",        ["id"]),
     # Normalized option schema (2026-09-10). Contracts sync on their natural key
     # so the same contract entered on two devices merges into one row; trades
     # and matches carry uuid PKs.
@@ -104,6 +107,10 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     # tables it refers to, though it declares no FK: the rows it points at
     # should already be present when a reader goes looking.
     ("trade_audit_log",          ["event_id"]),
+    # Row-level change log written by triggers on every money table
+    # (db.init_audit_layer). Append-only, uuid key → merge is a union. The
+    # triggers are sync-guarded, so imported rows never log twice.
+    ("audit_events",             ["event_id"]),
     # ATM implied-vol history. Market data, which normally stays local (see
     # fx_rates, deliberately absent) — but this series is the one kind that
     # CANNOT be re-derived later: the provider publishes only the CURRENT IV of a
@@ -124,7 +131,7 @@ TABLE_PK: dict[str, list[str]] = {t: pk for t, pk in SYNC_TABLES}
 # a conflict, because an unwanted row is visible and deletable while a wrongly
 # deleted trade is silent and gone. Everything else keeps delete-wins-on-tie.
 MONEY_TABLES: frozenset[str] = frozenset({
-    "transactions", "trades", "cash_ledger", "dividends",
+    "transactions", "trades", "cash_ledger", "cash_adjustments", "dividends",
     "option_trades", "option_trade_matches",
     "portfolio_accounts", "position_cost_overrides",
 })

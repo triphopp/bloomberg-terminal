@@ -199,7 +199,7 @@ components/bloomberg/
 | `layout/bloomberg-terminal.tsx` | `BloombergTerminal` (default) |
 | `layout/terminal-header.tsx` | `TerminalHeader` |
 | `portfolio/index.tsx` | `PortfolioView` (default) |
-| `portfolio/types.ts` | `Trade`, `Account`, `CashEntry`, `Dividend`, `Summary`, `BacktestMetrics`, `ThesisData`, `OptionPosition` |
+| `portfolio/types.ts` | `Trade`, `Account`, `CashEntry`, `CashAdjustment`, `Dividend`, `Summary`, `BacktestMetrics`, `ThesisData`, `OptionPosition` |
 | `portfolio/helpers.ts` | `fmt`, `fmtK`, `fmtPct`, `pnlColor`, `wlColor`, `groupKey`, `FLAG`, `Colors` |
 | `portfolio/constants.ts` | `ALL_COLS`, `DEFAULT_COLS`, `DENSE_COLS`, `TH_SECTORS` (34), `US_SECTORS` (11), `GROUP_COLORS`, `FINANSIA_SUBS`, `ALLOC_COLORS`, `SECTOR_COLORS`, `BLANK_CASH`, `BLANK_DIV`, `BLANK_FORM`, `STRATEGIES` |
 | `portfolio/ui/AccBadge.tsx` | `AccBadge`, `WLBadge` |
@@ -208,6 +208,8 @@ components/bloomberg/
 | `portfolio/ui/AllocationBasisCard.tsx` | `AllocationBasisCard`, `AllocRow` — ALLOCATION (OPEN) cost-vs-market card (COST/VALUE/DRIFT modes + rebalance table) |
 - `views/portfolio/ui/PayoffChart.tsx` — payoff chart (2026-09-10): expiry line solid, T+0 dashed, shaded profit/loss regions, reference lines at spot and each breakeven, plus the headline stats. Exports `PayoffChart`, `PayoffResult`, `PayoffPoint`
 - `views/portfolio/ui/usePayoff.ts` — `usePayoff(legs)` returns the expiry curve immediately from `localPayoff()` and swaps in the backend's answer (T+0 + POP) after a debounce. ⚠️ Depends on `JSON.stringify(legs)`, NOT the array: callers build it inline, so depending on the array re-ran the effect every render and aborted the request every time
+- `views/portfolio/tabs/AuditTab.tsx` — PORT → TOOLS → AUDIT (2026-09-16): every change from `/audit-events`, filter by table + action, follows active account, click row for field-by-field BEFORE/AFTER, LOAD OLDER paging. Exports `AuditTab`
+- `views/portfolio/modals/CashReconcileModal.tsx` — cash EDIT (2026-09-16): pick account, see DERIVED / ADJUST / CASH NOW, type broker balance → stores the difference; effective date + note; history with undo. Opened from SummaryBar CASH chip (always shown) and CASH tab EDIT. Invalidates `["portfolio","summary"]`. Exports `CashReconcileModal`
 - `views/portfolio/modals/PayoffModal.tsx` — payoff for a saved lot, combined across every lot on the same underlying by default (a hedge read alone looks like a pure loss) with a `THIS LOT ONLY` toggle
 - `views/portfolio/modals/OptionTradeEditModal.tsx` — correct a mis-entered option trade (2026-09-10): every field plus a required-by-convention `reason`, contract terms locked while the trade is matched, and the trade's audit log inline. Exports `OptionTradeEditModal`
 - `views/portfolio/ui/OptionTradeLog.tsx` — OPTIONS tab · TRADES view (2026-09-10): every

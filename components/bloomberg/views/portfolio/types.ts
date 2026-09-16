@@ -125,6 +125,39 @@ export interface AccountStat {
    *  − open cost. Blind to commissions, taxes and margin interest that were
    *  never recorded, so it is an estimate — label it as one wherever shown. */
   cash_base?: number;
+  /** cash_base before reconciliation offsets — the pure trade-log derivation. */
+  cash_derived_base?: number;
+  /** Sum of the user's cash reconciliation offsets, at today's FX. */
+  cash_adjustment_base?: number;
+  /** Effective date of the latest reconciliation, null if never reconciled. */
+  cash_reconciled_at?: string | null;
+}
+
+/** One row-level change from `/audit-events` (trigger-written, every money table). */
+export interface AuditEvent {
+  event_id: string;
+  table_name: string;
+  row_id: string;
+  account_id: string | null;
+  action: "INSERT" | "UPDATE" | "DELETE";
+  reason: string | null;
+  created_at: string;
+  old: Record<string, unknown> | null;
+  new: Record<string, unknown> | null;
+  changed?: Record<string, { old: unknown; new: unknown }>;
+}
+
+/** One cash EDIT: the offset that brought derived cash to the broker balance. */
+export interface CashAdjustment {
+  id: string;
+  account_id: string;
+  date: string;
+  amount: number;
+  currency: string;
+  target_balance: number | null;
+  derived_before: number | null;
+  note: string;
+  created_at: string;
 }
 
 export interface Summary {
@@ -143,6 +176,9 @@ export interface Summary {
   total_options_delta_notional_base?: number;
   total_open_cost_base?: number;
   total_cash_base?: number;
+  total_cash_derived_base?: number;
+  total_cash_adjustment_base?: number;
+  /** False once every active account has been reconciled at least once. */
   cash_is_estimate?: boolean;
 }
 

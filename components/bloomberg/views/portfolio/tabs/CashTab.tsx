@@ -3,6 +3,7 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { BLANK_CASH, BLANK_DIV } from "../constants";
 import { type Colors, fmtK, pnlColor } from "../helpers";
+import { CashReconcileModal } from "../modals/CashReconcileModal";
 import { ConfirmDeleteModal } from "../modals/ConfirmDeleteModal";
 import type { CashEntry, Dividend, Summary, Trade } from "../types";
 import { SubPortSelect } from "../ui/SubPortSelect";
@@ -30,6 +31,7 @@ export function CashTab({
   });
   const [divForm, setDivForm] = useState<Omit<Dividend, "id">>(BLANK_DIV);
   const [saving, setSaving] = useState(false);
+  const [cashEditOpen, setCashEditOpen] = useState(false);
   const [deleteCashTarget, setDeleteCashTarget] = useState<CashEntry | null>(null);
   const [deleteDivTarget, setDeleteDivTarget] = useState<Dividend | null>(null);
   const [suggestions, setSuggestions] = useState<
@@ -143,6 +145,11 @@ export function CashTab({
     accountId === "all"
       ? summary?.total_cash_base
       : summary?.accounts.find((a) => a.account.id === accountId)?.cash_base;
+  const cashReconciled =
+    accountId === "all"
+      ? summary?.cash_is_estimate === false
+      : !!summary?.accounts.find((a) => a.account.id === accountId)?.cash_reconciled_at;
+  const summaryCcy: "THB" | "USD" = summary?.base_currency === "USD" ? "USD" : "THB";
 
   const totalIn = cash.reduce((a, c) => a + c.income, 0);
   const totalInv = cash.reduce((a, c) => a + c.investment, 0);
@@ -389,22 +396,38 @@ export function CashTab({
         )}
         <div className="ml-auto flex gap-3 text-[9px] font-mono flex-wrap">
           {derivedCash != null && (
-            <span
+            <button
+              type="button"
+              onClick={() => setCashEditOpen(true)}
+              className="hover:opacity-80"
               style={{ color: colors.textSecondary }}
               title={
-                "DERIVED, not a ledger balance. invested + realized P&L (equities and options) + " +
-                "dividends − open cost basis. It will NOT equal IN − INV below: that pair is what " +
+                "invested + realized P&L (equities and options) + dividends − open cost basis, " +
+                "plus any EDIT you made. It will NOT equal IN − INV below: that pair is what " +
                 "you typed into this ledger, while this also folds in every position you have " +
-                "closed. Commissions, taxes and margin interest that were never entered are " +
-                "invisible to both."
+                "closed. Click to set it to the broker balance."
               }
             >
-              CASH~{" "}
+              CASH{cashReconciled ? "" : "~"}{" "}
               <span style={{ color: derivedCash >= 0 ? "#facc15" : "#f87171" }}>
-                ฿{fmtK(Math.abs(derivedCash))}
+                {derivedCash < 0 ? "-" : ""}
+                {summaryCcy === "THB" ? "฿" : "$"}
+                {fmtK(Math.abs(derivedCash))}
               </span>
-              <span className="ml-0.5 text-[8px]">est</span>
-            </span>
+              {!cashReconciled && <span className="ml-0.5 text-[8px]">est</span>}
+              <span className="ml-1 text-[8px] border px-1" style={{ borderColor: colors.border }}>
+                EDIT
+              </span>
+            </button>
+          )}
+          {cashEditOpen && summary && (
+            <CashReconcileModal
+              summary={summary}
+              currency={summaryCcy}
+              colors={colors}
+              accountId={accountId}
+              onClose={() => setCashEditOpen(false)}
+            />
           )}
           <span style={{ color: colors.textSecondary }}>
             IN: <span style={{ color: "#4ade80" }}>฿{fmtK(totalIn)}</span>

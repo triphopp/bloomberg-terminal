@@ -4,6 +4,7 @@ SQLite database connection and schema initialization.
 import json
 import sqlite3
 from contextlib import contextmanager
+from typing import Optional
 
 from config import DB_PATH
 
@@ -398,6 +399,51 @@ def init_portfolio_v2() -> None:
         # Migration: linked-pair TRANSFER entries (plans/cash-transfer-feature.md)
         _ensure_column(conn, "cash_ledger", "entry_type", "entry_type TEXT DEFAULT 'CASH'")
         _ensure_column(conn, "cash_ledger", "linked_id", "linked_id TEXT")
+        # Cash reconciliation. Idle cash is DERIVED (invested + realized +
+        # dividends − open cost); each row here is the offset that brought that
+        # derived number to the balance the broker actually showed on `date`.
+        # Deliberately NOT cash_ledger rows: an offset is not capital paid in, so
+        # it must not move invested capital, XIRR or CAGR. Amount is in
+        # `currency` (the currency the user reconciled in).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cash_adjustments (
+                id             TEXT PRIMARY KEY,
+                account_id     TEXT NOT NULL,
+                date           TEXT NOT NULL,
+                amount         REAL NOT NULL DEFAULT 0,
+                currency       TEXT NOT NULL DEFAULT 'THB',
+                target_balance REAL,
+                derived_before REAL,
+                note           TEXT DEFAULT '',
+                created_at     TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cash_adj_account ON cash_adjustments(account_id)")
+        # Row-level change log for every money table, written by triggers (see
+        # init_audit_layer) so no endpoint — present or future — can skip it.
+        # Append-only; `event_id` is a uuid so the log syncs as a union.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_events (
+                event_id   TEXT PRIMARY KEY,
+                table_name TEXT NOT NULL,
+                row_id     TEXT NOT NULL,
+                account_id TEXT,
+                action     TEXT NOT NULL CHECK(action IN ('INSERT','UPDATE','DELETE')),
+                old_data   TEXT,
+                new_data   TEXT,
+                reason     TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_events(created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_row ON audit_events(table_name, row_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_account ON audit_events(account_id, created_at)")
+        # One-row side channel for the human reason behind a write. Set and
+        # cleared inside the same transaction by `audit_reason()`; SQLite
+        # serialises writers, so a reason cannot leak into another request.
+        conn.execute("CREATE TABLE IF NOT EXISTS _audit_context (reason TEXT)")
+        if conn.execute("SELECT COUNT(*) FROM _audit_context").fetchone()[0] == 0:
+            conn.execute("INSERT INTO _audit_context (reason) VALUES (NULL)")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS dividends (
                 id                TEXT PRIMARY KEY,
@@ -968,6 +1014,101 @@ def init_thesis_schema() -> None:
                 UNIQUE(account_id, scope, key)
             )
         """)
+
+
+# Tables whose every INSERT / UPDATE / DELETE lands in audit_events.
+# option_trade_matches is left out on purpose: it is rebuilt from option_trades
+# on every edit, so logging it would bury the real change under recomputation.
+AUDITED_TABLES: tuple[str, ...] = (
+    "portfolio_accounts",
+    "trades",
+    "cash_ledger",
+    "cash_adjustments",
+    "dividends",
+    "position_cost_overrides",
+    "allocation_targets",
+    "option_contracts",
+    "option_trades",
+    "transactions",
+)
+
+
+@contextmanager
+def audit_reason(conn: sqlite3.Connection, reason: Optional[str]):
+    """Attach a human reason to every audit event written inside the block.
+
+    Must share the connection (and so the transaction) of the writes it labels.
+    """
+    conn.execute("UPDATE _audit_context SET reason = ?", ((reason or "").strip() or None,))
+    try:
+        yield
+    finally:
+        conn.execute("UPDATE _audit_context SET reason = NULL")
+
+
+def init_audit_layer() -> None:
+    """(Re)create the audit triggers. Run AFTER init_sync_layer.
+
+    Triggers are rebuilt on every start because their column lists are baked
+    in, and _ensure_column migrations add columns over time.
+
+    - Gated by `_sync_guard.active`: rows imported from a peer are not new
+      edits here, and the peer's own audit_events travel with the sync.
+    - UPDATE fires only when a column OTHER than `updated_at` changed. The sync
+      layer's own trigger re-stamps updated_at after every write; without this
+      filter each edit would log twice, and every insert once more as an update.
+    """
+    from sync.config import TABLE_PK
+    now_ms = "strftime('%Y-%m-%d %H:%M:%f', 'now')"
+    guard = "(SELECT active FROM _sync_guard) = 0"
+    reason = "(SELECT reason FROM _audit_context)"
+
+    with get_db() as conn:
+        for table in AUDITED_TABLES:
+            cols = [
+                str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()
+                if r[1] != "updated_at"
+            ]
+            for suffix in ("ins", "upd", "del"):
+                conn.execute(f"DROP TRIGGER IF EXISTS trg_{table}_audit_{suffix}")
+            if not cols:
+                continue  # table absent in this DB
+
+            pk = [c for c in TABLE_PK.get(table, ["id"]) if c in cols] or ["rowid"]
+
+            def row_id(ref: str) -> str:
+                return " || char(31) || ".join(f"CAST({ref}.{c} AS TEXT)" for c in pk)
+
+            def snapshot(ref: str) -> str:
+                return "json_object(" + ", ".join(f"'{c}', {ref}.{c}" for c in cols) + ")"
+
+            def account(ref: str) -> str:
+                return f"{ref}.account_id" if "account_id" in cols else "NULL"
+
+            def insert(action: str, ref: str, old: str, new: str) -> str:
+                return (
+                    "INSERT INTO audit_events (event_id, table_name, row_id, account_id, "
+                    "action, old_data, new_data, reason, created_at) VALUES ("
+                    f"lower(hex(randomblob(16))), '{table}', {row_id(ref)}, {account(ref)}, "
+                    f"'{action}', {old}, {new}, {reason}, {now_ms});"
+                )
+
+            conn.execute(f"""
+                CREATE TRIGGER trg_{table}_audit_ins AFTER INSERT ON {table} FOR EACH ROW
+                WHEN {guard}
+                BEGIN {insert('INSERT', 'NEW', 'NULL', snapshot('NEW'))} END;
+            """)
+            changed = " OR ".join(f"OLD.{c} IS NOT NEW.{c}" for c in cols)
+            conn.execute(f"""
+                CREATE TRIGGER trg_{table}_audit_upd AFTER UPDATE ON {table} FOR EACH ROW
+                WHEN {guard} AND ({changed})
+                BEGIN {insert('UPDATE', 'NEW', snapshot('OLD'), snapshot('NEW'))} END;
+            """)
+            conn.execute(f"""
+                CREATE TRIGGER trg_{table}_audit_del AFTER DELETE ON {table} FOR EACH ROW
+                WHEN {guard}
+                BEGIN {insert('DELETE', 'OLD', snapshot('OLD'), 'NULL')} END;
+            """)
 
 
 def init_alerts_schema() -> None:

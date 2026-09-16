@@ -441,9 +441,13 @@ export function AnalyticsTab({
     return null;
   };
 
+  // NAV includes idle cash: a sale moves value from holdings into cash, so a
+  // holdings-only line dipped on every sell and recovered on the next buy.
   const navData = navHistory.map((r) => ({
     date: typeof r.snapshot_date === "string" ? r.snapshot_date.slice(5) : r.snapshot_date,
-    value: toDisp(r.total_value ?? 0),
+    value: toDisp(r.nav_with_cash ?? r.total_value ?? 0),
+    holdings: toDisp(r.total_value ?? 0),
+    cash: toDisp(r.cash_balance ?? 0),
     cost: toDisp(r.open_cost_basis ?? 0),
   }));
 
@@ -1390,8 +1394,15 @@ export function AnalyticsTab({
                 itemStyle={tooltipItemStyle}
                 // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
                 formatter={(v: any, name: any) => [
-                  `${sym}${fmtK(v)}`,
-                  name === "value" ? "NAV" : "Cost basis",
+                  `${v < 0 ? "-" : ""}${sym}${fmtK(Math.abs(v))}`,
+                  (
+                    {
+                      value: "NAV (holdings + cash)",
+                      holdings: "Holdings",
+                      cash: "Cash",
+                      cost: "Cost basis",
+                    } as Record<string, string>
+                  )[name] ?? name,
                 ]}
               />
               <Area
@@ -1401,6 +1412,14 @@ export function AnalyticsTab({
                 fill="url(#navGrad)"
                 dot={navData.length < 2}
               />
+              <Line
+                dataKey="holdings"
+                stroke="#60a5fa"
+                strokeWidth={1}
+                strokeOpacity={0.5}
+                dot={false}
+              />
+              <Line dataKey="cash" stroke="#facc15" strokeWidth={1} dot={false} />
               <Line
                 dataKey="cost"
                 stroke="#888"

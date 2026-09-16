@@ -27,6 +27,7 @@ import { bloombergColors } from "../../lib/theme-config";
 import { FLAG } from "./helpers";
 import { portfolioQueries } from "./queries";
 import { AnalyticsTab } from "./tabs/AnalyticsTab";
+import { AuditTab } from "./tabs/AuditTab";
 import { BacktestTab } from "./tabs/BacktestTab";
 import { CashTab } from "./tabs/CashTab";
 import { ImportTab } from "./tabs/ImportTab";
@@ -46,7 +47,7 @@ import { SummaryBar } from "./ui/SummaryBar";
 type TopTab = "portfolio" | "analytics" | "risk" | "tools" | "paper";
 type PortfolioSub = "positions" | "options" | "trades" | "cash" | "entry";
 type AnalyticsSub = "analytics" | "backtest";
-type ToolsSub = "theses" | "import";
+type ToolsSub = "theses" | "import" | "audit";
 type PaperSub = "dashboard" | "trade" | "positions" | "options" | "history";
 
 const TOP_TABS: { id: TopTab; label: string; icon: React.ReactNode }[] = [
@@ -73,6 +74,7 @@ const ANALYTICS_SUBS: { id: AnalyticsSub; label: string; icon: React.ReactNode }
 const TOOLS_SUBS: { id: ToolsSub; label: string; icon: React.ReactNode }[] = [
   { id: "theses", label: "THESES", icon: <BookOpen className="h-2 w-2" /> },
   { id: "import", label: "IMPORT", icon: <Upload className="h-2 w-2" /> },
+  { id: "audit", label: "AUDIT", icon: <History className="h-2 w-2" /> },
 ];
 
 const PAPER_SUBS: { id: PaperSub; label: string; icon: React.ReactNode }[] = [
@@ -476,7 +478,7 @@ export function PortfolioView() {
       )}
 
       {/* Summary bar */}
-      <SummaryBar summary={summary} currency={currency} colors={colors} />
+      <SummaryBar summary={summary} currency={currency} colors={colors} accountId={activeAccount} />
 
       {/* Top tab bar */}
       <TopTabBar topTab={topTab} setTopTab={setTopTab} colors={colors} />
@@ -591,6 +593,9 @@ export function PortfolioView() {
             )}
             {topTab === "tools" && toolsSub === "import" && (
               <ImportTab colors={colors} variant="excel" />
+            )}
+            {topTab === "tools" && toolsSub === "audit" && (
+              <AuditTab accountId={activeAccount} colors={colors} />
             )}
 
             {topTab === "paper" && paperSub === "dashboard" && (

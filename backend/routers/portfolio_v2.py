@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from sources import market_data
 
 from cache import TTLCache
-from db import get_db
+from db import audit_reason, get_db
 from market_session import is_current_session, is_today_at, local_date_of, session_date_for
 from portfolio_options import (
     capture_daily_greeks,
@@ -509,6 +509,16 @@ class CashTransferIn(BaseModel):
     note: str = ""
 
 
+class CashReconcileIn(BaseModel):
+    account_id: str
+    # What the broker actually shows, in `currency`.
+    actual_balance: float
+    currency: str = "THB"
+    # Effective date: NAV history applies the offset from this day forward.
+    date: Optional[str] = None
+    note: str = ""
+
+
 class DividendIn(BaseModel):
     account_id: str
     asset: str
@@ -720,6 +730,7 @@ def delete_account(account_id: str):
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Account not found")
         conn.execute("DELETE FROM cash_ledger WHERE account_id = ?", (account_id,))
+        conn.execute("DELETE FROM cash_adjustments WHERE account_id = ?", (account_id,))
         conn.execute("DELETE FROM dividends   WHERE account_id = ?", (account_id,))
     return {"ok": True}
 
@@ -873,8 +884,9 @@ def patch_trade(trade_id: str, body: TradePatch):
         if not old:
             raise HTTPException(status_code=404, detail="Trade not found")
         old_dict = dict(old)
-        cur = conn.execute(f"UPDATE trades SET {set_clause} WHERE id = ?",
-                           list(updates.values()) + [trade_id])
+        with audit_reason(conn, reason):
+            cur = conn.execute(f"UPDATE trades SET {set_clause} WHERE id = ?",
+                               list(updates.values()) + [trade_id])
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Trade not found")
         _write_audit_log(conn, trade_id, "PATCH", old_dict, updates, reason)
@@ -890,6 +902,64 @@ def delete_trade(trade_id: str):
         _write_audit_log(conn, trade_id, "DELETE", dict(old), None, "")
         conn.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
     return {"ok": True}
+
+
+# ── Audit events (row-level, trigger-written) ───────────────────────────────
+
+def _parse_json(raw) -> Optional[dict]:
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+@router.get("/audit-events")
+def list_audit_events(
+    account_id: Optional[str] = Query(None),
+    table_name: Optional[str] = Query(None),
+    row_id: Optional[str] = Query(None),
+    action: Optional[str] = Query(None),
+    before: Optional[str] = Query(None, description="created_at cursor from the previous page"),
+    limit: int = Query(200),
+):
+    """Every change to a money table, newest first — written by SQLite triggers
+    (db.init_audit_layer), so it includes imports, sells and anything a future
+    endpoint does. UPDATE rows carry `changed` = {field: {old, new}}."""
+    where, params = [], []
+    if account_id and account_id != "all":
+        where.append("(account_id = ? OR (table_name = 'portfolio_accounts' AND row_id = ?))")
+        params += [account_id, account_id]
+    if table_name:
+        where.append("table_name = ?")
+        params.append(table_name)
+    if row_id:
+        where.append("row_id = ?")
+        params.append(row_id)
+    if action:
+        where.append("action = ?")
+        params.append(action.upper())
+    if before:
+        where.append("created_at < ?")
+        params.append(before)
+    sql = "SELECT * FROM audit_events"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params.append(max(1, min(int(limit), 1000)))
+    with get_db() as conn:
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    for r in rows:
+        r.pop("updated_at", None)
+        old, new = _parse_json(r.pop("old_data", None)), _parse_json(r.pop("new_data", None))
+        r["old"], r["new"] = old, new
+        if old is not None and new is not None:
+            r["changed"] = {
+                k: {"old": old.get(k), "new": new.get(k)}
+                for k in new if old.get(k) != new.get(k)
+            }
+    return {"events": rows, "next_before": rows[-1]["created_at"] if len(rows) >= limit else None}
 
 
 # ── Trade Audit Log ─────────────────────────────────────────────────────────
@@ -1301,6 +1371,75 @@ def delete_cash(entry_id: str):
         else:
             conn.execute("DELETE FROM cash_ledger WHERE id = ?", (entry_id,))
     return {"ok": True}
+
+
+# ── Cash reconciliation ──────────────────────────────────────────────────────
+# Idle cash is derived from the trade log, so it moves by itself on every buy,
+# sell and dividend. When it disagrees with the broker (unrecorded fees, taxes,
+# interest, a missing deposit) the user states the real balance and we store
+# the DIFFERENCE, not the balance: the derived number keeps moving with later
+# trades and the correction rides along with it.
+
+@router.get("/cash/adjustments")
+def list_cash_adjustments(account_id: Optional[str] = Query(None)):
+    sql = "SELECT * FROM cash_adjustments"
+    params: list = []
+    if account_id and account_id != "all":
+        sql += " WHERE account_id = ?"
+        params.append(account_id)
+    sql += " ORDER BY date DESC, created_at DESC"
+    with get_db() as conn:
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+@router.post("/cash/reconcile", status_code=201)
+def reconcile_cash(body: CashReconcileIn):
+    ccy = report_currency(body.currency)
+    with get_db() as conn:
+        if not conn.execute(
+            "SELECT 1 FROM portfolio_accounts WHERE id = ?", (body.account_id,)
+        ).fetchone():
+            raise HTTPException(status_code=404, detail="Account not found")
+    # Current cash INCLUDING earlier adjustments, so a second reconcile stacks
+    # on the first instead of double-counting it.
+    summary = get_summary(base_currency=ccy)
+    acct = next(
+        (a for a in summary["accounts"] if a["account"]["id"] == body.account_id), None
+    )
+    if acct is None:
+        raise HTTPException(status_code=409, detail="Account is inactive")
+    current = float(acct.get("cash_base") or 0)
+    delta = round(float(body.actual_balance) - current, 2)
+    if delta == 0:
+        return {"ok": True, "id": None, "amount": 0.0, "cash_before": current,
+                "cash_after": current, "currency": ccy}
+    entry_id = str(uuid.uuid4())
+    date = (body.date or datetime.now().strftime("%Y-%m-%d"))[:10]
+    with get_db() as conn, audit_reason(conn, body.note or "cash reconcile"):
+        conn.execute(
+            """INSERT INTO cash_adjustments
+                   (id, account_id, date, amount, currency, target_balance, derived_before, note)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (entry_id, body.account_id, date, delta, ccy,
+             float(body.actual_balance), current, body.note or ""),
+        )
+    return {"ok": True, "id": entry_id, "amount": delta, "cash_before": current,
+            "cash_after": float(body.actual_balance), "currency": ccy}
+
+
+@router.delete("/cash/adjustments/{adj_id}")
+def delete_cash_adjustment(adj_id: str):
+    with get_db() as conn:
+        cur = conn.execute("DELETE FROM cash_adjustments WHERE id = ?", (adj_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Adjustment not found")
+    return {"ok": True}
+
+
+def _cash_adjustment_rows(conn) -> list[dict]:
+    return [dict(r) for r in conn.execute(
+        "SELECT account_id, date, amount, currency FROM cash_adjustments"
+    ).fetchall()]
 
 
 # ── Dividends ─────────────────────────────────────────────────────────────────
@@ -2270,7 +2409,22 @@ def get_summary(base_currency: str = Query("THB")):
             FROM dividends d JOIN portfolio_accounts a ON d.account_id = a.id
         """).fetchall()
 
+        adjustment_rows = _cash_adjustment_rows(conn)
+
     thb_per_usd = _get_thb_per_usd()
+
+    # Reconciliation offsets, at today's FX: cash held in the other currency is
+    # worth what it is worth now, not what it was worth on the day it was typed.
+    adj_base_map: dict[str, float] = {}
+    adj_last_map: dict[str, str] = {}
+    for row in adjustment_rows:
+        aid = row["account_id"]
+        adj_base_map[aid] = adj_base_map.get(aid, 0.0) + _conv(
+            float(row.get("amount") or 0), row.get("currency") or "THB", base_currency, thb_per_usd
+        )
+        stamp = str(row.get("date") or "")
+        if stamp > adj_last_map.get(aid, ""):
+            adj_last_map[aid] = stamp
 
     stats_map = {r["account_id"]: dict(r) for r in trade_stats}
     cash_map  = {r["account_id"]: dict(r) for r in cash_stats}
@@ -2396,6 +2550,8 @@ def get_summary(base_currency: str = Query("THB")):
     total_options_realized_base = 0.0
     total_open_cost_base = 0.0
     total_cash_base = 0.0
+    total_cash_derived_base = 0.0
+    total_cash_adjustment_base = 0.0
     total_ytd_realized_base = 0.0
     total_ytd_economic_realized_base = 0.0
     total_wins = total_closed = 0
@@ -2459,7 +2615,7 @@ def get_summary(base_currency: str = Query("THB")):
         total_options_delta_base += options_delta
         total_options_realized_base += options_realized
 
-        cash_base = (
+        cash_derived_base = (
             float(_conv(invested_thb, "THB", base_currency, thb_per_usd))
             # pnl_base already includes option realized — adding opt_realized
             # again here would count every closed option twice.
@@ -2467,8 +2623,14 @@ def get_summary(base_currency: str = Query("THB")):
             + dividends_base
             - open_cost
         )
+        # Reconciled cash = derived + the user's corrections. The derived part
+        # still moves with every later trade; the offset stays put.
+        cash_adjustment_base = adj_base_map.get(aid, 0.0)
+        cash_base = cash_derived_base + cash_adjustment_base
         total_open_cost_base += open_cost
         total_cash_base += cash_base
+        total_cash_derived_base += cash_derived_base
+        total_cash_adjustment_base += cash_adjustment_base
 
         result.append({
             "account":        acc,
@@ -2501,6 +2663,9 @@ def get_summary(base_currency: str = Query("THB")):
             # Estimate — see the comment where cash_base is computed.
             "open_cost_base": round(open_cost, 2),
             "cash_base": round(cash_base, 2),
+            "cash_derived_base": round(cash_derived_base, 2),
+            "cash_adjustment_base": round(cash_adjustment_base, 2),
+            "cash_reconciled_at": adj_last_map.get(aid),
         })
 
     return {
@@ -2515,7 +2680,11 @@ def get_summary(base_currency: str = Query("THB")):
         "total_options_delta_notional_base": round(total_options_delta_base, 2),
         "total_open_cost_base": round(total_open_cost_base, 2),
         "total_cash_base": round(total_cash_base, 2),
-        "cash_is_estimate": True,
+        "total_cash_derived_base": round(total_cash_derived_base, 2),
+        "total_cash_adjustment_base": round(total_cash_adjustment_base, 2),
+        # An estimate until every active account has been reconciled at least
+        # once — after that the offsets carry the broker's figure forward.
+        "cash_is_estimate": not accounts or any(a["id"] not in adj_last_map for a in accounts),
         "ytd_year":       datetime.now().year,
         "global_win_rate": round(total_wins / total_closed * 100, 1) if total_closed > 0 else 0,
         "base_currency":  base_currency,
@@ -2965,7 +3134,15 @@ def get_option_pnl_attribution(
 
 @router.get("/nav-history")
 def get_nav_history(account_id: Optional[str] = Query(None), days: int = Query(365)):
-    """Daily NAV time series (THB base) for charting total asset value."""
+    """Daily NAV time series (THB base) for charting total asset value.
+
+    `total_value` is holdings only (what the snapshot stores). A sale turns
+    holdings into cash, so charting holdings alone dips on every sell and jumps
+    back on the next buy. Each row therefore also carries `cash_balance` —
+    invested + realized + dividends − open cost, the same derivation as
+    /summary, plus reconciliation offsets dated on or before that day — and
+    `nav_with_cash`, the number that should NOT move when you trade.
+    """
     aid = account_id if (account_id and account_id != "all") else "all"
     with get_db() as conn:
         rows = conn.execute(
@@ -2976,7 +3153,32 @@ def get_nav_history(account_id: Optional[str] = Query(None), days: int = Query(3
                ORDER BY snapshot_date DESC LIMIT ?""",
             (aid, max(1, days)),
         ).fetchall()
-    return [dict(r) for r in reversed(rows)]
+        active = {r["id"] for r in conn.execute(
+            "SELECT id FROM portfolio_accounts WHERE is_active = 1"
+        ).fetchall()}
+        adjustments = [
+            a for a in _cash_adjustment_rows(conn)
+            if a["account_id"] == aid or (aid == "all" and a["account_id"] in active)
+        ]
+    out = []
+    for r in reversed(rows):
+        row = dict(r)
+        day = str(row["snapshot_date"])[:10]
+        adj = sum(
+            convert_amount(_to_float_or_zero(a.get("amount")), a.get("currency") or "THB", "THB", date=day)
+            for a in adjustments if str(a.get("date") or "")[:10] <= day
+        )
+        cash = (
+            _to_float_or_zero(row.get("invested_capital"))
+            + _to_float_or_zero(row.get("realized_pnl"))
+            + _to_float_or_zero(row.get("dividends"))
+            - _to_float_or_zero(row.get("open_cost_basis"))
+            + adj
+        )
+        row["cash_balance"] = round(cash, 2)
+        row["nav_with_cash"] = round(_to_float_or_zero(row.get("total_value")) + cash, 2)
+        out.append(row)
+    return out
 
 
 # ── Analytics ─────────────────────────────────────────────────────────────────

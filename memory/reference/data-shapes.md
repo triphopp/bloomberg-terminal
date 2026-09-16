@@ -207,6 +207,37 @@ On the CASH tab this deliberately does NOT equal `IN − INV`: that pair is what
 ledger, while `CASH~` also folds in every closed position. Both are labelled so the difference does
 not read as a bug.
 
+### Reconciliation — cash EDIT (2026-09-16)
+
+`cash_base = cash_derived_base + cash_adjustment_base`. The user states the broker balance in
+`CashReconcileModal` (header CASH chip or CASH tab → EDIT); `POST /cash/reconcile` stores
+`actual − current cash_base` as a row in `cash_adjustments` — the **difference**, not the balance —
+so later buys/sells keep moving the derived part and the correction rides along. Stacking: a second
+reconcile compares against cash that already includes earlier offsets. Undo = delete the row.
+
+Offsets are NOT `cash_ledger` rows on purpose: they are not capital paid in, so they do not move
+invested capital, XIRR or CAGR. `/summary` converts them at live FX; `/nav-history` at the
+snapshot's dated FX and only for rows with `date <= snapshot_date` (effective date).
+
+New fields: per account `cash_derived_base`, `cash_adjustment_base`, `cash_reconciled_at`
+(latest effective date | null); totals `total_cash_derived_base`, `total_cash_adjustment_base`.
+`cash_is_estimate` is now `false` once every active account has ≥1 offset.
+
+```ts
+interface CashAdjustment { id: string; account_id: string; date: string; amount: number;
+  currency: "THB"|"USD"; target_balance: number|null; derived_before: number|null; note: string; created_at: string; }
+```
+
+### `/nav-history` rows gain `cash_balance` + `nav_with_cash` (2026-09-16)
+
+`total_value` in `portfolio_nav_snapshots` is **holdings only**, so a sale made NAV dip and the
+next buy made it recover. Each row now also carries
+`cash_balance = invested_capital + realized_pnl + dividends − open_cost_basis + offsets(date ≤ day)`
+and `nav_with_cash = total_value + cash_balance`, computed at read time from existing snapshot
+columns (no schema change, old rows get it too). ANALYTICS → PORTFOLIO VALUE plots `nav_with_cash`
+with holdings and cash as thin lines. Real data 2026-09-11: holdings 1.84M→1.55M after a sale,
+NAV+cash 2.08M→2.06M.
+
 ---
 
 ## Option Payoff (`POST /api/options/payoff`)
