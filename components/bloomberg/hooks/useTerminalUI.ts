@@ -34,10 +34,6 @@ export function useTerminalUI() {
     setCurrentView("clippings");
   }, [setCurrentView]);
 
-  const handleMacroView = useCallback(() => {
-    setCurrentView("macro");
-  }, [setCurrentView]);
-
   const handleCreditView = useCallback(() => {
     setCurrentView("credit");
   }, [setCurrentView]);
@@ -94,7 +90,6 @@ export function useTerminalUI() {
     handleMoversView,
     handleStockView,
     handleClippingsView,
-    handleMacroView,
     handleCreditView,
     handlePortfolioView,
     handleTailView,

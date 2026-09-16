@@ -3,6 +3,7 @@ Tail Risk Monitor v2 — six risk dimensions over fresh volatility data.
 
 GET /api/tail-risk/signals   — dimension scores, signal states, vol table, history
 GET /api/tail-risk/vix-term  — VIX9D / VIX / VIX3M / VIX6M term structure
+GET /api/tail-risk/macro-context — FOMC/CPI/NFP/PCE/GDP calendar + Fed, curve, regime (context only)
 
 Three rules this module is built around, each of which v1 broke:
 
@@ -949,6 +950,108 @@ def get_signals():  # sync: blocking requests/yfinance — FastAPI runs it in a 
             }
 
     return _cache.get_or_set("signals", build)
+
+
+# ─── Macro context ────────────────────────────────────────────────────────────
+# Shown BESIDE the six dimensions, never counted in the composite: nothing here
+# has a backtest behind it, and a scheduled release is known in advance rather
+# than evidence of stress. What it does change is how a lit vol signal reads —
+# VIX bid into an FOMC decision is the market pricing an event, not a crack.
+
+# Signals whose firing is routinely explained by a scheduled event.
+EVENT_SENSITIVE_SIGNALS = ("vix_level", "vix_momentum", "vix_term_inversion")
+
+
+def assess_regime(indicators: dict) -> dict:
+    """Four-way read of the US macro backdrop from the latest prints.
+
+    Thresholds carried over unchanged from the retired MACRO dashboard so the
+    labels users already learned keep their meaning.
+    """
+    def v(key: str):
+        ind = indicators.get(key) or {}
+        return ind.get("value")
+
+    gdp, cpi, unem, rate = v("gdp"), v("cpi"), v("unemployment"), v("fed_rate")
+
+    def pick(val, rules, default):
+        if val is None:
+            return {"state": None, "tone": "unknown"}
+        for test, state, tone in rules:
+            if test(val):
+                return {"state": state, "tone": tone}
+        return {"state": default[0], "tone": default[1]}
+
+    return {
+        "growth": pick(gdp, [(lambda x: x >= 2, "EXPANDING", "good"),
+                             (lambda x: x >= 0, "SLOWING", "watch")], ("CONTRACTING", "bad")),
+        "inflation": pick(cpi, [(lambda x: x > 3.0, "ELEVATED", "bad"),
+                                (lambda x: x > 2.0, "ABOVE TARGET", "watch")], ("AT/BELOW TARGET", "good")),
+        "labor": pick(unem, [(lambda x: x < 4.0, "TIGHT", "watch"),
+                             (lambda x: x < 5.5, "BALANCED", "good")], ("SLACK", "bad")),
+        "policy": pick(rate, [(lambda x: x > 4.0, "RESTRICTIVE", "bad"),
+                              (lambda x: x > 2.5, "NEUTRAL", "watch")], ("ACCOMMODATIVE", "good")),
+    }
+
+
+def _macro_context() -> dict:
+    from event_calendar import calendar_payload
+    from routers.macro import get_macro
+
+    today = datetime.now(timezone.utc).date()
+    out: dict = {
+        "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "counted_in_composite": False,
+        "event_sensitive_signals": list(EVENT_SENSITIVE_SIGNALS),
+    }
+    try:
+        out["calendar"] = calendar_payload(today)
+    except Exception as exc:
+        print(f"[tail_risk] calendar failed: {exc}")
+        out["calendar"] = None
+
+    try:
+        macro = get_macro()
+        ind = macro.get("indicators") or {}
+        out["indicators"] = {
+            k: ({"value": i.get("value"), "prev": i.get("prev"), "date": i.get("date")} if i else None)
+            for k, i in ind.items()
+        }
+        yc = macro.get("yield_curve") or {}
+        out["yield_curve"] = {
+            k: yc.get(k) for k in ("3m", "2y", "5y", "10y", "30y", "spread_10y_2y", "spread_10y_3m")
+        }
+        s2, s3m = yc.get("spread_10y_2y"), yc.get("spread_10y_3m")
+        out["yield_curve"]["inverted_10y_2y"] = None if s2 is None else s2 < 0
+        out["yield_curve"]["inverted_10y_3m"] = None if s3m is None else s3m < 0
+        fed = macro.get("fed") or {}
+        out["fed"] = {"rate": fed.get("current_rate"), "stance": fed.get("stance")}
+        out["regime"] = assess_regime(ind)
+        out["macro_ok"] = True
+    except Exception as exc:
+        print(f"[tail_risk] macro context failed: {exc}")
+        out.update(indicators=None, yield_curve=None, fed=None, regime=None, macro_ok=False)
+    return out
+
+
+@router.get("/macro-context")
+def get_macro_context():  # sync: FRED + macro disk cache
+    # A complete answer is kept 10 min; a degraded one (FRED timeout, macro
+    # series missing) only 60 s, so a transient miss does not stick.
+    hit = _cache.get("macro-context", ttl=600)
+    if hit is not None and _context_complete(hit):
+        return hit
+    hit = _cache.get("macro-context", ttl=60)
+    if hit is not None:
+        return hit
+    out = _macro_context()
+    _cache.set("macro-context", out)
+    return out
+
+
+def _context_complete(ctx: dict) -> bool:
+    cal = ctx.get("calendar") or {}
+    return bool(ctx.get("macro_ok")) and bool(cal.get("releases_ok"))
 
 
 @router.get("/vix-term")

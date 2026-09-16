@@ -15,9 +15,6 @@ const prefetchLoaders: Record<string, () => void> = {
   clippings: () => {
     import("../views/clippings-view");
   },
-  macro: () => {
-    import("../views/macro-view");
-  },
   credit: () => {
     import("../views/credit-view");
   },

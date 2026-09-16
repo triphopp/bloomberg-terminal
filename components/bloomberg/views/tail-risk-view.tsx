@@ -11,11 +11,32 @@
  *
  * Signals are tri-state. `unknown` means the data behind it could not be
  * verified and is rendered as such — never as a quiet "—" that reads like calm.
+ *
+ * Macro context (FOMC/CPI/NFP/PCE/GDP calendar, Fed, curve, regime) sits beside
+ * the dimensions and is NOT counted in the risk level. Inside an event window
+ * the VIX signals carry an EVENT tag: a vol bid into a scheduled release is the
+ * market pricing that release, not independent evidence of stress.
  */
 
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, RefreshCw } from "lucide-react";
-import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  Bar,
+  BarChart,
+  Cell,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
+  EventStrip,
+  KIND_COLOR,
+  type MacroEvent,
+  MacroPanel,
+  useMacroContext,
+} from "./tail/macro-context";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -331,7 +352,7 @@ function VolBoard({ rows }: { rows: VolRow[] }) {
 
 // ── Dimension card ────────────────────────────────────────────────────────────
 
-function SignalRow({ sig }: { sig: Signal }) {
+function SignalRow({ sig, eventTag }: { sig: Signal; eventTag?: string | null }) {
   const dot = sig.state === "on" ? "#FF4444" : sig.state === "unknown" ? "#B06000" : "#243024";
   const labelColor =
     sig.state === "on" ? "#FFCC44" : sig.state === "unknown" ? "#8a6a3a" : "#6a6a6a";
@@ -353,6 +374,21 @@ function SignalRow({ sig }: { sig: Signal }) {
       <span className="truncate" style={{ color: labelColor, fontSize: 8.5 }}>
         {sig.label}
       </span>
+
+      {eventTag && (
+        <span
+          style={{
+            color: "#000",
+            backgroundColor: "#FF8800",
+            fontSize: 6,
+            padding: "0 2px",
+            flexShrink: 0,
+          }}
+          title={`Event window: ${eventTag}. ${sig.state === "on" ? "This firing may be the market pricing the event rather than stress." : "Expect this signal to be noisy around the event."}`}
+        >
+          EVENT
+        </span>
+      )}
 
       {!sig.validated && (
         <span
@@ -404,7 +440,15 @@ function SignalRow({ sig }: { sig: Signal }) {
   );
 }
 
-function DimensionCard({ dim, signals }: { dim: Dimension; signals: Signal[] }) {
+function DimensionCard({
+  dim,
+  signals,
+  eventTagFor,
+}: {
+  dim: Dimension;
+  signals: Signal[];
+  eventTagFor: (id: string) => string | null;
+}) {
   const c = STATUS_COLOR[dim.status];
   const members = signals.filter((s) => s.dimension === dim.id);
 
@@ -441,7 +485,7 @@ function DimensionCard({ dim, signals }: { dim: Dimension; signals: Signal[] }) 
 
       <div className="flex flex-col" style={{ borderTop: "1px solid #141414", paddingTop: 2 }}>
         {members.map((s) => (
-          <SignalRow key={s.id} sig={s} />
+          <SignalRow key={s.id} sig={s} eventTag={eventTagFor(s.id)} />
         ))}
       </div>
     </div>
@@ -450,7 +494,11 @@ function DimensionCard({ dim, signals }: { dim: Dimension; signals: Signal[] }) 
 
 // ── History ───────────────────────────────────────────────────────────────────
 
-function HistoryChart({ history }: { history: HistoryItem[] }) {
+function HistoryChart({ history, events }: { history: HistoryItem[]; events: MacroEvent[] }) {
+  // Only high-impact events, and only on dates the chart actually has a bar for
+  // — a category axis silently drops a ReferenceLine whose x is not a category.
+  const dates = new Set(history.map((h) => h.date));
+  const marks = events.filter((e) => e.impact === "high" && dates.has(e.date));
   return (
     <ResponsiveContainer width="100%" height={78}>
       <BarChart data={history} barSize={2} margin={{ top: 2, right: 2, bottom: 0, left: -24 }}>
@@ -476,6 +524,15 @@ function HistoryChart({ history }: { history: HistoryItem[] }) {
             name === "signals_on" ? "Signals on" : "Alert dimensions",
           ]}
         />
+        {marks.map((e) => (
+          <ReferenceLine
+            key={`${e.date}-${e.kind}`}
+            x={e.date}
+            stroke={KIND_COLOR[e.kind]}
+            strokeOpacity={0.45}
+            strokeDasharray="2 2"
+          />
+        ))}
         <Bar dataKey="signals_on" radius={[1, 1, 0, 0]}>
           {history.map((h) => (
             <Cell
@@ -532,6 +589,7 @@ export function TailRiskView() {
     staleTime: 240_000,
     refetchInterval: 300_000,
   });
+  const { data: macro } = useMacroContext();
 
   if (isLoading) {
     return (
@@ -567,6 +625,14 @@ export function TailRiskView() {
   }
 
   const risk = RISK_COLOR[data.risk_level] ?? RISK_COLOR.NORMAL;
+
+  const eventWindow = macro?.calendar?.event_window;
+  const sensitive = new Set(macro?.event_sensitive_signals ?? []);
+  const windowLabel = eventWindow?.active
+    ? eventWindow.events.map((e) => `${e.kind} ${e.date.slice(5)}`).join(", ")
+    : null;
+  const eventTagFor = (id: string) => (windowLabel && sensitive.has(id) ? windowLabel : null);
+  const chartEvents = [...(macro?.calendar?.past ?? []), ...(macro?.calendar?.upcoming ?? [])];
 
   return (
     <div className="flex flex-col h-full font-mono bg-black text-white overflow-hidden">
@@ -622,6 +688,7 @@ export function TailRiskView() {
       </div>
 
       <HealthStrip health={data.data_health} signals={data.signals} />
+      <EventStrip ctx={macro} />
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="flex gap-2 p-2 min-h-full">
@@ -676,12 +743,15 @@ export function TailRiskView() {
               <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>
                 90D SIGNAL HISTORY
               </span>
-              <HistoryChart history={data.history} />
+              <HistoryChart history={data.history} events={chartEvents} />
               <span style={{ color: "#333", fontSize: 6.5, lineHeight: 1.4 }}>
                 Bars = vol/flow signals on that day, coloured by how many dimensions reached ALERT.
-                Credit and correlation are point-in-time only and are not back-filled here.
+                Dashed lines = FOMC / CPI / NFP days. Credit and correlation are point-in-time only
+                and are not back-filled here.
               </span>
             </div>
+
+            <MacroPanel ctx={macro} />
           </div>
 
           {/* ── Right: the six dimensions ──────────────────────────────────── */}
@@ -690,7 +760,12 @@ export function TailRiskView() {
             style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}
           >
             {data.dimensions.map((dim) => (
-              <DimensionCard key={dim.id} dim={dim} signals={data.signals} />
+              <DimensionCard
+                key={dim.id}
+                dim={dim}
+                signals={data.signals}
+                eventTagFor={eventTagFor}
+              />
             ))}
 
             <div

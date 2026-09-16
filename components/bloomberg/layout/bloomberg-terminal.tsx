@@ -43,9 +43,6 @@ import { KeyIndicatorsBar, MarketView } from "../views/market-view";
 const MarketMoversView = dynamic(() => import("../views/market-movers-view"), {
   loading: () => <ViewSkeleton />,
 });
-const MacroView = dynamic(() => import("../views/macro-view").then((m) => m.MacroView), {
-  loading: () => <ViewSkeleton />,
-});
 const CreditView = dynamic(() => import("../views/credit-view").then((m) => m.CreditView), {
   loading: () => <ViewSkeleton />,
 });
@@ -63,7 +60,6 @@ const TailRiskView = dynamic(() => import("../views/tail-risk-view").then((m) =>
 });
 
 const MemoMarketMovers = memo(MarketMoversView);
-const MemoMacro = memo(MacroView);
 const MemoCredit = memo(CreditView);
 const MemoNews = memo(NewsView);
 const MemoClippings = memo(ClippingsView);
@@ -83,7 +79,6 @@ function BloombergTerminal() {
     handleMoversView,
     handleStockView,
     handleClippingsView,
-    handleMacroView,
     handleCreditView,
     handlePortfolioView,
     handleTailView,
@@ -149,7 +144,6 @@ function BloombergTerminal() {
     { id: "news", label: "NEWS", shortcut: "2", onClick: handleNewsView },
     { id: "movers", label: "GMOV", shortcut: "3", onClick: handleMoversView },
     { id: "clippings", label: "CLIP", shortcut: "4", onClick: handleClippingsView },
-    { id: "macro", label: "MACRO", shortcut: "5", onClick: handleMacroView },
     { id: "credit", label: "CRDT", shortcut: "6", onClick: handleCreditView },
     { id: "portfolio", label: "PORT", shortcut: "P", onClick: handlePortfolioView },
     { id: "tail", label: "TAIL", shortcut: "T", onClick: handleTailView },
@@ -183,7 +177,6 @@ function BloombergTerminal() {
     { key: "2", action: handleNewsView, description: "News" },
     { key: "3", action: handleMoversView, description: "Market movers" },
     { key: "4", action: handleClippingsView, description: "Clippings" },
-    { key: "5", action: handleMacroView, description: "Macro" },
     { key: "6", action: handleCreditView, description: "Credit" },
     { key: "p", action: handlePortfolioView, description: "Portfolio" },
     {
@@ -224,7 +217,6 @@ function BloombergTerminal() {
     news: "NEWS & SOCIAL",
     movers: "GLOBAL MARKET MOVERS",
     clippings: "CLIPPINGS · OLLAMA AI",
-    macro: "MACRO ECONOMICS",
     credit: "CREDIT RISK & STRESS",
     portfolio: "PORTFOLIO",
     stock: "STOCK ANALYSIS",
@@ -310,8 +302,6 @@ function BloombergTerminal() {
         return <MemoStock onBack={handleBack} defaultSymbol={stockSymbol || undefined} />;
       case "clippings":
         return <MemoClippings onBack={handleBack} />;
-      case "macro":
-        return <MemoMacro onBack={handleBack} />;
       case "credit":
         return <MemoCredit onBack={handleBack} />;
       case "portfolio":

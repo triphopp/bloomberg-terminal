@@ -131,7 +131,7 @@ OPENAI_API_KEY      — optional
 | `polymarket_stock.py` | `/api/polymarket/stock/{symbol}`, `/api/polymarket/stocks` | Gamma `/public-search` + `/events` (single-name price ladders) |
 | `company_filings.py` | `/api/company/filings|outlook|xbrl/{symbol}` | SEC EDGAR (submissions + 8-K EX-99.1 + XBRL companyconcept) — US only |
 | `social.py` | `/api/social/feed` | RSSHub / Graph API |
-| `macro.py` | `/api/macro` | FRED + Alpha Vantage (2-layer cache) |
+| `macro.py` | `/api/macro` | FRED + Alpha Vantage (2-layer cache). Read in-process by `/api/tail-risk/macro-context`; `next_fomc` from `event_calendar.py` |
 | `crisis.py` | `/api/crisis` | FRED |
 | `sovereign.py` | `/api/sovereign/*` | World Bank |
 | `portfolio.py` | `/api/portfolio/*` (theses, research, transactions, backtest) | filesystem + SQLite |
@@ -140,7 +140,7 @@ OPENAI_API_KEY      — optional
 | `backtest_v2.py` | `/api/v2/portfolio/backtest/*` (equity, holdings-timeline, distribution) | SQLite trades + yfinance |
 | `fx.py` | `/api/fx/*` | yfinance |
 | `rates.py` | `/api/rates/curve` (UST 11 tenors + JGB 15 tenors, tick-row shape) | FRED daily + MOF CSV |
-| `global_yields.py` | `/api/macro/global-yields` (MACRO YIELD tab — `table/curves/series` shape) | FRED (US daily + OECD monthly) |
+| `global_yields.py` | `/api/macro/global-yields` (was MACRO YIELD tab — no UI consumer since 2026-09-17) | FRED (US daily + OECD monthly) |
 | `crypto.py` | `/api/crypto/*` | yfinance |
 | `etf.py` | `/api/etf/{symbol}` | yfinance |
 | `footprint.py` | `/api/crypto/footprint` | Binance aggTrades |
@@ -291,11 +291,11 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 | `2` | NEWS | News | `news-view.tsx` → barrel for `views/news/` — WATCHLIST (default, sector rail + per-ticker stream; HEADLINES/RATE STRESS/DCF/REGIME panels) / NEWSFEED / SOCIAL tabs + Polymarket right column |
 | `3` | GMOV | Market Movers | `market-movers-view.tsx` — indices table + heatmap treemap |
 | `4` | CLIP | Clippings + AI | `clippings-view.tsx` |
-| `5` | MACRO | Macro Economics | `macro-view.tsx` — 7 tabs: dashboard, yield, indicators, fed, country, compare, **signals** |
+| `T` | TAIL | Tail Risk Monitor | `tail-risk-view.tsx` — 6 risk dimensions + **MACRO CONTEXT** (not in composite, 2026-09-17): event strip FOMC/SEP/CPI/NFP/PCE/GDP, EVENT tag on VIX signals inside ±1 bday window, Fed/curve/regime/latest prints panel, event markers on 90D chart |
 | `6` | CRDT | Credit / Stress | `credit-view.tsx` — 4 tabs: overview, spreads, stress, consumer |
 | `P` | PORT | Portfolio | `portfolio-view.tsx` (barrel → `portfolio/`) — 5 top-level tabs: PORTFOLIO (sub: POSITIONS\|OPTIONS\|TRADES\|CASH\|ENTRY=manual trade form) · ANALYTICS (sub: P&L incl. Total Return per port + CAPM β/α table\|BACKTEST) · RISK (standalone) · TOOLS (sub: THESES\|IMPORT) · PAPER (sub: DASHBOARD\|TRADE\|POSITIONS\|OPTIONS\|HISTORY) |
 
-Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026-08-01 — FX merged into the MKT TICK DATA board; crypto via global search `BTC-USD` → stock-view). Backend `crypto.py`/`fx.py` routers kept: `/api/crypto/footprint` feeds the Order Footprint indicator. Keys `C`/`E` are free. Stock analysis (9 tabs) accessible via global search / heatmap click.
+Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as context; COUNTRY + SIGNALS tabs deleted with it, backend routers kept; key `5` free), GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026-08-01 — FX merged into the MKT TICK DATA board; crypto via global search `BTC-USD` → stock-view). Backend `crypto.py`/`fx.py` routers kept: `/api/crypto/footprint` feeds the Order Footprint indicator. Keys `C`/`E` are free. Stock analysis (9 tabs) accessible via global search / heatmap click.
 
 ---
 
@@ -321,6 +321,8 @@ Removed: GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026
 ---
 
 ## What Could Be Built Next
+
+- [x] **TAIL Macro Context** — FOMC/CPI/NFP/PCE/GDP calendar + Fed/curve/regime context in TAIL; MACRO view removed; FOMC off-by-one fixed — done 2026-09-17 (`plans/completed/tail-macro-context.md`)
 
 - [x] **Windows NEWS API recovery** — done 2026-09-13 — restarted stale Windows backend; DCF/REGIME/SVI live HTTP checks OK, 61 tests passed (`plans/completed/windows-news-api-reload.md`)
 

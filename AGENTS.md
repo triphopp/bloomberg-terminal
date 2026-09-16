@@ -57,7 +57,7 @@ npm run dev   # → http://localhost:3000
 4. `layout/terminal-header.tsx` — add nav button
 5. Update `memory/reference/frontend-structure.md` + `memory/project_summary.md` views table
 
-### Add a new tab inside macro-view (or any tabbed view)
+### Add a new tab inside a tabbed view (credit-view, portfolio, …)
 1. Create `views/X-tab.tsx` — component with `h-full flex flex-col overflow-hidden` root
 2. Import + add to tab array in parent view
 3. Wire `Alt+N` shortcut in `terminal-layout.tsx` if needed
@@ -128,7 +128,7 @@ async def get_x():
 | `2` | NEWS  | news-view      | Financial news · Facebook social feed · Polymarket column (right 256px) |
 | `3` | GMOV  | market-movers  | Global indices table · Heatmap treemap |
 | `4` | CLIP  | clippings-view | Obsidian markdown notes · Ollama AI |
-| `5` | MACRO | macro-view     | 7 tabs: dashboard, yield, indicators, fed, country, compare, signals |
+| `T` | TAIL  | tail-risk-view | 6 risk dimensions (composite) + MACRO CONTEXT (not in composite): event strip FOMC/SEP/CPI/NFP/PCE/GDP + EVENT WINDOW tag on VIX signals, Fed rate/stance, 10Y−2Y/10Y−3M, regime, latest prints, event markers on 90D chart |
 | `6` | CRDT  | credit-view    | 4 tabs: overview, spreads, stress, consumer |
 | `P` | PORT  | portfolio-view | 5 top-level: PORTFOLIO (sub: POSITIONS·OPTIONS·TRADES·CASH) · ANALYTICS (sub: P&L·BACKTEST) · RISK · TOOLS (sub: THESES·IMPORT) · PAPER (sub: DASHBOARD·TRADE·POSITIONS·OPTIONS·HISTORY) |
 | `C` | CRYP  | crypto-view    | 20 crypto coins · Chart |
@@ -136,7 +136,7 @@ async def get_x():
 
 **Removed:** GVOL (fake `Math.random()` data), EQTY (duplicates MKT search), RMI (removed 2026-05-24)  
 **Stock analysis** (9 tabs: financials, options, etc.) still accessible from global search / heatmap click  
-**Country/sovereign data** → use MACRO [6] → COUNTRY tab (was in CRDT sovereign, now consolidated)
+**MACRO `5` removed 2026-09-17** — US macro (Fed, curve, indicators, regime) + FOMC/release calendar moved into TAIL as context; COUNTRY (World Bank) and SIGNALS (country rotation / sector selection / allocation) tabs were deleted with it. Backend routers remain (`/api/macro`, `/api/sovereign/*`, `/api/country-rotation`, `/api/sector`, `/api/allocation`) — TAIL reads `/api/macro` in-process. Key `5` is free.
 
 ## 3 Mandatory Rules (ALL agents, every session)
 

@@ -723,6 +723,32 @@ Flags: `TREND_UP`/`TREND_DOWN`, `GOLDEN_CROSS`/`DEATH_CROSS`, `RSI_OVERBOUGHT`/`
 
 ---
 
+## Tail Macro Context (`GET /api/tail-risk/macro-context`)
+
+```json
+{
+  "counted_in_composite": false,
+  "event_sensitive_signals": ["vix_level", "vix_momentum", "vix_term_inversion"],
+  "calendar": {
+    "as_of": "2026-09-16",
+    "upcoming": [{"date": "2026-09-16", "kind": "FOMC", "label": "FOMC decision + SEP", "sep": true,
+                  "impact": "high", "source": "federalreserve.gov", "days_until": 0, "bdays_until": 0}],
+    "past": [/* same shape, days_until < 0 */],
+    "event_window": {"active": true, "bdays": 1, "events": [/* MacroEvent */]},
+    "next_fomc": {"date": "2026-09-16", "days_until": 0, "sep": true},
+    "fomc_calendar_through": "2027-12-08", "fomc_calendar_stale": false, "fomc_calendar_expiring": false,
+    "releases_ok": true
+  },
+  "fed": {"rate": 3.63, "stance": "HOLD"},
+  "yield_curve": {"3m": 3.94, "2y": 4.65, "5y": 4.777, "10y": 4.959, "30y": 5.341,
+                  "spread_10y_2y": 0.309, "spread_10y_3m": 1.019, "inverted_10y_2y": false, "inverted_10y_3m": false},
+  "regime": {"growth": {"state": "SLOWING", "tone": "watch"}, "inflation": {...}, "labor": {...}, "policy": {...}},
+  "indicators": {"cpi": {"value": 3.71, "prev": 3.54, "date": "2026-08-01"}, "...": null},
+  "macro_ok": true
+}
+```
+`kind` ∈ FOMC|CPI|NFP|PCE|GDP. Spreads are percentage points (UI ×100 → bp). `calendar`/`regime`/`fed`/`yield_curve`/`indicators` may be `null` on failure — render NO DATA, never calm.
+
 ## Tail Risk Signals (`GET /api/tail-risk/signals`)
 
 ```json
