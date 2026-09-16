@@ -1,5 +1,6 @@
 "use client";
 
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useQuery } from "@tanstack/react-query";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
@@ -243,6 +244,8 @@ function fmtVolShort(n: number): string {
   if (n >= 1e3) return `${(n / 1e3).toFixed(0)}K`;
   return n.toFixed(0);
 }
+
+const LS_MOBILE_PANEL_KEY = "bloomberg_mkt_mobile_tab";
 
 const PANEL_LABELS: Record<PanelId, string> = {
   watchlist: "WATCHLIST",
@@ -1103,6 +1106,36 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
 
   // Selected symbol for chart
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+
+  // ── Phone layout: one panel at a time ──
+  const isMobile = useIsMobile();
+  const [mobilePanel, setMobilePanel] = useState<PanelId>(() => {
+    if (typeof window === "undefined") return "chart";
+    try {
+      const s = localStorage.getItem(LS_MOBILE_PANEL_KEY);
+      if (s === "watchlist" || s === "chart" || s === "tickdata") return s;
+    } catch {
+      /* ignore */
+    }
+    return "chart";
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_MOBILE_PANEL_KEY, mobilePanel);
+    } catch {
+      /* ignore */
+    }
+  }, [mobilePanel]);
+  // Picking a symbol on the watchlist/tick board is a request to see it, and on
+  // a phone the chart is behind another tab — follow the pick. The view fills
+  // in a default symbol after load (null → DOW JONES); that is not a pick and
+  // must not steal the stored tab, so only a change between two symbols counts.
+  const prevSymbolRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevSymbolRef.current;
+    prevSymbolRef.current = selectedSymbol;
+    if (isMobile && prev && selectedSymbol && prev !== selectedSymbol) setMobilePanel("chart");
+  }, [selectedSymbol, isMobile]);
   const [selectedLabel, setSelectedLabel] = useState("");
   const {
     timePeriod,
@@ -1556,7 +1589,11 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     return (
       <div className="flex flex-col overflow-hidden h-full">
         {/* ── Watchlist section ── */}
-        <div className="shrink-0 flex flex-col" style={{ height: watchlistHeight, minHeight: 100 }}>
+        <div
+          className="shrink-0 flex flex-col" // Phone: the drag handle is mouse-only and the stored pixel height was
+          // sized for a desktop column, which left ~4 rows above the regime map.
+          style={{ height: isMobile ? "60%" : watchlistHeight, minHeight: 100 }}
+        >
           <div
             className="flex items-center gap-1 px-1 py-0.5 shrink-0"
             style={{ background: "#0a0a0a", borderBottom: `1px solid ${colors.border}` }}
@@ -2855,7 +2892,37 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
         />
       )}
 
-      {/* 3-Column customizable layout.
+      {isMobile ? (
+        // Phone: the three columns can't share 375px (the chart got squeezed
+        // to nothing), so show one at a time. Desktop panel order, widths and
+        // folds are left untouched — they belong to the desktop layout.
+        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+          <div
+            className="shrink-0 flex items-stretch"
+            style={{ borderBottom: `1px solid ${colors.border}` }}
+            role="tablist"
+          >
+            {(["watchlist", "chart", "tickdata"] as const).map((pid) => (
+              <button
+                key={pid}
+                type="button"
+                role="tab"
+                aria-selected={mobilePanel === pid}
+                onClick={() => setMobilePanel(pid)}
+                className="flex-1 h-9 text-[11px] font-mono tracking-widest"
+                style={{
+                  color: mobilePanel === pid ? colors.accent : colors.textSecondary,
+                  fontWeight: mobilePanel === pid ? 700 : 400,
+                }}
+              >
+                {PANEL_LABELS[pid]}
+              </button>
+            ))}
+          </div>
+          <div className="flex-1 min-h-0 overflow-hidden">{panelRenderers[mobilePanel](false)}</div>
+        </div>
+      ) : (
+        /* 3-Column customizable layout.
 
           The side panels hold their configured width; the chart absorbs
           whatever folding a panel frees. Before, every open panel had
@@ -2863,50 +2930,51 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
           freed space — it jumped from its 30% to ~45% and the divider could not
           pull it back, since its stored width was already at the 15% floor
           while the bonus stayed. A watchlist is a list: it needs the width the
-          user gave it and no more. The chart is what benefits from the room. */}
-      <div ref={containerRef} className="flex-1 flex overflow-hidden min-h-0">
-        {layout.panelOrder.map((panelId, idx) => {
-          const isCollapsed = layout.collapsedPanels.includes(panelId);
-          // Nothing is rendered for a folded panel — not a narrow one, none.
-          if (isCollapsed) return null;
-          // The next panel that is actually rendered — a folded one is not in
-          // the row at all, so a divider must reach past it to the next open
-          // panel or it would resize something invisible.
-          const nextPanel = layout.panelOrder
-            .slice(idx + 1)
-            .find((id) => !layout.collapsedPanels.includes(id));
-          const isFiller = panelId === fillerPanel;
-          const showDivider = nextPanel != null;
+          user gave it and no more. The chart is what benefits from the room. */
+        <div ref={containerRef} className="flex-1 flex overflow-hidden min-h-0">
+          {layout.panelOrder.map((panelId, idx) => {
+            const isCollapsed = layout.collapsedPanels.includes(panelId);
+            // Nothing is rendered for a folded panel — not a narrow one, none.
+            if (isCollapsed) return null;
+            // The next panel that is actually rendered — a folded one is not in
+            // the row at all, so a divider must reach past it to the next open
+            // panel or it would resize something invisible.
+            const nextPanel = layout.panelOrder
+              .slice(idx + 1)
+              .find((id) => !layout.collapsedPanels.includes(id));
+            const isFiller = panelId === fillerPanel;
+            const showDivider = nextPanel != null;
 
-          return (
-            <div
-              key={panelId}
-              className="flex"
-              style={
-                isFiller
-                  ? // Explicit `minWidth: 0` rather than `auto`: a flex item
-                    // never shrinks below its min-content width by default,
-                    // and the chart's tables are wide enough to claim space
-                    // back off the panel widths.
-                    { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0 }
-                  : {
-                      flex: `0 0 ${layout.panelWidths[panelId]}%`,
-                      minWidth: panelId === "watchlist" ? 260 : 0,
-                    }
-              }
-            >
-              {/* Panel content */}
-              <div className="flex-1 overflow-hidden">{panelRenderers[panelId](isCollapsed)}</div>
-              {showDivider && (
-                <ResizeDivider
-                  onDrag={(delta) => handleResize(panelId, nextPanel, delta)}
-                  colors={colors}
-                />
-              )}
-            </div>
-          );
-        })}
-      </div>
+            return (
+              <div
+                key={panelId}
+                className="flex"
+                style={
+                  isFiller
+                    ? // Explicit `minWidth: 0` rather than `auto`: a flex item
+                      // never shrinks below its min-content width by default,
+                      // and the chart's tables are wide enough to claim space
+                      // back off the panel widths.
+                      { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0 }
+                    : {
+                        flex: `0 0 ${layout.panelWidths[panelId]}%`,
+                        minWidth: panelId === "watchlist" ? 260 : 0,
+                      }
+                }
+              >
+                {/* Panel content */}
+                <div className="flex-1 overflow-hidden">{panelRenderers[panelId](isCollapsed)}</div>
+                {showDivider && (
+                  <ResizeDivider
+                    onDrag={(delta) => handleResize(panelId, nextPanel, delta)}
+                    colors={colors}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

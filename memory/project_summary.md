@@ -322,6 +322,8 @@ Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as 
 
 ## What Could Be Built Next
 
+- [ ] **Mobile Responsive** — shell bottom nav + MKT single-panel switcher first; PORT, NEWS, rest follow (`plans/mobile-responsive.md`)
+
 - [x] **TAIL Macro Context** — FOMC/CPI/NFP/PCE/GDP calendar + Fed/curve/regime context in TAIL; MACRO view removed; FOMC off-by-one fixed — done 2026-09-17 (`plans/completed/tail-macro-context.md`)
 
 - [x] **Windows NEWS API recovery** — done 2026-09-13 — restarted stale Windows backend; DCF/REGIME/SVI live HTTP checks OK, 61 tests passed (`plans/completed/windows-news-api-reload.md`)

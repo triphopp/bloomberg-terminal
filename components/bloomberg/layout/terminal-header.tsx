@@ -1,5 +1,6 @@
 "use client";
 
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Search, Settings } from "lucide-react";
 import type React from "react";
 import { bloombergColors } from "../lib/theme-config";
@@ -40,6 +41,58 @@ export function TerminalHeader({
 }: TerminalHeaderProps) {
   const colors = isDarkMode ? bloombergColors.dark : bloombergColors.light;
   const sep = `1px solid ${colors.border}33`;
+  const isMobile = useIsMobile();
+
+  // Phone: nav lives in <MobileNav> at the bottom, and the key-indicator strip,
+  // provider/sync lights, HELP and Esc have no room (or no keyboard) — keep the
+  // current view's name plus the two controls a thumb needs.
+  if (isMobile) {
+    const active = navItems.find((n) => n.id === currentView);
+    return (
+      <div
+        className="font-mono select-none flex items-center h-10 px-1"
+        style={{ backgroundColor: colors.background, borderBottom: `1px solid ${colors.border}` }}
+      >
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="h-10 px-2 text-[12px]"
+            style={{ color: colors.textSecondary }}
+            aria-label="Back"
+          >
+            ←
+          </button>
+        )}
+        <span
+          className="px-2 text-[12px] font-bold tracking-widest truncate"
+          style={{ color: colors.accent }}
+        >
+          {active?.label ?? currentView.toUpperCase()}
+        </span>
+        <div className="ml-auto flex items-center">
+          <button
+            type="button"
+            onClick={onSearchClick}
+            className="h-10 w-10 flex items-center justify-center"
+            aria-label="Search"
+          >
+            <Search className="h-4 w-4" style={{ color: colors.accent }} />
+          </button>
+          {onSettingsClick && currentView === "market" && (
+            <button
+              type="button"
+              onClick={onSettingsClick}
+              className="h-10 w-10 flex items-center justify-center"
+              aria-label="Layout settings"
+            >
+              <Settings className="h-4 w-4" style={{ color: colors.textSecondary }} />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

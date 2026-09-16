@@ -36,7 +36,9 @@ export function TerminalLayout({ children, shortcuts }: TerminalLayoutProps) {
 
   return (
     <div
-      className="h-screen w-screen overflow-hidden flex flex-col font-mono"
+      // 100dvh, not h-screen: on a phone 100vh includes the area under the
+      // browser toolbar, which pushed the bottom nav off-screen.
+      className="h-[100dvh] w-screen overflow-hidden flex flex-col font-mono"
       style={{ backgroundColor: colors.background, color: colors.text }}
     >
       {children}

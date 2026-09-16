@@ -1,5 +1,6 @@
 "use client";
 
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useAtom } from "jotai";
 import dynamic from "next/dynamic";
 import { Suspense, memo, useCallback, useEffect } from "react";
@@ -29,6 +30,7 @@ import { Watchlist } from "../core/watchlist";
 import { usePortfolioPrewarm, useTerminalUI, useViewPrefetch } from "../hooks";
 import { useMarketDataQuery } from "../hooks";
 import { AlertTicker } from "../layout/alert-ticker";
+import { MobileNav } from "../layout/mobile-nav";
 import { TailRiskRibbon } from "../layout/tail-risk-ribbon";
 import { TerminalHeader } from "../layout/terminal-header";
 import type { NavItem } from "../layout/terminal-header";
@@ -211,6 +213,7 @@ function BloombergTerminal() {
     { key: "1–9", altKey: true, action: () => {}, description: "Switch to tab N in current view" },
   ];
 
+  const isMobile = useIsMobile();
   const headerColors = isDarkMode ? bloombergColors.dark : bloombergColors.light;
 
   const VIEW_SUBTITLES: Record<string, string> = {
@@ -319,8 +322,13 @@ function BloombergTerminal() {
       <div className="flex-1 min-h-0 overflow-hidden">
         <Suspense fallback={<ViewSkeleton />}>{renderView()}</Suspense>
       </div>
-      <TailRiskRibbon />
-      <AlertTicker />
+      {/* Ribbon + crawl are desktop furniture: on a phone they eat ~40px of a
+          ~700px screen for text too small to read, and the TAIL view has it all. */}
+      {!isMobile && <TailRiskRibbon />}
+      {!isMobile && <AlertTicker />}
+      {isMobile && (
+        <MobileNav currentView={currentView} navItems={navItems} colors={headerColors} />
+      )}
       <ChartWindowLayer />
       {modals}
     </TerminalLayout>

@@ -12,7 +12,8 @@
 components/bloomberg/
 ├── layout/
 │   ├── bloomberg-terminal.tsx   ← root view router (9 views)
-│   ├── terminal-header.tsx      ← top nav bar + view buttons
+│   ├── terminal-header.tsx      ← top nav bar + view buttons (phone <768px: title + search only)
+│   ├── mobile-nav.tsx           ← phone bottom view switcher (replaces header nav; ribbon + ticker hidden)
 │   ├── terminal-layout.tsx      ← keyboard shortcut binding wrapper
 │   └── terminal-filter-bar.tsx  ← watchlist filter
 │
@@ -194,6 +195,7 @@ components/bloomberg/
 | `hooks/useTerminalUI.ts` | `useTerminalUI()` → `{ currentView, handleKeyPress, ... }` |
 | `layout/bloomberg-terminal.tsx` | `BloombergTerminal` (default) |
 | `layout/terminal-header.tsx` | `TerminalHeader` |
+| `layout/mobile-nav.tsx` | `MobileNav` |
 | `portfolio/index.tsx` | `PortfolioView` (default) |
 | `portfolio/types.ts` | `Trade`, `Account`, `CashEntry`, `CashAdjustment`, `Dividend`, `Summary`, `BacktestMetrics`, `ThesisData`, `OptionPosition` |
 | `portfolio/helpers.ts` | `fmt`, `fmtK`, `fmtPct`, `pnlColor`, `wlColor`, `groupKey`, `FLAG`, `Colors` |
