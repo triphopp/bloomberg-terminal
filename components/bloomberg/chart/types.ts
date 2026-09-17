@@ -200,6 +200,10 @@ export interface IndicatorSeriesOutput {
   data: (SeriesDataPoint | HistogramDataPoint | WhitespaceDataPoint)[];
   color?: string;
   lineWidth?: number;
+  /** Line series only. Reference levels read as guides when they are not solid. */
+  lineStyle?: "solid" | "dashed" | "dotted";
+  /** Line series only — show the latest value as a label on the price axis. */
+  lastValueVisible?: boolean;
   priceScaleId?: string; // separate scale for pane indicators
   opacity?: number;
   /**
