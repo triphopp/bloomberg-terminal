@@ -553,8 +553,14 @@ export function ModularChart({
           const series = subPane.addSeries(LineSeries, {
             color: output.color ?? "#888",
             lineWidth: (output.lineWidth ?? 1) as 1 | 2 | 3 | 4,
+            lineStyle:
+              output.lineStyle === "dashed"
+                ? LineStyle.Dashed
+                : output.lineStyle === "dotted"
+                  ? LineStyle.Dotted
+                  : LineStyle.Solid,
             priceLineVisible: false,
-            lastValueVisible: false,
+            lastValueVisible: output.lastValueVisible ?? false,
             crosshairMarkerVisible: false,
             ...(pinRsiRange
               ? { autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) }

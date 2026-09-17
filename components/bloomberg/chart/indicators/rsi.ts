@@ -59,6 +59,27 @@ function calcRSIState(closes: number[], period: number): (RsiState | null)[] {
 
 export { calcRSIState };
 
+/**
+ * RSI line colours by zone. The line itself carries the reading: red while it
+ * sits above overbought, green below oversold, a quiet violet in between — so
+ * "is it stretched?" is answered by colour before the axis is read. The
+ * reference lines stay dim and broken so they never compete with the line.
+ */
+export const RSI_COLORS = {
+  neutral: "#b39ddb",
+  overbought: "#ff5252",
+  oversold: "#00e676",
+  obLevel: "#ff525299",
+  osLevel: "#00e67699",
+  mid: "#666666",
+} as const;
+
+export function rsiZoneColor(value: number, overbought: number, oversold: number): string {
+  if (value >= overbought) return RSI_COLORS.overbought;
+  if (value <= oversold) return RSI_COLORS.oversold;
+  return RSI_COLORS.neutral;
+}
+
 export const createRSI: IndicatorFactory = (overrides = {}) => {
   const period = (overrides.period as number) ?? 14;
 
@@ -102,26 +123,32 @@ export const createRSI: IndicatorFactory = (overrides = {}) => {
 
       const rsiLine = data
         .map((d, i) => ({ time: d.time, value: rsiStates[i]?.rsi as number }))
-        .filter((d) => d.value != null);
+        .filter((d) => d.value != null)
+        .map((d) => ({ ...d, color: rsiZoneColor(d.value, ob, os) }));
 
       const times = rsiLine.map((d) => d.time);
 
+      // Reference levels first: later series paint on top, and the RSI line is
+      // the thing to read. Refills match series by position, so this order is
+      // fixed for every compute.
       return [
         {
-          id: `rsi-${p}-line`,
-          label: `RSI ${p}`,
+          id: `rsi-${p}-mid`,
+          label: "50",
           type: "line",
-          color: "#ab47bc",
+          color: RSI_COLORS.mid,
           lineWidth: 1,
-          data: rsiLine,
+          lineStyle: "dotted",
+          data: times.map((t) => ({ time: t, value: 50 })),
           priceScaleId: scaleId,
         },
         {
           id: `rsi-${p}-ob`,
           label: `OB ${ob}`,
           type: "line",
-          color: "#ef5350",
+          color: RSI_COLORS.obLevel,
           lineWidth: 1,
+          lineStyle: "dashed",
           data: times.map((t) => ({ time: t, value: ob })),
           priceScaleId: scaleId,
         },
@@ -129,18 +156,20 @@ export const createRSI: IndicatorFactory = (overrides = {}) => {
           id: `rsi-${p}-os`,
           label: `OS ${os}`,
           type: "line",
-          color: "#26a69a",
+          color: RSI_COLORS.osLevel,
           lineWidth: 1,
+          lineStyle: "dashed",
           data: times.map((t) => ({ time: t, value: os })),
           priceScaleId: scaleId,
         },
         {
-          id: `rsi-${p}-mid`,
-          label: "50",
+          id: `rsi-${p}-line`,
+          label: `RSI ${p}`,
           type: "line",
-          color: "#555",
-          lineWidth: 1,
-          data: times.map((t) => ({ time: t, value: 50 })),
+          color: RSI_COLORS.neutral,
+          lineWidth: 2,
+          lastValueVisible: true,
+          data: rsiLine,
           priceScaleId: scaleId,
         },
       ];
