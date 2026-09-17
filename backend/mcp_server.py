@@ -544,4 +544,16 @@ def review_thesis(thesis_id: str) -> str:
 
 
 if __name__ == "__main__":
-    mcp.run("stdio")
+    # stdio is what Claude Code / Claude Desktop / Cursor spawn. Agents that
+    # cannot spawn a process (n8n, a browser-side agent, anything on another
+    # machine) get the same tools over HTTP instead:
+    #   MCP_TRANSPORT=streamable-http MCP_PORT=9319 python backend/mcp_server.py
+    # Binding stays on 127.0.0.1: this server writes to the portfolio and has no
+    # auth of its own, so reaching it from another host is a deliberate act
+    # (an SSH tunnel), never the default.
+    transport = os.getenv("MCP_TRANSPORT", "stdio")
+    if transport == "stdio":
+        mcp.run("stdio")
+    else:
+        mcp.run(transport, host=os.getenv("MCP_HOST", "127.0.0.1"),
+                port=int(os.getenv("MCP_PORT", "9319")))

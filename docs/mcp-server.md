@@ -54,6 +54,40 @@ name (`claude` for Claude Code, `desktop` here) — that is how you tell later w
 wrote what. `PYTHONIOENCODING=utf-8` matters on Windows: the tool messages contain `→`
 and `–`, and the default cp1252 console encoding raises on them.
 
+## Any other MCP client
+
+The server is a standard stdio MCP server, so anything that speaks MCP takes the same
+three fields — command, args, env — under whatever key that client uses
+(`mcpServers`, `mcp.servers`, `context_servers`, …):
+
+```json
+{
+  "command": "python",
+  "args": ["D:/Agents/Claude/bloomberg-terminal-main/backend/mcp_server.py"],
+  "env": { "PYTHON_API_URL": "http://localhost:9317", "MCP_AGENT_NAME": "cursor" }
+}
+```
+
+Give each client its own `MCP_AGENT_NAME`: it becomes the `AGENT·<NAME>` tag in the thesis
+timeline and the `actor` on every zettel, which is the only way to tell later which agent
+wrote what.
+
+**Clients that cannot spawn a process** (n8n, a hosted agent, anything on another machine)
+use the HTTP transport instead — same tools, same code:
+
+```bash
+MCP_TRANSPORT=streamable-http MCP_PORT=9319 python backend/mcp_server.py
+```
+
+It serves `http://127.0.0.1:9319/mcp`. It binds to loopback on purpose: the server writes to
+the portfolio and carries no auth of its own, so reaching it from another host should be a
+deliberate act (an SSH tunnel), never a default. `MCP_HOST` can override that — don't, unless
+you have put something in front of it.
+
+**Agents with no MCP support at all** can use the REST API directly: `/api/v2/theses/*` and
+`/api/v2/zettel/*` on the backend, with the `X-Thesis-Actor: agent:<name>` header so the
+attribution still works. `memory/reference/api-endpoints.md` lists every route.
+
 ## Tools
 
 | Group | Tools |
