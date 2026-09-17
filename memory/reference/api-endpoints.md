@@ -200,9 +200,28 @@ DB-backed investment theses. `theses` = materialised head (field-level LWW merge
 - `POST /api/v2/theses/{id}/export-md` — write markdown back to `THESES_DIR` (Obsidian); DB stays authoritative
 - **`X-Thesis-Actor` header** (every route, router-level dependency) — when set (MCP server sends `agent:<name>`), `_log_event` adds `payload.actor`; no header = user, payload unchanged. Timeline shows an `AGENT·NAME` tag.
 
+## Zettel (`routers/zettel.py`) — prefix `/api/v2/zettel`
+Zettelkasten knowledge base: atomic notes reusable across theses, typed links, sources as
+their own rows. Schema in `db.init_zettel_schema()`. All four tables are cloud-synced.
+- `GET /api/v2/zettel?kind&status&stance&tag&thesis_id&symbol&actor&include_deleted&limit` — list + `source_count` + `open_conflicts`
+- `GET /api/v2/zettel/{id|ref}` — `{zettel, sources, edges:{out,in}, refs}` (`ref` = the Z-0042 label)
+- `POST /api/v2/zettel` — create; 409 when the title already exists (message carries the existing id); EVIDENCE without a source is 400
+- `PATCH /api/v2/zettel/{id}` — edit; a change of `status`/`stance`/`title`/`confidence` logs `ZETTEL_CHANGED` on every thesis it is attached to
+- `DELETE /api/v2/zettel/{id}` — soft only; **edges are kept** ("what did this once contradict")
+- `POST /api/v2/zettel/edges` — `{src_id,dst_id,rel,note}`; rel ∈ SUPPORTS/CONTRADICTS/REFINES/SUPERSEDES/FOLLOWS_FROM/CONTEXT. SUPERSEDES flips the target to `superseded` (still readable). CONTRADICTS logs `CONFLICT_OPENED`
+- `PATCH /api/v2/zettel/edges/{id}` — resolve a contradiction: `resolution` required, optional `superseded_id` draws the SUPERSEDES edge in the same call
+- `DELETE /api/v2/zettel/edges/{id}` — unresolved edges only (a settled disagreement is the record)
+- `GET /api/v2/zettel/conflicts?thesis_id&include_resolved` — both sides in full + `open_count`
+- `GET /api/v2/zettel/search?q` — FTS5 **trigram** (matches inside Thai text); falls back to LIKE on a malformed MATCH or an SQLite built without FTS5
+- `GET /api/v2/zettel/graph?thesis_id|root_id&depth=1..4` — nodes + edges, BFS from the seed set
+- `POST /api/v2/zettel/{id}/sources` · `DELETE /api/v2/zettel/sources/{sid}` · `GET /api/v2/zettel/sources/by-url?url=` (what else rests on this story)
+- `POST /api/v2/zettel/{id}/refs` · `DELETE /api/v2/zettel/{id}/refs/{type}/{id}` — attach to thesis/trade/symbol
+- `POST /api/v2/zettel/export-md` — mirror the base into `OBSIDIAN_WIKI_DIR/zettel/` with `[[wikilinks]]` + `INDEX.md`; returns `stale` files the DB no longer knows about
+- `POST /api/v2/zettel/resolve-ref-collisions` — post-merge: two offline devices can mint the same `Z-00NN`; the older row keeps it (`ref` is indexed, NOT unique — a UNIQUE index would abort the sync import)
+
 ### MCP server (`backend/mcp_server.py`, stdio; setup → `docs/mcp-server.md`)
 Claude Code: `/.mcp.json` (repo root). Claude Desktop: `%APPDATA%\Claude\claude_desktop_config.json` — absolute interpreter path + `PYTHONIOENCODING=utf-8`, does NOT read `.mcp.json`. `MCP_AGENT_NAME` distinguishes clients in the timeline.
-HTTP client over the running backend (`PYTHON_API_URL`, default :9317) — never opens the DB. 15 tools: theses `list_theses` `get_thesis` `notes_due` `create_thesis` (always draft) `update_thesis` (reason required) `log_event` (NOTE/REVIEW/EVIDENCE/CHECKPOINT) `add_note` `update_note` `link_trade` · context `get_positions` `get_trades` · research `get_stock_data(kind)` `get_price_history` `get_news` `get_filings`. Prompt `review_thesis`. **No delete tool** by design. Output capped at 40k chars.
+HTTP client over the running backend (`PYTHON_API_URL`, default :9317) — never opens the DB. 26 tools: theses `list_theses` `get_thesis` `notes_due` `create_thesis` (always draft) `update_thesis` (reason required) `log_event` (NOTE/REVIEW/EVIDENCE/CHECKPOINT) `add_note` `update_note` `link_trade` · context `get_positions` `get_trades` · research `get_stock_data(kind)` `get_price_history` `get_news` `get_filings` · knowledge base `zettel_search` `zettel_list` `zettel_get` `zettel_create` `zettel_update` `zettel_link` `zettel_add_source` `zettel_attach` `open_conflicts` `resolve_conflict` `zettel_by_source`. Prompts `review_thesis`, `triage_conflicts`. **No delete tool** by design. Output capped at 40k chars.
 
 ## Portfolio Risk (`routers/risk.py`)
 - `GET /api/v2/portfolio/risk/metrics` — VaR/CVaR 1D–6M with √T scaling (Basel)

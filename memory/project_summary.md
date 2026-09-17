@@ -168,6 +168,7 @@ OPENAI_API_KEY      — optional
 | `analytics.py` | `/api/analytics/{corr,beta,vol,return,drawdown,sharpe,zscore,rsi,compare,rank}` | yfinance + TTLCache 300s |
 | `paper_trading.py` | `/api/paper/*` (accounts, orders, positions, fills, equity-curve) | yfinance + SQLite |
 | `providers.py` | `/api/providers` (list+health), `/api/providers/active` (switch), `/api/providers/auto-failover` | quote registry |
+| `zettel.py` | `/api/v2/zettel/*` (Zettelkasten: atomic notes + typed edges + sources + FTS5 trigram + Obsidian export) | SQLite + `OBSIDIAN_WIKI_DIR` |
 | `theses.py` | `/api/v2/theses/*` (CRUD + append-only event log + trade links + md import/export; `X-Thesis-Actor` → `payload.actor`) | SQLite + `THESES_DIR` |
 | `sync_router.py` | `/api/sync/status`, `/api/sync/pull`, `/api/sync/push` | cloud-sync (`backend/sync/`) |
 | `watchlist_signals.py` | `/api/watchlist/signals` (batch daily technical scan) | yfinance batch (TTLCache 900s) |
@@ -252,6 +253,16 @@ paper_orders        (id, account_id, symbol, side buy/sell, order_type market/li
 paper_fills         (id, order_id, quantity, price, commission, filled_at)
 paper_positions     (id, account_id, symbol, quantity, avg_cost, realized_pnl) UNIQUE(account_id, symbol)
 paper_snapshots     (id, account_id, date, equity, cash, positions_value) UNIQUE(account_id, date)
+zettel              (id TEXT uuid PK, ref 'Z-0042' (indexed, NOT unique — two offline devices can
+                     mint the same one; resolve-ref-collisions renames the later), kind, title,
+                     body, stance, confidence, status, tags, actor, occurred_at (date of the FACT),
+                     deleted_at, device_id, created_at, updated_at)
+zettel_edges        (id PK, src_id, dst_id, rel, note, resolved_at, resolution, actor, …)
+                     append-only; UNIQUE(src_id,dst_id,rel). CONTRADICTS with resolved_at NULL
+                     = an open question the book is carrying
+zettel_sources      (id PK, zettel_id, url, publisher, title, published_at, quote, reliability, …)
+zettel_refs         (zettel_id, target_type thesis|trade|symbol, target_id, role) — PK all three
+zettel_fts          FTS5 trigram over (title, body, tags) — derived, NOT synced
 theses              (id TEXT uuid PK, symbol, resolved_symbol, market, account_id, sub_portfolio,
                      title, category, strategy, status draft|active|watch|invalidated|closed,
                      conviction 1-5, time_horizon, target_price, stop_price, currency, body,
@@ -293,7 +304,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 | `4` | CLIP | Clippings + AI | `clippings-view.tsx` |
 | `T` | TAIL | Tail Risk Monitor | `tail-risk-view.tsx` — 6 risk dimensions + **MACRO CONTEXT** (not in composite, 2026-09-17): event strip FOMC/SEP/CPI/NFP/PCE/GDP, EVENT tag on VIX signals inside ±1 bday window, Fed/curve/regime/latest prints panel, event markers on 90D chart |
 | `6` | CRDT | Credit / Stress | `credit-view.tsx` — 4 tabs: overview, spreads, stress, consumer |
-| `P` | PORT | Portfolio | `portfolio-view.tsx` (barrel → `portfolio/`) — 5 top-level tabs: PORTFOLIO (sub: POSITIONS\|OPTIONS\|TRADES\|CASH\|ENTRY=manual trade form; POSITIONS + OPTIONS show `% PORT` of NAV incl. cash, options also `Δ % NAV`) · ANALYTICS (sub: P&L incl. Total Return per port + CAPM β/α table\|BACKTEST) · RISK (standalone) · TOOLS (sub: THESES\|IMPORT) · PAPER (sub: DASHBOARD\|TRADE\|POSITIONS\|OPTIONS\|HISTORY) |
+| `P` | PORT | Portfolio | `portfolio-view.tsx` (barrel → `portfolio/`) — 5 top-level tabs: PORTFOLIO (sub: POSITIONS\|OPTIONS\|TRADES\|CASH\|ENTRY=manual trade form; POSITIONS + OPTIONS show `% PORT` of NAV incl. cash, options also `Δ % NAV`) · ANALYTICS (sub: P&L incl. Total Return per port + CAPM β/α table\|BACKTEST) · RISK (standalone) · TOOLS (sub: THESES — sub-tabs THESIS\|NOTES\|KB (Zettelkasten: notes·conflicts·graph)\|HISTORY\|LINKED TRADES\|AI\|IMPORT) · PAPER (sub: DASHBOARD\|TRADE\|POSITIONS\|OPTIONS\|HISTORY) |
 
 Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as context; COUNTRY + SIGNALS tabs deleted with it, backend routers kept; key `5` free), GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026-08-01 — FX merged into the MKT TICK DATA board; crypto via global search `BTC-USD` → stock-view). Backend `crypto.py`/`fx.py` routers kept: `/api/crypto/footprint` feeds the Order Footprint indicator. Keys `C`/`E` are free. Stock analysis (9 tabs) accessible via global search / heatmap click.
 
@@ -322,6 +333,7 @@ Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as 
 
 ## What Could Be Built Next
 
+- [x] **Zettelkasten Knowledge Base (THESES)** — คลังความรู้อะตอมที่ใช้ซ้ำข้าม thesis: `zettel`/`zettel_edges`/`zettel_sources`/`zettel_refs` + FTS5, edge ชนิด SUPPORTS/CONTRADICTS/REFINES/SUPERSEDES, พาเนล OPEN CONFLICTS, MCP 11 tools, export ทางเดียว → Obsidian `[[wikilink]]` — done 2026-09-18 (`plans/completed/zettelkasten-knowledge-base.md`)
 - [ ] **Mobile Responsive** — shell bottom nav + MKT single-panel switcher first; PORT, NEWS, rest follow (`plans/mobile-responsive.md`)
 
 - [x] **TAIL Macro Context** — FOMC/CPI/NFP/PCE/GDP calendar + Fed/curve/regime context in TAIL; MACRO view removed; FOMC off-by-one fixed — done 2026-09-17 (`plans/completed/tail-macro-context.md`)

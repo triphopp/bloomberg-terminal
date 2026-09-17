@@ -1016,6 +1016,187 @@ def init_thesis_schema() -> None:
         """)
 
 
+def init_zettel_schema() -> None:
+    """Zettelkasten knowledge base — atomic notes that outlive one thesis.
+
+    `thesis_notes` is a note ABOUT a thesis: it lives and dies with it. A zettel
+    is a standing claim ("CXMT ships DDR5 at >90% yield") that several theses may
+    lean on, so it is linked to them through `zettel_refs` rather than owned by
+    one. That is also what makes conflicting evidence tractable: two zettels are
+    joined by a typed edge, and an unresolved CONTRADICTS edge is a question the
+    book is carrying, not a lost note.
+
+    Shapes follow the thesis system so the existing merge covers them unchanged:
+    `zettel` is a materialised head (field-level LWW), while `zettel_edges` and
+    `zettel_sources` are append-only by construction — a device that closes a
+    contradiction only ever fills `resolved_at`, never rewrites the edge.
+    """
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS zettel (
+                id          TEXT PRIMARY KEY,
+                ref         TEXT,
+                kind        TEXT NOT NULL DEFAULT 'CLAIM',
+                title       TEXT NOT NULL DEFAULT '',
+                body        TEXT NOT NULL DEFAULT '',
+                stance      TEXT,
+                confidence  INTEGER,
+                status      TEXT NOT NULL DEFAULT 'open',
+                tags        TEXT NOT NULL DEFAULT '',
+                actor       TEXT NOT NULL DEFAULT 'user',
+                occurred_at TEXT,
+                deleted_at  TEXT,
+                device_id   TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        # `ref` (Z-0042) is a label people quote, not a key: two offline devices
+        # can mint the same number, and a UNIQUE index would make the merge fail
+        # for the whole table. The router renames the later arrival instead.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_zettel_ref    ON zettel(ref)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_zettel_status ON zettel(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_zettel_kind   ON zettel(kind)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS zettel_edges (
+                id          TEXT PRIMARY KEY,
+                src_id      TEXT NOT NULL,
+                dst_id      TEXT NOT NULL,
+                rel         TEXT NOT NULL,
+                note        TEXT NOT NULL DEFAULT '',
+                resolved_at TEXT,
+                resolution  TEXT NOT NULL DEFAULT '',
+                actor       TEXT NOT NULL DEFAULT 'user',
+                device_id   TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_zedge_src ON zettel_edges(src_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_zedge_dst ON zettel_edges(dst_id)")
+        # The OPEN CONFLICTS panel: unresolved CONTRADICTS edges, newest first.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_zedge_open ON zettel_edges(rel, resolved_at)"
+        )
+        # One direction per pair per relation — a second identical link says
+        # nothing the first did not.
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_zedge_uniq "
+            "ON zettel_edges(src_id, dst_id, rel)"
+        )
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS zettel_sources (
+                id           TEXT PRIMARY KEY,
+                zettel_id    TEXT NOT NULL,
+                url          TEXT NOT NULL DEFAULT '',
+                publisher    TEXT NOT NULL DEFAULT '',
+                title        TEXT NOT NULL DEFAULT '',
+                published_at TEXT,
+                quote        TEXT NOT NULL DEFAULT '',
+                reliability  TEXT NOT NULL DEFAULT 'secondary',
+                retrieved_at TEXT,
+                actor        TEXT NOT NULL DEFAULT 'user',
+                device_id    TEXT,
+                created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_zsrc_zettel ON zettel_sources(zettel_id)")
+        # "What else rests on this story?" — the question that matters when a
+        # source is corrected or retracted.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_zsrc_url ON zettel_sources(url)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS zettel_refs (
+                zettel_id   TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                target_id   TEXT NOT NULL,
+                role        TEXT NOT NULL DEFAULT '',
+                device_id   TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (zettel_id, target_type, target_id)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_zref_target ON zettel_refs(target_type, target_id)"
+        )
+
+        _init_zettel_fts(conn)
+
+
+def _init_zettel_fts(conn) -> None:
+    """FTS5 index over zettel text, kept in step by triggers.
+
+    Tokenizer is `trigram`, not the default `unicode61`: Thai has no spaces, so
+    unicode61 indexes a whole clause as one token and a search for a word in the
+    middle of it finds nothing. Trigram matches substrings in any script, at the
+    cost of a larger index — irrelevant at the scale of a personal notebook.
+
+    Derived data: NOT in SYNC_TABLES. Each device rebuilds it from its own rows.
+    """
+    try:
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS zettel_fts USING fts5(
+                title, body, tags,
+                content='zettel', content_rowid='rowid',
+                tokenize='trigram'
+            )
+        """)
+    except sqlite3.OperationalError as exc:
+        # An SQLite built without FTS5: search degrades to LIKE in the router
+        # rather than taking the whole app down.
+        print(f"[zettel] FTS5 unavailable, falling back to LIKE search: {exc}")
+        return
+
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS zettel_fts_ai AFTER INSERT ON zettel BEGIN
+            INSERT INTO zettel_fts(rowid, title, body, tags)
+            VALUES (new.rowid, new.title, new.body, new.tags);
+        END
+    """)
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS zettel_fts_ad AFTER DELETE ON zettel BEGIN
+            INSERT INTO zettel_fts(zettel_fts, rowid, title, body, tags)
+            VALUES ('delete', old.rowid, old.title, old.body, old.tags);
+        END
+    """)
+    # `OF title, body, tags` is load-bearing, not tidiness. init_sync_layer puts
+    # its own AFTER UPDATE trigger on every synced table which re-UPDATEs
+    # `updated_at`; an unrestricted trigger here would then fire a second time
+    # with old == new and hand FTS a 'delete' for content it no longer holds,
+    # and SQLite reports that as "database disk image is malformed".
+    conn.execute("DROP TRIGGER IF EXISTS zettel_fts_au")
+    conn.execute("""
+        CREATE TRIGGER zettel_fts_au AFTER UPDATE OF title, body, tags ON zettel
+        WHEN old.title IS NOT new.title OR old.body IS NOT new.body
+          OR old.tags IS NOT new.tags
+        BEGIN
+            INSERT INTO zettel_fts(zettel_fts, rowid, title, body, tags)
+            VALUES ('delete', old.rowid, old.title, old.body, old.tags);
+            INSERT INTO zettel_fts(rowid, title, body, tags)
+            VALUES (new.rowid, new.title, new.body, new.tags);
+        END
+    """)
+    # A DB that held rows before FTS existed, or whose index an older build of
+    # the trigger above left inconsistent.
+    rows = conn.execute("SELECT COUNT(*) FROM zettel").fetchone()[0]
+    indexed = conn.execute("SELECT COUNT(*) FROM zettel_fts").fetchone()[0]
+    if rows != indexed:
+        conn.execute("INSERT INTO zettel_fts(zettel_fts) VALUES ('rebuild')")
+
+
+def zettel_fts_available() -> bool:
+    """False on an SQLite built without FTS5 — the router then searches with LIKE."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='zettel_fts'"
+        ).fetchone()
+    return row is not None
+
+
 # Tables whose every INSERT / UPDATE / DELETE lands in audit_events.
 # option_trade_matches is left out on purpose: it is rebuilt from option_trades
 # on every edit, so logging it would bury the real change under recomputation.

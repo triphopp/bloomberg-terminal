@@ -50,6 +50,7 @@ memory/
 > ```
 > plans/rsi-scale-modes.md                             🔄 step 1-2/6 done
 > sessions/reports/rsi-seed-divergence-risk-report.md  📋 risk logged, ยังไม่แก้
+> plans/completed/zettelkasten-knowledge-base.md       ✅ done 2026-09-18
 > ```
 
 ---

@@ -53,6 +53,7 @@ from db import (
     init_audit_layer,
     init_alerts_schema,
     init_thesis_schema,
+    init_zettel_schema,
     seed_symbol_lists,
     sync_symbol_lists,
 )
@@ -61,7 +62,7 @@ from analytics.regime_v2 import ensure_v2_fresh
 from contextlib import asynccontextmanager
 
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, ir_stress, market_state, dcf
+from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, ir_stress, market_state, dcf
 import sync
 from sources.errors import UpstreamRateLimited, is_rate_limit
 from sync.gate import is_synced_write, should_gate
@@ -97,6 +98,7 @@ app.add_middleware(
 init_db()
 init_portfolio_v2()
 init_thesis_schema()   # must precede init_sync_layer(): it adds updated_at + triggers
+init_zettel_schema()   # same ordering reason as the thesis schema above
 init_sync_layer()
 init_audit_layer()     # after sync layer: needs _sync_guard + final column set
 init_alerts_schema()
@@ -159,6 +161,7 @@ app.include_router(listing_gate.router)
 app.include_router(sectors.router)
 app.include_router(portfolio_v2.router)
 app.include_router(theses.router, tags=["Theses"])
+app.include_router(zettel.router, tags=["Zettel"])
 app.include_router(backtest_v2.router)
 app.include_router(risk.router)
 app.include_router(allocation.router)

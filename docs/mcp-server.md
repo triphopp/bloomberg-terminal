@@ -62,10 +62,33 @@ and `–`, and the default cp1252 console encoding raises on them.
 | Theses (write) | `create_thesis` (always `draft`) · `update_thesis` (`reason` required) · `log_event` (NOTE/REVIEW/EVIDENCE/CHECKPOINT) · `add_note` · `update_note` · `link_trade` |
 | Portfolio | `get_positions` · `get_trades` |
 | Research | `get_stock_data(kind=quote\|financials\|ratios\|estimates\|analyst\|earnings-calendar\|ownership\|management\|dividends\|pe-history\|quality\|sector\|sec-filings)` · `get_price_history` · `get_news` · `get_filings` |
+| Knowledge base | `zettel_search` · `zettel_list` · `zettel_get` · `zettel_create` · `zettel_update` · `zettel_link` · `zettel_add_source` · `zettel_attach` · `open_conflicts` · `resolve_conflict` · `zettel_by_source` |
 
-Prompt: `review_thesis(thesis_id)` — read the thesis, size the position, hunt for evidence
-**against** it, record findings as notes, log a REVIEW verdict, and propose (not apply)
-any status/conviction change.
+Prompts:
+- `review_thesis(thesis_id)` — read the thesis, size the position, hunt for evidence
+  **against** it, record findings in the knowledge base, log a REVIEW verdict, and
+  propose (not apply) any status/conviction change.
+- `triage_conflicts(thesis_id?)` — work through unresolved contradictions, compare the
+  sources rather than the wording, and propose a resolution for you to accept.
+
+## The knowledge base (Zettelkasten)
+
+`thesis_notes` are notes *about* a thesis. A **zettel** is one idea stated as a sentence,
+reusable across theses, with its own sources and typed links to other notes. That is what
+makes research an agent did rereadable months later — and what makes conflicting findings
+tractable:
+
+- A finding that clashes with something already written is linked `CONTRADICTS`, never
+  written over it. The pair stays in **OPEN CONFLICTS** (PORT → TOOLS → THESES → KB) until
+  someone records what settled it.
+- Resolving writes the reasoning and may mark one side `SUPERSEDES`d — the losing note stays
+  readable, because retracing how the view moved is the point.
+- Sources are separate rows, so `zettel_by_source` answers "what else rests on this story?"
+  when one turns out to be wrong.
+- Every zettel carries `actor`; agent-written ones show an `AGENT·<NAME>` tag in the UI.
+- `POST /api/v2/zettel/export-md` mirrors the whole base into `OBSIDIAN_WIKI_DIR/zettel/`
+  with `[[wikilinks]]`, so Obsidian's graph draws the argument. One-way: the DB stays
+  authoritative and a re-export overwrites the vault copy.
 
 ## Guard rails
 
@@ -75,6 +98,8 @@ any status/conviction change.
   onto the event payload and the timeline renders an `AGENT·<NAME>` tag. Writes from the
   UI carry no header and stay unmarked.
 - Tool output is capped at 40 000 chars so one `get_news` call cannot flood the context.
+- `zettel_create` refuses a duplicate title (409, naming the existing note) and an EVIDENCE
+  note with no source. Resolving a conflict requires written reasoning.
 
 ## Troubleshooting
 

@@ -34,10 +34,14 @@ mcp = MCPServer(
         "Investment-thesis workspace shared with the user. The DB is the source of "
         "truth; the user sees every change in PORT → TOOLS → THESES. "
         "Read before you write: get_thesis first, then research with the market tools. "
-        "Record findings as notes (EVIDENCE / RISK / CATALYST / SCENARIO / QUESTION) or "
-        "log_event — do not rewrite the thesis body or change status/conviction unless "
-        "the user asked, and always give a reason. Cite sources (URL, filing, date) in "
-        "note bodies."
+        "Findings belong in the Zettelkasten: zettel_search FIRST (never jot a "
+        "duplicate), then zettel_create one idea per note with its source and the "
+        "date of the fact, attached to the thesis. When a finding clashes with "
+        "something already written, do NOT overwrite it — zettel_link rel=CONTRADICTS "
+        "and leave the conflict open for the user. Thesis-local scenarios and dated "
+        "watch items still go in add_note; log_event records a REVIEW verdict. "
+        "Never rewrite the thesis body or change status/conviction unless asked, and "
+        "always give a reason."
     ),
 )
 
@@ -310,7 +314,211 @@ def get_filings(symbol: str, forms: str = "10-K,10-Q,8-K", limit: int = 10) -> s
                       params={"forms": forms, "limit": limit}, timeout=60))
 
 
+# ── Zettelkasten knowledge base ──────────────────────────────────────────────
+#
+# A zettel is one idea, reusable across theses — the place where research an
+# agent does becomes something the user can reread, trace and re-argue later.
+# Conflicting findings are recorded as a CONTRADICTS edge that stays open until
+# it is settled in writing, rather than as two notes that never meet.
+
+ZETTEL = f"{API}/api/v2/zettel"
+
+ZKind = Literal["CLAIM", "EVIDENCE", "QUESTION", "MECHANISM", "DEFINITION", "SOURCE_NOTE"]
+ZRel = Literal["SUPPORTS", "CONTRADICTS", "REFINES", "SUPERSEDES", "FOLLOWS_FROM", "CONTEXT"]
+
+
+@mcp.tool()
+def zettel_search(
+    q: str,
+    kind: Optional[ZKind] = None,
+    status: Optional[Literal["open", "settled", "superseded", "retracted"]] = None,
+    limit: int = 20,
+) -> str:
+    """Search the knowledge base (matches inside Thai text too).
+
+    ALWAYS run this before zettel_create: if the idea is already written down,
+    add a source to it or link a new note to it instead of jotting a duplicate."""
+    data = _call("GET", f"{ZETTEL}/search", params={"q": q, "limit": limit})
+    rows = data.get("zettel", [])
+    if kind:
+        rows = [r for r in rows if r.get("kind") == kind]
+    if status:
+        rows = [r for r in rows if r.get("status") == status]
+    return _out({"engine": data.get("engine"), "zettel": rows})
+
+
+@mcp.tool()
+def zettel_list(
+    thesis_id: Optional[str] = None,
+    symbol: Optional[str] = None,
+    kind: Optional[ZKind] = None,
+    tag: Optional[str] = None,
+    limit: int = 50,
+) -> str:
+    """Notes attached to a thesis or ticker, newest fact first. Each row carries
+    source_count and open_conflicts, so a thin or disputed claim is visible."""
+    return _out(_call("GET", ZETTEL, params={
+        "thesis_id": thesis_id, "symbol": symbol, "kind": kind, "tag": tag, "limit": limit,
+    })["zettel"])
+
+
+@mcp.tool()
+def zettel_get(ref_or_id: str) -> str:
+    """One note in full: body, sources, both link directions (backlinks) and what
+    it is attached to. Accepts either the Z-0042 label or the uuid."""
+    return _out(_call("GET", f"{ZETTEL}/{ref_or_id}"))
+
+
+@mcp.tool()
+def zettel_create(
+    title: str,
+    kind: ZKind = "CLAIM",
+    body: str = "",
+    stance: Optional[Literal["bull", "bear", "neutral"]] = None,
+    confidence: Optional[int] = None,
+    tags: str = "",
+    occurred_at: Optional[str] = None,
+    thesis_id: Optional[str] = None,
+    symbol: Optional[str] = None,
+    source_url: str = "",
+    source_publisher: str = "",
+    source_published_at: Optional[str] = None,
+    source_quote: str = "",
+    source_reliability: Literal["primary", "secondary", "rumor"] = "secondary",
+) -> str:
+    """Write one idea down. The title IS the idea, stated as a sentence
+    ("CXMT ships DDR5 at >90% yield"), not a topic ("CXMT yield").
+
+    kind=EVIDENCE requires a source. `occurred_at` is the date of the FACT (the
+    filing, the article), not today — the archive is ordered by it. Quote the
+    sentence you are relying on in source_quote so a later reader can check it
+    without refetching. Returns 409 with the existing note if the idea is already
+    in the base: extend that one instead."""
+    src = {}
+    if source_url or source_quote or source_publisher:
+        src = {
+            "url": source_url, "publisher": source_publisher, "quote": source_quote,
+            "published_at": source_published_at, "reliability": source_reliability,
+        }
+    if kind == "EVIDENCE" and not src:
+        raise ToolError("an EVIDENCE note needs a source — pass source_url or source_quote")
+    payload = _clean({
+        "title": title, "kind": kind, "body": body, "stance": stance,
+        "confidence": confidence, "tags": tags, "occurred_at": occurred_at,
+        "thesis_id": thesis_id, "symbol": symbol.upper() if symbol else None,
+        "sources": [src] if src else [],
+    })
+    return _out(_call("POST", ZETTEL, body=payload))
+
+
+@mcp.tool()
+def zettel_update(
+    ref_or_id: str,
+    reason: str,
+    title: Optional[str] = None,
+    body: Optional[str] = None,
+    stance: Optional[Literal["bull", "bear", "neutral"]] = None,
+    confidence: Optional[int] = None,
+    status: Optional[Literal["open", "settled", "superseded", "retracted"]] = None,
+    tags: Optional[str] = None,
+) -> str:
+    """Revise a note. Prefer a NEW note linked with REFINES or CONTRADICTS when
+    the view actually changed — rewriting history is what this archive exists to
+    prevent. Use this for wording, tags, or marking a question settled."""
+    if not reason.strip():
+        raise ToolError("reason is required — it is what the user reads in the timeline")
+    fields = _clean({
+        "title": title, "body": body, "stance": stance, "confidence": confidence,
+        "status": status, "tags": tags,
+    })
+    if not fields:
+        raise ToolError("nothing to update")
+    return _out(_call("PATCH", f"{ZETTEL}/{ref_or_id}", body={**fields, "reason": reason}))
+
+
+@mcp.tool()
+def zettel_link(src: str, dst: str, rel: ZRel, note: str = "") -> str:
+    """Connect two notes. Direction matters: src → dst.
+
+    SUPPORTS/CONTRADICTS: src is the newer evidence, dst the claim it bears on.
+    REFINES: src sharpens dst. SUPERSEDES: src replaces dst (dst becomes
+    `superseded` but stays readable). FOLLOWS_FROM: src is implied by dst.
+    Say WHY in `note` — an unexplained line is unreadable a month later."""
+    return _out(_call("POST", f"{ZETTEL}/edges",
+                      body={"src_id": src, "dst_id": dst, "rel": rel, "note": note}))
+
+
+@mcp.tool()
+def zettel_add_source(
+    ref_or_id: str,
+    url: str = "",
+    publisher: str = "",
+    title: str = "",
+    published_at: Optional[str] = None,
+    quote: str = "",
+    reliability: Literal["primary", "secondary", "rumor"] = "secondary",
+) -> str:
+    """Add a citation to an existing note — the right move when new reporting
+    confirms something already written down."""
+    return _out(_call("POST", f"{ZETTEL}/{ref_or_id}/sources", body=_clean({
+        "url": url, "publisher": publisher, "title": title, "published_at": published_at,
+        "quote": quote, "reliability": reliability,
+    })))
+
+
+@mcp.tool()
+def zettel_attach(ref_or_id: str, thesis_id: str, role: str = "") -> str:
+    """Attach an existing note to another thesis — how one finding comes to serve
+    several theses instead of being retyped under each."""
+    return _out(_call("POST", f"{ZETTEL}/{ref_or_id}/refs",
+                      body={"target_type": "thesis", "target_id": thesis_id, "role": role}))
+
+
+@mcp.tool()
+def open_conflicts(thesis_id: Optional[str] = None, limit: int = 50) -> str:
+    """Contradictions still unsettled, both sides in full. This is the queue to
+    work through when the user asks what is unresolved."""
+    return _out(_call("GET", f"{ZETTEL}/conflicts",
+                      params={"thesis_id": thesis_id, "limit": limit}))
+
+
+@mcp.tool()
+def resolve_conflict(edge_id: str, resolution: str, superseded_id: Optional[str] = None) -> str:
+    """Close a contradiction by recording how it was settled, optionally marking
+    one side superseded. Only do this when the user has agreed with the reading —
+    an unresolved conflict is more honest than a wrong resolution."""
+    if not resolution.strip():
+        raise ToolError("resolution is required — what settled it, and on what evidence")
+    return _out(_call("PATCH", f"{ZETTEL}/edges/{edge_id}",
+                      body=_clean({"resolution": resolution, "superseded_id": superseded_id})))
+
+
+@mcp.tool()
+def zettel_by_source(url: str) -> str:
+    """Every claim resting on one story — run this when a source turns out to be
+    wrong, retracted or paywalled-over, to see what else has to move."""
+    return _out(_call("GET", f"{ZETTEL}/sources/by-url", params={"url": url}))
+
+
 # ── Prompts ──────────────────────────────────────────────────────────────────
+
+@mcp.prompt()
+def triage_conflicts(thesis_id: str = "") -> str:
+    """Work through unresolved contradictions in the knowledge base."""
+    scope = f" for thesis {thesis_id}" if thesis_id else " across the whole book"
+    return f"""Triage the open conflicts{scope}.
+
+1. open_conflicts — list what is unsettled.
+2. For each: zettel_get both sides. Compare the SOURCES, not the wording —
+   which is primary, which is newer, which measures the thing actually in dispute.
+3. Check whether either side has been overtaken: get_news / get_filings /
+   get_stock_data for the ticker, and zettel_by_source if one rests on a single story.
+4. Report each conflict as: what the disagreement really is · what the evidence
+   now supports · what would settle it for good.
+5. Do NOT call resolve_conflict on your own. Propose the resolution text and which
+   side (if any) is superseded, and wait for me. If new evidence turned up that
+   neither side records, zettel_create it and link it with zettel_link first."""
+
 
 @mcp.prompt()
 def review_thesis(thesis_id: str) -> str:
@@ -321,13 +529,18 @@ def review_thesis(thesis_id: str) -> str:
 2. get_positions for its symbol — how much capital rides on it.
 3. Research: get_stock_data (quote, estimates, analyst, earnings-calendar),
    get_news, get_filings. Look for evidence AGAINST the thesis first.
-4. For each condition killer / open note: is it triggered, closer, or further?
-   - new evidence → add_note kind=EVIDENCE (impact bull/bear, cite URL + date)
-   - new risk or catalyst → add_note RISK / CATALYST with watch_date if dated
-   - a note now resolved → update_note status confirmed/dismissed with the reason
-5. log_event event_type=REVIEW with a 2–3 line verdict: intact / weakened / broken.
-6. Do NOT change status, conviction or targets yourself — propose the change and
-   the reasoning in chat, and apply update_thesis only if I agree."""
+4. zettel_list for this thesis + open_conflicts — what the archive already holds,
+   and what is already in dispute. zettel_search before recording anything new.
+5. For each condition killer / open item: is it triggered, closer, or further?
+   - a new finding → zettel_create (title = the finding as a sentence, kind=EVIDENCE,
+     stance bull/bear, source url + quote + the date of the fact, thesis_id set)
+   - it clashes with an existing note → zettel_link rel=CONTRADICTS and leave it OPEN
+   - it sharpens one → zettel_link rel=REFINES
+   - a dated thing to wait for → add_note CATALYST/RISK with watch_date
+6. log_event event_type=REVIEW with a 2–3 line verdict: intact / weakened / broken,
+   naming the Z-refs the verdict rests on.
+7. Do NOT change status, conviction or targets yourself, and do not resolve a
+   conflict — propose those in chat, and apply them only if I agree."""
 
 
 if __name__ == "__main__":
