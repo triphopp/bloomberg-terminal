@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "bloomberg-terminal": {
+      "command": "python",
+      "args": ["backend/mcp_server.py"],
+      "env": {
+        "PYTHON_API_URL": "http://localhost:9317",
+        "MCP_AGENT_NAME": "claude"
+      }
+    }
+  }
+}

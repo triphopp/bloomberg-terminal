@@ -17,6 +17,17 @@ const KIND_COLOR: Record<string, string> = {
   TRADE_LINKED: "#a78bfa",
   TRADE_UNLINKED: "#a78bfa",
   EXPORTED: "#666",
+  // Written by an agent through backend/mcp_server.py
+  REVIEW: "#f472b6",
+  EVIDENCE: "#14b8a6",
+  CHECKPOINT: "#888",
+};
+
+// The theses router stamps `actor` on the payload when a write carries
+// X-Thesis-Actor (the MCP server sends "agent:<name>"). No actor = the user.
+const actorOf = (ev: ThesisEvent): string | null => {
+  const a = (ev.payload as Record<string, unknown> | null | undefined)?.actor;
+  return typeof a === "string" ? a : null;
 };
 
 const fmtVal = (v: unknown) =>
@@ -79,67 +90,83 @@ export function ThesisTimeline({
       </div>
 
       <div className="space-y-1">
-        {events.map((ev) => (
-          <div
-            key={ev.id}
-            className="border-l-2 pl-2 py-1"
-            style={{ borderColor: KIND_COLOR[ev.event_type] ?? "#333" }}
-          >
-            <div className="flex items-center gap-2">
-              <span
-                className="text-[8px] font-bold tracking-widest"
-                style={{ color: KIND_COLOR[ev.event_type] ?? colors.textSecondary }}
-              >
-                {ev.event_type}
-              </span>
-              <span className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
-                {ev.occurred_at.slice(0, 16).replace("T", " ")}
-              </span>
-              {ev.device_id && (
-                <span className="text-[7px]" style={{ color: "#444" }}>
-                  {ev.device_id}
-                </span>
-              )}
-              {ev.event_type === "NOTE" && (
-                <button
-                  type="button"
-                  onClick={() => onDeleteNote(ev.id)}
-                  className="ml-auto text-[7px]"
-                  style={{ color: "#f87171" }}
+        {events.map((ev) => {
+          const actor = actorOf(ev);
+          const fields =
+            ev.payload && typeof ev.payload === "object"
+              ? Object.entries(ev.payload as Record<string, unknown>).filter(([k]) => k !== "actor")
+              : [];
+          return (
+            <div
+              key={ev.id}
+              className="border-l-2 pl-2 py-1"
+              style={{ borderColor: KIND_COLOR[ev.event_type] ?? "#333" }}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className="text-[8px] font-bold tracking-widest"
+                  style={{ color: KIND_COLOR[ev.event_type] ?? colors.textSecondary }}
                 >
-                  DEL
-                </button>
+                  {ev.event_type}
+                </span>
+                <span className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
+                  {ev.occurred_at.slice(0, 16).replace("T", " ")}
+                </span>
+                {actor && (
+                  <span
+                    className="text-[7px] font-bold tracking-widest"
+                    style={{ color: "#f472b6" }}
+                    title={actor}
+                  >
+                    {actor.replace(/^agent:/, "AGENT·").toUpperCase()}
+                  </span>
+                )}
+                {ev.device_id && (
+                  <span className="text-[7px]" style={{ color: "#444" }}>
+                    {ev.device_id}
+                  </span>
+                )}
+                {ev.event_type === "NOTE" && (
+                  <button
+                    type="button"
+                    onClick={() => onDeleteNote(ev.id)}
+                    className="ml-auto text-[7px]"
+                    style={{ color: "#f87171" }}
+                  >
+                    DEL
+                  </button>
+                )}
+              </div>
+              {ev.note && (
+                <div className="text-[9px] mt-0.5" style={{ color: colors.text }}>
+                  {ev.note}
+                </div>
+              )}
+              {fields.length > 0 && (
+                <div className="mt-0.5 space-y-px">
+                  {fields.map(([field, val]) => {
+                    const diff = val as { from?: unknown; to?: unknown };
+                    const isDiff = diff && typeof diff === "object" && "to" in diff;
+                    return (
+                      <div key={field} className="text-[8px] font-mono">
+                        <span style={{ color: colors.textSecondary }}>{field}: </span>
+                        {isDiff ? (
+                          <>
+                            <span style={{ color: "#f87171" }}>{fmtVal(diff.from)}</span>
+                            <span style={{ color: "#444" }}> → </span>
+                            <span style={{ color: "#4ade80" }}>{fmtVal(diff.to)}</span>
+                          </>
+                        ) : (
+                          <span style={{ color: colors.text }}>{fmtVal(val)}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
-            {ev.note && (
-              <div className="text-[9px] mt-0.5" style={{ color: colors.text }}>
-                {ev.note}
-              </div>
-            )}
-            {ev.payload && typeof ev.payload === "object" && (
-              <div className="mt-0.5 space-y-px">
-                {Object.entries(ev.payload as Record<string, unknown>).map(([field, val]) => {
-                  const diff = val as { from?: unknown; to?: unknown };
-                  const isDiff = diff && typeof diff === "object" && "to" in diff;
-                  return (
-                    <div key={field} className="text-[8px] font-mono">
-                      <span style={{ color: colors.textSecondary }}>{field}: </span>
-                      {isDiff ? (
-                        <>
-                          <span style={{ color: "#f87171" }}>{fmtVal(diff.from)}</span>
-                          <span style={{ color: "#444" }}> → </span>
-                          <span style={{ color: "#4ade80" }}>{fmtVal(diff.to)}</span>
-                        </>
-                      ) : (
-                        <span style={{ color: colors.text }}>{fmtVal(val)}</span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
         {events.length === 0 && (
           <div className="text-[9px]" style={{ color: colors.textSecondary }}>
             No history yet

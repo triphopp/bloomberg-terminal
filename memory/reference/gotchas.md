@@ -1426,3 +1426,31 @@ column migration ของ POSITIONS (`% PORT`) เคย `localStorage.setItem(
 `views/portfolio/weights.ts`. ALL → เทียบทั้งพอร์ต, เลือกบัญชี → เทียบ NAV ของบัญชีนั้น (ตัวเลขแถวเดียวกันจึงต่างกันระหว่าง scope โดยเจตนา).
 Option มีสองตัว: `% PORT` จาก premium MV (short lot = ลบ, เป็นหนี้) และ `Δ % NAV` จาก `delta_notional_base` (signed, null เมื่อไม่มี IV → แสดง — ไม่ใช่ 0).
 
+
+## MCP server (`backend/mcp_server.py`) — 3 กับดัก (2026-09-18)
+
+1. **SDK เป็น `mcp` 2.x** — `FastMCP` เปลี่ยนชื่อเป็น `MCPServer` (`from mcp.server.mcpserver import MCPServer`). โค้ดตัวอย่าง v1 จะ import พัง.
+2. **error ต้อง raise `ToolError`** (`mcp.server.mcpserver.exceptions`) — exception ชนิดอื่น SDK ซ่อนข้อความ agent เห็นแค่ "Error executing tool X". `BackendError` จึง subclass `ToolError`.
+3. **Actor ต้องตั้งใน async dependency** — `_capture_actor` ใน `routers/theses.py` เป็น `async def` เพื่อ set ContextVar ใน request task แล้วถูก copy เข้า threadpool ที่ sync route รัน. ถ้าเปลี่ยนเป็น `def` จะรันใน thread แยก และ `_log_event` อ่านได้ "user" ทุกครั้ง. Test: `test_actor_header_is_stamped_on_events`.
+
+MCP ต้องให้ backend รันอยู่ (HTTP client) — ไม่เปิด `portfolio.db` เอง เพื่อให้ validation / event log / sync triggers เหมือน UI ทุกอย่าง.
+
+## FTS5 external-content + sync trigger = "database disk image is malformed" (2026-09-18)
+
+`init_sync_layer` แขวน AFTER UPDATE trigger บนทุกตารางที่ sync เพื่อ restamp `updated_at`.
+ถ้า FTS trigger เขียนเป็น `AFTER UPDATE ON zettel` เฉยๆ มันจะยิงรอบสองจากการ restamp นั้น
+โดยที่ old == new แล้วส่งคำสั่ง `'delete'` ด้วยเนื้อหาที่ index ไม่มีแล้ว → SQLite รายงานว่า
+**database disk image is malformed** (ทั้งที่ไฟล์ไม่ได้พัง).
+
+แก้ด้วยการจำกัด trigger: `AFTER UPDATE OF title, body, tags ON zettel` + `WHEN old.x IS NOT new.x`
+(`db._init_zettel_fts`). ตารางไหนที่จะเพิ่ม FTS ทีหลังและอยู่ใน `SYNC_TABLES` ต้องทำแบบเดียวกัน.
+Test: `test_editing_a_note_keeps_search_working`.
+
+**tokenizer ต้องเป็น `trigram`** ไม่ใช่ `unicode61` — ภาษาไทยไม่มีช่องว่าง unicode61 จะ index
+ทั้งวรรคเป็น token เดียว ค้นคำกลางประโยคไม่เจอ.
+
+## Zettel: อย่าเรียก endpoint ตัวอื่นซ้อนขณะถือ connection (2026-09-18)
+
+`resolve_edge` ถือ `get_db()` อยู่แล้วเรียก `create_edge()` ซึ่งเปิด connection ใหม่ → `database is locked`
+(SQLite เขียนได้ทีละ writer). Pattern: แยก `_create_edge(conn, ...)` ที่รับ connection มา แล้วให้
+route wrapper เปิด connection เอง. ใช้กับทุกฟังก์ชันที่ route หนึ่งต้องเรียกงานของอีก route.

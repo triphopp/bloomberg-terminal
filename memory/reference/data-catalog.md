@@ -360,7 +360,7 @@ assets: symbol, comment, buy_target, sell_target,
 ## หมวดที่ 16 — Research Notes (Obsidian)
 
 **Source:** Markdown files บน Google Drive (G:)
-**Endpoints:** `/api/clippings` · `/api/portfolio/theses` · `/api/portfolio/research`
+**Endpoints:** `/api/clippings` · `/api/v2/theses` · `/api/portfolio/research`
 
 ```
 clippings: filename, title, tags, source_url, created_at, content (full MD)

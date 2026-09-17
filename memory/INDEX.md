@@ -50,6 +50,7 @@ memory/
 > ```
 > plans/rsi-scale-modes.md                             🔄 step 1-2/6 done
 > sessions/reports/rsi-seed-divergence-risk-report.md  📋 risk logged, ยังไม่แก้
+> plans/completed/zettelkasten-knowledge-base.md       ✅ done 2026-09-18
 > ```
 
 ---
@@ -60,6 +61,7 @@ memory/
 
 | ต้องการ | ไฟล์ |
 |---------|------|
+| **MCP — ให้ agent อ่าน/แก้ THESES + ดึง portfolio/ราคา/ข่าว** (setup Claude Code + Desktop, tools, guard rails) | `../docs/mcp-server.md` |
 | **Heatmap tile silent drop** — a throttled quote disappears instead of erroring | `reports/heatmap-tile-silent-drop-risk-report.md` |
 | **Windows NEWS API recovery** — stale backend caused DCF/REGIME 404 and SVI 405 ✅ done 2026-09-13 | `plans/completed/windows-news-api-reload.md` |
 | **Windows stale-backend risk** — restart Python after pulling backend changes | `reports/windows-news-stale-backend-risk-report.md` |

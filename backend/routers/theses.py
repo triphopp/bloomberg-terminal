@@ -22,14 +22,15 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from actor import capture_actor, current_actor
 from config import THESES_DIR
 from db import get_db
 from sync.config import device_id
 
-router = APIRouter(prefix="/api/v2/theses")
+router = APIRouter(prefix="/api/v2/theses", dependencies=[Depends(capture_actor)])
 
 # Fields a PATCH may touch. Anything else in the body is ignored rather than
 # silently written — the head row is what the merge layer reconciles.
@@ -75,6 +76,9 @@ def _log_event(
     occurred_at: Optional[str] = None,
 ) -> str:
     event_id = _uid()
+    actor = current_actor()
+    if actor != "user":
+        payload = {**(payload or {}), "actor": actor}
     conn.execute(
         """INSERT INTO thesis_events
            (id, thesis_id, event_type, payload, note, occurred_at, device_id, created_at)

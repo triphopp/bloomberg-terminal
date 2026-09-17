@@ -65,6 +65,9 @@ components/bloomberg/
 │           ├── BacktestTab.tsx       ← backtest v2 (4 sub-tabs: equity/holdings/distribution/attribution)
 │           ├── RiskTab.tsx           ← 2 sub-tabs: OVERVIEW (dense col layout: header/9-stat/VaR+chart+EWS) | OPTIONS risk
 │           ├── ThesesTab.tsx         ← barrel → tabs/theses/
+│           │   └── theses/zettel/     ← KB sub-tab: ZettelPanel (list+detail+create),
+│           │                             ConflictPanel (two sides + RESOLVE),
+│           │                             ZettelGraph (deterministic radial SVG)
 │           ├── theses/                ← DB-backed thesis system (CRUD + notes + history)
 │           │   ├── index.tsx          ← rail + detail + sub-tabs THESIS|NOTES|HISTORY|LINKED TRADES|AI
 │           │   ├── ThesisRail.tsx     ← grouped category → sub-portfolio → symbol (+ open-note badge "3N")

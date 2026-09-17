@@ -243,8 +243,6 @@ backend/
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/portfolio/theses` | List all investment thesis files |
-| GET | `/api/portfolio/thesis/{symbol}` | Parsed thesis with sections and KO cards |
 | POST | `/api/portfolio/research` | Stream AI research analysis (Ollama/Claude SSE) |
 | GET | `/api/portfolio/sources/{symbol}` | List relevant Obsidian source notes |
 | POST | `/api/portfolio/export` | Export holdings to Obsidian markdown |

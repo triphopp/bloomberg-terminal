@@ -99,6 +99,15 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     # peer ignores a table it does not walk, and its snapshot simply carries none.
     ("thesis_notes",             ["id"]),
     ("thesis_links",             ["thesis_id", "trade_id"]),   # composite PK
+    # Zettelkasten. `zettel` is a head row like `theses` (field-level LWW);
+    # edges and sources are append-only by construction — closing a conflict
+    # fills resolved_at on the existing row, it never rewrites the link — so a
+    # merge unions them. zettel_fts is derived and deliberately absent: each
+    # device rebuilds its own index from its own rows.
+    ("zettel",                   ["id"]),
+    ("zettel_edges",             ["id"]),
+    ("zettel_sources",           ["id"]),
+    ("zettel_refs",              ["zettel_id", "target_type", "target_id"]),  # composite PK
     ("allocation_targets",       ["account_id", "scope", "key"]),  # UNIQUE(...)
     # Why an edit was made, for both equity and option trades. Append-only by
     # construction — no endpoint UPDATEs a row — so last-write-wins is a union,

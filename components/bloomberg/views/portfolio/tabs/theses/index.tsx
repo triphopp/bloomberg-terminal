@@ -18,8 +18,9 @@ import {
   type ThesisLink,
   type ThesisNote,
 } from "./types";
+import { ZettelPanel } from "./zettel/ZettelPanel";
 
-type SubTab = "thesis" | "notes" | "history" | "trades" | "ai";
+type SubTab = "thesis" | "notes" | "kb" | "history" | "trades" | "ai";
 
 const API = "/api/v2/theses";
 
@@ -55,6 +56,9 @@ export function ThesesTab({
   const [streaming, setStreaming] = useState(false);
   const [streamText, setStreamText] = useState("");
   const [banner, setBanner] = useState<string | null>(null);
+  // Counts for the KB tab label, reported up by the panel that loads them —
+  // the thesis list endpoint knows nothing about the knowledge base.
+  const [kbCounts, setKbCounts] = useState({ notes: 0, conflicts: 0 });
   // Phone: rail and detail can't share 375px (the detail got ~160px), so it is
   // one or the other. A hand-off from the positions table goes straight to detail.
   const isMobile = useIsMobile();
@@ -534,6 +538,12 @@ export function ThesesTab({
                   [
                     ["thesis", "THESIS"],
                     ["notes", `NOTES (${openNoteCount})`],
+                    [
+                      "kb",
+                      kbCounts.conflicts
+                        ? `KB (${kbCounts.notes}) ⟂${kbCounts.conflicts}`
+                        : `KB (${kbCounts.notes})`,
+                    ],
                     ["history", `HISTORY (${detail?.events.length ?? 0})`],
                     ["trades", `LINKED TRADES (${detail?.links.length ?? 0})`],
                     ["ai", "AI ANALYSIS"],
@@ -574,6 +584,15 @@ export function ThesesTab({
                 onPatch={patchNote}
                 onDelete={removeNote}
                 colors={colors}
+              />
+            )}
+
+            {subTab === "kb" && (
+              <ZettelPanel
+                thesisId={thesis.id}
+                symbol={thesis.symbol}
+                colors={colors}
+                onCountsChange={setKbCounts}
               />
             )}
 
