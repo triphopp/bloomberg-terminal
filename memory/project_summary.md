@@ -134,7 +134,7 @@ OPENAI_API_KEY      — optional
 | `macro.py` | `/api/macro` | FRED + Alpha Vantage (2-layer cache). Read in-process by `/api/tail-risk/macro-context`; `next_fomc` from `event_calendar.py` |
 | `crisis.py` | `/api/crisis` | FRED |
 | `sovereign.py` | `/api/sovereign/*` | World Bank |
-| `portfolio.py` | `/api/portfolio/*` (theses, research, transactions, backtest) | filesystem + SQLite |
+| `portfolio.py` | `/api/portfolio/*` (research — thesis from DB, transactions, backtest) | filesystem + SQLite |
 | `portfolio_v2.py` | `/api/v2/portfolio/*` (accounts, trades CRUD, open-positions, sell, dividends, import) | SQLite |
 | `risk.py` | `/api/v2/portfolio/risk/*` (VaR/CVaR/Parity/Stress/Position-size) | Ledoit-Wolf |
 | `backtest_v2.py` | `/api/v2/portfolio/backtest/*` (equity, holdings-timeline, distribution) | SQLite trades + yfinance |
@@ -168,7 +168,7 @@ OPENAI_API_KEY      — optional
 | `analytics.py` | `/api/analytics/{corr,beta,vol,return,drawdown,sharpe,zscore,rsi,compare,rank}` | yfinance + TTLCache 300s |
 | `paper_trading.py` | `/api/paper/*` (accounts, orders, positions, fills, equity-curve) | yfinance + SQLite |
 | `providers.py` | `/api/providers` (list+health), `/api/providers/active` (switch), `/api/providers/auto-failover` | quote registry |
-| `theses.py` | `/api/v2/theses/*` (CRUD + append-only event log + trade links + md import/export) | SQLite + `THESES_DIR` |
+| `theses.py` | `/api/v2/theses/*` (CRUD + append-only event log + trade links + md import/export; `X-Thesis-Actor` → `payload.actor`) | SQLite + `THESES_DIR` |
 | `sync_router.py` | `/api/sync/status`, `/api/sync/pull`, `/api/sync/push` | cloud-sync (`backend/sync/`) |
 | `watchlist_signals.py` | `/api/watchlist/signals` (batch daily technical scan) | yfinance batch (TTLCache 900s) |
 
@@ -386,7 +386,7 @@ Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as 
 - [x] **Fear & Greed Index** — chart pane indicator + FEAR-GREED searchable symbol + F&G/VIX prominent pills in alert ticker done 2026-06-06 (`plans/completed/fear-greed-index.md`)
 - [ ] Alerts: price alert when stock hits threshold (price target, separate from stop loss)
 - [ ] Sovereign: map visualization
-- [ ] Bloomberg CLI + MCP server (`plans/bloomberg-cli-mcp.md`)
+- [ ] Bloomberg CLI + MCP server (`plans/bloomberg-cli-mcp.md`) — **MCP part started 2026-09-18**: `backend/mcp_server.py` (theses workspace + portfolio/market research, 15 tools; Claude Code via `.mcp.json`, Claude Desktop via `claude_desktop_config.json` — setup in `docs/mcp-server.md`); CLI still not built
 - [x] PORT Analytics: Allocation stacked bar + Dividend M/Q/Y + currency fix (done 2026-06-05, `plans/completed/analytics-charts-enhancement.md`)
 - [ ] SEC One Report: frontend view (data available 2021–2023)
 - [x] Polymarket: Δ24h + MCP endpoint (2026-06-05)

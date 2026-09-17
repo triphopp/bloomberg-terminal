@@ -180,6 +180,7 @@ bloomberg-terminal/
 │   ├── config.py            # Constants, indices, env vars
 │   ├── db.py                # SQLite schema + helpers
 │   ├── greeks.py            # Black-Scholes + Gram-Charlier
+│   ├── mcp_server.py        # MCP stdio server (agent ⇄ THESES) — docs/mcp-server.md
 │   ├── routers/             # 46 modular routers
 │   │   ├── market.py        # Market data + heatmap
 │   │   ├── stock.py         # Quotes, history, dividends, earnings
@@ -202,8 +203,23 @@ bloomberg-terminal/
 │   ├── hooks/               # useTerminalUI, useMarketData, ...
 │   ├── layout/              # Terminal shell, header, navigation
 │   └── views/               # 7 view components + portfolio tabs
+├── docs/
+│   └── mcp-server.md        # Wiring an agent to the THESES workspace over MCP
 └── memory/reference/        # Architecture docs, API reference, data shapes
 ```
+
+---
+
+## Agent access (MCP)
+
+`backend/mcp_server.py` lets Claude Code / Claude Desktop read and edit investment theses
+and pull the terminal's own portfolio, price, news and filing data — 15 tools over stdio,
+talking to the running backend rather than to `portfolio.db`, so the event log and Google
+Drive sync stay identical to the UI. Agent writes are tagged `AGENT·<NAME>` in the thesis
+timeline, and there is no delete tool.
+
+Claude Code needs nothing beyond approving the repo's `.mcp.json`; Claude Desktop needs an
+entry in `claude_desktop_config.json`. Both are in **[docs/mcp-server.md](docs/mcp-server.md)**.
 
 ---
 

@@ -135,9 +135,8 @@ US listings only (EDGAR ไม่มี `.BK`/`.KS` → ใช้ `routers/sec_v
 - `GET /api/sovereign/{code}` — World Bank indicators (GDP, inflation, debt, etc.)
 
 ## Portfolio v1 (`routers/portfolio.py`)
-- `GET /api/portfolio/theses` — list investment theses (.md from THESES_DIR)
-- `GET /api/portfolio/thesis` — content of one thesis
-- `GET /api/portfolio/research` — research articles from SOURCES_DIR
+- ~~`GET /api/portfolio/theses`, `GET /api/portfolio/thesis/{symbol}`~~ — **removed 2026-09-18** (read .md straight from THESES_DIR; the THESES tab uses `/api/v2/theses`)
+- `POST /api/portfolio/research` — SSE condition-killer analysis (Ollama/Claude); reads the latest non-deleted thesis for `symbol` **from the DB** (`body` → `## Condition Killers` / `## Claim`, falls back to the whole body) + SOURCES_DIR notes
 - `GET/POST /api/portfolio/db/transactions` — list / add transactions
 - `PATCH/DELETE /api/portfolio/db/transactions/{id}` — update / delete
 - `GET /api/portfolio/db/holdings` — computed holdings (avg cost method)
@@ -199,6 +198,11 @@ DB-backed investment theses. `theses` = materialised head (field-level LWW merge
 - `GET /api/v2/theses/notes/due?days=14&include_undated=false` — cross-thesis: unresolved notes whose `watch_date` falls inside the window, joined to their thesis (`symbol`, `thesis_title`)
 - `POST /api/v2/theses/import-md?dry_run` — import `THESES_DIR/*.md`; keyed on `source_file` so re-running never duplicates
 - `POST /api/v2/theses/{id}/export-md` — write markdown back to `THESES_DIR` (Obsidian); DB stays authoritative
+- **`X-Thesis-Actor` header** (every route, router-level dependency) — when set (MCP server sends `agent:<name>`), `_log_event` adds `payload.actor`; no header = user, payload unchanged. Timeline shows an `AGENT·NAME` tag.
+
+### MCP server (`backend/mcp_server.py`, stdio; setup → `docs/mcp-server.md`)
+Claude Code: `/.mcp.json` (repo root). Claude Desktop: `%APPDATA%\Claude\claude_desktop_config.json` — absolute interpreter path + `PYTHONIOENCODING=utf-8`, does NOT read `.mcp.json`. `MCP_AGENT_NAME` distinguishes clients in the timeline.
+HTTP client over the running backend (`PYTHON_API_URL`, default :9317) — never opens the DB. 15 tools: theses `list_theses` `get_thesis` `notes_due` `create_thesis` (always draft) `update_thesis` (reason required) `log_event` (NOTE/REVIEW/EVIDENCE/CHECKPOINT) `add_note` `update_note` `link_trade` · context `get_positions` `get_trades` · research `get_stock_data(kind)` `get_price_history` `get_news` `get_filings`. Prompt `review_thesis`. **No delete tool** by design. Output capped at 40k chars.
 
 ## Portfolio Risk (`routers/risk.py`)
 - `GET /api/v2/portfolio/risk/metrics` — VaR/CVaR 1D–6M with √T scaling (Basel)
@@ -549,7 +553,7 @@ app/api/
 ├── macro/route.ts
 ├── crisis/route.ts
 ├── sovereign/list + [code]/route.ts
-├── portfolio/theses|thesis|research|export|sources
+├── portfolio/research|export|sources
 ├── portfolio/db/transactions + [id]
 ├── portfolio/db/holdings|import|backtest
 ├── v2/portfolio/accounts|trades|open-positions|sell

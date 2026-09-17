@@ -96,6 +96,7 @@ BOT data path:
 
 ### Backend
 - `backend/main.py` — App init, CORS, mounts all 26 routers
+- `backend/mcp_server.py` — MCP stdio server (not mounted; separate process spawned by the MCP client via `/.mcp.json`). HTTP client of the backend, writes tagged `X-Thesis-Actor: agent:<name>`
 - `backend/config.py` — All env vars + BOT tokens (BOT_API_TOKEN, BOT_IR_TOKEN, BOT_FX_TOKEN, BOT_STATS_TOKEN) + SEC_KEYS (old portal) + SEC2_KEYS (new portal, falls back to SEC2_API_KEY)
 - `backend/db.py` — SQLite connection manager + schema init + compute_holdings() + sector_classifications helpers
 - `backend/portfolio_options.py` — canonical option-lot valuation (2026-09-09; reads the

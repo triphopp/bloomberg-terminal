@@ -17,19 +17,32 @@ is the source of truth once a thesis has been imported.
 import json
 import re
 import uuid
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
 from config import THESES_DIR
 from db import get_db
 from sync.config import device_id
 
-router = APIRouter(prefix="/api/v2/theses")
+# Who made a write: "user" (the UI, no header) or whatever the caller names in
+# X-Thesis-Actor — the MCP server sends "agent:<name>". It rides on the event
+# payload rather than a new column, so the sync schema is untouched.
+_actor: ContextVar[str] = ContextVar("thesis_actor", default="user")
+
+
+async def _capture_actor(x_thesis_actor: Optional[str] = Header(None)) -> None:
+    # async on purpose: set in the request task, then copied into the threadpool
+    # context the sync endpoint runs in.
+    _actor.set((x_thesis_actor or "user").strip()[:64] or "user")
+
+
+router = APIRouter(prefix="/api/v2/theses", dependencies=[Depends(_capture_actor)])
 
 # Fields a PATCH may touch. Anything else in the body is ignored rather than
 # silently written — the head row is what the merge layer reconciles.
@@ -75,6 +88,9 @@ def _log_event(
     occurred_at: Optional[str] = None,
 ) -> str:
     event_id = _uid()
+    actor = _actor.get()
+    if actor != "user":
+        payload = {**(payload or {}), "actor": actor}
     conn.execute(
         """INSERT INTO thesis_events
            (id, thesis_id, event_type, payload, note, occurred_at, device_id, created_at)

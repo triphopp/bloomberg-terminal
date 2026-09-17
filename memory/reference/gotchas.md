@@ -1426,3 +1426,11 @@ column migration ของ POSITIONS (`% PORT`) เคย `localStorage.setItem(
 `views/portfolio/weights.ts`. ALL → เทียบทั้งพอร์ต, เลือกบัญชี → เทียบ NAV ของบัญชีนั้น (ตัวเลขแถวเดียวกันจึงต่างกันระหว่าง scope โดยเจตนา).
 Option มีสองตัว: `% PORT` จาก premium MV (short lot = ลบ, เป็นหนี้) และ `Δ % NAV` จาก `delta_notional_base` (signed, null เมื่อไม่มี IV → แสดง — ไม่ใช่ 0).
 
+
+## MCP server (`backend/mcp_server.py`) — 3 กับดัก (2026-09-18)
+
+1. **SDK เป็น `mcp` 2.x** — `FastMCP` เปลี่ยนชื่อเป็น `MCPServer` (`from mcp.server.mcpserver import MCPServer`). โค้ดตัวอย่าง v1 จะ import พัง.
+2. **error ต้อง raise `ToolError`** (`mcp.server.mcpserver.exceptions`) — exception ชนิดอื่น SDK ซ่อนข้อความ agent เห็นแค่ "Error executing tool X". `BackendError` จึง subclass `ToolError`.
+3. **Actor ต้องตั้งใน async dependency** — `_capture_actor` ใน `routers/theses.py` เป็น `async def` เพื่อ set ContextVar ใน request task แล้วถูก copy เข้า threadpool ที่ sync route รัน. ถ้าเปลี่ยนเป็น `def` จะรันใน thread แยก และ `_log_event` อ่านได้ "user" ทุกครั้ง. Test: `test_actor_header_is_stamped_on_events`.
+
+MCP ต้องให้ backend รันอยู่ (HTTP client) — ไม่เปิด `portfolio.db` เอง เพื่อให้ validation / event log / sync triggers เหมือน UI ทุกอย่าง.

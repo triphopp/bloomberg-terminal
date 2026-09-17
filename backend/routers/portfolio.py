@@ -1,5 +1,5 @@
 """
-Portfolio theses, research, transactions, backtest — extracted from main.py.
+Portfolio research, transactions, backtest — extracted from main.py.
 """
 import json
 import re
@@ -18,7 +18,6 @@ from pydantic import BaseModel
 
 from cache import TTLCache
 from config import (
-    THESES_DIR,
     SOURCES_DIR,
     OBSIDIAN_WIKI_DIR,
     OLLAMA_URL,
@@ -31,7 +30,6 @@ from db import get_db, compute_holdings
 
 router = APIRouter()
 
-_theses_cache = TTLCache(ttl=300, maxsize=50)
 _sources_cache = TTLCache(ttl=300, maxsize=50)
 
 
@@ -236,19 +234,15 @@ def _build_sources_block(sources: list[dict]) -> str:
     )
 
 
-def _find_thesis_file(symbol: str) -> Path | None:
-    """Find a thesis .md file for the given symbol (prefix match)."""
-    sym_upper = symbol.upper()
-    if not THESES_DIR.exists():
-        return None
-    # Exact prefix match: PLTR-*.md
-    for p in THESES_DIR.glob(f"{sym_upper}-*.md"):
-        return p
-    # Fallback: any .md containing the symbol in its name
-    for p in THESES_DIR.glob("*.md"):
-        if sym_upper in p.stem.upper():
-            return p
-    return None
+def _thesis_from_db(symbol: str) -> dict | None:
+    """Most recently touched non-deleted thesis for a symbol (the THESES tab's source)."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM theses WHERE UPPER(symbol) = ? AND deleted_at IS NULL "
+            "ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 1",
+            (symbol.upper(),),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def _save_research_note(
@@ -332,78 +326,6 @@ class PortfolioExportRequest(BaseModel):
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
-@router.get("/api/portfolio/theses")
-def list_theses():
-    """List all thesis .md files in THESES_DIR with frontmatter metadata."""
-    cache_key = "theses:list"
-    cached = _theses_cache.get(cache_key, ttl=120)
-    if cached is not None:
-        return cached
-
-    if not THESES_DIR.exists():
-        return {"theses": [], "dir": str(THESES_DIR), "error": f"Directory not found: {THESES_DIR}"}
-
-    items = []
-    for path in sorted(THESES_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-            fm, body = _parse_frontmatter(text)
-            # Try to guess symbol from filename (first segment before "-")
-            symbol_guess = path.stem.split("-")[0].upper()
-            items.append({
-                "file": path.name,
-                "symbol": symbol_guess,
-                "title": fm.get("title") or path.stem,
-                "status": fm.get("status") or "unknown",
-                "confidence": fm.get("confidence") or "",
-                "last_updated": str(fm.get("last_updated") or ""),
-                "tags": fm.get("tags") or [],
-            })
-        except Exception as exc:
-            print(f"[theses] {path.name}: {exc}")
-
-    data = {"theses": items, "dir": str(THESES_DIR)}
-    _theses_cache.set(cache_key, data)
-    return data
-
-
-@router.get("/api/portfolio/thesis/{symbol}")
-def get_thesis(symbol: str):
-    """Return parsed thesis for a symbol (e.g. PLTR)."""
-    sym = symbol.upper()
-    cache_key = f"thesis:{sym}"
-    cached = _theses_cache.get(cache_key)
-    if cached is not None:
-        return cached
-
-    path = _find_thesis_file(sym)
-    if not path:
-        raise HTTPException(status_code=404, detail=f"No thesis found for {sym}")
-
-    text = path.read_text(encoding="utf-8", errors="replace")
-    fm, body = _parse_frontmatter(text)
-    sections = _parse_thesis_sections(body)
-    condition_killers = _parse_condition_killers(sections.get("condition_killers", ""))
-
-    data = {
-        "symbol": sym,
-        "file": path.name,
-        "meta": {
-            "title": fm.get("title") or path.stem,
-            "type": fm.get("type") or "thesis",
-            "status": fm.get("status") or "unknown",
-            "confidence": fm.get("confidence") or "",
-            "last_updated": str(fm.get("last_updated") or ""),
-            "tags": fm.get("tags") or [],
-        },
-        "sections": sections,
-        "condition_killers": condition_killers,
-        "raw_body": body,
-    }
-    _theses_cache.set(cache_key, data)
-    return data
-
-
 @router.post("/api/portfolio/research")
 def portfolio_research(req: ResearchRequest):
     """Stream a multi-KO condition-killer analysis via Ollama or Claude API (SSE).
@@ -413,20 +335,20 @@ def portfolio_research(req: ResearchRequest):
     to recent Claude-analyzed research instead of relying on training data alone.
     """
     sym = req.symbol.upper()
-    path = _find_thesis_file(sym)
-    if not path:
+    thesis = _thesis_from_db(sym)
+    if not thesis:
         return StreamingResponse(
             iter([f"data: {json.dumps({'error': f'No thesis found for {sym}', 'done': True})}\n\n"]),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    text = path.read_text(encoding="utf-8", errors="replace")
-    fm, body = _parse_frontmatter(text)
+    body = thesis.get("body") or ""
     sections = _parse_thesis_sections(body)
     kos = _parse_condition_killers(sections.get("condition_killers", ""))
 
-    thesis_claim = sections.get("claim", "")
+    # A DB-native thesis rarely has a "## Claim" header — fall back to the body.
+    thesis_claim = sections.get("claim", "") or f"{thesis.get('title') or ''}\n{body}"
     ko_list = "\n".join(
         f"KO #{ko['id']}: {ko['title']}\n  Monitor signals: {ko['monitor']}"
         for ko in kos

@@ -262,3 +262,32 @@ def test_thesis_gets_updated_at_stamp_for_lww(env):
     with db.get_db() as c:
         row = c.execute("SELECT updated_at FROM theses WHERE id = ?", (t["id"],)).fetchone()
     assert row["updated_at"]   # trigger fired; merge has something to compare
+
+
+# ── Actor attribution (MCP agent writes) ─────────────────────────────────────
+
+def test_actor_header_is_stamped_on_events(env):
+    """X-Thesis-Actor must survive the hop from the async dependency into the
+    threadpool the sync route runs in — otherwise every agent edit reads as the
+    user's in the timeline."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+    app.include_router(env.router)
+    client = TestClient(app)
+
+    r = client.post("/api/v2/theses", json={"symbol": "NVDA"},
+                    headers={"X-Thesis-Actor": "agent:claude"})
+    tid = r.json()["thesis"]["id"]
+    client.patch(f"/api/v2/theses/{tid}", json={"conviction": 4, "note": "earnings beat"},
+                 headers={"X-Thesis-Actor": "agent:claude"})
+    client.patch(f"/api/v2/theses/{tid}", json={"conviction": 3})  # the UI: no header
+
+    events = client.get(f"/api/v2/theses/{tid}/events").json()["events"]
+    by_type = {}
+    for ev in events:
+        by_type.setdefault(ev["event_type"], []).append(ev)
+    assert by_type["CREATED"][0]["payload"]["actor"] == "agent:claude"
+    actors = sorted(str((e["payload"] or {}).get("actor")) for e in by_type["EDITED"])
+    assert actors == ["None", "agent:claude"]
