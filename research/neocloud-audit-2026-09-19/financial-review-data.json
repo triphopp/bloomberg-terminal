@@ -1,0 +1,1289 @@
+{
+  "as_of": "2026-09-19",
+  "unit": "millions of stated currency",
+  "null_means": "not verified / not comparable / no comparable period, NOT zero",
+  "companies": [
+    {
+      "symbol": "CRWV",
+      "name": "CoreWeave",
+      "market": "Nasdaq / สหรัฐฯ",
+      "category": "GPU cloud",
+      "currency": "USD",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        229,
+        1915,
+        5131
+      ],
+      "net_income": [
+        -594,
+        -863,
+        -1167
+      ],
+      "cfo": [
+        1833,
+        2749,
+        3058
+      ],
+      "basis": "US GAAP; กำไรสุทธิรวมกลุ่ม; FY2023–25 ตาม 10-K ล่าสุด",
+      "facts": "FY2025 Microsoft สร้างรายได้ 67%; CFO 3,058 แต่ซื้อ PP&E ด้วยเงินสด 10,309 ล้าน และมี accrued PP&E purchases 5,196 ล้าน ค่าเสื่อมและตัดจำหน่าย 2,454 ล้าน; บริษัทเปิดเผย material weaknesses ของการควบคุมภายใน ณ สิ้นปี 2025. อายุอุปกรณ์ประมวลผลเปลี่ยนจาก 5 เป็น 6 ปีตั้งแต่ต้นปี 2023 ไม่ใช่การเปลี่ยนใหม่ในปี 2026.",
+      "analysis": "จุดเปราะคือวงจรจ่ายค่า GPU ก่อนเก็บเงินตลอดสัญญา ลูกค้ารายใหญ่ช่วยให้มีสัญญายาวแต่กระจายความเสี่ยงไม่ได้ ค่าเสื่อมที่ต่ำลงเพิ่มกำไรตามบัญชีโดยไม่ได้ยืดอายุเชิงเศรษฐกิจโดยอัตโนมัติ CFO บวกยังไม่พอทดแทนการลงทุน และ cash capex ไม่รวมอุปกรณ์ที่ค้างจ่ายทั้งหมด.",
+      "watch": "ตรวจอายุ GPU ตามรุ่น การใช้กำลังผลิตจริง การส่งมอบตามสัญญา ลูกหนี้/เงินรับล่วงหน้า และการแก้ material weaknesses. Q2 2026 ต้องแยกหนี้การเงิน 35.068 พันล้านออกจาก leases 16.540 พันล้าน; ยอดรวม 51.608 พันล้านรวม leases แล้ว.",
+      "sources": [
+        "CRWV",
+        "CRWVQ2"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "NBIS",
+      "name": "Nebius Group",
+      "market": "Nasdaq / เนเธอร์แลนด์",
+      "category": "GPU cloud",
+      "currency": "USD",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        9.8,
+        91.5,
+        529.8
+      ],
+      "net_income": [
+        241.3,
+        -641.4,
+        82.5
+      ],
+      "cfo": [
+        -222.0,
+        -269.9,
+        401.9
+      ],
+      "basis": "รายได้และCFOเป็นcontinuingoperations; NIส่วนบริษัทแม่ยังรวมผลdiscontinued; CFOรวมทุกกิจกรรมดำเนินงานเดิมคือ829.8/245.6/384.8ล้านใน2023/24/25",
+      "facts": "FY2025 CFOcontinuing401.9ล้านมีเงินรับล่วงหน้าจากstrategiccustomers982.5ล้านหนุน มีinvestmentrevaluationgain598.9ล้าน และซื้อPP&E/intangibles4,066ล้าน. ผู้สอบบัญชีให้adverseopinionต่อICFRจากmaterialweaknessเรื่องPP&EและกระบวนการrevenueของTripleTen แต่ให้unqualifiedopinionต่องบการเงิน.",
+      "analysis": "กำไรสุทธิรวมไม่ยืนยันว่าเช่าGPUมีกำไร เพราะมีผลเงินลงทุนและกิจการที่เลิกดำเนินงาน ประวัติYandexเดิมกับNebiusปัจจุบันต่างกัน ต้องแยกcashadvanceออกจากrecurringcashconversionและติดตามcontrolsเมื่อสินทรัพย์โตเร็ว การมีweaknessด้านTripleTenไม่ใช่หลักฐานว่าAIrevenueผิดทั้งหมด.",
+      "watch": "สร้างbridgeจากAIsegmentoperatingresultสู่GAAPNI; ดูcashcollection/ARและการเริ่มให้บริการตามstrategiccontracts; ตรวจPP&Eregister, cutoffการเริ่มคิดค่าเสื่อม และremediationของICFRจาก20-Fฉบับเต็มที่อ่านผ่านfilingmirror.",
+      "sources": [
+        "NBIS",
+        "NBISmirror"
+      ],
+      "coverage": "สามปีcontinuingrevenue/CFOและNIรวม; มีการขายกิจการและadverseICFRต้องอ่านแยก"
+    },
+    {
+      "symbol": "IREN",
+      "name": "IREN",
+      "market": "Nasdaq / ออสเตรเลีย",
+      "category": "GPU cloud + mining",
+      "currency": "USD",
+      "years": [
+        "FY2024/06",
+        "FY2025/06",
+        "FY2026/06"
+      ],
+      "revenue": [
+        187.192,
+        501.023,
+        707.007
+      ],
+      "net_income": [
+        -28.92,
+        86.941,
+        -702.621
+      ],
+      "cfo": [
+        52.219,
+        245.886,
+        2100.418
+      ],
+      "basis": "ใช้ US GAAP comparatives ล่าสุด; ไม่ต่อ CFO ปีเก่าบน IFRS เข้ากับปีใหม่",
+      "facts": "FY2026 CFO ได้แรงหนุนจากเงินรับล่วงหน้า AI 1,841.7 ล้าน ขณะที่ NI ขาดทุน 702.6 ล้าน มี impairment 638.8 ล้าน ค่าเสื่อม/ตัดจำหน่าย 417.7 ล้าน และ derivative gain 558.5 ล้าน. เงินสด 5,895.6 ล้านแยกจาก restricted cash 1,723.9 ล้าน; capital commitments 13,810 ล้าน ณ สิ้นปี.",
+      "analysis": "เงินรับล่วงหน้ามีประโยชน์ต่อ financing แต่แลกกับหน้าที่ส่งมอบและเครดิตค่าบริการในอนาคต การลบเงินรับล่วงหน้าจาก CFO เพื่อดู sensitivity ได้ประมาณ258.7ล้าน ไม่ใช่กำไรปรับปรุงหรือ FCF. ขาดทุนส่วนหนึ่งไม่ใช่เงินสด แต่ impairment เป็นหลักฐานว่าการเปลี่ยนธุรกิจทำให้สินทรัพย์เดิมสูญมูลค่า.",
+      "watch": "ตาม acceptance ของโครงการ Horizon ทีละ tranche, สัญญา Microsoft และการเริ่มตัดเครดิตเงินรับล่วงหน้า; ทดสอบ cash runway หลัง committed capex และเงื่อนไข parent guarantee ของเงินกู้ที่เรียก non-recourse.",
+      "sources": [
+        "IREN"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "HUT",
+      "name": "Hut 8",
+      "market": "Nasdaq / สหรัฐฯ",
+      "category": "โครงสร้างพื้นฐาน + mining",
+      "currency": "USD",
+      "years": [
+        "2023/07–12 (6 เดือน)",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        60.6,
+        162.385,
+        235.118
+      ],
+      "net_income": [
+        6.208,
+        331.882,
+        -226.149
+      ],
+      "cfo": [
+        -19.621,
+        -68.535,
+        -139.226
+      ],
+      "basis": "ปี2023เป็นงวดเปลี่ยนรอบ 6 เดือน; revenue2023ปัดตามยอดรวมที่รายงาน; NI ส่วนบริษัทแม่ ไม่ใช่กำไรทั้งกลุ่ม",
+      "facts": "FY2025 รายได้ส่วน Compute 202.3 ล้านยังมี mining เป็นส่วนสำคัญ กลุ่ม Power 23.2 ล้าน และ Digital Infrastructure 9.6 ล้าน; CFO ติดลบทั้งสามงวด คำว่า cash and Bitcoin รวมสินทรัพย์คริปโตและส่วนของ American Bitcoin ซึ่งมีผู้ถือหุ้นภายนอก.",
+      "analysis": "ความเสี่ยงอยู่ที่การเปลี่ยนจากผลตอบแทน Bitcoin เป็นค่าเช่า AI ระยะยาวก่อนโครงการเริ่มรับรายได้ อย่าใช้ราคา Bitcoin ณ วันเดียวแทนเงินสดชำระเจ้าหนี้ และอย่าตีการเพิ่มจากงวด6เดือนเป็น organic growth รายปี.",
+      "watch": "ติดตามการปิด project financing จริง เงื่อนไขเบิกเงินและ contribution ของผู้ถือหุ้นโครงการ ก่อนนำวงเงินคาดหมายมาเป็น liquidity. แยกส่วนที่เป็นของ HUT ออกจาก ABTC และไม่บวกงบแม่ลูกซ้ำ.",
+      "sources": [
+        "HUT"
+      ],
+      "coverage": "สองปีเต็ม + งวดเปลี่ยนรอบ6เดือน; ไม่ใช่สามปีเต็ม"
+    },
+    {
+      "symbol": "WULF",
+      "name": "TeraWulf",
+      "market": "Nasdaq / สหรัฐฯ",
+      "category": "HPC landlord + mining",
+      "currency": "USD",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        69.229,
+        140.051,
+        168.455
+      ],
+      "net_income": [
+        -73.421,
+        -72.418,
+        -661.416
+      ],
+      "cfo": [
+        4.263,
+        -24.422,
+        -123.18
+      ],
+      "basis": "US GAAP; NI รวมกลุ่ม; แยกเงินลงทุน JV และ consolidated projects",
+      "facts": "FY2025 ซื้อ PP&E เงินสด 1,060.189 ล้าน ขณะที่ CFO -123.180 ล้าน มี Google warrant liability มูลค่ายุติธรรม 844.698 ล้าน. เงื่อนไข backstop ของ Google เริ่มเมื่อ lease commencement จึงไม่ใช่การค้ำความเสี่ยงก่อสร้างก่อนส่งมอบทั้งหมด.",
+      "analysis": "ขาดทุนจำนวนมากอาจเกิดจาก warrant remeasurement โดยไม่มีเงินสดจ่ายทันที แต่การสร้างศูนย์ใช้เงินจริงและมีความเสี่ยงส่งมอบ คำว่ามี Google ค้ำไม่ทำให้โครงการทุกระยะมีคุณภาพเครดิตเท่า Google.",
+      "watch": "ตรวจ milestone ที่ทำให้การค้ำมีผล, delay damages, เงินทุนสำรองก่อสร้าง, warrant dilution และ cash waterfall ของ JV. อย่านำ warrant liability ไปปนกับหนี้ธนาคารที่ต้องชำระดอกเบี้ยคงที่.",
+      "sources": [
+        "WULF"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "APLD",
+      "name": "Applied Digital",
+      "market": "Nasdaq / สหรัฐฯ",
+      "category": "HPC landlord + บริษัทแม่ GPU cloud",
+      "currency": "USD",
+      "years": [
+        "FY2024/05",
+        "FY2025/05",
+        "FY2026/05"
+      ],
+      "revenue": [
+        165.575,
+        228.569,
+        611.311
+      ],
+      "net_income": [
+        -149.671,
+        -231.065,
+        -184.339
+      ],
+      "cfo": [
+        13.794,
+        -115.402,
+        89.685
+      ],
+      "basis": "รายได้รวมมีรายได้เช่า; NI ทั้งกลุ่มก่อนจัดสรร preferred/NCI จึงต่างจากกำไร common shareholders; cloud กลับเป็น continuing operations",
+      "facts": "วันที่5พ.ค.2026 แยก Cloud เข้า ChronoScale แต่ยังถือหุ้นประมาณ97% จึงยังรวมงบ มี loss จากการกลับวัดธุรกิจ Cloud เป็น held-and-used 59.7 ล้าน. Preferred financing มีสิทธิรับผลตอบแทน/เงินคืนก่อน common equity ซึ่ง headline EBITDA ไม่สะท้อนทั้งหมด.",
+      "analysis": "การแยกชื่อหุ้นไม่ใช่การขายความเสี่ยงออกจากงบ และรายได้ ASC606 อย่างเดียวจะต่ำกว่ารายได้รวมที่มี lease income ต้องใช้ comparative ล่าสุดเดียวกันเพื่อไม่สร้างภาพว่าโตหรือหดจากการเปลี่ยนการนำเสนอ.",
+      "watch": "ตรวจ distributable cash หลังดอกเบี้ย ค่าเช่า preferred distributions และเงินสำรองส่งมอบ; ไม่บวก CHRN ซ้ำกับ APLD. ตรวจ project-level priority และสิทธิถอนทุนของผู้ลงทุนร่วมจากสัญญาจริง.",
+      "sources": [
+        "APLD",
+        "CHRN"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "CIFR",
+      "name": "Cipher Digital (เดิม Cipher Mining)",
+      "market": "Nasdaq / สหรัฐฯ",
+      "category": "HPC landlord + mining",
+      "currency": "USD",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        126.842,
+        151.27,
+        223.942
+      ],
+      "net_income": [
+        -25.777,
+        -44.635,
+        -822.244
+      ],
+      "cfo": [
+        -94.241,
+        -87.511,
+        -207.938
+      ],
+      "basis": "US GAAP; รายได้ FY2025 ในตารางยังเป็น Bitcoin mining",
+      "facts": "FY2025 รายได้ 223.942 ล้านไม่ใช่ HPC contracted revenue ในอนาคต ข้อตกลง credit backstop ของ Google แลก warrants ทำให้บันทึก credit-backstop asset 544.5 ล้านในสินทรัพย์ไม่หมุนเวียน และวัด warrant liability ผ่านกำไรขาดทุน.",
+      "analysis": "ทรัพย์สินทางบัญชีจากสิทธิการค้ำไม่ใช่เงินสดซื้อเครื่อง และการค้ำแลกหุ้นมีต้นทุนต่อผู้ถือหุ้น ความเสี่ยงจริงจึงอยู่ทั้งการส่งมอบอาคารและภาระตามเงื่อนไข warrants ไม่ใช่มอง net loss แล้วตีว่าเงินสดหายเท่ากัน.",
+      "watch": "ติดตาม HPC commencement และการตัด amortization ของ backstop asset; ตรวจกรณีราคาหุ้นต่ำจนเกิด shortfall/เพิ่มจำนวนหุ้นตามสัญญา รวมทั้ง debt covenants. Financial/ICFR opinions สิ้น2025 ไม่ได้เป็น adverse เพียงเพราะมีขาดทุนสูง.",
+      "sources": [
+        "CIFR"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "CORZ",
+      "name": "Core Scientific",
+      "market": "Nasdaq / สหรัฐฯ",
+      "category": "HPC landlord + mining",
+      "currency": "USD",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        502.4,
+        510.672,
+        319.019
+      ],
+      "net_income": [
+        -246.487,
+        -1437.874,
+        -288.616
+      ],
+      "cfo": [
+        65.114,
+        42.896,
+        278.25
+      ],
+      "basis": "FY2024 ใช้งบแก้ไขแล้ว; bankruptcy/reorganization ทำให้การเทียบโครงสร้างทุนระหว่างปีต้องระวัง",
+      "facts": "10-K/A ที่ยื่น2มี.ค.2026 ลด PP&E ปี2024 ลง122.869ล้านเพราะสินทรัพย์ที่ผูกพันรื้อถอนยังค้างมูลค่าในบัญชี ขาดทุน2024ปรับจาก1,315.005เป็น1,437.874ล้าน รายได้และกระแสเงินสดทั้งสามกิจกรรมไม่เปลี่ยน. บริษัทประกาศ non-reliance หลายงวด2024–25 และ material weakness ที่เกี่ยวข้อง.",
+      "analysis": "นี่คือข้อผิดพลาดบัญชีที่ยืนยันแล้ว และตรงกับจุดเสี่ยงของการเปลี่ยนเหมืองเป็น HPC: สินทรัพย์ที่ใช้ไม่ได้ต่อควรถูกประเมินด้อยค่าเมื่อมีข้อบ่งชี้ ไม่ใช่รอรื้อจริง. Adverse ICFR opinion ต้องแยกจากความเห็นต่องบการเงินที่แก้ไขแล้ว; ไม่ใช่หลักฐานเจตนาทุจริต.",
+      "watch": "ตรวจ remediation และ impairment ของโครงการแปลงอื่น ๆ รวมทั้งกำไรจาก warrants ที่ไม่ใช่เงินสด. เคยเข้า Chapter11 ธ.ค.2022 และออกมาม.ค.2024 จึงใช้คำว่าไม่มีประวัติปัญหาหนี้ทั้งกลุ่มไม่ได้.",
+      "sources": [
+        "CORZ",
+        "CORZ24A",
+        "CORZ8K"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "GLXY",
+      "name": "Galaxy Digital",
+      "market": "Nasdaq / สหรัฐฯ",
+      "category": "ธุรกิจสินทรัพย์ดิจิทัล + HPC landlord",
+      "currency": "USD",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        51626.779,
+        42596.673,
+        60406.728
+      ],
+      "net_income": [
+        228.514,
+        346.722,
+        -241.349
+      ],
+      "cfo": [
+        -4.079,
+        -205.079,
+        -316.636
+      ],
+      "basis": "รายได้หลักเป็น gross digital-asset trading; NI ส่วนบริษัทแม่; ไม่ใช่ recurring cloud sales",
+      "facts": "FY2025 ยอดรายได้กว่า60พันล้านเกิดจากวิธีแสดงธุรกรรมสินทรัพย์ดิจิทัลแบบ gross เป็นหลัก ขณะที่ Helios อยู่ในช่วงเปลี่ยนผ่านไป HPC. เงินสด/สินทรัพย์ลูกค้า collateral และสินทรัพย์ของบริษัทมีสิทธิเรียกร้องต่างกัน.",
+      "analysis": "Debt/revenue จะดูต่ำมากอย่างหลอกตาถ้าใช้ trading turnover เป็นฐานเทียบกับค่าเช่า GPU ของผู้อื่น ต้องใช้ operating margin/segment cash flow ของ Data Centers และสิทธิรับกระแสเงินสดตามโครงการ.",
+      "watch": "ตรวจบริการเริ่มส่งมอบจริงของ Helios, cash collections และ project debt แยกธุรกิจ digital assets. ไม่ถือ customer assets เป็นแหล่งสภาพคล่องอิสระของผู้ถือหุ้น.",
+      "sources": [
+        "GLXY"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "BTDR",
+      "name": "Bitdeer",
+      "market": "Nasdaq / สิงคโปร์",
+      "category": "Mining + ASIC + GPU cloud",
+      "currency": "USD",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        368.554,
+        349.782,
+        620.253
+      ],
+      "net_income": [
+        -56.656,
+        -599.151,
+        65.597
+      ],
+      "cfo": [
+        -271.8,
+        -622.073,
+        -1738.678
+      ],
+      "basis": "IFRS; CFO2023ปัด0.1ล้านจาก MD&A; งบฉบับบริษัทอ่านผ่าน filing mirror",
+      "facts": "แม้ปี2025กำไร65.6ล้าน CFO -1,738.7ล้าน: รายได้ที่รับเป็นคริปโตถูกปรับออกจาก CFO และมีเงินจมใน inventories/เงินล่วงหน้าเพื่อ SEALMINER. Gain จาก derivative liabilities 444.9ล้านเป็นรายการสำคัญ.",
+      "analysis": "CFO ติดลบไม่เท่ากับ GPU cloud ขาดทุนทั้งหมด เพราะบริษัทมีวงจรผลิตชิป/เครื่องขุดและขายคริปโตซึ่งจัด cash flow อีกประเภท ต้องอ่าน operating กับเงินขายเหรียญร่วมกัน พร้อมไม่ลืมว่าเงินที่จมในสต็อกยังมีความเสี่ยงลดราคาและขายช้า.",
+      "watch": "ตรวจ inventory aging, commitments wafer, customer deposits, impairment ASIC และแยกสัดส่วนรายได้ AI จริงจาก mining. กำไรจากหุ้น/ตราสารแปลงสภาพที่ราคาลดลงไม่ใช่ความได้เปรียบการดำเนินงาน.",
+      "sources": [
+        "BTDR",
+        "BTDRmirror"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "WYFI",
+      "name": "WhiteFiber",
+      "market": "Nasdaq / สหรัฐฯ",
+      "category": "GPU cloud + data centers",
+      "currency": "USD",
+      "years": [
+        "2023 (ก่อนฐานปัจจุบัน)",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        null,
+        47.639,
+        79.164
+      ],
+      "net_income": [
+        null,
+        1.37,
+        -24.683
+      ],
+      "cfo": [
+        null,
+        18.75,
+        45.655
+      ],
+      "basis": "สองปีเต็มใน filing ปัจจุบัน; ไม่เติมปี2023เป็นศูนย์; cloud เริ่ม2024/Enovumมีฐานตั้งแต่ปลาย2023",
+      "facts": "FY2025 CFO45.655ล้านเทียบซื้อPP&E268.403ล้าน รายได้เพิ่มแต่เปลี่ยนเป็นขาดทุนสุทธิ บริษัทจดทะเบียนแยกแต่ยังมี Bit Digital เป็นบริษัทแม่ควบคุม.",
+      "analysis": "การเร่งลงทุนก่อนเปิด capacity ทำให้รายได้และค่าเสื่อมขึ้นคนละเวลา CFO บวกไม่ยืนยันว่าเติบโตได้โดยไม่เพิ่มทุน ต้องทดสอบสัญญาของลูกค้ารายหลักว่าค้ำระยะเวลาคืนทุนของเครื่องจริงเพียงใด.",
+      "watch": "ขอรายได้/กระแสเงินสดแยก Cloud กับ Enovum พร้อม related-party balances และ ownership ปัจจุบัน. ห้ามรวม WYFI+BTBT เพื่อวัดขนาดตลาด; ประวัติสามปี GPU ที่เทียบกันได้ยังไม่มี.",
+      "sources": [
+        "WYFI",
+        "BTBT"
+      ],
+      "coverage": "มีสองปีเต็ม; ก่อนหน้ามี predecessor/ระยะเริ่มต้น"
+    },
+    {
+      "symbol": "BTBT",
+      "name": "Bit Digital",
+      "market": "Nasdaq / สหรัฐฯ",
+      "category": "บริษัทแม่ GPU cloud + crypto treasury",
+      "currency": "USD",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        44.916,
+        108.051,
+        113.56
+      ],
+      "net_income": [
+        -13.893,
+        28.306,
+        -80.317
+      ],
+      "cfo": [
+        1.106,
+        -12.987,
+        -288.924
+      ],
+      "basis": "NI ส่วนบริษัทแม่; CFO รวมกลุ่ม; เปลี่ยน mix ธุรกิจและมี NCI ของ WhiteFiber",
+      "facts": "FY2025 ขาดทุนทั้งกลุ่ม84.930ล้าน แต่ส่วนบริษัทแม่80.317ล้าน มีการลงทุน PP&E285.928ล้าน และกระแสเงินสดเกี่ยวกับสินทรัพย์ดิจิทัล/treasury ปนกับ Cloud.",
+      "analysis": "ความเสี่ยงหลักคือ shareholder exposure เป็นทั้งราคาคริปโตและการใช้เงินลงทุน Cloud ไม่ใช่หุ้น cloud บริสุทธิ์ การมีหุ้น WYFI จดทะเบียนทำให้มีราคาตลาดของ subsidiary แต่ไม่ได้ทำให้สินทรัพย์ของลูกเป็นเงินสดของแม่ที่เบิกใช้ได้ทันที.",
+      "watch": "ตรวจการจัดประเภทซื้อ/ขายสินทรัพย์ดิจิทัล, เงินโอนระหว่างแม่ลูก, dilution และการจัดสรรผลขาดทุนแก่ NCI. ใช้ segment data ของ WYFI สำหรับ economics ของ GPU.",
+      "sources": [
+        "BTBT",
+        "WYFI"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "HIVE",
+      "name": "HIVE Digital / BUZZ",
+      "market": "Nasdaq / แคนาดา",
+      "category": "Mining + GPU cloud",
+      "currency": "USD",
+      "years": [
+        "FY2024/03",
+        "FY2025/03",
+        "FY2026/03"
+      ],
+      "revenue": [
+        114.465,
+        115.279,
+        297.791
+      ],
+      "net_income": [
+        26.5,
+        -2.996,
+        -148.448
+      ],
+      "cfo": [
+        9.64,
+        16.634,
+        62.337
+      ],
+      "basis": "US GAAP comparative ใน FY2026; ต่างจากกำไรปี2024บน IFRS เดิมอย่างมีนัยสำคัญ",
+      "facts": "รายได้รวมยังมี Bitcoin mining มาก ขณะที่ BUZZ เป็นส่วน GPU cloud บริษัทเปลี่ยนฐานรายงานเป็น US GAAP ทำให้ชุดกำไร/CF เก่าที่ vendor เก็บไว้ไม่ควรถูกต่อรวมโดยไม่ reconcile.",
+      "analysis": "hashrate ที่เพิ่มไม่ได้แปลว่ามี AI capacity สร้างกำไรเท่ากัน เช่นเดียวกับการเป็นพันธมิตร/ผู้ให้บริการที่ได้รับเลือกไม่ได้พิสูจน์ minimum contracted volume. กำไรจาก crypto valuation และการเปลี่ยนบัญชีต้องแยกจากผลดำเนินงาน BUZZ.",
+      "watch": "ตรวจ revenue/EBITDA/capex ของ BUZZ โดยตรง และเปรียบ gross margin ของเครื่องรุ่นเดียวกันหลังค่าไฟและ networking. รายงานนี้ใช้ตัวเลข US GAAP ล่าสุดตลอดชุดเพื่อหลีกเลี่ยงกำไรที่เปลี่ยนเพราะฐานบัญชี.",
+      "sources": [
+        "HIVE"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "DOCN",
+      "name": "DigitalOcean / Paperspace",
+      "market": "NYSE / สหรัฐฯ",
+      "category": "General cloud + GPU cloud",
+      "currency": "USD",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        692.884,
+        780.615,
+        901.427
+      ],
+      "net_income": [
+        19.409,
+        84.492,
+        259.262
+      ],
+      "cfo": [
+        234.942,
+        282.725,
+        309.604
+      ],
+      "basis": "US GAAP; กลุ่มรวม SMB cloud ไม่ใช่ Paperspace อย่างเดียว",
+      "facts": "FY2025 มี valuation allowance release ของสินทรัพย์ภาษี69.939ล้าน และ tax benefit สุทธิ52.6ล้าน; CFO309.604ล้าน กับ cash PP&E129.086ล้าน. SBC82.524ล้านยังเป็นต้นทุน dilution แม้ไม่ใช้เงินสดทันที.",
+      "analysis": "มีหลักฐานสร้างเงินสดต่อเนื่องมากกว่าผู้เริ่มต้นหลายราย แต่การโตของกำไร259ล้านไม่ควรถูกยกทั้งหมดเป็นการเพิ่มประสิทธิภาพ GPU เพราะผลภาษีและรายการอื่นช่วยด้วย การวัด FCF ต้องรวมวิธีจัดหาอุปกรณ์ผ่าน finance lease.",
+      "watch": "แยก normalized tax กับกำไรดำเนินงาน และติดตาม retention, pricing, receivables ของลูกค้า AI พร้อมหัก lease principal เมื่อวัดเงินที่เหลือผู้ถือหุ้น. กลุ่ม cloud ที่โตไม่ได้พิสูจน์ GPU segment profitable.",
+      "sources": [
+        "DOCN"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "RUM",
+      "name": "Rumble / Northern Data–Taiga",
+      "market": "Nasdaq / สหรัฐฯ",
+      "category": "Video + cloud; เปลี่ยนกลุ่มด้วย M&A",
+      "currency": "USD",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        80.963,
+        95.488,
+        100.622
+      ],
+      "net_income": [
+        -116.42,
+        -338.363,
+        -81.83
+      ],
+      "cfo": [
+        -92.911,
+        -87.01,
+        -70.43
+      ],
+      "basis": "FY2023–25 คือ Rumble เดิม; ยังไม่ใช่งบรวม Northern Data หลังซื้อปี2026",
+      "facts": "RUMซื้อNorthernData85.2%เมื่อ17มิ.ย.2026; S-4/8-K/Aแนบงบacquireeที่ตรวจแล้ว2025/2024และcomparatives2023 ซึ่งนำมาแสดงแยกในprofileNB2. ปี2025RUMเดิมยังเผาเงินสดจากการดำเนินงาน70.430ล้านUSD; ตารางRUM2023–25ไม่รวมTaigaที่เพิ่งซื้อปี2026.",
+      "analysis": "ความเสี่ยงใหม่คือ purchase price allocation, goodwill, contingent/convertible consideration และธุรกรรมกับผู้ให้ทุนที่เป็นคู่ค้า ภาพรายได้โตหลังควบรวมต้องแยก acquired growth ออกจาก organic utilization.",
+      "watch": "อ่านงบacquireeNB2ในรายงานนี้ควบคู่proformaIFRS→USGAAP และpurchasepriceallocationหลังปิดดีล; ตรวจเงินกู้/สิทธิแปลงสภาพจากผู้ให้ทุนที่เป็นคู่ค้า รวมถึงimpairmentของสินทรัพย์ที่ซื้อ. ไม่บวกNorthernDataซ้ำกับRUMหลังรวมงบ และไม่ถือproformaเป็นactualhistoricalresults.",
+      "sources": [
+        "RUM",
+        "RUMdeal",
+        "NDannual"
+      ],
+      "coverage": "สามปีRUM + งบNorthernDataสามปีแยกในNB2profile; งบรวมใหม่หลังM&Aต่างฐาน"
+    },
+    {
+      "symbol": "SHAZ",
+      "name": "SharonAI",
+      "market": "Nasdaq / ออสเตรเลีย",
+      "category": "GPU cloud ระยะเริ่มต้น",
+      "currency": "USD",
+      "years": [
+        "2023 (ไม่มีชุดเทียบ)",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        null,
+        0.438,
+        1.567
+      ],
+      "net_income": [
+        null,
+        -3.905,
+        -39.624
+      ],
+      "cfo": [
+        null,
+        -2.206,
+        -2.639
+      ],
+      "basis": "สองปีเต็มในงบปัจจุบัน; NI ส่วนบริษัทแม่; IPOปี2026",
+      "facts": "FY2025 รายได้1.567ล้าน ขาดทุนส่วนบริษัทแม่39.624ล้าน มี material weakness เกี่ยวกับการบัญชีเครื่องมือทางการเงินที่ซับซ้อน และยังต้องพิสูจน์ remediation.",
+      "analysis": "ขนาดประกาศลงทุน/กำลังประมวลผลในอนาคตสูงกว่าประวัติรับเงินจริงมาก จึงควรให้ความสำคัญกับเงินสดที่ได้รับแล้วและเงื่อนไขจัดหาเครื่องมากกว่า valuation จากรายได้คาดการณ์ งานควบคุมบัญชีต้องโตตามความซับซ้อนของ financing.",
+      "watch": "ดู cash runway, signed customer acceptance, dilution จาก options/warrants และผลทดสอบ remediation รอบถัดไป; การเปิดเผย material weakness ไม่ใช่ข้อพิสูจน์ว่า revenue ปลอม.",
+      "sources": [
+        "SHAZ"
+      ],
+      "coverage": "มีสองปีเต็ม; ไม่ใช่สามปี GPU cloud"
+    },
+    {
+      "symbol": "MOVE",
+      "name": "Corvex (reverse merger กับ Movano)",
+      "market": "Nasdaq / สหรัฐฯ",
+      "category": "GPU cloud หลังเปลี่ยนกิจการ",
+      "currency": "USD",
+      "years": [
+        "2023 (ยังไม่ก่อตั้ง)",
+        "21ต.ค.–31ธ.ค.2024",
+        "2025"
+      ],
+      "revenue": [
+        null,
+        0,
+        7.102
+      ],
+      "net_income": [
+        null,
+        -4.311,
+        -9.517
+      ],
+      "cfo": [
+        null,
+        -0.316,
+        -4.023
+      ],
+      "basis": "US GAAP audited Corvex OpCo predecessor: ก่อตั้ง21ต.ค.2024 จึงไม่มีปี2023; ไม่ใช่ตัวเลขMovano wearableเดิม; งบตรวจโดยBDOตามGAASและไม่มีการปรับความเห็น",
+      "facts": "FY2025รายได้7.102ล้าน CFO -4.023ล้าน ขาดทุน9.517ล้าน ลูกค้ารายใหญ่สามราย32%/19%/16%; รับเงินSAFE37.202ล้าน และจัดหาfinanceleaseROUassets11.698ล้านที่ไม่อยู่cashPP&E1.128ล้าน. Q2ปี2026เป็นไตรมาสเต็มแรกหลังreversemerger; live compute contracted ARR22ล้านที่ประกาศส.ค.ไม่ใช่รายได้ทั้งปีที่รับรู้แล้ว.",
+      "analysis": "ปิดช่องว่างได้ด้วยงบกิจการที่ซื้อแทนใช้ประวัติwearable ตัวอย่างนี้แสดงชัดว่าcashcapexต่ำอาจเกิดจากleasefinancing ไม่ใช่ธุรกิจใช้ทุนน้อย เงินSAFE/warrantsและpreferredต้องวัดสิทธิแปลงสภาพและdilution พร้อมแยกfairvaluegains/lossesจากการขายcompute.",
+      "watch": "ติดตามARR→revenue→cashcollected, concentrationของลูกค้า, replacementcapexและสิทธิSAFEหลังควบรวม. ปี2023ไม่มีเพราะยังไม่ก่อตั้ง จึงไม่มีเหตุให้เติมประวัติสามปีสมมติ; ข้อสงสัยgoingconcernของMovanoเดิมไม่ใช่ความเห็นผู้สอบบัญชีของCorvexOpCoโดยอัตโนมัติ.",
+      "sources": [
+        "MOVEopco",
+        "MOVE26",
+        "MOVE"
+      ],
+      "coverage": "ตรวจงบOpCo2025+งวดตั้งกิจการ2024; ปี2023ไม่มีเพราะยังไม่ก่อตั้ง"
+    },
+    {
+      "symbol": "CHRN",
+      "name": "ChronoScale",
+      "market": "Nasdaq / สหรัฐฯ",
+      "category": "GPU cloud; ลูกของ APLD",
+      "currency": "USD",
+      "years": [
+        "FY2024/05",
+        "FY2025/05",
+        "FY2026/05"
+      ],
+      "revenue": [
+        29.0,
+        84.376,
+        71.604
+      ],
+      "net_income": [
+        null,
+        -72.73,
+        -50.32
+      ],
+      "cfo": [
+        null,
+        -7.222,
+        39.067
+      ],
+      "basis": "Cloud accounting predecessor; FY2024 revenue29.0ล้านจาก merger proxy MD&A (ปัด0.1ล้าน); NI/CFOปี2024ยังไม่reconcile carve-out; ไม่ต่อรายได้หุ่นยนต์Ekso",
+      "facts": "FY2026 Cloudมีลูกค้ารายเดียว และรับรู้รายได้71.604ล้าน ลดลงจาก84.376ล้าน; ลูกหนี้12.542ล้านเทียบ3.788ล้าน. APLDยังถือหุ้นประมาณ97% หลังดีลพ.ค.2026.",
+      "analysis": "เป็นตัวอย่างว่าความต้องการ AI ทั้งตลาดเติบโตได้พร้อมกับรายได้ provider รายหนึ่งลดลง การรับประกัน uptime/เงื่อนไขราคา/การย้าย workload มีผลมากกว่าจำนวน GPU ที่ติดตั้งอย่างเดียว CFOบวก39.067ล้านยังต้องอ่าน working capital และ supplier financing.",
+      "watch": "ตรวจอายุและวันหมดสัญญาลูกค้าหลัก การเก็บลูกหนี้หลังวันงบ และแผนทดแทน GPU. สองบริษัทจดทะเบียน APLD กับ CHRN ไม่ใช่สองแหล่งรายได้อิสระ.",
+      "sources": [
+        "CHRN",
+        "CHRNpre"
+      ],
+      "coverage": "สามปีรายได้Cloud; สองปีNI/CFOใน10-K; ปี2024carve-outทั้งชุดยังเป็นช่องว่าง"
+    },
+    {
+      "symbol": "KC",
+      "name": "Kingsoft Cloud",
+      "market": "Nasdaq / HKEX 3896",
+      "category": "General cloud + AI cloud",
+      "currency": "CNY",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        7047.461,
+        7785.18,
+        9558.619
+      ],
+      "net_income": [
+        -2176.34,
+        -1966.68,
+        -936.251
+      ],
+      "cfo": [
+        -169.07,
+        628.419,
+        3801.028
+      ],
+      "basis": "US GAAP; CNYล้าน; กำไรส่วนบริษัทแม่; ADRกับ3896.HKคือบริษัทเดียวกัน",
+      "facts": "สัดส่วนรายได้ Xiaomi เพิ่ม12.3%→16.4%→23.4% ใน2023–25 และ Kingsoft3.3%→3.8%→4.0%; เงินกู้ให้ Xiaomi 559.8ล้าน ณสิ้น2025. อายุอุปกรณ์อิเล็กทรอนิกส์3–5ปี แต่อาคาร/โครงสร้างพื้นฐานมีอายุบัญชีต่างกัน.",
+      "analysis": "related-party customers อาจช่วยการเติบโต แต่ต้องตรวจราคาค่าบริการ ระยะเวลาเก็บเงิน และการหมุนเงินไปกลับ CFOที่ดีขึ้นอย่างมากต้อง reconcile working capital/การจ่าย capex ไม่ใช่ถือว่าทั้งหมดมาจากกำไร AI.",
+      "watch": "ตรวจ related-party receivables, การชำระเงินจริงหลังวันงบ, arm’s-length pricing และ loans ที่ออกไปในขณะต้องลงทุนเอง. อย่าใช้ค่าเสื่อมอาคารเฉลี่ยแทนอายุ GPU.",
+      "sources": [
+        "KC"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "OVH",
+      "name": "OVHcloud",
+      "market": "Euronext Paris",
+      "category": "General cloud + GPU cloud",
+      "currency": "EUR",
+      "years": [
+        "FY2023/08",
+        "FY2024/08",
+        "FY2025/08"
+      ],
+      "revenue": [
+        897.299,
+        993.053,
+        1084.613
+      ],
+      "net_income": [
+        -40.3,
+        -10.3,
+        0.4
+      ],
+      "cfo": [
+        330,
+        368.2,
+        419.0
+      ],
+      "basis": "IFRS; NI และ CFOปัดตามเอกสารผลประกอบการ; กลุ่มรวม private/public/web cloud",
+      "facts": "FY2025 cash capex excluding acquisitionsประมาณ361.4ล้าน และ net debt excluding leases1,103ล้าน เพิ่มจาก667ล้านในFY2024 ส่วนหนึ่งเกี่ยวข้องกับ share buyback350ล้าน. Company unlevered FCF57.6ล้านมีนิยามต่างจากเงินสดเหลือผู้ถือหุ้น.",
+      "analysis": "ธุรกิจสร้าง CFO ได้ต่อเนื่องแต่การคืนทุนผู้ถือหุ้นด้วย buyback เพิ่มภาระหนี้ในช่วงต้องลงทุนแข่งขัน หากใช้ net debt excluding leases ต้องใส่คำนี้เสมอ ไม่เทียบตรงกับ vendor debtที่รวม leases ของ CRWV.",
+      "watch": "ดู maintenance capex จริง, lease principal, cash interest และกำหนด refinancings; แยก GPU usage/pricing ออกจาก public cloud ทั้งหมด. ทดสอบกรณี capexต่อรายได้ยังสูงแม้รายได้โตช้าลง.",
+      "sources": [
+        "OVH",
+        "OVH24"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "IONOS",
+      "name": "IONOS Group",
+      "market": "Xetra / เยอรมนี",
+      "category": "Hosting + general/GPU cloud",
+      "currency": "EUR",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        1423.734,
+        1248.07,
+        1316.894
+      ],
+      "net_income": [
+        174.231,
+        169.666,
+        229.693
+      ],
+      "cfo": [
+        314.496,
+        386.803,
+        391.859
+      ],
+      "basis": "FY2023 revenueรวม Sedo; FY2024–25 continuing revenueหลังแยก Sedo; NIส่วนบริษัทแม่และ CFOรวม discontinued ด้วย",
+      "facts": "FY2025 continuing profit202.350ล้าน เทียบ129.552ล้านปี2024 ต่างจากกำไรรวมในตารางเพราะ discontinued operations. Cloud/hostingเดิมมีฐานลูกค้ากระจาย แต่ไม่ได้เปิดกำไร GPU แยกที่ใช้วัดเศรษฐศาสตร์ GPU โดยตรง.",
+      "analysis": "การเห็นรายได้2023สูงกว่า2024แล้วสรุปว่าธุรกิจหดเป็นการเทียบคนละขอบเขต ต้องสร้าง continuing series ก่อน อีกจุดคือ related-party funding/cash pooling กับ United Internet ซึ่งต้องดูสิทธิเรียกเงินและต้นทุน.",
+      "watch": "ติดตาม segment Cloud Solutions และการเพิ่ม capacity เทียบยอดใช้จริง; ตรวจ impairment goodwill กับ terminal growth/WACC และ related-party balances. อย่าใช้ลูกค้า hosting จำนวนมากเป็นหลักฐานว่าลูกค้า GPU กระจายเท่ากัน.",
+      "sources": [
+        "IONOS",
+        "IONOS23"
+      ],
+      "coverage": "สามปี แต่ revenueมีการตัดธุรกิจ; ห้ามคำนวณgrowth2023→24ตรง ๆ"
+    },
+    {
+      "symbol": "DHH",
+      "name": "DHH / Seeweb",
+      "market": "Euronext Growth Milan",
+      "category": "Regional cloud + GPU cloud",
+      "currency": "EUR",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        33.677297,
+        35.890208,
+        40.304966
+      ],
+      "net_income": [
+        2.210961,
+        3.608781,
+        4.458696
+      ],
+      "cfo": [
+        9.058144,
+        9.179023,
+        11.153636
+      ],
+      "basis": "ใช้ net sales ไม่ใช่ total revenueรวมother income; NIส่วนบริษัทแม่; IFRS",
+      "facts": "FY2025 goodwill17.234ล้าน เพิ่มจากการซื้อกิจการราว6.870ล้าน; net cashประมาณ1.275ล้านหลังปี2024เป็นnet debt3.127ล้าน แต่ปี2025ได้รับทุนใหม่7.382ล้านด้วย. มี right-of-use investment4.983ล้านที่ไม่เท่ากับcash capex.",
+      "analysis": "ตัวเลขดูเติบโตพร้อมกำไรและCFO แต่ต้องแยก organic/ซื้อกิจการ และไม่ให้การเพิ่มทุนถูกอ่านว่าเงินสดมาจากกำไรทั้งหมด ขนาดเล็กทำให้การสูญเสียลูกค้า GPU รายใหญ่หรือ impairmentของCGUบางตัวมีผลต่อ equity มาก.",
+      "watch": "ตรวจ goodwill sensitivity และสัดส่วน cash capex/lease additions ของ Seeweb; bridge net cash หลังทุนใหม่; ติดตาม receivable concentration. บริษัทนี้มีรายได้ภูมิภาค/บริการอื่นด้วย ไม่ใช่ GPUล้วน.",
+      "sources": [
+        "DHH",
+        "DHH24"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "SAKURA",
+      "name": "Sakura Internet",
+      "market": "Tokyo 3778",
+      "category": "Sovereign/GPU cloud + hosting",
+      "currency": "JPY",
+      "years": [
+        "FY2024/03",
+        "FY2025/03",
+        "FY2026/03"
+      ],
+      "revenue": [
+        21826,
+        31412,
+        35301.649
+      ],
+      "net_income": [
+        651,
+        2937,
+        216.023
+      ],
+      "cfo": [
+        2884,
+        5787.563,
+        6223.575
+      ],
+      "basis": "Japanese GAAP; ใช้ financial results summaries + comparative; summariesไม่ใช่รายงานผู้สอบบัญชีเต็มฉบับ",
+      "facts": "FY2026 operating loss403.654ล้าน แม้รายได้โต; cash PP&E36,336.695ล้านและ intangible1,106.251ล้าน เทียบCFO6,223.575ล้าน เงินอุดหนุนรับ12,346.456ล้านอยู่ใน investing cash flow ไม่ใช่CFO.",
+      "analysis": "เงินอุดหนุนช่วยลดเงินลงทุนสุทธิแต่ไม่ได้ยืนยันว่า capacity ทำกำไรได้เอง ต้องแยกเงินรัฐที่ได้รับแล้วกับที่รออนุมัติ และเงื่อนไขคืนเงินเมื่อไม่ผ่าน milestone การโตของรายได้พร้อมoperating lossทำให้ utilizationสำคัญมาก.",
+      "watch": "คำนวณ funding gap หลัง CFO+grant เทียบgrosscapex และ debt/lease repayment; ติดตาม grants receivable, subsidy compliance และค่าเสื่อมของเครื่องที่เริ่มใช้. การเปลี่ยนestimateในปีเก่าต้องอ่านรายละเอียดก่อนกล่าวว่าเป็นGPUlife extension.",
+      "sources": [
+        "SAKURA",
+        "SAKURA25"
+      ],
+      "coverage": "สามปีตัวเลขผลประกอบการ; auditor opinionฉบับเต็มยังไม่ได้ทบทวน"
+    },
+    {
+      "symbol": "GMO",
+      "name": "GMO Internet",
+      "market": "Tokyo 4784",
+      "category": "Internet infrastructure + GPU cloud",
+      "currency": "JPY",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        14903.84,
+        12997.73,
+        78548
+      ],
+      "net_income": [
+        40.343,
+        -4.845,
+        5563
+      ],
+      "cfo": [
+        null,
+        6,
+        13669
+      ],
+      "basis": "FY2023–24คือฐาน GMO Ad Partners; รับโอนธุรกิจ infrastructureจากบริษัทแม่ต้น2025; CFO2023ยังไม่ยืนยัน",
+      "facts": "รายได้2025กระโดดเพราะการปรับโครงสร้างธุรกิจ ไม่ใช่ organic GPU growthกว่า500%. แหล่งรายได้มี domain/hosting/advertising/infra และทุน/หนี้จากกลุ่มต้องแยกตามนิติบุคคล4784กับ9449.",
+      "analysis": "กรณีนี้ชื่อบริษัทชวนให้ใช้ประวัติของบริษัทแม่ผิดตัวมากที่สุด ต้องระบุsecurity codeและscopeของconsolidationทุกครั้ง การเทียบmarginก่อนและหลังรับโอนจึงมีข้อจำกัดแม้ใช้สกุลเงินเดียวกัน.",
+      "watch": "ขอpro formaงบธุรกิจที่โอนย้อนหลัง, related-party transfer pricing, cash poolและปันผลหลังลงทุนGPU; ตรวจ GPU usage จริงแยกจากบริการinternet. ไม่อนุมานคุณภาพGPUจากกำไรของธุรกิจอื่น.",
+      "sources": [
+        "GMO",
+        "GMO24"
+      ],
+      "coverage": "สามปีคนละbusiness perimeter; CFO2023เป็นช่องว่าง"
+    },
+    {
+      "symbol": "DATASECTION",
+      "name": "Datasection",
+      "market": "Tokyo 3905",
+      "category": "AI data centers / GPU compute",
+      "currency": "JPY",
+      "years": [
+        "FY2024/03",
+        "FY2025/03",
+        "FY2026/03"
+      ],
+      "revenue": [
+        2229,
+        2942,
+        33605
+      ],
+      "net_income": [
+        -1261,
+        -654,
+        2801
+      ],
+      "cfo": [
+        333.604,
+        -83.408,
+        -4913.586
+      ],
+      "basis": "Japanese GAAP; FY2026 ใช้ AGM/annual securities report วันที่29มิ.ย.2026 ที่เผยแพร่ซ้ำบน RegFIS; หน่วย千円หาร1,000เป็นJPYล้าน",
+      "facts": "ธุรกิจ AI เริ่มรับรู้รายได้ก.ย.2025; FY2026 server usage expense25,154ล้านจากต้นทุนรวม27,208ล้าน สัญญาผ่านNOWNOWJapanไปยังลูกค้าcloudรายใหญ่ ขณะที่ CFO -4,913.586ล้านได้รับผลจากtrade receivablesเพิ่ม10,459ล้าน; เงินออกซื้อPP&E4,628.615ล้านและวางเงินประกัน3,180ล้าน. มีเงินรับจากการใช้สิทธิ warrants ออกหุ้น13,147.847ล้าน.",
+      "analysis": "กำไรกับเงินสดแยกกันชัด: รายได้และกำไรโตแต่เงินทุนจมในลูกหนี้ ต้องพิสูจน์การเก็บเงินจริงหลังวันงบก่อนสรุปคุณภาพกำไร อีกเรื่องคือ principal–agent: ควบคุมบริการก่อนส่งต่อจริงหรือเป็นนายหน้า การแสดงgrossที่ถูกต้องก็ยังทำให้รายได้สูงโดยmarginต่อรายได้ต่ำได้ การใช้เงินจากwarrantsพยุงรอบลงทุนสร้างdilutionแก่ผู้ถือหุ้นเดิม.",
+      "watch": "ตรวจ principal–agent assessment, สัญญาฝ่ายจัดหา/ลูกค้า, receivable collection, ภาระเช่าserverกับยอดสั่งGPU. FY2024–25เป็นธุรกิจข้อมูลเดิมมาก จึงไม่ใช่3ปีAIที่เทียบกันได้.",
+      "sources": [
+        "DATASECTION",
+        "DATASECTION25",
+        "DATASECTION26annual"
+      ],
+      "coverage": "สามปีรายได้/กำไร/CFO; เริ่มAIปลาย2025 จึงไม่ใช่สามปีAI operating record"
+    },
+    {
+      "symbol": "E2E",
+      "name": "E2E Networks",
+      "market": "NSE / อินเดีย",
+      "category": "GPU cloud",
+      "currency": "INR",
+      "years": [
+        "FY2024/03",
+        "FY2025/03",
+        "FY2026/03"
+      ],
+      "revenue": [
+        944.636,
+        1639.608,
+        2455.801
+      ],
+      "net_income": [
+        218.669,
+        474.943,
+        -155.659
+      ],
+      "cfo": [
+        428.633,
+        884.663,
+        1220.568
+      ],
+      "basis": "งบต้นทางหน่วย lakh; หาร10เพื่อแสดง INRล้าน; ไม่สับสนcroreกับmillion",
+      "facts": "FY2026 cash fixed-asset capex12,624.503ล้าน เทียบCFO1,220.568ล้านและขาดทุน155.659ล้าน; ปี2025มีinterest income324.654ล้านช่วยกำไร และการออกหุ้นเพิ่มทุนขนาดใหญ่ก่อนนำเงินไปซื้ออุปกรณ์.",
+      "analysis": "นี่เป็นรูปแบบที่EBITDAโตแต่กำไรสุทธิเสียหายเมื่อค่าเสื่อมของเครื่องใหม่เริ่มวิ่ง รายได้ดอกเบี้ยบนเงินเพิ่มทุนก่อนลงทุนไม่ใช่marginของGPU เมื่อเงินสดถูกใช้ไปผลดอกเบี้ยดังกล่าวย่อมไม่คงเดิม.",
+      "watch": "ตรวจcashcapexต่อcapacityที่ใช้งานจริง, useful life, utilizationของGPUรุ่นเก่า และcash commitments; แยกเงินฝากจากเงินสดใช้ได้ทันที. ใช้เงินทุนที่ได้รับจริงวางcash runwayโดยไม่ถือEBITDAเป็นFCF.",
+      "sources": [
+        "E2E",
+        "E2E25"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "SIFY",
+      "name": "Sify Technologies",
+      "market": "Nasdaq / อินเดีย",
+      "category": "Network + data centers + cloud",
+      "currency": "INR",
+      "years": [
+        "FY2024/03",
+        "FY2025/03",
+        "FY2026/03"
+      ],
+      "revenue": [
+        35634,
+        39886,
+        44877
+      ],
+      "net_income": [
+        169,
+        -785,
+        -1366
+      ],
+      "cfo": [
+        5935,
+        8647,
+        7176
+      ],
+      "basis": "IFRS; ใช้ชุดFY2026ที่ปัดเป็นINRล้านทั้งสามปี; NIรวมกลุ่ม; cloudอยู่ในหลายบริการ",
+      "facts": "FY2026 CFO7,176ล้านลดจาก8,647ล้านแม้รายได้โต เงินซื้อPP&E11,956ล้านสูงกว่าCFO. Gross trade receivables12,648ล้านและallowance expense164ล้านเป็นcritical audit matterด้านrecoverability; ลูกค้ารายหนึ่งมีรายได้8,809ล้านประมาณ19.6%ของยอดรวม.",
+      "analysis": "critical audit matterหมายถึงเรื่องที่ผู้สอบบัญชีต้องใช้ดุลยพินิจมาก ไม่ใช่qualified opinionโดยตัวมันเอง เมื่อขายทั้งnetwork/DC/cloudแก่ลูกค้ารายเดียว ความสัมพันธ์ของreceivablesกับการลงทุนต้องอ่านข้ามsegment.",
+      "watch": "ตรวจaging/รับชำระหลังวันงบ, capexcreditorและleasefinancing, แหล่งเงินระดับSISLและสิทธิผู้ลงทุนก่อนหุ้นสามัญ. อย่าใช้ยอดลูกค้า8,809/44,877เป็นมากกว่า20%โดยไม่ตรวจเลข แม้ข้อความMD&Aจะใช้ถ้อยคำดังกล่าว.",
+      "sources": [
+        "SIFY",
+        "SIFYmirror"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "UCLOUD",
+      "name": "UCloud",
+      "market": "SSE STAR 688158",
+      "category": "General cloud + GPU cloud",
+      "currency": "CNY",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        1515.2789,
+        1502.972,
+        1699.357
+      ],
+      "net_income": [
+        -342.7194,
+        -241.042,
+        -73.5534
+      ],
+      "cfo": [
+        138.0175,
+        122.0969,
+        242.5313
+      ],
+      "basis": "PRC GAAP; NIส่วนบริษัทแม่; 万元หาร100เป็นCNYล้าน; ใช้annual filingฉบับแก้ไขผ่านSina",
+      "facts": "ปลาย2025เปลี่ยนอายุGPUจาก4เป็น5ปีแบบprospective และมีgain63.8029ล้านจากการเปลี่ยนการวัดเงินลงทุนHaimaCloudหลังสูญเสียsignificant influence. มิถุนายน2026แก้ไขงบH1/Q3ปี2025เรื่องจังหวะรับรู้รายการดังกล่าวโดยไม่เปลี่ยนผลทั้งปี2025.",
+      "analysis": "ต้องแยกสองเรื่อง: useful-life changeเป็นการเปลี่ยนประมาณการที่อาจเหมาะสมหากมีหลักฐาน ส่วนการลงงวดผิดที่แก้ไขเป็นข้อผิดพลาดการรับรู้จริง ขาดทุนที่แคบลงจึงยังไม่พิสูจน์ว่าcorecloudทำกำไร โดยเฉพาะเมื่อnonrecurringgainมีขนาดใหญ่.",
+      "watch": "ตรวจเหตุผลยืดอายุจากข้อมูลขายต่อ/renewalจริง และแสดงnormalizedearningsที่ตัดgainครั้งเดียวพร้อมผลภาษี; ตรวจtimingที่เสียอำนาจมีอิทธิพลตามเอกสารคณะกรรมการ ไม่กล่าวว่าestimatechangeเท่ากับfraud.",
+      "sources": [
+        "UCLOUD",
+        "UCLOUDcorrection",
+        "UCLOUDestimate"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "QING",
+      "name": "QingCloud",
+      "market": "SSE STAR 688316",
+      "category": "General cloud + GPU cloud",
+      "currency": "CNY",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        335.693625,
+        272.066179,
+        228.104982
+      ],
+      "net_income": [
+        -170.072433,
+        -95.757721,
+        -66.663125
+      ],
+      "cfo": [
+        -110.46969,
+        -34.537329,
+        -21.455429
+      ],
+      "basis": "PRC GAAP; NIส่วนบริษัทแม่; อ่านcompanyannualfilingผ่านmirror",
+      "facts": "รายได้ลดสามปีและCFOติดลบต่อเนื่อง ส่วนผู้ถือหุ้นลดจาก179.481เป็น87.114และ21.513ล้านใน2023–25 ปี2025grossmarginบริการcloud4.89% ต่ำกว่ากลุ่มcloudproducts62.66%มาก.",
+      "analysis": "ทุนบางเป็นความเสี่ยงรองรับloss/impairment แต่ยังไม่เท่ากับพิสูจน์liquidityinsolvency ต้องดูcashmaturitiesเพิ่ม EBITDAรวมอาจถูกพยุงด้วยproductlicensesซึ่งไม่สะท้อนผลตอบแทนจากcloudcapacity.",
+      "watch": "ตรวจcashrunway, refinancing/equityraise, ARagingและgoodwill/assetimpairment; วัดcloudservicesgrossprofitแยกproducts. รายงานนี้ไม่ได้ยืนยันgoing-concernqualificationของผู้สอบบัญชี จึงไม่ติดป้ายว่ามีโดยอาศัยขาดทุนอย่างเดียว.",
+      "sources": [
+        "QING",
+        "QINGpdf"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "CAPITAL",
+      "name": "Capitalonline",
+      "market": "Shenzhen 300846",
+      "category": "IDC + GPU/general cloud",
+      "currency": "CNY",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        1243.287334,
+        1396.789414,
+        1236.589073
+      ],
+      "net_income": [
+        -340.078977,
+        -303.144023,
+        -170.034969
+      ],
+      "cfo": [
+        169.048664,
+        240.905308,
+        179.780923
+      ],
+      "basis": "PRC GAAP; NIส่วนบริษัทแม่; แยกIDClegacyกับcloud/AIGC",
+      "facts": "FY2025AIGCcustomerrevenue260.903ล้านโต65.88% แต่รายได้รวมลด11.47%; CFO179.781ล้านเทียบcashcapex384.111ล้าน และได้เงินขายfixedassets118.258ล้านในinvestingCF.",
+      "analysis": "การเปลี่ยนmixช่วยให้AIโตขณะธุรกิจเดิมหดได้ จึงอย่าคูณAIGCgrowthกับฐานรายได้ทั้งบริษัท เงินขายสินทรัพย์ช่วยสภาพคล่องเพียงครั้งเดียวและอาจลดcapacityเดิม ต้องตรวจว่าขายเพราะเปลี่ยนกลยุทธ์หรือจำเป็นต้องหาเงิน.",
+      "watch": "ติดตามsegmentmarginแทนgrowthอย่างเดียว, assetdisposalราคาขายเทียบbookvalue, capexpayablesและleaseprincipal. ดูว่ารายได้AIแปลงเป็นcashที่เพียงพอชดเชยIDCที่ลดลงเมื่อใด.",
+      "sources": [
+        "CAPITAL"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "AKAM",
+      "name": "Akamai / Linode",
+      "market": "Nasdaq / สหรัฐฯ",
+      "category": "Security/CDN + cloud compute",
+      "currency": "USD",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        3811.92,
+        3991.168,
+        4208.175
+      ],
+      "net_income": [
+        547.629,
+        504.918,
+        452.031
+      ],
+      "cfo": [
+        1348.439,
+        1519.171,
+        1518.765
+      ],
+      "basis": "US GAAP; กลุ่มรวม; revenuecloudcomputeไม่เท่ากับGPUrevenue",
+      "facts": "FY2025CloudCompute708.050ล้านประมาณ16.8%ของกลุ่ม แต่CloudInfrastructureServicesเป็นsubset314ล้าน ขณะที่Security/CDNมีขนาดใหญ่กว่า. CFOบวกมากต่อเนื่องจากหลายธุรกิจ.",
+      "analysis": "งบรวมมีความสามารถระดมทุนภายในดีกว่าผู้เริ่มต้นบางราย แต่ไม่สามารถสรุปว่าการเช่าGPUมีกำไรหรือมีmarginเท่ากลุ่มโดยไม่มีallocationของcapex/ค่าเสื่อม/ต้นทุนnetwork.",
+      "watch": "ตรวจsegmentcomputeprofitและincrementalcapexต่อรายได้ใหม่ รวมทั้งการโอนcostระหว่างCDNกับcompute; อย่าให้คุณภาพธุรกิจsecurityกลบunit economicsของAIที่ยังต้องพิสูจน์.",
+      "sources": [
+        "AKAM"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "DUG",
+      "name": "DUG Technology",
+      "market": "ASX / ออสเตรเลีย",
+      "category": "Scientific HPC as a service",
+      "currency": "USD",
+      "years": [
+        "FY2024/06",
+        "FY2025/06",
+        "FY2026/06"
+      ],
+      "revenue": [
+        65.501,
+        62.577,
+        86.387
+      ],
+      "net_income": [
+        3.324,
+        -4.408,
+        2.641
+      ],
+      "cfo": [
+        12.113,
+        5.58,
+        20.902
+      ],
+      "basis": "รายงานเป็นUSDไม่ใช่AUD; NIรวมNCI; ใช้CFOในprimarycashflowstatement (noteFY2026ต่าง0.001ล้าน)",
+      "facts": "HPCaaSrevenue3.367→2.379→11.488ล้าน หรือ13.3%ของรายได้ล่าสุด ที่เหลือส่วนใหญ่geophysicalservicesและsoftware. FY2026เงินลงทุนPP&E11.508ล้านเทียบCFO20.902ล้าน.",
+      "analysis": "อยู่ในขอบเขตแบบadjacentHPCเพราะขายกำลังประมวลผลจริง แต่ไม่ควรตีความอุปสงค์ประมวลผลธรณีฟิสิกส์ว่าเคลื่อนไหวเหมือนLLMtrainingทั้งหมด ลูกค้าและงบลงทุนอุตสาหกรรมพลังงานทำให้cycleต่างออกไป.",
+      "watch": "ตรวจHPCaaSrenewalและcashmarginแยกservices, usefullifeของอุปกรณ์และการลงทุนsoftware. ต้องระวังการนำCFOรวมที่มาจากservicesไปอ้างว่าบริการHPCได้ผลตอบแทนเท่ากัน.",
+      "sources": [
+        "DUG",
+        "DUG25"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "RXT",
+      "name": "Rackspace Technology",
+      "market": "Nasdaq / สหรัฐฯ",
+      "category": "Managed cloud + GPU cloud",
+      "currency": "USD",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        2957.1,
+        2737.1,
+        2685.7
+      ],
+      "net_income": [
+        -837.8,
+        -858.2,
+        -225.8
+      ],
+      "cfo": [
+        374.9,
+        39.9,
+        151.4
+      ],
+      "basis": "US GAAP; consolidated revenue จาก annual report FY2025, segment/geographical note; historical managed cloud ไม่ใช่ GPU ล้วน",
+      "facts": "ปี2023–24มีgoodwillimpairment708.8และ714.9ล้าน ปี2025ไม่มีรายการดังกล่าวจึงทำให้netlossลดลงมาก CFO151.4ล้านเทียบcashPP&E/software60.8ล้าน แต่ยังจ่ายfinanceleaseprincipal56.6ล้านและfinancingobligations15.9ล้าน.",
+      "analysis": "ขาดทุนที่ดีขึ้นเมื่อimpairmentหายไปไม่เท่ากับunit economicsพลิกบวก โครงสร้างหนี้อยู่หลายrestrictedgroups ทำให้เงินสดรวมกับเงินสดที่เจ้าหนี้ชุดหนึ่งเรียกร้องได้ต่างกัน.",
+      "watch": "ข้อตกลงAMDมิ.ย.2026วางแผนdeployment30MWปลาย2026–28: แยกfuturecapacityกับrecognizedrevenue ตรวจfundingต่อphase, contractedcustomersและguarantorgroup. อย่าหักแค่cashcapexแล้วเรียกเงินที่เหลือทั้งหมดเป็นFCFผู้ถือหุ้น.",
+      "sources": [
+        "RXT",
+        "RXTdeal"
+      ],
+      "coverage": "สามปี; ตัวเลขรวมกลุ่ม ไม่ใช่ GPU segment ล้วน"
+    },
+    {
+      "symbol": "NB2",
+      "name": "Northern Data / Taiga (acquiree ของ RUM)",
+      "market": "เยอรมนี / NB2; ประวัติก่อนควบรวม",
+      "category": "GPU cloud + discontinued mining",
+      "currency": "EUR",
+      "years": [
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "revenue": [
+        77.527,
+        121.087,
+        80.042
+      ],
+      "net_income": [
+        -151.055,
+        -127.443,
+        -390.173
+      ],
+      "cfo": [
+        -17.601,
+        -58.461,
+        29.213
+      ],
+      "basis": "IFRS; FY2024–25รายได้continuingหลังแยกPeakMining; FY2023รายได้รวมเดิมส่วนใหญ่mining; NI/CFOยังรวมdiscontinued จึงห้ามหารCFO/revenueตรง ๆ",
+      "facts": "S-4แนบงบตรวจแล้ว2025/2024และcomparatives2023. FY2025รายได้continuing80.042ล้านลดจาก121.087ล้าน และมีdepreciation/amortization/impairmentของcontinuing380.178ล้าน; CFOรวม29.213ล้านมีworkingcapitalและเงินขายคริปโตจากminingเดิมหนุน ขายPeakMiningทำให้ผลdiscontinuedเป็นบวก92.556ล้าน ขณะที่continuingloss482.729ล้าน.",
+      "analysis": "Taigaเป็นตัวอย่างที่capacityลงทุนแล้วไม่ได้รับประกันการโตของรายได้ในทุกปี การขายกิจการและimpairmentเปลี่ยนกำไร/สินทรัพย์อย่างมาก ต้องแยกเงินที่เกิดจากdisposeออกจากเงินให้บริการต่อเนื่อง เมื่อRUMซื้อ85.2%ใน17มิ.ย.2026 การวิเคราะห์เริ่มต้องรวมpurchasepriceallocationและเงินทุนจากคู่ค้าที่เป็นผู้ถือหุ้น.",
+      "watch": "ตรวจrenewal/collectionของTaiga, impairment assumptionsและrelated-partyfinancing; อ่านIFRS→USGAAPproformabridgeก่อนเทียบRUM. งบชุดนี้เป็นส่วนต่อของRUManalysis ไม่ให้นำยอดไปบวกกับRUMหลังacquisitionซ้ำ; ไม่อ้างสถานะdelistingสุดท้ายที่ยังไม่ยืนยัน.",
+      "sources": [
+        "NDannual",
+        "RUMdeal"
+      ],
+      "coverage": "สามปีงบacquiree; FY2023คนละmixและFY2024recast discontinued"
+    }
+  ],
+  "sources": {
+    "CRWV": "https://www.sec.gov/Archives/edgar/data/1769628/000176962826000104/crwv-20251231.htm",
+    "NBIS": "https://www.sec.gov/Archives/edgar/data/1513845/000110465926052948/nbis-20251231x20f.htm",
+    "IREN": "https://www.sec.gov/Archives/edgar/data/1878848/000187884826000052/iren-20260630.htm",
+    "HUT": "https://www.sec.gov/Archives/edgar/data/1964789/000110465926019392/hut-20251231x10k.htm",
+    "WULF": "https://www.sec.gov/Archives/edgar/data/1083301/000108330126000031/wulf-20251231.htm",
+    "APLD": "https://www.sec.gov/Archives/edgar/data/1144879/000114487926000048/apld-20260531.htm",
+    "CIFR": "https://www.sec.gov/Archives/edgar/data/1819989/000181998926000009/cifr-20251231.htm",
+    "CORZ": "https://investors.corescientific.com/sec-filings/all-sec-filings/content/0001628280-26-013305/core-20251231.htm",
+    "GLXY": "https://www.sec.gov/Archives/edgar/data/1859392/000185939226000016/glxy-20251231.htm",
+    "BTDR": "https://www.sec.gov/Archives/edgar/data/1899123/000121390026049770/ea0282628-20f_bitdeer.htm",
+    "WYFI": "https://www.sec.gov/Archives/edgar/data/2042022/000121390026034341/ea0278305-10k_white.htm",
+    "BTBT": "https://www.sec.gov/Archives/edgar/data/1710350/000121390026035544/ea0279621-10k_bitdigit.htm",
+    "HIVE": "https://www.sec.gov/Archives/edgar/data/1720424/000106299326002973/form10k.htm",
+    "DOCN": "https://www.sec.gov/Archives/edgar/data/1582961/000158296126000019/docn-20251231.htm",
+    "RUM": "https://www.sec.gov/Archives/edgar/data/1830081/000121390026024099/ea0277968-10k_rumble.htm",
+    "SHAZ": "https://www.sec.gov/Archives/edgar/data/2068385/000149315226014068/form10-k.htm",
+    "CRWVQ2": "https://www.sec.gov/Archives/edgar/data/1769628/000176962826000366/crwv-20260630.htm",
+    "CORZ24A": "https://investors.corescientific.com/sec-filings/all-sec-filings/content/0001628280-26-013232/core-20241231.htm",
+    "CORZ8K": "https://investors.corescientific.com/sec-filings/all-sec-filings/content/0001628280-26-013214/core-20260302.htm",
+    "BTDRmirror": "https://cdn.yahoofinance.com/prod/sec-filings/0001899123/000121390026049770/ea0282628-20f_bitdeer.htm",
+    "CHRN": "https://ir.chronoscale.com/financials-filings/all-sec-filings/content/0001628280-26-058018/chrn-20260531.htm",
+    "CHRNpre": "https://ir.chronoscale.com/financials-filings/all-sec-filings/content/0001437749-26-009267/ekso-20251231.htm",
+    "MOVE": "https://www.sec.gov/Archives/edgar/data/1734750/000121390026036609/ea0278320-10k_corvex.htm",
+    "MOVE26": "https://www.sec.gov/Archives/edgar/data/1734750/000121390026090115/ea030200401ex99-1.htm",
+    "MOVEopco": "https://www.sec.gov/Archives/edgar/data/1734750/000121390026050668/ea028834301ex99-2.htm",
+    "NBISmirror": "https://cdn.yahoofinance.com/prod/sec-filings/0001513845/000110465926052948/nbis-20251231x20f.htm",
+    "NDannual": "https://www.sec.gov/Archives/edgar/data/1830081/000121390026043611/ea0270012-05.htm",
+    "RUMdeal": "https://www.sec.gov/Archives/edgar/data/1830081/000121390026095047/ea0303717-8ka1_rumgroup.htm",
+    "KC": "https://ir.ksyun.com/static-files/47c93910-2590-4dca-992d-ca3a2779fb16",
+    "SIFY": "https://www.sec.gov/Archives/edgar/data/1094324/000155485526001437/sify-20260331.htm",
+    "SIFYmirror": "https://cdn.yahoofinance.com/prod/sec-filings/0001094324/000155485526001437/sify-20260331.htm",
+    "AKAM": "https://www.ir.akamai.com/static-files/984955f9-2334-48f7-9312-5245579ec14d",
+    "OVH": "https://corporate.ovhcloud.com/sites/default/files/2025-11/ovh_urd_2025_en_mel_25_11_14.pdf",
+    "OVH24": "https://corporate.ovhcloud.com/sites/default/files/2024-12/ovh_urd_2024_en_mel_24_12_02_0.pdf",
+    "IONOS": "https://www.ionos-group.com/fileadmin/Publications/Berichte/FY_2025/IONOS_Annual_Report_2025.pdf",
+    "IONOS23": "https://www.ionos-group.com/fileadmin/Publications/Berichte/IONOS_Group_SE_Annual_Report_2023.pdf",
+    "DHH": "https://www.dhh.international/wp-content/uploads/2026/04/FBC31122025_EN.pdf",
+    "DHH24": "https://www.dhh.international/wp-content/uploads/2025/04/FBC31122024_EN.pdf",
+    "SAKURA": "https://www.sakura.ad.jp/corporate/wp-content/uploads/2026/04/260427-ir_1.pdf",
+    "SAKURA25": "https://www.sakura.ad.jp/corporate/wp-content/uploads/2025/04/250428-ir_1.pdf",
+    "GMO": "https://internet.gmo/pdf/presen/gmointernet_fy2025_full-year_j_financial_report.pdf",
+    "GMO24": "https://internet.gmo/pdf/shareholder/gmointernet_j_stockholders_20250319_01.pdf",
+    "DATASECTION": "https://www.datasection.co.jp/en-financial-report/en-ir-20260608001.pdf",
+    "DATASECTION25": "https://www.datasection.co.jp/en-financial-report/en-ir-20250515004.pdf",
+    "DATASECTION26annual": "https://regfis.com/reports/20260629_S100YMGV_E31131_null_010_030000_120",
+    "E2E": "https://e2e-mainsite-ui.objectstore.e2enetworks.net/Financial_Compliance/Financial_Information/Financial_Results/20252026/Audit_financial_Results_for_the_Financial_year_ended_March_31_03_2026.pdf",
+    "E2E25": "https://e2e-mainsite-ui.objectstore.e2enetworks.net/Financial_Compliance/Financial_Information/Financial_Results/20242025/Audit_financial_Results_for_the_Financial_year_ended_March_31_2025_31_03_2025.pdf",
+    "UCLOUD": "https://vip.stock.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=12394452",
+    "UCLOUDcorrection": "https://money.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=12394451&stockid=688158",
+    "UCLOUDestimate": "https://vip.stock.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=11575513&stockid=688158",
+    "QING": "https://vip.stock.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=12277316",
+    "QINGpdf": "https://static.cninfo.com.cn/finalpage/2026-04-30/1225257030.PDF",
+    "CAPITAL": "https://money.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=12005520&stockid=300846",
+    "DUG": "https://dug.com/wp-content/uploads/2026/08/260827_DUG_FY26_Consolidated_Annual_Report_ASX.pdf",
+    "DUG25": "https://dug.com/wp-content/uploads/2025/08/DUG_Annual_Report_FY25_ASX.pdf",
+    "RXT": "https://ir.rackspace.com/static-files/0dc12411-3dc0-4989-a5f9-4c17aa51cccb",
+    "RXTdeal": "https://www.rackspace.com/newsroom/amd-and-rackspace-technology-sign-definitive-agreement-phased-deployment",
+    "FPT": "https://bctn2025.fpt.com/wp-content/uploads/2026/04/Annual-Report-2025.pdf",
+    "YTL": "https://www.ytlpowerinternational.com/wp-content/uploads/sites/2/2025/10/YTLPower_AR2025.pdf",
+    "BSAI": "https://www.sec.gov/Archives/edgar/data/1416090/000149315226014362/form10-k.htm"
+  },
+  "profile_count": 34,
+  "scope": "Original ten plus worldwide listed providers/adjacent infrastructure identified; not a certified global census; gaps explicit"
+}

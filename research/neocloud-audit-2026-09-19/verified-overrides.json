@@ -1,0 +1,45 @@
+{
+  "RUM": {
+    "facts": "RUMซื้อNorthernData85.2%เมื่อ17มิ.ย.2026; S-4/8-K/Aแนบงบacquireeที่ตรวจแล้ว2025/2024และcomparatives2023 ซึ่งนำมาแสดงแยกในprofileNB2. ปี2025RUMเดิมยังเผาเงินสดจากการดำเนินงาน70.430ล้านUSD; ตารางRUM2023–25ไม่รวมTaigaที่เพิ่งซื้อปี2026.",
+    "watch": "อ่านงบacquireeNB2ในรายงานนี้ควบคู่proformaIFRS→USGAAP และpurchasepriceallocationหลังปิดดีล; ตรวจเงินกู้/สิทธิแปลงสภาพจากผู้ให้ทุนที่เป็นคู่ค้า รวมถึงimpairmentของสินทรัพย์ที่ซื้อ. ไม่บวกNorthernDataซ้ำกับRUMหลังรวมงบ และไม่ถือproformaเป็นactualhistoricalresults.",
+    "sources": ["RUM", "RUMdeal", "NDannual"],
+    "coverage": "สามปีRUM + งบNorthernDataสามปีแยกในNB2profile; งบรวมใหม่หลังM&Aต่างฐาน"
+  },
+  "MOVE": {
+    "years": ["2023 (ยังไม่ก่อตั้ง)", "21ต.ค.–31ธ.ค.2024", "2025"],
+    "revenue": [null, 0, 7.102],
+    "net_income": [null, -4.311, -9.517],
+    "cfo": [null, -0.316, -4.023],
+    "basis": "US GAAP audited Corvex OpCo predecessor: ก่อตั้ง21ต.ค.2024 จึงไม่มีปี2023; ไม่ใช่ตัวเลขMovano wearableเดิม; งบตรวจโดยBDOตามGAASและไม่มีการปรับความเห็น",
+    "facts": "FY2025รายได้7.102ล้าน CFO -4.023ล้าน ขาดทุน9.517ล้าน ลูกค้ารายใหญ่สามราย32%/19%/16%; รับเงินSAFE37.202ล้าน และจัดหาfinanceleaseROUassets11.698ล้านที่ไม่อยู่cashPP&E1.128ล้าน. Q2ปี2026เป็นไตรมาสเต็มแรกหลังreversemerger; live compute contracted ARR22ล้านที่ประกาศส.ค.ไม่ใช่รายได้ทั้งปีที่รับรู้แล้ว.",
+    "analysis": "ปิดช่องว่างได้ด้วยงบกิจการที่ซื้อแทนใช้ประวัติwearable ตัวอย่างนี้แสดงชัดว่าcashcapexต่ำอาจเกิดจากleasefinancing ไม่ใช่ธุรกิจใช้ทุนน้อย เงินSAFE/warrantsและpreferredต้องวัดสิทธิแปลงสภาพและdilution พร้อมแยกfairvaluegains/lossesจากการขายcompute.",
+    "watch": "ติดตามARR→revenue→cashcollected, concentrationของลูกค้า, replacementcapexและสิทธิSAFEหลังควบรวม. ปี2023ไม่มีเพราะยังไม่ก่อตั้ง จึงไม่มีเหตุให้เติมประวัติสามปีสมมติ; ข้อสงสัยgoingconcernของMovanoเดิมไม่ใช่ความเห็นผู้สอบบัญชีของCorvexOpCoโดยอัตโนมัติ.",
+    "sources": ["MOVEopco", "MOVE26", "MOVE"],
+    "coverage": "ตรวจงบOpCo2025+งวดตั้งกิจการ2024; ปี2023ไม่มีเพราะยังไม่ก่อตั้ง"
+  },
+  "NBIS": {
+    "cfo": [-222.0, -269.9, 401.9],
+    "basis": "รายได้และCFOเป็นcontinuingoperations; NIส่วนบริษัทแม่ยังรวมผลdiscontinued; CFOรวมทุกกิจกรรมดำเนินงานเดิมคือ829.8/245.6/384.8ล้านใน2023/24/25",
+    "facts": "FY2025 CFOcontinuing401.9ล้านมีเงินรับล่วงหน้าจากstrategiccustomers982.5ล้านหนุน มีinvestmentrevaluationgain598.9ล้าน และซื้อPP&E/intangibles4,066ล้าน. ผู้สอบบัญชีให้adverseopinionต่อICFRจากmaterialweaknessเรื่องPP&EและกระบวนการrevenueของTripleTen แต่ให้unqualifiedopinionต่องบการเงิน.",
+    "analysis": "กำไรสุทธิรวมไม่ยืนยันว่าเช่าGPUมีกำไร เพราะมีผลเงินลงทุนและกิจการที่เลิกดำเนินงาน ประวัติYandexเดิมกับNebiusปัจจุบันต่างกัน ต้องแยกcashadvanceออกจากrecurringcashconversionและติดตามcontrolsเมื่อสินทรัพย์โตเร็ว การมีweaknessด้านTripleTenไม่ใช่หลักฐานว่าAIrevenueผิดทั้งหมด.",
+    "watch": "สร้างbridgeจากAIsegmentoperatingresultสู่GAAPNI; ดูcashcollection/ARและการเริ่มให้บริการตามstrategiccontracts; ตรวจPP&Eregister, cutoffการเริ่มคิดค่าเสื่อม และremediationของICFRจาก20-Fฉบับเต็มที่อ่านผ่านfilingmirror.",
+    "sources": ["NBIS", "NBISmirror"],
+    "coverage": "สามปีcontinuingrevenue/CFOและNIรวม; มีการขายกิจการและadverseICFRต้องอ่านแยก"
+  },
+  "RXT": {
+    "revenue": [2957.1, 2737.1, 2685.7],
+    "basis": "US GAAP; consolidated revenue จาก annual report FY2025, segment/geographical note; historical managed cloud ไม่ใช่ GPU ล้วน"
+  },
+  "DATASECTION": {
+    "cfo": [333.604, -83.408, -4913.586],
+    "basis": "Japanese GAAP; FY2026 ใช้ AGM/annual securities report วันที่29มิ.ย.2026 ที่เผยแพร่ซ้ำบน RegFIS; หน่วย千円หาร1,000เป็นJPYล้าน",
+    "facts": "ธุรกิจ AI เริ่มรับรู้รายได้ก.ย.2025; FY2026 server usage expense25,154ล้านจากต้นทุนรวม27,208ล้าน สัญญาผ่านNOWNOWJapanไปยังลูกค้าcloudรายใหญ่ ขณะที่ CFO -4,913.586ล้านได้รับผลจากtrade receivablesเพิ่ม10,459ล้าน; เงินออกซื้อPP&E4,628.615ล้านและวางเงินประกัน3,180ล้าน. มีเงินรับจากการใช้สิทธิ warrants ออกหุ้น13,147.847ล้าน.",
+    "analysis": "กำไรกับเงินสดแยกกันชัด: รายได้และกำไรโตแต่เงินทุนจมในลูกหนี้ ต้องพิสูจน์การเก็บเงินจริงหลังวันงบก่อนสรุปคุณภาพกำไร อีกเรื่องคือ principal–agent: ควบคุมบริการก่อนส่งต่อจริงหรือเป็นนายหน้า การแสดงgrossที่ถูกต้องก็ยังทำให้รายได้สูงโดยmarginต่อรายได้ต่ำได้ การใช้เงินจากwarrantsพยุงรอบลงทุนสร้างdilutionแก่ผู้ถือหุ้นเดิม.",
+    "coverage": "สามปีรายได้/กำไร/CFO; เริ่มAIปลาย2025 จึงไม่ใช่สามปีAI operating record"
+  },
+  "CHRN": {
+    "revenue": [29.0, 84.376, 71.604],
+    "basis": "Cloud accounting predecessor; FY2024 revenue29.0ล้านจาก merger proxy MD&A (ปัด0.1ล้าน); NI/CFOปี2024ยังไม่reconcile carve-out; ไม่ต่อรายได้หุ่นยนต์Ekso",
+    "coverage": "สามปีรายได้Cloud; สองปีNI/CFOใน10-K; ปี2024carve-outทั้งชุดยังเป็นช่องว่าง"
+  }
+}

@@ -1,0 +1,1426 @@
+{
+  "CRWV": {
+    "incomeStatementHistory": {
+      "incomeStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 5131000000,
+          "grossProfit": 3678000000,
+          "netIncome": -1167000000,
+          "basicEPS": -2.75
+        },
+        {
+          "endDate": "2024-12-31",
+          "totalRevenue": 1915000000,
+          "grossProfit": 1422000000,
+          "netIncome": -863000000,
+          "basicEPS": -2.018966
+        },
+        {
+          "endDate": "2023-12-31",
+          "totalRevenue": 229000000,
+          "grossProfit": 160000000,
+          "netIncome": -594000000,
+          "basicEPS": -1.471291
+        },
+        {
+          "endDate": "2022-12-31",
+          "totalRevenue": 15830000,
+          "grossProfit": 3708000,
+          "netIncome": -31055000,
+          "basicEPS": -0.076921
+        }
+      ]
+    },
+    "incomeStatementHistoryQuarterly": {
+      "incomeStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "totalRevenue": 2575000000,
+          "grossProfit": 1696000000,
+          "netIncome": -626000000,
+          "basicEPS": -1.14
+        },
+        {
+          "endDate": "2026-03-31",
+          "totalRevenue": 2078000000,
+          "grossProfit": 1362000000,
+          "netIncome": -740000000,
+          "basicEPS": -1.4
+        },
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 1571904000,
+          "grossProfit": 1062789000,
+          "netIncome": -451726000,
+          "basicEPS": -0.89
+        },
+        {
+          "endDate": "2025-09-30",
+          "totalRevenue": 1364676000,
+          "grossProfit": 995852000,
+          "netIncome": -110124000,
+          "basicEPS": -0.22
+        },
+        {
+          "endDate": "2025-06-30",
+          "totalRevenue": 1212000000,
+          "grossProfit": 899000000,
+          "netIncome": -290000000,
+          "basicEPS": -0.6
+        },
+        {
+          "endDate": "2025-03-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        },
+        {
+          "endDate": "2024-12-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        }
+      ]
+    },
+    "cashflowStatementHistory": {
+      "cashflowStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -7251000000
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": -5953000000
+        },
+        {
+          "endDate": "2023-12-31",
+          "freeCashflow": -1110000000
+        },
+        {
+          "endDate": "2022-12-31",
+          "freeCashflow": -71494000
+        }
+      ]
+    },
+    "cashflowStatementHistoryQuarterly": {
+      "cashflowStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "freeCashflow": -5743000000
+        },
+        {
+          "endDate": "2026-03-31",
+          "freeCashflow": -4711000000
+        },
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -2500812000
+        },
+        {
+          "endDate": "2025-09-30",
+          "freeCashflow": -700188000
+        },
+        {
+          "endDate": "2025-06-30",
+          "freeCashflow": -2704000000
+        },
+        {
+          "endDate": "2025-03-31",
+          "freeCashflow": null
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": null
+        }
+      ]
+    }
+  },
+  "NBIS": {
+    "incomeStatementHistory": {
+      "incomeStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 529800000,
+          "grossProfit": 363600000,
+          "netIncome": 82500000,
+          "basicEPS": 0.34
+        },
+        {
+          "endDate": "2024-12-31",
+          "totalRevenue": 91500000,
+          "grossProfit": 47800000,
+          "netIncome": -641400000,
+          "basicEPS": -2.28
+        },
+        {
+          "endDate": "2023-12-31",
+          "totalRevenue": 9800000,
+          "grossProfit": -9800000,
+          "netIncome": 241300000,
+          "basicEPS": 0.65
+        },
+        {
+          "endDate": "2022-12-31",
+          "totalRevenue": 13500000,
+          "grossProfit": -14900000,
+          "netIncome": 745600000,
+          "basicEPS": 2.03
+        },
+        {
+          "endDate": "2021-12-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        }
+      ]
+    },
+    "incomeStatementHistoryQuarterly": {
+      "incomeStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "totalRevenue": 582300000,
+          "grossProfit": 448700000,
+          "netIncome": -190400000,
+          "basicEPS": -0.68
+        },
+        {
+          "endDate": "2026-03-31",
+          "totalRevenue": 399000000,
+          "grossProfit": 295200000,
+          "netIncome": 621200000,
+          "basicEPS": 2.4
+        },
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 227700000,
+          "grossProfit": 159200000,
+          "netIncome": -268800000,
+          "basicEPS": -0.986495
+        },
+        {
+          "endDate": "2025-09-30",
+          "totalRevenue": 146100000,
+          "grossProfit": 103200000,
+          "netIncome": -119600000,
+          "basicEPS": -0.5
+        },
+        {
+          "endDate": "2025-06-30",
+          "totalRevenue": 105100000,
+          "grossProfit": 75000000,
+          "netIncome": 584400000,
+          "basicEPS": 2.45
+        }
+      ]
+    },
+    "cashflowStatementHistory": {
+      "cashflowStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -3681200000
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": -561900000
+        },
+        {
+          "endDate": "2023-12-31",
+          "freeCashflow": 746900000
+        },
+        {
+          "endDate": "2022-12-31",
+          "freeCashflow": 682400000
+        },
+        {
+          "endDate": "2021-12-31",
+          "freeCashflow": null
+        }
+      ]
+    },
+    "cashflowStatementHistoryQuarterly": {
+      "cashflowStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "freeCashflow": -3411300000
+        },
+        {
+          "endDate": "2026-03-31",
+          "freeCashflow": -214900000
+        },
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -1221700000
+        },
+        {
+          "endDate": "2025-09-30",
+          "freeCashflow": -1035900000
+        },
+        {
+          "endDate": "2025-06-30",
+          "freeCashflow": -682200000
+        },
+        {
+          "endDate": "2025-03-31",
+          "freeCashflow": null
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": null
+        }
+      ]
+    }
+  },
+  "IREN": {
+    "incomeStatementHistory": {
+      "incomeStatementHistory": [
+        {
+          "endDate": "2026-06-30",
+          "totalRevenue": 707007000,
+          "grossProfit": 440635000,
+          "netIncome": -702621000,
+          "basicEPS": null
+        },
+        {
+          "endDate": "2025-06-30",
+          "totalRevenue": 501023000,
+          "grossProfit": 318394000,
+          "netIncome": 86941000,
+          "basicEPS": 0.41
+        },
+        {
+          "endDate": "2024-06-30",
+          "totalRevenue": 187192000,
+          "grossProfit": 83513000,
+          "netIncome": -28920000,
+          "basicEPS": -0.29
+        },
+        {
+          "endDate": "2023-06-30",
+          "totalRevenue": 75509000,
+          "grossProfit": 21121000,
+          "netIncome": -171827000,
+          "basicEPS": -3.14
+        },
+        {
+          "endDate": "2022-06-30",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": -10.253
+        }
+      ]
+    },
+    "incomeStatementHistoryQuarterly": {
+      "incomeStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "totalRevenue": 137225000,
+          "grossProfit": 85431000,
+          "netIncome": -683999000,
+          "basicEPS": null
+        },
+        {
+          "endDate": "2026-03-31",
+          "totalRevenue": 144795000,
+          "grossProfit": 93570000,
+          "netIncome": -247827000,
+          "basicEPS": -0.74
+        },
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 184692000,
+          "grossProfit": 110376000,
+          "netIncome": -155407000,
+          "basicEPS": -0.52
+        },
+        {
+          "endDate": "2025-09-30",
+          "totalRevenue": 240295000,
+          "grossProfit": 151258000,
+          "netIncome": 384611000,
+          "basicEPS": 1.42
+        },
+        {
+          "endDate": "2025-06-30",
+          "totalRevenue": 187292000,
+          "grossProfit": 50470000,
+          "netIncome": 95546000,
+          "basicEPS": 0.685385
+        },
+        {
+          "endDate": "2025-03-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": -0.07
+        },
+        {
+          "endDate": "2024-12-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        }
+      ]
+    },
+    "cashflowStatementHistory": {
+      "cashflowStatementHistory": [
+        {
+          "endDate": "2026-06-30",
+          "freeCashflow": -2350426000
+        },
+        {
+          "endDate": "2025-06-30",
+          "freeCashflow": -1126741000
+        },
+        {
+          "endDate": "2024-06-30",
+          "freeCashflow": -427690000
+        },
+        {
+          "endDate": "2023-06-30",
+          "freeCashflow": -110335000
+        },
+        {
+          "endDate": "2022-06-30",
+          "freeCashflow": null
+        }
+      ]
+    },
+    "cashflowStatementHistoryQuarterly": {
+      "cashflowStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "freeCashflow": -167061000
+        },
+        {
+          "endDate": "2026-03-31",
+          "freeCashflow": -1279903000
+        },
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -765204000
+        },
+        {
+          "endDate": "2025-09-30",
+          "freeCashflow": -138258000
+        },
+        {
+          "endDate": "2025-06-30",
+          "freeCashflow": 49220000
+        },
+        {
+          "endDate": "2025-03-31",
+          "freeCashflow": null
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": null
+        }
+      ]
+    }
+  },
+  "HUT": {
+    "incomeStatementHistory": {
+      "incomeStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 235118000,
+          "grossProfit": 127344000,
+          "netIncome": -226149000,
+          "basicEPS": -2.054194
+        },
+        {
+          "endDate": "2024-12-31",
+          "totalRevenue": 162385000,
+          "grossProfit": 75730000,
+          "netIncome": 331882000,
+          "basicEPS": 3.336235
+        },
+        {
+          "endDate": "2023-06-30",
+          "totalRevenue": 86737000,
+          "grossProfit": 43625000,
+          "netIncome": -65611000,
+          "basicEPS": -0.740948
+        },
+        {
+          "endDate": "2022-06-30",
+          "totalRevenue": 79185000,
+          "grossProfit": 53402000,
+          "netIncome": -31803000,
+          "basicEPS": -0.359153
+        }
+      ]
+    },
+    "incomeStatementHistoryQuarterly": {
+      "incomeStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "totalRevenue": 74932000,
+          "grossProfit": 48041000,
+          "netIncome": -150191000,
+          "basicEPS": -1.27
+        },
+        {
+          "endDate": "2026-03-31",
+          "totalRevenue": 71017000,
+          "grossProfit": 45469000,
+          "netIncome": -219849000,
+          "basicEPS": -1.98
+        },
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 88494000,
+          "grossProfit": 53485000,
+          "netIncome": -279681000,
+          "basicEPS": -2.540445
+        },
+        {
+          "endDate": "2025-09-30",
+          "totalRevenue": 83510000,
+          "grossProfit": 51180000,
+          "netIncome": 50109000,
+          "basicEPS": 0.48
+        },
+        {
+          "endDate": "2025-06-30",
+          "totalRevenue": 41299000,
+          "grossProfit": 19523000,
+          "netIncome": 137312000,
+          "basicEPS": 1.32
+        },
+        {
+          "endDate": "2025-03-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        },
+        {
+          "endDate": "2024-12-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        }
+      ]
+    },
+    "cashflowStatementHistory": {
+      "cashflowStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -787312000
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": -333131000
+        },
+        {
+          "endDate": "2023-06-30",
+          "freeCashflow": -32476000
+        },
+        {
+          "endDate": "2022-06-30",
+          "freeCashflow": -80186000
+        }
+      ]
+    },
+    "cashflowStatementHistoryQuarterly": {
+      "cashflowStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "freeCashflow": -589188000
+        },
+        {
+          "endDate": "2026-03-31",
+          "freeCashflow": -125156000
+        },
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -243757000
+        },
+        {
+          "endDate": "2025-09-30",
+          "freeCashflow": -351324000
+        },
+        {
+          "endDate": "2025-06-30",
+          "freeCashflow": -94150000
+        },
+        {
+          "endDate": "2025-03-31",
+          "freeCashflow": null
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": null
+        }
+      ]
+    }
+  },
+  "WULF": {
+    "incomeStatementHistory": {
+      "incomeStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 168455000,
+          "grossProfit": 85792000,
+          "netIncome": -661416000,
+          "basicEPS": -1.66
+        },
+        {
+          "endDate": "2024-12-31",
+          "totalRevenue": 140051000,
+          "grossProfit": 77443000,
+          "netIncome": -72418000,
+          "basicEPS": -0.21
+        },
+        {
+          "endDate": "2023-12-31",
+          "totalRevenue": 69229000,
+          "grossProfit": 41914000,
+          "netIncome": -73421000,
+          "basicEPS": -0.35
+        },
+        {
+          "endDate": "2022-12-31",
+          "totalRevenue": 15033000,
+          "grossProfit": 3950000,
+          "netIncome": -90791000,
+          "basicEPS": -0.82
+        }
+      ]
+    },
+    "incomeStatementHistoryQuarterly": {
+      "incomeStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "totalRevenue": 44767000,
+          "grossProfit": 32367000,
+          "netIncome": -939917000,
+          "basicEPS": -1.94
+        },
+        {
+          "endDate": "2026-03-31",
+          "totalRevenue": 34012000,
+          "grossProfit": 31651000,
+          "netIncome": -427634000,
+          "basicEPS": -1.01
+        },
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 35836000,
+          "grossProfit": 16943000,
+          "netIncome": -126578000,
+          "basicEPS": null
+        },
+        {
+          "endDate": "2025-09-30",
+          "totalRevenue": 50578000,
+          "grossProfit": 33455000,
+          "netIncome": -455050000,
+          "basicEPS": -1.13
+        },
+        {
+          "endDate": "2025-06-30",
+          "totalRevenue": 47636000,
+          "grossProfit": 25542000,
+          "netIncome": -18370000,
+          "basicEPS": -0.05
+        },
+        {
+          "endDate": "2025-03-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": -0.16
+        },
+        {
+          "endDate": "2024-12-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        }
+      ]
+    },
+    "cashflowStatementHistory": {
+      "cashflowStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -1183369000
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": -292362000
+        },
+        {
+          "endDate": "2023-12-31",
+          "freeCashflow": -70905000
+        },
+        {
+          "endDate": "2022-12-31",
+          "freeCashflow": -106923000
+        }
+      ]
+    },
+    "cashflowStatementHistoryQuarterly": {
+      "cashflowStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "freeCashflow": -992269000
+        },
+        {
+          "endDate": "2026-03-31",
+          "freeCashflow": -540545000
+        },
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -703161000
+        },
+        {
+          "endDate": "2025-09-30",
+          "freeCashflow": -268256000
+        },
+        {
+          "endDate": "2025-06-30",
+          "freeCashflow": -174752000
+        },
+        {
+          "endDate": "2025-03-31",
+          "freeCashflow": null
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": null
+        }
+      ]
+    }
+  },
+  "APLD": {
+    "incomeStatementHistory": {
+      "incomeStatementHistory": [
+        {
+          "endDate": "2026-05-31",
+          "totalRevenue": 611311000,
+          "grossProfit": 157682000,
+          "netIncome": -244004000,
+          "basicEPS": -0.91
+        },
+        {
+          "endDate": "2025-05-31",
+          "totalRevenue": 228569000,
+          "grossProfit": 11810000,
+          "netIncome": -231065000,
+          "basicEPS": null
+        },
+        {
+          "endDate": "2024-05-31",
+          "totalRevenue": 165575000,
+          "grossProfit": 17235000,
+          "netIncome": -149274000,
+          "basicEPS": -1.31
+        },
+        {
+          "endDate": "2023-05-31",
+          "totalRevenue": 55392000,
+          "grossProfit": 11004000,
+          "netIncome": -44646000,
+          "basicEPS": -0.49
+        },
+        {
+          "endDate": "2022-05-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": -0.41
+        }
+      ]
+    },
+    "incomeStatementHistoryQuarterly": {
+      "incomeStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-05-31",
+          "totalRevenue": 258749000,
+          "grossProfit": 40518000,
+          "netIncome": -110162000,
+          "basicEPS": -0.39
+        },
+        {
+          "endDate": "2026-02-28",
+          "totalRevenue": 126637000,
+          "grossProfit": 53805000,
+          "netIncome": -99303000,
+          "basicEPS": -0.36
+        },
+        {
+          "endDate": "2025-11-30",
+          "totalRevenue": 126589000,
+          "grossProfit": 26036000,
+          "netIncome": -17511000,
+          "basicEPS": -0.07
+        },
+        {
+          "endDate": "2025-08-31",
+          "totalRevenue": 64216000,
+          "grossProfit": 8610000,
+          "netIncome": -16926000,
+          "basicEPS": -0.07
+        },
+        {
+          "endDate": "2025-05-31",
+          "totalRevenue": -33300000,
+          "grossProfit": 27811000,
+          "netIncome": -52537000,
+          "basicEPS": null
+        },
+        {
+          "endDate": "2025-02-28",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": -0.16
+        }
+      ]
+    },
+    "cashflowStatementHistory": {
+      "cashflowStatementHistory": [
+        {
+          "endDate": "2026-05-31",
+          "freeCashflow": -2776080000
+        },
+        {
+          "endDate": "2025-05-31",
+          "freeCashflow": -797005000
+        },
+        {
+          "endDate": "2024-05-31",
+          "freeCashflow": -128015000
+        },
+        {
+          "endDate": "2023-05-31",
+          "freeCashflow": -72543000
+        },
+        {
+          "endDate": "2022-05-31",
+          "freeCashflow": null
+        }
+      ]
+    },
+    "cashflowStatementHistoryQuarterly": {
+      "cashflowStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-05-31",
+          "freeCashflow": -1156523000
+        },
+        {
+          "endDate": "2026-02-28",
+          "freeCashflow": -720199000
+        },
+        {
+          "endDate": "2025-11-30",
+          "freeCashflow": -567915000
+        },
+        {
+          "endDate": "2025-08-31",
+          "freeCashflow": -331443000
+        },
+        {
+          "endDate": "2025-05-31",
+          "freeCashflow": -191408000
+        },
+        {
+          "endDate": "2025-02-28",
+          "freeCashflow": null
+        }
+      ]
+    }
+  },
+  "CIFR": {
+    "incomeStatementHistory": {
+      "incomeStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 223942000,
+          "grossProfit": 63597000,
+          "netIncome": -822244000,
+          "basicEPS": -2.15
+        },
+        {
+          "endDate": "2024-12-31",
+          "totalRevenue": 151270000,
+          "grossProfit": 28110000,
+          "netIncome": -44635000,
+          "basicEPS": -0.14
+        },
+        {
+          "endDate": "2023-12-31",
+          "totalRevenue": 126842000,
+          "grossProfit": 19134000,
+          "netIncome": -25777000,
+          "basicEPS": -0.1
+        },
+        {
+          "endDate": "2022-12-31",
+          "totalRevenue": 3037000,
+          "grossProfit": 2289000,
+          "netIncome": -39053000,
+          "basicEPS": -0.16
+        }
+      ]
+    },
+    "incomeStatementHistoryQuarterly": {
+      "incomeStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "totalRevenue": 24837000,
+          "grossProfit": -32568000,
+          "netIncome": -267529000,
+          "basicEPS": -0.65
+        },
+        {
+          "endDate": "2026-03-31",
+          "totalRevenue": 34838000,
+          "grossProfit": -17870000,
+          "netIncome": -114316000,
+          "basicEPS": -0.28
+        },
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 59711000,
+          "grossProfit": 730000,
+          "netIncome": -734205000,
+          "basicEPS": null
+        },
+        {
+          "endDate": "2025-09-30",
+          "totalRevenue": 71707000,
+          "grossProfit": 30529000,
+          "netIncome": -3283000,
+          "basicEPS": -0.01
+        },
+        {
+          "endDate": "2025-06-30",
+          "totalRevenue": 43565000,
+          "grossProfit": 12576000,
+          "netIncome": -45781000,
+          "basicEPS": -0.12
+        },
+        {
+          "endDate": "2025-03-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": -0.11
+        }
+      ]
+    },
+    "cashflowStatementHistory": {
+      "cashflowStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -702175000
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": -391387000
+        },
+        {
+          "endDate": "2023-12-31",
+          "freeCashflow": -149261000
+        },
+        {
+          "endDate": "2022-12-31",
+          "freeCashflow": -248833000
+        }
+      ]
+    },
+    "cashflowStatementHistoryQuarterly": {
+      "cashflowStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "freeCashflow": -653809000
+        },
+        {
+          "endDate": "2026-03-31",
+          "freeCashflow": -462459000
+        },
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -284557000
+        },
+        {
+          "endDate": "2025-09-30",
+          "freeCashflow": -95183000
+        },
+        {
+          "endDate": "2025-06-30",
+          "freeCashflow": -175170000
+        },
+        {
+          "endDate": "2025-03-31",
+          "freeCashflow": null
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": null
+        }
+      ]
+    }
+  },
+  "CORZ": {
+    "incomeStatementHistory": {
+      "incomeStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 319019000,
+          "grossProfit": 37898000,
+          "netIncome": -288616000,
+          "basicEPS": -0.88
+        },
+        {
+          "endDate": "2024-12-31",
+          "totalRevenue": 510672000,
+          "grossProfit": 121070000,
+          "netIncome": -1437874000,
+          "basicEPS": -4.39
+        },
+        {
+          "endDate": "2023-12-31",
+          "totalRevenue": 502400000,
+          "grossProfit": 123459000,
+          "netIncome": -246487000,
+          "basicEPS": -0.65
+        },
+        {
+          "endDate": "2022-12-31",
+          "totalRevenue": 640313000,
+          "grossProfit": 8400000,
+          "netIncome": -2146318000,
+          "basicEPS": -6.3
+        },
+        {
+          "endDate": "2021-12-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        }
+      ]
+    },
+    "incomeStatementHistoryQuarterly": {
+      "incomeStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "totalRevenue": 164201000,
+          "grossProfit": 70044000,
+          "netIncome": -1155310000,
+          "basicEPS": -3.32
+        },
+        {
+          "endDate": "2026-03-31",
+          "totalRevenue": 115244000,
+          "grossProfit": 30106000,
+          "netIncome": -347188000,
+          "basicEPS": -1.06
+        },
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 79763000,
+          "grossProfit": 20755000,
+          "netIncome": 214150000,
+          "basicEPS": 0.6
+        },
+        {
+          "endDate": "2025-09-30",
+          "totalRevenue": 81103000,
+          "grossProfit": 3905000,
+          "netIncome": -144027000,
+          "basicEPS": -0.46
+        },
+        {
+          "endDate": "2025-06-30",
+          "totalRevenue": 78628000,
+          "grossProfit": 5025000,
+          "netIncome": -936799000,
+          "basicEPS": -0.04
+        },
+        {
+          "endDate": "2025-03-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        },
+        {
+          "endDate": "2024-12-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        }
+      ]
+    },
+    "cashflowStatementHistory": {
+      "cashflowStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -460961000
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": -52296000
+        },
+        {
+          "endDate": "2023-12-31",
+          "freeCashflow": 48120000
+        },
+        {
+          "endDate": "2022-12-31",
+          "freeCashflow": -396470000
+        },
+        {
+          "endDate": "2021-12-31",
+          "freeCashflow": null
+        }
+      ]
+    },
+    "cashflowStatementHistoryQuarterly": {
+      "cashflowStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "freeCashflow": -583891000
+        },
+        {
+          "endDate": "2026-03-31",
+          "freeCashflow": -139404000
+        },
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -121789000
+        },
+        {
+          "endDate": "2025-09-30",
+          "freeCashflow": -112712000
+        },
+        {
+          "endDate": "2025-06-30",
+          "freeCashflow": -87243000
+        },
+        {
+          "endDate": "2025-03-31",
+          "freeCashflow": null
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": null
+        }
+      ]
+    }
+  },
+  "GLXY": {
+    "incomeStatementHistory": {
+      "incomeStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 60406728000,
+          "grossProfit": -115911000,
+          "netIncome": -241349000,
+          "basicEPS": -0.53
+        },
+        {
+          "endDate": "2024-12-31",
+          "totalRevenue": 42596673000,
+          "grossProfit": -109284000,
+          "netIncome": 346722000,
+          "basicEPS": 0.96
+        },
+        {
+          "endDate": "2023-12-31",
+          "totalRevenue": 51626779000,
+          "grossProfit": -106667000,
+          "netIncome": 228514000,
+          "basicEPS": 0.72
+        },
+        {
+          "endDate": "2022-12-31",
+          "totalRevenue": 0,
+          "grossProfit": null,
+          "netIncome": -522676000,
+          "basicEPS": -4.99
+        },
+        {
+          "endDate": "2021-12-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        }
+      ]
+    },
+    "incomeStatementHistoryQuarterly": {
+      "incomeStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "totalRevenue": 8576213000,
+          "grossProfit": -9858000,
+          "netIncome": -170632000,
+          "basicEPS": -0.09
+        },
+        {
+          "endDate": "2026-03-31",
+          "totalRevenue": 10041444000,
+          "grossProfit": -73612000,
+          "netIncome": -216311000,
+          "basicEPS": -0.48
+        },
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 10367096000,
+          "grossProfit": -45846000,
+          "netIncome": -389947000,
+          "basicEPS": -2.531446
+        },
+        {
+          "endDate": "2025-09-30",
+          "totalRevenue": 28401871000,
+          "grossProfit": 12531000,
+          "netIncome": 713525000,
+          "basicEPS": 1.01
+        },
+        {
+          "endDate": "2025-06-30",
+          "totalRevenue": 8661555000,
+          "grossProfit": -44952000,
+          "netIncome": 61382000,
+          "basicEPS": 0.1
+        },
+        {
+          "endDate": "2025-03-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        },
+        {
+          "endDate": "2024-12-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        }
+      ]
+    },
+    "cashflowStatementHistory": {
+      "cashflowStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -1509170000
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": -264104000
+        },
+        {
+          "endDate": "2023-12-31",
+          "freeCashflow": -49692000
+        },
+        {
+          "endDate": "2022-12-31",
+          "freeCashflow": -76774000
+        },
+        {
+          "endDate": "2021-12-31",
+          "freeCashflow": null
+        }
+      ]
+    },
+    "cashflowStatementHistoryQuarterly": {
+      "cashflowStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "freeCashflow": -26796000
+        },
+        {
+          "endDate": "2026-03-31",
+          "freeCashflow": -421233000
+        },
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -1631609000
+        },
+        {
+          "endDate": "2025-09-30",
+          "freeCashflow": 189609000
+        },
+        {
+          "endDate": "2025-06-30",
+          "freeCashflow": -134941000
+        },
+        {
+          "endDate": "2025-03-31",
+          "freeCashflow": null
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": null
+        }
+      ]
+    }
+  },
+  "BTDR": {
+    "incomeStatementHistory": {
+      "incomeStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 620253000,
+          "grossProfit": 60992000,
+          "netIncome": 65597000,
+          "basicEPS": 0.32
+        },
+        {
+          "endDate": "2024-12-31",
+          "totalRevenue": 349782000,
+          "grossProfit": 66400000,
+          "netIncome": -599151000,
+          "basicEPS": -4.36
+        },
+        {
+          "endDate": "2023-12-31",
+          "totalRevenue": 368554000,
+          "grossProfit": 77809000,
+          "netIncome": -56656000,
+          "basicEPS": -0.51
+        },
+        {
+          "endDate": "2022-12-31",
+          "totalRevenue": 333342000,
+          "grossProfit": 83252000,
+          "netIncome": -60366000,
+          "basicEPS": -0.542428
+        },
+        {
+          "endDate": "2021-12-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        }
+      ]
+    },
+    "incomeStatementHistoryQuarterly": {
+      "incomeStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "totalRevenue": 228784000,
+          "grossProfit": -8526000,
+          "netIncome": -92278000,
+          "basicEPS": -0.37
+        },
+        {
+          "endDate": "2026-03-31",
+          "totalRevenue": 188930000,
+          "grossProfit": -39041000,
+          "netIncome": -159527000,
+          "basicEPS": -0.68
+        },
+        {
+          "endDate": "2025-12-31",
+          "totalRevenue": 224835000,
+          "grossProfit": 10570000,
+          "netIncome": 70542000,
+          "basicEPS": 0.31
+        },
+        {
+          "endDate": "2025-09-30",
+          "totalRevenue": 169708000,
+          "grossProfit": 40827000,
+          "netIncome": -266685000,
+          "basicEPS": -1.28
+        },
+        {
+          "endDate": "2025-06-30",
+          "totalRevenue": 155582000,
+          "grossProfit": 11981000,
+          "netIncome": -62937000,
+          "basicEPS": -0.32
+        },
+        {
+          "endDate": "2025-03-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        },
+        {
+          "endDate": "2024-12-31",
+          "totalRevenue": null,
+          "grossProfit": null,
+          "netIncome": null,
+          "basicEPS": null
+        }
+      ]
+    },
+    "cashflowStatementHistory": {
+      "cashflowStatementHistory": [
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -2028242000
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": -749291000
+        },
+        {
+          "endDate": "2023-12-31",
+          "freeCashflow": -398133000
+        },
+        {
+          "endDate": "2022-12-31",
+          "freeCashflow": -331237000
+        },
+        {
+          "endDate": "2021-12-31",
+          "freeCashflow": null
+        }
+      ]
+    },
+    "cashflowStatementHistoryQuarterly": {
+      "cashflowStatementHistoryQuarterly": [
+        {
+          "endDate": "2026-06-30",
+          "freeCashflow": -424517000
+        },
+        {
+          "endDate": "2026-03-31",
+          "freeCashflow": -440640000
+        },
+        {
+          "endDate": "2025-12-31",
+          "freeCashflow": -650267000
+        },
+        {
+          "endDate": "2025-09-30",
+          "freeCashflow": -580030000
+        },
+        {
+          "endDate": "2025-06-30",
+          "freeCashflow": -448243000
+        },
+        {
+          "endDate": "2025-03-31",
+          "freeCashflow": null
+        },
+        {
+          "endDate": "2024-12-31",
+          "freeCashflow": null
+        }
+      ]
+    }
+  }
+}

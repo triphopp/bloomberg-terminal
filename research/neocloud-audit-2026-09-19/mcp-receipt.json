@@ -1,0 +1,15 @@
+{
+  "as_of": "2026-09-19",
+  "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+  "new_graph": {"slug": "neocloud-accounting-review-2026-09-19", "id": "a4817494-e8eb-47c7-b483-cab9d1850b21", "version": 2, "bytes": 188113},
+  "existing_graph": {"slug": "neocloud-risk-board", "version": 2, "change": "Added dated corrections banner and link; retained original analysis and version history"},
+  "zettel_refs": ["Z-0029", "Z-0030", "Z-0031", "Z-0032", "Z-0033", "Z-0034"],
+  "open_conflict": {"src": "Z-0029", "dst": "Z-0024", "rel": "CONTRADICTS", "resolved": false},
+  "watch_note_id": "bf3e18ec-b560-4245-9738-210ea13bd99c",
+  "watch_note_status": "watching",
+  "scheduled_automation_created": false,
+  "review_event_id": "bb31dfc7-9e7f-4f83-9ad7-a13629b5027a",
+  "unchanged_thesis_fields_verified": ["body", "status", "conviction", "target_price", "stop_price", "time_horizon"],
+  "mcp_saved_file_matches_local_html": true,
+  "normalized_html_sha256": "bcdbb885cdc8ff93077ec1432ee9bd37559d64caa1f4370b02403c9ede92a00a"
+}

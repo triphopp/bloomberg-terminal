@@ -1,0 +1,16 @@
+{
+  "profiles": 34,
+  "annual_period_rows": 102,
+  "missing_numeric_cells": 12,
+  "source_urls": 60,
+  "html_bytes": 188113,
+  "markdown_characters": 77630,
+  "internal_links_valid": true,
+  "no_external_subresources": true,
+  "core_debt_bridge_pass": true,
+  "restatement_bridge_pass": true,
+  "scenario_math_pass": true,
+  "render_sha256": "bcdbb885cdc8ff93077ec1432ee9bd37559d64caa1f4370b02403c9ede92a00a",
+  "mcp_saved_file_matches": true,
+  "visual_qa": "Passed: Thai title/TOC and IREN three-year table; company selector navigates correctly"
+}
