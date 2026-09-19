@@ -181,8 +181,8 @@ US listings only (EDGAR ไม่มี `.BK`/`.KS` → ใช้ `routers/sec_v
 
 ## Theses (`routers/theses.py`) — prefix `/api/v2/theses`
 DB-backed investment theses. `theses` = materialised head (field-level LWW merge); `thesis_events` = append-only history (never UPDATEd → no merge conflicts). Cloud-synced via `SYNC_TABLES`.
-- `GET /api/v2/theses?symbol&category&status&account_id&include_deleted` — list + `event_count` + `open_note_count` (open|watching only — a badge counting dismissed scenarios never goes down)
-- `GET /api/v2/theses/{id}` — `{thesis, events, links, notes}` (links join `trades`)
+- `GET /api/v2/theses?symbol&category&status&account_id&include_deleted` — list + `event_count` + `open_note_count` (open|watching only — a badge counting dismissed scenarios never goes down) + `zettel_count` / `conflict_count` / `graph_count` (attachments, so a tab label is right before its panel has ever been opened)
+- `GET /api/v2/theses/{id}` — `{thesis, events, links, notes, counts}` (links join `trades`; `counts` = `{zettel, conflicts, graphs}`)
 - `GET /api/v2/theses/by-symbol/{symbol}` — theses for one ticker
 - `GET /api/v2/theses/summary/by-symbol` — `{by_symbol: {SYM: {count, status, conviction, id}}}`, one query for the whole book (positions-table badge)
 - `POST /api/v2/theses` — create → event `CREATED`
@@ -219,9 +219,29 @@ their own rows. Schema in `db.init_zettel_schema()`. All four tables are cloud-s
 - `POST /api/v2/zettel/export-md` — mirror the base into `OBSIDIAN_WIKI_DIR/zettel/` with `[[wikilinks]]` + `INDEX.md`; returns `stale` files the DB no longer knows about
 - `POST /api/v2/zettel/resolve-ref-collisions` — post-merge: two offline devices can mint the same `Z-00NN`; the older row keeps it (`ref` is indexed, NOT unique — a UNIQUE index would abort the sync import)
 
+## Series (`routers/series.py`) — prefix `/api/v2/series`
+Generic indicator series: any number a publisher puts out over time that is **not** a tradable instrument (industry spot prices, freight rates, survey indices). Two tables — `series_meta` (head row) + `series_points` (one number on one day, PK `(series_id, date)`), both in `SYNC_TABLES`. Collectors live in `backend/series_sources/`; adding a source is one file + `register()`, no endpoint or UI change. First collector: `dramexchange` (DRAM/NAND/module/memory-card spot from the public home page + DRAM/NAND/SSD contract prices from its own `/Home/HomePrice` JSON).
+**The history is ours.** DRAMeXchange's charts are members-only, so there is no back-fill: `series_scheduler.py` records a point a day (same design as `iv_snapshots`) and a day nobody recorded stays a hole.
+- `GET /api/v2/series/groups` — boards that exist + series count + freshness. The UI builds its selector from this
+- `GET /api/v2/series?group=&section=&source=&days=60` — every series on a board with inlined points for a sparkline, `change_pct` (publisher's own), `window_change_pct`, `point_count`, `stale_days`
+- `GET /api/v2/series/{id}?days=365` — one series' recorded history (the big chart)
+- `POST /api/v2/series/refresh?source=` — pull now; failures come back per source, never as a 500
+- `DELETE /api/v2/series/{id}?purge_points=` — drop a series from the board; points are kept unless purged
+Scheduler: `series_scheduler.start_background_recorder()` from `main.py`, pass every 4h (`SERIES_REFRESH_INTERVAL`, 0 disables), self-gating on "did we read today (Taipei)" + one re-read after 19:00 GMT+8 when the publisher updates spot.
+
+## Graphs (`routers/graphs.py`) — prefix `/api/v2/graphs`
+Rendered analysis pages. The HTML is a file (`GRAPHS_DIR/<slug>/index.html`, older versions `v<N>.html`, `meta.json` beside it); SQLite only indexes it. Schema in `db.init_graphs_schema()`. Cloud-synced since 2026-09-19: the row via `SYNC_TABLES` (key `slug`), the FILE via `sync/files.py` (`<sync>/graphs/<slug>/index.html` + `manifest.json`, sha256 compare, a locally-changed page is never clobbered). `v<N>.html` stays local.
+- `GET /api/v2/graphs?symbol&thesis_id&q&limit` — index, newest first, never includes the HTML
+- `GET /api/v2/graphs/{slug}?include_html` — metadata (+ `render_url`, `file`); `include_html=true` adds the source
+- `GET /api/v2/graphs/{slug}/render?v=&shell=` — the page itself as `text/html` under a strict CSP (`default-src 'none'`, inline style/script only, `img-src data:`, `font-src data:`) + `nosniff`. `backend/graph_shell.py` wraps the stored content at render time: masthead, academic typography, Laksaman (`@font-face` from `research/graphs/_assets/*.woff2` as a data: URI — the CSP blocks Google Fonts) and a sticky section-tab strip built from the page's `<h2>`/`<h3>`. `shell=0` returns the raw file. The Next proxy passes the response through untouched instead of parsing it as JSON
+- `POST /api/v2/graphs` — `{title, html, slug?, symbol?, thesis_id?, zettel_refs?, tags?, as_of?, sources[]}`; 409 on a duplicate slug, 413 over 4MB. `html` is the CONTENT, not a document (`research/graphs/_template.html`): 400 when it loads a network resource (the CSP blocks it → a hole in the page), `warnings[]` in the response when it has no `<h2>` or ships its own `<html>`. With `thesis_id` logs `GRAPH_ADDED`
+- `PATCH /api/v2/graphs/{slug}` — new `html` bumps `version` and copies the old page to `v<N>.html`; logs `GRAPH_UPDATED`
+- `DELETE /api/v2/graphs/{slug}` — soft only, files stay on disk. No MCP tool for this on purpose
+- Slug is resolved under `GRAPHS_DIR` and anything escaping it is refused — it arrives from a URL path segment
+
 ### MCP server (`backend/mcp_server.py`, stdio; setup → `docs/mcp-server.md`)
 Claude Code: `/.mcp.json` (repo root). Claude Desktop: `%APPDATA%\Claude\claude_desktop_config.json` — absolute interpreter path + `PYTHONIOENCODING=utf-8`, does NOT read `.mcp.json`. Any other MCP client takes the same command/args/env. `MCP_AGENT_NAME` distinguishes clients in the timeline (`AGENT·<NAME>` + zettel `actor`). `MCP_TRANSPORT=streamable-http MCP_PORT=9319` serves the same tools at `http://127.0.0.1:9319/mcp` for agents that cannot spawn a process (loopback only — no auth of its own).
-HTTP client over the running backend (`PYTHON_API_URL`, default :9317) — never opens the DB. 26 tools: theses `list_theses` `get_thesis` `notes_due` `create_thesis` (always draft) `update_thesis` (reason required) `log_event` (NOTE/REVIEW/EVIDENCE/CHECKPOINT) `add_note` `update_note` `link_trade` · context `get_positions` `get_trades` · research `get_stock_data(kind)` `get_price_history` `get_news` `get_filings` · knowledge base `zettel_search` `zettel_list` `zettel_get` `zettel_create` `zettel_update` `zettel_link` `zettel_add_source` `zettel_attach` `open_conflicts` `resolve_conflict` `zettel_by_source`. Prompts `review_thesis`, `triage_conflicts`. **No delete tool** by design. Output capped at 40k chars.
+HTTP client over the running backend (`PYTHON_API_URL`, default :9317) — never opens the DB. 30 tools: theses `list_theses` `get_thesis` `notes_due` `create_thesis` (always draft) `update_thesis` (reason required) `log_event` (NOTE/REVIEW/EVIDENCE/CHECKPOINT) `add_note` `update_note` `link_trade` · context `get_positions` `get_trades` · research `get_stock_data(kind)` `get_price_history` `get_news` `get_filings` · knowledge base `zettel_search` `zettel_list` `zettel_get` `zettel_create` `zettel_update` `zettel_link` `zettel_add_source` `zettel_attach` `open_conflicts` `resolve_conflict` `zettel_by_source` · analysis graphs `graph_list` `graph_get` `graph_create` `graph_update`. Prompts `review_thesis`, `triage_conflicts`. **No delete tool** by design. Output capped at 40k chars.
 
 ## Portfolio Risk (`routers/risk.py`)
 - `GET /api/v2/portfolio/risk/metrics` — VaR/CVaR 1D–6M with √T scaling (Basel)

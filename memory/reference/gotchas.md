@@ -7,6 +7,12 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### Financial provider fields can mix definitions and periods (SNDK, 2026-09-18)
+
+| Symptom | Root Cause | Fix / current workaround |
+|---|---|---|
+| DPO/CCC looks too favorable; quote operating margin exceeds gross margin | `stock.py` maps `Payables And Accrued Expenses` to `accountsPayable`; vendor quote margins can use different periods. Standardized `endDate`, debt and FCF fields also need definition checks. | Use SEC fiscal periods and trade payables, separate leases/borrowings and reconcile FCF before deriving ratios. Risk logged, application code not changed: [SNDK mapping report](../reports/sndk-financial-field-mapping-risk-report.md). |
+
 ### ALERT crawl stuck on "MARKET DATA LOADING..." / slowest thing on the page (fixed 2026-09-13)
 
 | Symptom | Root Cause | Fix |
@@ -131,6 +137,9 @@ HTTP 200 / `status: ok`; live SNDK 2026-10-16 SVI returned `ok` for 56 call and
 | สัญญาณเทียบ 2 series แล้วยิงผิด (เช่น VIX backwardation) | `s.dropna().iloc[-1]` หยิบค่าล่าสุด**ที่ไม่ใช่ NaN** — ถ้า series นั้นค้าง (yfinance `^VIX9D`/`^VIX3M` หยุดที่ 2026-07-17 ขณะ `^VIX` ถึง 08-14) จะเอาค่าคนละวันมาเทียบกัน | เช็ค staleness ก่อนเทียบ: ถ้า last bar เก่ากว่า reference series > 1-2 วัน ให้คืน `None` และ **ไม่ตัดสิน** signal นั้น ดู `reports/tail-risk-debt-report.md` A1 |
 | rolling window ไม่เคยให้ค่า signal ไม่เคยยิง | `rolling(252, min_periods=60)` แต่ fetch แค่ 70 วันปฏิทิน = 48 trading days → NaN ทั้งคอลัมน์ เงียบๆ (`tail_risk.py` g8_layer_a) | นับเป็น **trading days** ไม่ใช่ calendar days: lookback ต้อง ≥ `min_periods × 1.45` และ log/assert เมื่อ series ออกมาเป็น NaN ล้วน |
 | หน้าจอ risk ขึ้น "ALL CLEAR" ทั้งที่ backend ล่ม | helper แบบ `except: return {}` ทำให้ signal ที่ดึงจาก router อื่นไม่ถูก set → นับเป็น False = ปลอดภัย (fail-open) | risk monitor ต้อง fail-closed: แยก `unknown` ออกจาก `false` และส่ง `data_health` ขึ้นหน้าจอ |
+| โฟลเดอร์ที่ config ชี้ ไปโผล่ผิดที่ (`backend/research/graphs/` แทน `research/graphs/`) | path ใน `config.py` เขียนแบบ relative (`./research/graphs`) แต่ backend ถูกสตาร์ทด้วย cwd = `backend/` — เหตุผลเดียวกับที่ `PORTFOLIO_DB="portfolio.db"` หมายถึง `backend/portfolio.db` ไม่ใช่ที่ root | path ที่ต้องอยู่ใน repo ให้ anchor กับไฟล์: `Path(__file__).resolve().parent.parent / "research" / "graphs"` (`GRAPHS_DIR`, 2026-09-18) อย่าพึ่ง cwd |
+| slug/ชื่อไฟล์จาก URL path เปิดไฟล์นอกโฟลเดอร์ที่ตั้งใจได้ | `GRAPHS_DIR / slug` ยอมรับ `..` และ absolute path → อ่าน/ทับไฟล์ที่ไหนก็ได้ | resolve แล้วเช็คว่ายังอยู่ใต้ root จริง (`routers/graphs.py::_dir_for`) ก่อนแตะดิสก์ทุกครั้ง |
+| หน้า HTML ที่ agent เขียน ถูก render บน origin ของแอปเอง = XSS ใส่ตัวเอง | เสิร์ฟ HTML จาก API เดียวกับแอปโดยไม่มี CSP แล้วฝังด้วย iframe ที่มี `allow-same-origin` | สองชั้นเสมอ: backend ส่ง `default-src 'none'; style-src/script-src 'unsafe-inline'; img-src data:` + `nosniff` และ UI ใช้ `sandbox="allow-scripts"` **ไม่มี** `allow-same-origin` (`/api/v2/graphs/{slug}/render`) |
 | `YFDataException: Yahoo API requires curl_cffi session not <requests.Session>` | Injected a plain `requests.Session` into `yf.Ticker(session=...)` | DON'T inject a session — yfinance already pools internally (singleton YfData) + requires curl_cffi. `_ticker()` = plain `yf.Ticker(symbol)`. (tried+reverted 2026-06-10) |
 | market-data slow | `fetch_one` over-fetches `.info` per symbol (heaviest yfinance call) just for `regularMarketChange` | Batch via `download()` from one OHLC frame (pending — needs backend verify CHG%/YTD) |
 | Arbitrary file read via API (LFI) | user-supplied `dir`/path param used as base for file resolve → traversal guard useless | Whitelist allowed roots (`clippings.py _is_allowed_dir`). Never resolve user filename against user-supplied base |
@@ -1454,3 +1463,39 @@ Test: `test_editing_a_note_keeps_search_working`.
 `resolve_edge` ถือ `get_db()` อยู่แล้วเรียก `create_edge()` ซึ่งเปิด connection ใหม่ → `database is locked`
 (SQLite เขียนได้ทีละ writer). Pattern: แยก `_create_edge(conn, ...)` ที่รับ connection มา แล้วให้
 route wrapper เปิด connection เอง. ใช้กับทุกฟังก์ชันที่ route หนึ่งต้องเรียกงานของอีก route.
+
+---
+
+## แท็บนับเป็น 0 จนกว่าจะกดเข้าไป (2026-09-19)
+
+**อาการ:** `KB (0)` / `GRAPHS (0)` ใน THESES ทั้งที่มี 34 โน้ตและ 4 หน้าวิเคราะห์
+
+**เหตุ:** ตัวเลขมาจาก `onCountsChange` ของ panel ที่ mount เฉพาะตอนเปิดแท็บนั้น —
+แท็บที่ยังไม่เคยเปิดจึงไม่มีใครรายงานตัวเลขให้
+
+**กฎ:** badge/label ต้องได้ตัวเลขจาก payload ที่โหลดอยู่แล้ว (list หรือ detail endpoint)
+ส่วนค่าที่ panel รายงานใช้ *ทับ* ทีหลังเพื่อให้สดระหว่างแก้ — ไม่ใช่เป็นแหล่งเดียว
+(`backend/routers/theses.py:_attachment_counts`, `theses/index.tsx:kbLabel`)
+
+## หน้า GRAPHS โหลดฟอนต์/CSS จากเน็ตไม่ได้ (2026-09-19)
+
+`RENDER_CSP` ใน `backend/routers/graphs.py` = `default-src 'none'` + `font-src data:` +
+`style-src 'unsafe-inline'` และ iframe เป็น `sandbox="allow-scripts"` (ไม่มี allow-same-origin)
+→ Google Fonts, `<link rel=stylesheet>`, `<img src=https://…>` ตายเงียบทั้งหมด
+ฟอนต์ต้องฝังเป็น data: URI (`backend/graph_shell.py`), รูปต้องเป็น inline SVG หรือ data: URI
+POST/PATCH ปฏิเสธ (400) ถ้า html อ้าง resource ภายนอก
+
+## ราคาที่ผู้เผยแพร่ไม่ขายประวัติ (2026-09-19)
+
+DRAMeXchange แสดงราคา spot ของ "วันนี้" ฟรี แต่กราฟย้อนหลังเป็นของสมาชิก
+(`chart.dramexchange.com/chart.php` ตอบ "Only for MI members") และหน้า
+LPDDR/GDDR/Wafer redirect ไป login
+
+**กฎ:** ข้อมูลประเภทนี้ต้องบันทึกเองวันละจุด (`series_scheduler.py`) — เหมือน `iv_snapshots`
+วันที่ไม่มีใครบันทึก = รูถาวร ซ่อมย้อนหลังไม่ได้ และ **`date` ของจุดต้องเป็นวันที่ผู้เผยแพร่ประทับ
+ไม่ใช่วันที่เครื่องเราอ่าน** — ไม่งั้นซีรีส์จะเลื่อนไปมาตามว่าเครื่องไหนตื่นตอนกี่โมง
+
+**parser พังแบบเงียบ:** collector ต้อง `raise` เมื่อเจอโครงหน้าที่ไม่รู้จัก ห้ามคืน list ว่าง —
+list ว่างแปลว่า "วันนี้เขาไม่ประกาศ" ซึ่งเป็นสถานะจริงคนละเรื่องกัน
+(`backend/series_sources/dramexchange.py:ParseError`)
+

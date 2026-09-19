@@ -1,5 +1,9 @@
 # Bloomberg Terminal — Memory Index
 
+- [Neocloud three-year accounting review](plans/completed/neocloud-three-year-accounting-review.md) — ✅ done 2026-09-19; รายชื่อเดิมและค้นเพิ่มทั่วโลก พร้อมช่องว่างหลักฐาน
+- [Neocloud accounting review — session](sessions/2026-09-19-neocloud-accounting-review.md) — audit trail และ MCP receipts
+- [Neocloud accounting report ภาษาไทย](../research/neocloud-audit-2026-09-19/neocloud-accounting-review-th.html) — รายงานฉบับเต็ม 34 โปรไฟล์
+
 - [BBW squeeze audit 2026-09-09](reports/bbw-squeeze-2026-09-09-risk-report.md) — ทบทวน study เดิม: พบ label/benchmark/purge และการตีความผิด; E2 ranking signal ยังอยู่หลังตรวจแก้ cohort
 
 > **อ่านไฟล์นี้ก่อนเสมอ** เพื่อรู้ว่าต้องการข้อมูลอะไร อยู่ที่ไหน
@@ -39,6 +43,7 @@ memory/
 > **สถานะ ณ 2026-08-01 บนเครื่อง macOS (`~/bloomberg-terminal`):**
 > ```
 > plans/alert-rule-engine.md                          🔄 phase 4+6/7 done
+> plans/completed/analysis-graphs.md                  ✅ done 2026-09-18
 > plans/pane-height-persistence-fix.md                📋 planned
 > plans/mobile-responsive.md                         🔄 step 1-2 in progress (2026-09-17)
 > plans/completed/tail-macro-context.md               ✅ done 2026-09-17
@@ -48,6 +53,8 @@ memory/
 >
 > **สถานะ ณ 2026-08-05 บนเครื่อง Windows (`D:\Agents\Claude\bloomberg-terminal-main`):**
 > ```
+> plans/completed/indicator-series-board.md         ✅ done 2026-09-19
+> plans/theses-readability-and-sync.md              🔄 7/7 coded, รอไฟล์ฟอนต์ (2026-09-19)
 > plans/rsi-scale-modes.md                             🔄 step 1-2/6 done
 > sessions/reports/rsi-seed-divergence-risk-report.md  📋 risk logged, ยังไม่แก้
 > plans/completed/zettelkasten-knowledge-base.md       ✅ done 2026-09-18
@@ -61,6 +68,8 @@ memory/
 
 | ต้องการ | ไฟล์ |
 |---------|------|
+| **SNDK financial review + NAND cycle** — MCP/SEC reconciliation, thesis questions and watch conditions (2026-09-18) | `sessions/reports/sndk-financial-cycle-2026-09-18-report.md` |
+| **SNDK financial field mapping risks** — AP/accruals, fiscal dates, margin periods and FCF definitions | `reports/sndk-financial-field-mapping-risk-report.md` |
 | **MCP — ให้ agent อ่าน/แก้ THESES + ดึง portfolio/ราคา/ข่าว** (setup Claude Code + Desktop, tools, guard rails) | `../docs/mcp-server.md` |
 | **Heatmap tile silent drop** — a throttled quote disappears instead of erroring | `reports/heatmap-tile-silent-drop-risk-report.md` |
 | **Windows NEWS API recovery** — stale backend caused DCF/REGIME 404 and SVI 405 ✅ done 2026-09-13 | `plans/completed/windows-news-api-reload.md` |
