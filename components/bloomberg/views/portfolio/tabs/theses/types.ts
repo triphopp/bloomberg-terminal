@@ -22,6 +22,11 @@ export interface Thesis {
   event_count?: number;
   /** Notes still open or being watched — the rail badge. */
   open_note_count?: number;
+  /** Attachments, counted by the list endpoint so a tab label is right before
+   *  its panel has ever been opened. */
+  zettel_count?: number;
+  conflict_count?: number;
+  graph_count?: number;
 }
 
 export type ThesisStatus = "draft" | "active" | "watch" | "invalidated" | "closed";
