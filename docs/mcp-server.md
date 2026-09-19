@@ -96,7 +96,38 @@ attribution still works. `memory/reference/api-endpoints.md` lists every route.
 | Theses (write) | `create_thesis` (always `draft`) · `update_thesis` (`reason` required) · `log_event` (NOTE/REVIEW/EVIDENCE/CHECKPOINT) · `add_note` · `update_note` · `link_trade` |
 | Portfolio | `get_positions` · `get_trades` |
 | Research | `get_stock_data(kind=quote\|financials\|ratios\|estimates\|analyst\|earnings-calendar\|ownership\|management\|dividends\|pe-history\|quality\|sector\|sec-filings)` · `get_price_history` · `get_news` · `get_filings` |
+| Analysis graphs | `graph_list` · `graph_get` · `graph_create` · `graph_update` |
 | Knowledge base | `zettel_search` · `zettel_list` · `zettel_get` · `zettel_create` · `zettel_update` · `zettel_link` · `zettel_add_source` · `zettel_attach` · `open_conflicts` · `resolve_conflict` · `zettel_by_source` |
+
+### Analysis graphs
+
+Some findings only read as a picture. `graph_create` saves one page into
+`research/graphs/<slug>/index.html` and indexes it in the `graphs` table. Attach it with
+`thesis_id` (writes a `GRAPH_ADDED` event) and `zettel_refs` so the picture points back at
+the notes it argues from; `as_of` is the date of the DATA.
+
+**Send the content, not a document.** `backend/graph_shell.py` wraps the stored HTML at
+render time with the masthead, the academic typography, the Thai face (Laksaman, embedded
+as a data: URI) and a sticky tab strip built from the page's own `<h2>`/`<h3>` — so every
+analysis page reads alike and an old page picks up a format change without being rewritten.
+Start from `research/graphs/_template.html`, which documents the classes the shell styles
+(`.lede`, `.note`, `.fig`, `.tablebox`, `.src`). Two rules are enforced on write: **no
+external requests** (the render CSP blocks them, so an off-box `<img>`/stylesheet is a hole
+in the page — 400) and at least one `<h2>` (otherwise there are no tabs — returned in
+`warnings`). `?shell=0` on the render URL shows the raw file.
+
+The page is model-written, so it is never rendered on the app's own origin: the backend
+serves it under a strict CSP and the UI frames it with `sandbox="allow-scripts"` and no
+`allow-same-origin`. `graph_update` bumps the version and keeps the old page beside it
+(`?v=<n>`). There is no delete tool — removing a page is a human action in the UI.
+
+The row and the file both travel between machines: the `graphs` row in the ordinary cloud
+snapshot, the `index.html` through `backend/sync/files.py` (`<sync>/graphs/<slug>/`,
+sha256-compared; a page edited locally is never overwritten by a pull). The `v<N>.html`
+history stays on the machine that made the edit.
+
+Where it shows up: PORT → TOOLS → THESES → **GRAPHS**, and at
+`http://bloomberg.localhost:9318/api/v2/graphs/<slug>/render` as a plain link.
 
 Prompts:
 - `review_thesis(thesis_id)` — read the thesis, size the position, hunt for evidence

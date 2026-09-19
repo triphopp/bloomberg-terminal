@@ -1,0 +1,34 @@
+{
+  "id": "19b64b4f-49bc-408e-87f1-d57bfe4eaeff",
+  "slug": "ai-money-map",
+  "title": "AI Money Map",
+  "description": "แผนที่กระแสเงิน AI: ตลาดทุน → hyperscaler/neocloud → NVIDIA → MU/SNDK พร้อมหลักฐาน FCF, ลูกหนี้ และ DSO จากงบของแต่ละบริษัท",
+  "kind": "html",
+  "symbol": "SNDK",
+  "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+  "zettel_refs": "Z-0019,Z-0021,Z-0022,Z-0023,Z-0024",
+  "tags": "circular-financing,memory,cash-flow",
+  "as_of": "2026-09-18",
+  "sources": [
+    {
+      "title": "SNDK 10-K FY26",
+      "url": "https://www.sec.gov/Archives/edgar/data/2023554/000162828026057406/sndk-20260703.htm"
+    },
+    {
+      "title": "NVDA 10-Q Jul 2026",
+      "url": "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000075/nvda-20260726.htm"
+    },
+    {
+      "title": "FactSet — hyperscalers tap external financing",
+      "url": "https://insight.factset.com/hyperscalers-tap-external-financing-as-ai-capex-outruns-cash-flow"
+    }
+  ],
+  "version": 1,
+  "bytes": 37272,
+  "actor": "user",
+  "deleted_at": null,
+  "created_at": "2026-09-18T15:29:26.089916",
+  "updated_at": "2026-09-18T15:29:26.089916",
+  "render_url": "/api/v2/graphs/ai-money-map/render",
+  "file": "D:/Agents/Claude/bloomberg-terminal-main/research/graphs/ai-money-map/index.html"
+}

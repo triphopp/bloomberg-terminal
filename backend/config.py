@@ -324,6 +324,16 @@ THESES_DIR = Path(os.getenv("THESES_DIR", "./data/theses"))
 SOURCES_DIR = Path(os.getenv("SOURCES_DIR", "./data/sources"))
 OBSIDIAN_WIKI_DIR = Path(os.getenv("OBSIDIAN_WIKI_DIR", "./data/wiki"))
 
+# Rendered analysis pages (one folder per graph, index.html + older v<N>.html).
+# Deliberately under research/ and not data/: these are hand-reviewed research
+# output that belongs in git, unlike the caches and scratch files in data/.
+#
+# Anchored to the repo root rather than the process CWD, because the backend is
+# normally started from backend/ — a plain "./research/graphs" would quietly
+# create a second folder at backend/research/graphs that no checkout contains.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+GRAPHS_DIR = Path(os.getenv("GRAPHS_DIR", str(_REPO_ROOT / "research" / "graphs")))
+
 CLAUDE_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ALPHA_VANTAGE_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")
 FRED_API_KEY = os.getenv("FRED_API_KEY", "")

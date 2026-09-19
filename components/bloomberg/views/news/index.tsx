@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTabShortcuts } from "../../hooks/useTabShortcuts";
 import { bloombergColors } from "../../lib/theme-config";
 import { NEWS_TAB_KEY } from "./constants";
+import { DataTab } from "./data-tab";
 import { NewsFeedTab } from "./newsfeed-tab";
 import { PolymarketColumn } from "./polymarket-column";
 import { SocialTab } from "./social-tab";
@@ -14,6 +15,7 @@ const TABS: { id: NewsTab; label: string }[] = [
   { id: "watchlist", label: "WATCHLIST" },
   { id: "feed", label: "NEWSFEED" },
   { id: "social", label: "SOCIAL" },
+  { id: "data", label: "DATA" },
 ];
 
 interface NewsViewProps {
@@ -86,7 +88,9 @@ export default function NewsView({ isDarkMode }: NewsViewProps) {
             ? "news sourced per watchlist symbol · grouped by sector"
             : activeTab === "feed"
               ? "topic newswire"
-              : "followed social accounts"}
+              : activeTab === "social"
+                ? "followed social accounts"
+                : "published series — recorded here one day at a time"}
         </span>
       </div>
 
@@ -97,15 +101,18 @@ export default function NewsView({ isDarkMode }: NewsViewProps) {
         )}
         {activeTab === "feed" && <NewsFeedTab colors={colors} />}
         {activeTab === "social" && <SocialTab colors={colors} />}
+        {activeTab === "data" && <DataTab colors={colors} />}
 
-        <PolymarketColumn
-          colors={colors}
-          isDark={isDarkMode}
-          watchlistMarkets={markets}
-          focusSymbols={activeTab === "watchlist" ? focus : null}
-          ladderSymbol={activeTab === "watchlist" ? (ladder?.symbol ?? null) : null}
-          ladderCompany={ladder?.company}
-        />
+        {activeTab !== "data" && (
+          <PolymarketColumn
+            colors={colors}
+            isDark={isDarkMode}
+            watchlistMarkets={markets}
+            focusSymbols={activeTab === "watchlist" ? focus : null}
+            ladderSymbol={activeTab === "watchlist" ? (ladder?.symbol ?? null) : null}
+            ladderCompany={ladder?.company}
+          />
+        )}
       </div>
     </div>
   );

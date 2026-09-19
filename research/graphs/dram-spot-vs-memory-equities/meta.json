@@ -1,0 +1,38 @@
+{
+  "id": "d88f1094-8b9f-4824-874c-d1771eb16060",
+  "slug": "dram-spot-vs-memory-equities",
+  "title": "DRAM Spot vs Memory Equities",
+  "description": "ราคาชิป DRAM/NAND ที่ DRAMeXchange กับหุ้นกลุ่มหน่วยความจำ: สหสัมพันธ์ PCA cointegration และการไหลของข้อมูลข้ามตลาด พร้อมข้อค้นพบว่าสองฝั่งกำลังบอกคนละเรื่อง",
+  "kind": "html",
+  "symbol": "MU",
+  "thesis_id": null,
+  "zettel_refs": "",
+  "tags": "dram,nand,memory,correlation,cointegration,granger,pca,dramexchange",
+  "as_of": "2026-09-18",
+  "sources": [
+    {
+      "title": "DRAMeXchange — spot/module/flash/wafer/contract tables (spot as of 2026-09-18 18:10 GMT+8)",
+      "url": "https://www.dramexchange.com/"
+    },
+    {
+      "title": "DRAMeXchange — historical price charts (MI members only, checked 2026-09-19)",
+      "url": "https://chart.dramexchange.com/chart.php?class=spot&item=dram&type=473&days=30"
+    },
+    {
+      "title": "FRED PCU334413334413 — PPI, semiconductor & related device manufacturing",
+      "url": "https://fred.stlouisfed.org/series/PCU334413334413"
+    },
+    {
+      "title": "Terminal /api/stock/history — weekly 5y + daily 1y, 18 tickers",
+      "url": "http://localhost:9317/api/stock/history/MU?period=5y&interval=1wk"
+    }
+  ],
+  "version": 2,
+  "bytes": 125155,
+  "actor": "user",
+  "deleted_at": null,
+  "created_at": "2026-09-19T06:14:26.322546",
+  "updated_at": "2026-09-19 06:15:50.395",
+  "render_url": "/api/v2/graphs/dram-spot-vs-memory-equities/render",
+  "file": "D:/Agents/Claude/bloomberg-terminal-main/research/graphs/dram-spot-vs-memory-equities/index.html"
+}

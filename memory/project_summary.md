@@ -169,6 +169,8 @@ OPENAI_API_KEY      — optional
 | `paper_trading.py` | `/api/paper/*` (accounts, orders, positions, fills, equity-curve) | yfinance + SQLite |
 | `providers.py` | `/api/providers` (list+health), `/api/providers/active` (switch), `/api/providers/auto-failover` | quote registry |
 | `zettel.py` | `/api/v2/zettel/*` (Zettelkasten: atomic notes + typed edges + sources + FTS5 trigram + Obsidian export) | SQLite + `OBSIDIAN_WIKI_DIR` |
+| `graphs.py` | `/api/v2/graphs/*` (rendered analysis pages: index in SQLite, HTML on disk, `/render` under a strict CSP) | SQLite + `GRAPHS_DIR` |
+| `series.py` | `/api/v2/series/*` (generic indicator series: any published number over time that is not an instrument; collectors in `series_sources/`, first one = dramexchange DRAM/NAND) | SQLite |
 | `theses.py` | `/api/v2/theses/*` (CRUD + append-only event log + trade links + md import/export; `X-Thesis-Actor` → `payload.actor`) | SQLite + `THESES_DIR` |
 | `sync_router.py` | `/api/sync/status`, `/api/sync/pull`, `/api/sync/push` | cloud-sync (`backend/sync/`) |
 | `watchlist_signals.py` | `/api/watchlist/signals` (batch daily technical scan) | yfinance batch (TTLCache 900s) |
@@ -262,6 +264,10 @@ zettel_edges        (id PK, src_id, dst_id, rel, note, resolved_at, resolution, 
                      = an open question the book is carrying
 zettel_sources      (id PK, zettel_id, url, publisher, title, published_at, quote, reliability, …)
 zettel_refs         (zettel_id, target_type thesis|trade|symbol, target_id, role) — PK all three
+graphs              (id TEXT uuid PK, slug UNIQUE (natural key + URL segment), title, description,
+                     kind 'html', symbol, thesis_id, zettel_refs 'Z-0019,Z-0021', tags, as_of,
+                     sources JSON, version, bytes, actor, deleted_at, created_at, updated_at)
+                     — page itself lives at GRAPHS_DIR/<slug>/index.html; NOT cloud-synced (git carries it)
 zettel_fts          FTS5 trigram over (title, body, tags) — derived, NOT synced
 theses              (id TEXT uuid PK, symbol, resolved_symbol, market, account_id, sub_portfolio,
                      title, category, strategy, status draft|active|watch|invalidated|closed,
@@ -285,6 +291,13 @@ sync_tombstones     (table_name, row_id, deleted_at) PK(table_name,row_id)  -- c
 _sync_guard         (active)  -- flag; raised during restore to silence sync triggers
 ```
 Holdings computed via **average-cost method** in `db.compute_holdings()`.
+
+series_meta         (id TEXT PK 'dx.spot.dram.<item>', group_key ('memory' — the board in the UI),
+                     section, label, unit, source, source_url, freq, symbol, tags, sort_order,
+                     first_seen, last_value, last_date, updated_at)   ← head row, LWW on merge
+series_points       (series_id, date, value, high, low, change_pct, captured_at,
+                     PK(series_id, date))   ← one published number on one day; merge = union.
+                     `date` is the PUBLISHER's stamp, never the reader's clock
 
 **Cloud sync (`backend/sync/`):** `init_sync_layer()` adds `updated_at` (millisecond stamps) + AFTER INSERT/UPDATE/DELETE triggers to synced tables (tombstones, all gated by `_sync_guard`). Local `.db` stays working copy; JSON snapshots (user tables only — excludes sector/risk/regime caches) exchanged via `SYNC_DIR`. **Never put `.db` on the cloud drive** (Drive byte-sync + WAL → corruption).
 
@@ -333,7 +346,11 @@ Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as 
 
 ## What Could Be Built Next
 
+- [x] **Neocloud three-year accounting review** — done 2026-09-19; รายงานไทย 34 โปรไฟล์พร้อมช่องว่างหลักฐานและ MCP readback (`plans/completed/neocloud-three-year-accounting-review.md`)
+
 - [x] **Zettelkasten Knowledge Base (THESES)** — คลังความรู้อะตอมที่ใช้ซ้ำข้าม thesis: `zettel`/`zettel_edges`/`zettel_sources`/`zettel_refs` + FTS5, edge ชนิด SUPPORTS/CONTRADICTS/REFINES/SUPERSEDES, พาเนล OPEN CONFLICTS, MCP 11 tools, export ทางเดียว → Obsidian `[[wikilink]]` — done 2026-09-18 (`plans/completed/zettelkasten-knowledge-base.md`)
+- [ ] **THESES readability + GRAPHS format + graph sync** — 7/7 steps coded 2026-09-19 (counts บนแท็บมากับ payload, markdown renderer เต็ม, rail พับได้, ปุ่ม READ โหมดเอกสาร, GRAPHS render shell + เทมเพลต + lint, `graphs` เข้า SYNC_TABLES + ไฟล์ HTML ไป Drive); เหลือฝังไฟล์ฟอนต์ Laksaman (`plans/theses-readability-and-sync.md`)
+- [x] **Indicator Series Board** — done 2026-09-19 — generic series store (`series_meta`/`series_points`) + collector registry `series_sources/`; dramexchange = ชุดแรก (31 series: DRAM/NAND/module/memcard spot + DRAM/NAND/SSD contract), แท็บ DATA ใน NEWS, scheduler วันละจุด, เข้า cloud sync (`plans/completed/indicator-series-board.md`)
 - [ ] **Mobile Responsive** — shell bottom nav + MKT single-panel switcher first; PORT, NEWS, rest follow (`plans/mobile-responsive.md`)
 
 - [x] **TAIL Macro Context** — FOMC/CPI/NFP/PCE/GDP calendar + Fed/curve/regime context in TAIL; MACRO view removed; FOMC off-by-one fixed — done 2026-09-17 (`plans/completed/tail-macro-context.md`)
@@ -398,6 +415,7 @@ Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as 
 - [x] **Fear & Greed Index** — chart pane indicator + FEAR-GREED searchable symbol + F&G/VIX prominent pills in alert ticker done 2026-06-06 (`plans/completed/fear-greed-index.md`)
 - [ ] Alerts: price alert when stock hits threshold (price target, separate from stop loss)
 - [ ] Sovereign: map visualization
+- [x] **Analysis Graphs** — หน้าวิเคราะห์ HTML ที่ agent สร้างผ่าน MCP `graph_create` เก็บใน `research/graphs/<slug>/` + ตาราง `graphs`, เปิดจาก PORT → TOOLS → THESES → GRAPHS หรือลิงก์ `/api/v2/graphs/<slug>/render`; render ใต้ CSP เข้ม + iframe sandbox ไม่มี allow-same-origin — done 2026-09-18 (`plans/completed/analysis-graphs.md`)
 - [ ] Bloomberg CLI + MCP server (`plans/bloomberg-cli-mcp.md`) — **MCP part started 2026-09-18**: `backend/mcp_server.py` (theses workspace + portfolio/market research, 15 tools; Claude Code via `.mcp.json`, Claude Desktop via `claude_desktop_config.json` — setup in `docs/mcp-server.md`); CLI still not built
 - [x] PORT Analytics: Allocation stacked bar + Dividend M/Q/Y + currency fix (done 2026-06-05, `plans/completed/analytics-charts-enhancement.md`)
 - [ ] SEC One Report: frontend view (data available 2021–2023)

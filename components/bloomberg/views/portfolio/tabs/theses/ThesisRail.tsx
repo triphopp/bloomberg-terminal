@@ -102,6 +102,15 @@ export function ThesisRail({
                             {t.open_note_count}N
                           </span>
                         )}
+                        {!!t.conflict_count && (
+                          <span
+                            className="text-[7px] px-0.5 border"
+                            title={`${t.conflict_count} unresolved contradiction(s) in the knowledge base`}
+                            style={{ color: "#f87171", borderColor: "#f8717155" }}
+                          >
+                            ⟂{t.conflict_count}
+                          </span>
+                        )}
                         {t.conviction != null && (
                           <span
                             className="ml-auto text-[7px]"

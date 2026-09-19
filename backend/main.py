@@ -54,6 +54,8 @@ from db import (
     init_alerts_schema,
     init_thesis_schema,
     init_zettel_schema,
+    init_graphs_schema,
+    init_series_schema,
     seed_symbol_lists,
     sync_symbol_lists,
 )
@@ -62,12 +64,13 @@ from analytics.regime_v2 import ensure_v2_fresh
 from contextlib import asynccontextmanager
 
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, ir_stress, market_state, dcf
+from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, graphs, series, ir_stress, market_state, dcf
 import sync
 from sources.errors import UpstreamRateLimited, is_rate_limit
 from sync.gate import is_synced_write, should_gate
 from alerts import scheduler as alert_scheduler
 import iv_scheduler
+import series_scheduler
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -99,6 +102,8 @@ init_db()
 init_portfolio_v2()
 init_thesis_schema()   # must precede init_sync_layer(): it adds updated_at + triggers
 init_zettel_schema()   # same ordering reason as the thesis schema above
+init_graphs_schema()   # index for research/graphs; no sync triggers, order free
+init_series_schema()   # generic indicator series; must precede init_sync_layer()
 init_sync_layer()
 init_audit_layer()     # after sync layer: needs _sync_guard + final column set
 init_alerts_schema()
@@ -127,6 +132,11 @@ alert_scheduler.start_background_scan()
 # in the SD-band series — this is the only writer that does not depend on the user
 # happening to open the right screen. See iv_scheduler for the gating rules.
 iv_scheduler.start_background_recorder()
+
+# Memory spot/contract prices and anything else added to series_sources. Same
+# reason as the IV recorder above: the publishers show only today's number and
+# sell the history, so the series exists only if something writes it down daily.
+series_scheduler.start_background_recorder()
 
 # ── Mount routers ─────────────────────────────────────────────────────────────
 app.include_router(market.router)
@@ -162,6 +172,8 @@ app.include_router(sectors.router)
 app.include_router(portfolio_v2.router)
 app.include_router(theses.router, tags=["Theses"])
 app.include_router(zettel.router, tags=["Zettel"])
+app.include_router(graphs.router, tags=["Graphs"])
+app.include_router(series.router, tags=["Series"])
 app.include_router(backtest_v2.router)
 app.include_router(risk.router)
 app.include_router(allocation.router)

@@ -29,6 +29,12 @@ SYNC_GATED_PREFIXES: tuple[str, ...] = (
 # that schedules another push is a loop with no exit.
 SYNCED_WRITE_PREFIXES: tuple[str, ...] = SYNC_GATED_PREFIXES + (
     "/api/alerts/rules",
+    # Zettel and graph writes land in synced tables (and, for graphs, in a
+    # synced FILE). They read fine pre-merge, so they are push-worthy without
+    # being gate-worthy — same reasoning as alert_rules above.
+    "/api/v2/zettel",
+    "/api/v2/graphs",
+    "/api/v2/series",
 )
 
 

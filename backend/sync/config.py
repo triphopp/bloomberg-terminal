@@ -108,6 +108,21 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     ("zettel_edges",             ["id"]),
     ("zettel_sources",           ["id"]),
     ("zettel_refs",              ["zettel_id", "target_type", "target_id"]),  # composite PK
+    # Rendered analysis pages. The ROW travels here; the HTML file beside it
+    # travels through sync/files.py, because a page index without its pages is
+    # four links that 404 on the other machine. Keyed on `slug` (UNIQUE, and the
+    # name of the folder the file lives in) rather than the uuid `id`, so the
+    # same page written on two devices merges into one row instead of two.
+    ("graphs",                   ["slug"]),                       # UNIQUE(slug)
+    # Indicator series (backend/series_sources). `series_meta` is a head row
+    # like `theses` — a label or sort order is edited in place, so field-level
+    # LWW. `series_points` is one published number on one day, keyed naturally,
+    # which makes a merge a union: two devices recording the same day agree, and
+    # a day only one machine was awake for is filled in for both. Same argument
+    # as iv_snapshots — the publisher sells the history, so an unrecorded day
+    # cannot be re-derived by anyone.
+    ("series_meta",              ["id"]),
+    ("series_points",            ["series_id", "date"]),   # composite PK
     ("allocation_targets",       ["account_id", "scope", "key"]),  # UNIQUE(...)
     # Why an edit was made, for both equity and option trades. Append-only by
     # construction — no endpoint UPDATEs a row — so last-write-wins is a union,

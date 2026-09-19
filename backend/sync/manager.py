@@ -22,6 +22,7 @@ from .derived import rebuild_all
 from .merge import merge_snapshots
 from .restore import restore
 from .snapshot import compute_hash, export_snapshot, read_snapshot, write_json
+from .files import live_slugs, pull_files, push_files
 
 logger = logging.getLogger("sync")
 
@@ -148,6 +149,9 @@ def pull() -> dict:
             )
             applied = restore(conn, merged, tombs)
             rebuilt = rebuild_all(conn)
+            # The rows now name every analysis page this device should hold;
+            # fetch the HTML files those rows point at (sync/files.py).
+            pages = pull_files(d["base"], live_slugs(conn))
 
         # The merge result is now the state this device has seen — next merge
         # compares against it. Saved after restore so a crash mid-restore leaves
@@ -169,7 +173,8 @@ def pull() -> dict:
         state["last_conflicts"] = len(conflicts)
         _save_state(state)
         return {"status": "ok", "applied": applied, "devices": len(peers) + 1,
-                "conflicts": len(conflicts), "rebuilt": rebuilt}
+                "conflicts": len(conflicts), "rebuilt": rebuilt,
+                "pages": pages}
 
 
 def push() -> dict:
@@ -185,10 +190,17 @@ def push() -> dict:
         from db import get_db
         with get_db() as conn:
             snap = export_snapshot(conn, device)
+            slugs = live_slugs(conn)
+
+        # Published before the early return below: a run where only a page's
+        # BYTES changed leaves the row hash untouched (the row carries `bytes`
+        # and `version`, but a same-size correction moves neither), and the file
+        # would then never travel.
+        pages = push_files(d["base"], slugs, device)
 
         state = _load_state()
         if snap["hash"] == state.get("last_push_hash"):
-            return {"status": "unchanged"}
+            return {"status": "unchanged", "pages": pages}
 
         write_json(d["snapshots"] / f"{device}.json", snap)
 
@@ -227,7 +239,7 @@ def push() -> dict:
         if not _sidecar("base").exists():
             _save_base(snap["tables"], snap["tombstones"])
 
-        return {"status": "ok", "hash": snap["hash"][:12]}
+        return {"status": "ok", "hash": snap["hash"][:12], "pages": pages}
 
 
 # ── event-driven push (local writes) ─────────────────────────────────────────

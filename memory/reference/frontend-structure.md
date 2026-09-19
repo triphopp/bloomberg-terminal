@@ -65,6 +65,9 @@ components/bloomberg/
 │           ├── BacktestTab.tsx       ← backtest v2 (4 sub-tabs: equity/holdings/distribution/attribution)
 │           ├── RiskTab.tsx           ← 2 sub-tabs: OVERVIEW (dense col layout: header/9-stat/VaR+chart+EWS) | OPTIONS risk
 │           ├── ThesesTab.tsx         ← barrel → tabs/theses/
+│           │   ├── theses/graphs/     ← GRAPHS sub-tab: GraphsPanel — lists rendered analysis
+│           │   │                        pages for the thesis, previews one in a sandboxed
+│           │   │                        iframe (no allow-same-origin: the HTML is agent-written)
 │           │   └── theses/zettel/     ← KB sub-tab: ZettelPanel (list+detail+create),
 │           │                             ConflictPanel (two sides + RESOLVE),
 │           │                             ZettelGraph (deterministic radial SVG)
@@ -224,6 +227,11 @@ components/bloomberg/
 | `portfolio/tabs/theses/ThesisEditor.tsx` | `ThesisEditor`, `ThesisDraft`, `emptyDraft`, `draftFrom` |
 | `portfolio/tabs/theses/ThesisNotes.tsx` | `ThesisNotes`, `NoteDraft`, `emptyNoteDraft` |
 | `portfolio/tabs/theses/ThesisTimeline.tsx` | `ThesisTimeline` |
+| `portfolio/tabs/theses/graphs/GraphsPanel.tsx` | `GraphsPanel` (props: `thesisId`, `colors`, `onCountChange`), `AnalysisGraph` |
+| `ui/series-board.tsx` | `SeriesBoard` (props: `group`, `colors`, `days`), `SeriesRow`, `SeriesBoardColors` — generic indicator board: sections, values, Δ%, sparkline, detail chart. Names no specific market |
+| `views/news/data-tab.tsx` | `DataTab` — NEWS → DATA: group selector from `/api/v2/series/groups` + `SeriesBoard` |
+| `portfolio/tabs/theses/ReadView.tsx` | `ReadView` (props: `thesis`, `notes`, `events`, `colors`) — READ mode: the whole thesis as one scrollable document (body + notes + zettel + analysis pages + history) with a scroll-spy contents rail |
+| `portfolio/tabs/theses/markdown.tsx` | `renderMarkdown(text, colors, scale)`, `headingsOf`, `slugifyHeading`, `MdScale` (`"dense"` \| `"read"`) — tables, links, ordered/nested lists, blockquote, code fence, hr |
 | `portfolio/modals/SellModal.tsx` | `SellModal` |
 | `portfolio/modals/TradeEditModal.tsx` | `TradeEditModal` |
 | `portfolio/tabs/OpenPositionsTab.tsx` | `OpenPositionsTab` (prop `onOpenThesis` → TH / +TH badge jumps to TOOLS → THESES) |

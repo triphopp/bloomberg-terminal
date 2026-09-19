@@ -1,15 +1,17 @@
 "use client";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { BookOpen, FlaskConical, Loader2, Plus } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, FlaskConical, Loader2, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Colors } from "../../helpers";
 import { fmtK, pnlColor } from "../../helpers";
 import { ConfirmDeleteModal } from "../../modals/ConfirmDeleteModal";
 import type { Trade } from "../../types";
+import { ReadView } from "./ReadView";
 import { type ThesisDraft, ThesisEditor, draftFrom, emptyDraft } from "./ThesisEditor";
 import { type NoteDraft, ThesisNotes } from "./ThesisNotes";
 import { ThesisRail } from "./ThesisRail";
 import { ThesisTimeline } from "./ThesisTimeline";
+import { GraphsPanel } from "./graphs/GraphsPanel";
 import { renderMarkdown } from "./markdown";
 import {
   STATUS_COLOR,
@@ -20,9 +22,10 @@ import {
 } from "./types";
 import { ZettelPanel } from "./zettel/ZettelPanel";
 
-type SubTab = "thesis" | "notes" | "kb" | "history" | "trades" | "ai";
+type SubTab = "thesis" | "notes" | "kb" | "graphs" | "history" | "trades" | "ai";
 
 const API = "/api/v2/theses";
+const RAIL_KEY = "bloomberg_theses_rail";
 
 export function ThesesTab({
   colors,
@@ -44,6 +47,7 @@ export function ThesesTab({
     events: ThesisEvent[];
     links: ThesisLink[];
     notes?: ThesisNote[];
+    counts?: { zettel: number; conflicts: number; graphs: number };
   } | null>(null);
   const [subTab, setSubTab] = useState<SubTab>("thesis");
   const [editing, setEditing] = useState(false);
@@ -56,13 +60,36 @@ export function ThesesTab({
   const [streaming, setStreaming] = useState(false);
   const [streamText, setStreamText] = useState("");
   const [banner, setBanner] = useState<string | null>(null);
-  // Counts for the KB tab label, reported up by the panel that loads them —
-  // the thesis list endpoint knows nothing about the knowledge base.
-  const [kbCounts, setKbCounts] = useState({ notes: 0, conflicts: 0 });
+  // Counts for the KB and GRAPHS tab labels. They come with the detail payload,
+  // so a tab that was never opened still shows its real number; the panels
+  // report theirs up as they load, which keeps the label live while editing.
+  const [kbCounts, setKbCounts] = useState<{ notes: number; conflicts: number } | null>(null);
+  const [graphCount, setGraphCount] = useState<number | null>(null);
   // Phone: rail and detail can't share 375px (the detail got ~160px), so it is
   // one or the other. A hand-off from the positions table goes straight to detail.
   const isMobile = useIsMobile();
   const [mobileList, setMobileList] = useState(!initialSymbol);
+  // READ is a way of looking at the same thesis, not a tab: it stays on while
+  // the user moves between theses, which is what "I am reading tonight" means.
+  const [reading, setReading] = useState(false);
+  const [railOpen, setRailOpen] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const s = localStorage.getItem(RAIL_KEY);
+      if (s) return JSON.parse(s) as boolean;
+    } catch {
+      /* ignore */
+    }
+    return true;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(RAIL_KEY, JSON.stringify(railOpen));
+    } catch {
+      /* ignore */
+    }
+  }, [railOpen]);
   const textRef = useRef<HTMLDivElement>(null);
 
   const loadList = useCallback(async (signal?: AbortSignal) => {
@@ -83,6 +110,10 @@ export function ThesesTab({
       const r = await fetch(`${API}/${id}`);
       if (!r.ok) return;
       setDetail(await r.json());
+      // A panel's own count belongs to the thesis it was mounted for; drop it
+      // so the freshly loaded detail counts take over on a switch.
+      setKbCounts(null);
+      setGraphCount(null);
     } catch {
       /* ignore */
     }
@@ -155,6 +186,14 @@ export function ThesesTab({
       (detail?.notes ?? []).filter((n) => n.status === "open" || n.status === "watching").length,
     [detail]
   );
+
+  // The panel's own number wins once it has loaded — it reflects edits made in
+  // the tab — otherwise the count that arrived with the thesis.
+  const kbLabel = useMemo(() => {
+    const notes = kbCounts?.notes ?? detail?.counts?.zettel ?? 0;
+    const conflicts = kbCounts?.conflicts ?? detail?.counts?.conflicts ?? 0;
+    return conflicts ? `KB (${notes}) ⟂${conflicts}` : `KB (${notes})`;
+  }, [kbCounts, detail]);
 
   const startNew = () => {
     setMobileList(false);
@@ -369,50 +408,76 @@ export function ThesesTab({
     <div className="flex" style={{ minHeight: "400px", height: "100%" }}>
       {/* Rail */}
       <div
-        className={`${isMobile ? (mobileList ? "w-full" : "hidden") : "w-52 border-r"} flex flex-col flex-shrink-0`}
+        className={`${
+          isMobile ? (mobileList ? "w-full" : "hidden") : `${railOpen ? "w-52" : "w-7"} border-r`
+        } flex flex-col flex-shrink-0 overflow-hidden`}
         style={{ borderColor: colors.border }}
       >
         <div
           className="px-2 py-1 flex items-center gap-1 border-b shrink-0"
           style={{ borderColor: colors.border }}
         >
-          <span className="text-[9px] font-bold tracking-widest" style={{ color: colors.accent }}>
+          {!isMobile && (
+            <button
+              type="button"
+              onClick={() => setRailOpen((v) => !v)}
+              title={railOpen ? "collapse list" : "expand list"}
+              className="-ml-1 p-0.5 shrink-0"
+              style={{ color: colors.textSecondary }}
+            >
+              {railOpen ? (
+                <ChevronLeft className="h-3 w-3" />
+              ) : (
+                <ChevronRight className="h-3 w-3" />
+              )}
+            </button>
+          )}
+          <span
+            className={`text-[9px] font-bold tracking-widest ${railOpen || isMobile ? "" : "hidden"}`}
+            style={{ color: colors.accent }}
+          >
             THESES
           </span>
           {loadingList && (
             <Loader2 className="h-2.5 w-2.5 animate-spin" style={{ color: colors.accent }} />
           )}
+          {(railOpen || isMobile) && (
+            <button
+              type="button"
+              onClick={startNew}
+              title="new thesis"
+              className="ml-auto flex items-center gap-0.5 text-[7px] px-1 py-0.5 border font-bold"
+              style={{ borderColor: colors.accent, color: colors.accent }}
+            >
+              <Plus className="h-2 w-2" />
+              NEW
+            </button>
+          )}
+        </div>
+        {(railOpen || isMobile) && (
+          <ThesisRail
+            theses={theses}
+            selectedId={selectedId}
+            onSelect={(id) => {
+              setSelectedId(id);
+              setMobileList(false);
+              setEditing(false);
+              setSubTab("thesis");
+              setStreamText("");
+            }}
+            colors={colors}
+          />
+        )}
+        {(railOpen || isMobile) && (
           <button
             type="button"
-            onClick={startNew}
-            title="new thesis"
-            className="ml-auto flex items-center gap-0.5 text-[7px] px-1 py-0.5 border font-bold"
-            style={{ borderColor: colors.accent, color: colors.accent }}
+            onClick={importMd}
+            className="border-t px-2 py-1 text-[7px] tracking-widest shrink-0"
+            style={{ borderColor: colors.border, color: colors.textSecondary }}
           >
-            <Plus className="h-2 w-2" />
-            NEW
+            IMPORT .MD FROM THESES_DIR
           </button>
-        </div>
-        <ThesisRail
-          theses={theses}
-          selectedId={selectedId}
-          onSelect={(id) => {
-            setSelectedId(id);
-            setMobileList(false);
-            setEditing(false);
-            setSubTab("thesis");
-            setStreamText("");
-          }}
-          colors={colors}
-        />
-        <button
-          type="button"
-          onClick={importMd}
-          className="border-t px-2 py-1 text-[7px] tracking-widest shrink-0"
-          style={{ borderColor: colors.border, color: colors.textSecondary }}
-        >
-          IMPORT .MD FROM THESES_DIR
-        </button>
+        )}
       </div>
 
       {/* Detail */}
@@ -474,6 +539,19 @@ export function ThesesTab({
                 <div className="flex gap-1">
                   <button
                     type="button"
+                    onClick={() => setReading((v) => !v)}
+                    title="read the whole thesis as one document"
+                    className="text-[8px] px-2 py-1 border font-bold"
+                    style={{
+                      borderColor: reading ? colors.accent : colors.border,
+                      color: reading ? colors.accent : colors.textSecondary,
+                      background: reading ? "#ff990015" : "transparent",
+                    }}
+                  >
+                    READ
+                  </button>
+                  <button
+                    type="button"
                     onClick={startEdit}
                     className="text-[8px] px-2 py-1 border font-bold"
                     style={{ borderColor: colors.accent, color: colors.accent }}
@@ -533,17 +611,13 @@ export function ThesesTab({
                 {chip("UPDATED", (thesis.updated_at ?? "").slice(0, 10))}
               </div>
 
-              <div className="flex gap-1 px-3 pb-1">
+              <div className={`flex gap-1 px-3 pb-1 ${reading ? "hidden" : ""}`}>
                 {(
                   [
                     ["thesis", "THESIS"],
                     ["notes", `NOTES (${openNoteCount})`],
-                    [
-                      "kb",
-                      kbCounts.conflicts
-                        ? `KB (${kbCounts.notes}) ⟂${kbCounts.conflicts}`
-                        : `KB (${kbCounts.notes})`,
-                    ],
+                    ["kb", kbLabel],
+                    ["graphs", `GRAPHS (${graphCount ?? detail?.counts?.graphs ?? 0})`],
                     ["history", `HISTORY (${detail?.events.length ?? 0})`],
                     ["trades", `LINKED TRADES (${detail?.links.length ?? 0})`],
                     ["ai", "AI ANALYSIS"],
@@ -566,7 +640,16 @@ export function ThesesTab({
               </div>
             </div>
 
-            {subTab === "thesis" && (
+            {reading && (
+              <ReadView
+                thesis={thesis}
+                notes={detail?.notes ?? []}
+                events={detail?.events ?? []}
+                colors={colors}
+              />
+            )}
+
+            {!reading && subTab === "thesis" && (
               <div className="flex-1 overflow-y-auto p-3">
                 {renderMarkdown(thesis.body ?? "", colors)}
                 {thesis.source_file && (
@@ -577,7 +660,7 @@ export function ThesesTab({
               </div>
             )}
 
-            {subTab === "notes" && (
+            {!reading && subTab === "notes" && (
               <ThesisNotes
                 notes={detail?.notes ?? []}
                 onCreate={createNote}
@@ -587,7 +670,7 @@ export function ThesesTab({
               />
             )}
 
-            {subTab === "kb" && (
+            {!reading && subTab === "kb" && (
               <ZettelPanel
                 thesisId={thesis.id}
                 symbol={thesis.symbol}
@@ -596,7 +679,11 @@ export function ThesesTab({
               />
             )}
 
-            {subTab === "history" && (
+            {!reading && subTab === "graphs" && (
+              <GraphsPanel thesisId={thesis.id} colors={colors} onCountChange={setGraphCount} />
+            )}
+
+            {!reading && subTab === "history" && (
               <ThesisTimeline
                 events={detail?.events ?? []}
                 onAddNote={addNote}
@@ -605,7 +692,7 @@ export function ThesesTab({
               />
             )}
 
-            {subTab === "trades" && (
+            {!reading && subTab === "trades" && (
               <div className="flex-1 overflow-y-auto p-3">
                 <table className="w-full text-[9px] font-mono">
                   <thead>
@@ -666,7 +753,7 @@ export function ThesesTab({
               </div>
             )}
 
-            {subTab === "ai" && (
+            {!reading && subTab === "ai" && (
               <div className="flex-1 overflow-y-auto p-3" ref={textRef}>
                 {streamText ? (
                   renderMarkdown(streamText, colors)

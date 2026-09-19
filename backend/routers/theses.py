@@ -16,6 +16,7 @@ is the source of truth once a thesis has been imported.
 """
 import json
 import re
+import sqlite3
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -158,6 +159,54 @@ class LinkIn(BaseModel):
 
 # ── CRUD ─────────────────────────────────────────────────────────────────────
 
+# ── Attachment counts ────────────────────────────────────────────────────────
+# The KB and GRAPHS tabs used to count nothing until their panel had been
+# opened once, so a thesis with 30 notes read "KB (0)" until clicked. The
+# counts belong to whoever already knows the thesis id — the list and detail
+# endpoints — not to the panel that happens to render them.
+
+_ZETTEL_COUNT_SQL = """
+    SELECT r.target_id AS thesis_id, COUNT(*) AS n
+      FROM zettel_refs r JOIN zettel z ON z.id = r.zettel_id
+     WHERE r.target_type = 'thesis' AND z.deleted_at IS NULL
+     GROUP BY r.target_id
+"""
+
+# One CONTRADICTS edge is one conflict even when BOTH of its notes hang off the
+# same thesis, hence DISTINCT e.id.
+_CONFLICT_COUNT_SQL = """
+    SELECT r.target_id AS thesis_id, COUNT(DISTINCT e.id) AS n
+      FROM zettel_edges e
+      JOIN zettel_refs r ON r.zettel_id IN (e.src_id, e.dst_id)
+     WHERE e.rel = 'CONTRADICTS' AND e.resolved_at IS NULL
+       AND r.target_type = 'thesis'
+     GROUP BY r.target_id
+"""
+
+_GRAPH_COUNT_SQL = """
+    SELECT thesis_id, COUNT(*) AS n FROM graphs
+     WHERE deleted_at IS NULL AND thesis_id IS NOT NULL
+     GROUP BY thesis_id
+"""
+
+
+def _count_map(conn, sql: str) -> dict[str, int]:
+    """thesis_id → n, tolerant of a table that a migration has not created yet."""
+    try:
+        return {r["thesis_id"]: r["n"] for r in conn.execute(sql).fetchall()}
+    except sqlite3.OperationalError:
+        return {}
+
+
+def _attachment_counts(conn, thesis_id: str) -> dict[str, int]:
+    """Everything the sub-tab labels need for one thesis, in one place."""
+    return {
+        "zettel": _count_map(conn, _ZETTEL_COUNT_SQL).get(thesis_id, 0),
+        "conflicts": _count_map(conn, _CONFLICT_COUNT_SQL).get(thesis_id, 0),
+        "graphs": _count_map(conn, _GRAPH_COUNT_SQL).get(thesis_id, 0),
+    }
+
+
 @router.get("")
 def list_theses(
     symbol: Optional[str] = Query(None),
@@ -206,9 +255,15 @@ def list_theses(
                 "GROUP BY thesis_id"
             ).fetchall()
         }
+        zettel_counts = _count_map(conn, _ZETTEL_COUNT_SQL)
+        conflict_counts = _count_map(conn, _CONFLICT_COUNT_SQL)
+        graph_counts = _count_map(conn, _GRAPH_COUNT_SQL)
     for r in rows:
         r["event_count"] = counts.get(r["id"], 0)
         r["open_note_count"] = note_counts.get(r["id"], 0)
+        r["zettel_count"] = zettel_counts.get(r["id"], 0)
+        r["conflict_count"] = conflict_counts.get(r["id"], 0)
+        r["graph_count"] = graph_counts.get(r["id"], 0)
     return {"theses": rows}
 
 
@@ -277,13 +332,20 @@ def get_thesis(thesis_id: str, event_limit: int = Query(50)):
             ).fetchall()
         ]
         notes = _notes_for(conn, thesis_id)
+        counts = _attachment_counts(conn, thesis_id)
     for ev in events:
         if ev.get("payload"):
             try:
                 ev["payload"] = json.loads(ev["payload"])
             except (TypeError, ValueError):
                 pass
-    return {"thesis": thesis, "events": events, "links": links, "notes": notes}
+    return {
+        "thesis": thesis,
+        "events": events,
+        "links": links,
+        "notes": notes,
+        "counts": counts,
+    }
 
 
 @router.post("")
