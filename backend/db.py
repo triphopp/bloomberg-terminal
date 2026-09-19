@@ -1292,6 +1292,115 @@ def init_audit_layer() -> None:
             """)
 
 
+def init_graphs_schema() -> None:
+    """Rendered analysis pages — the index for what lives in GRAPHS_DIR.
+
+    The page itself is a file on disk (research/graphs/<slug>/index.html): an
+    80KB document with inline SVG has no business sitting in a TEXT column, and
+    keeping it as a file means it diffs in git and opens without the backend
+    running. This table is only what you need to FIND one — title, who it is
+    about, which thesis it argues, when the data was pulled.
+
+    `slug` is the natural key and the URL segment, so it is UNIQUE here (unlike
+    zettel `ref`, which is minted per device): a graph is created through one
+    backend, never merged in from another, and a collision would otherwise
+    silently overwrite someone's page on disk.
+
+    Not wired into the sync layer: the folder travels with the repo.
+    """
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS graphs (
+                id          TEXT PRIMARY KEY,
+                slug        TEXT NOT NULL UNIQUE,
+                title       TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                kind        TEXT NOT NULL DEFAULT 'html',
+                symbol      TEXT,
+                thesis_id   TEXT,
+                zettel_refs TEXT NOT NULL DEFAULT '',
+                tags        TEXT NOT NULL DEFAULT '',
+                as_of       TEXT,
+                sources     TEXT NOT NULL DEFAULT '[]',
+                version     INTEGER NOT NULL DEFAULT 1,
+                bytes       INTEGER NOT NULL DEFAULT 0,
+                actor       TEXT NOT NULL DEFAULT 'user',
+                deleted_at  TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_graphs_thesis ON graphs(thesis_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_graphs_symbol ON graphs(symbol)")
+
+
+def init_series_schema() -> None:
+    """Generic indicator series — anything that is a number over time and is NOT
+    a tradable instrument.
+
+    Quotes already have a home (yfinance through the provider registry); what
+    had none is the other half of a research desk: spot prices published by an
+    industry board, a freight rate, a survey index. Those arrive per source, in
+    a shape that source decides, and the mistake would be one table per source —
+    a `dram_prices` table means the next one needs a `freight_rates` table, a
+    second endpoint and a second panel.
+
+    So the store is deliberately source-agnostic. A collector
+    (backend/series_sources/*.py) declares its series and hands back
+    observations; the router, the scheduler and the UI never learn what DRAM is.
+
+    Two tables, for the same reason the thesis system has a head row and an
+    append-only log:
+
+      series_meta   — what a series IS. Edited in place (a label or a sort order
+                      changes), so field-level last-write-wins on merge.
+      series_points — what it WAS on a given day. Keyed on (series_id, date):
+                      an immutable fact about one day, which makes a merge a
+                      union rather than a race — the same argument as
+                      iv_snapshots, and it matters for the same reason. The
+                      publisher shows only TODAY's price, so a day nobody
+                      recorded is a permanent hole in the chart.
+    """
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS series_meta (
+                id          TEXT PRIMARY KEY,
+                group_key   TEXT NOT NULL,
+                section     TEXT NOT NULL DEFAULT '',
+                label       TEXT NOT NULL,
+                unit        TEXT NOT NULL DEFAULT '',
+                source      TEXT NOT NULL,
+                source_url  TEXT NOT NULL DEFAULT '',
+                freq        TEXT NOT NULL DEFAULT 'daily',
+                symbol      TEXT,
+                tags        TEXT NOT NULL DEFAULT '',
+                sort_order  INTEGER NOT NULL DEFAULT 0,
+                first_seen  TEXT,
+                last_value  REAL,
+                last_date   TEXT,
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS series_points (
+                series_id   TEXT NOT NULL,
+                date        TEXT NOT NULL,
+                value       REAL,
+                high        REAL,
+                low         REAL,
+                change_pct  REAL,
+                captured_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (series_id, date)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_series_meta_group ON series_meta(group_key, section)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_series_points_date ON series_points(date)"
+        )
+
+
 def init_alerts_schema() -> None:
     """Alert Rule Engine tables (memory/plans/alert-rule-engine.md §5)."""
     from alerts.schema import create_alert_tables
