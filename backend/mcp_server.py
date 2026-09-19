@@ -40,6 +40,9 @@ mcp = MCPServer(
         "something already written, do NOT overwrite it — zettel_link rel=CONTRADICTS "
         "and leave the conflict open for the user. Thesis-local scenarios and dated "
         "watch items still go in add_note; log_event records a REVIEW verdict. "
+        "A finding that is only legible as a picture — a money-flow map, a cycle "
+        "ladder, a cross-company comparison — goes in graph_create as one "
+        "self-contained HTML page attached to the thesis (graph_list first). "
         "Never rewrite the thesis body or change status/conviction unless asked, and "
         "always give a reason."
     ),
@@ -498,6 +501,102 @@ def zettel_by_source(url: str) -> str:
     """Every claim resting on one story — run this when a source turns out to be
     wrong, retracted or paywalled-over, to see what else has to move."""
     return _out(_call("GET", f"{ZETTEL}/sources/by-url", params={"url": url}))
+
+
+# ── Graphs: rendered analysis pages ──────────────────────────────────────────
+#
+# A zettel holds one claim in prose. Some findings are only legible as a picture:
+# a money-flow map, a cycle ladder, a side-by-side of five companies' cash flow.
+# Those go here — one self-contained HTML page per analysis, stored in
+# research/graphs/<slug>/ and listed in PORT → TOOLS → THESES → GRAPHS.
+#
+# Write the page the way you would write any standalone document: inline <style>,
+# inline SVG for the diagram, no external scripts or fonts (the render CSP blocks
+# every off-box request, so a CDN link silently does nothing). Cite the numbers
+# you drew from, and attach the graph to the thesis it argues.
+
+GRAPHS = f"{API}/api/v2/graphs"
+
+
+@mcp.tool()
+def graph_list(symbol: Optional[str] = None, thesis_id: Optional[str] = None,
+               q: Optional[str] = None, limit: int = 100) -> str:
+    """Analysis pages already in the book (metadata only, never the HTML).
+    Run this before graph_create — updating an existing page beats a near-duplicate."""
+    return _out(_call("GET", GRAPHS, params={
+        "symbol": symbol, "thesis_id": thesis_id, "q": q, "limit": limit,
+    })["graphs"])
+
+
+@mcp.tool()
+def graph_get(slug: str, include_html: bool = False) -> str:
+    """One page's metadata, and with include_html=True its source — which is how
+    you edit an existing page instead of replacing it blind."""
+    return _out(_call("GET", f"{GRAPHS}/{slug}", params={"include_html": include_html}))
+
+
+@mcp.tool()
+def graph_create(
+    title: str,
+    html: str,
+    slug: Optional[str] = None,
+    description: str = "",
+    symbol: Optional[str] = None,
+    thesis_id: Optional[str] = None,
+    zettel_refs: str = "",
+    tags: str = "",
+    as_of: Optional[str] = None,
+    sources: Optional[list] = None,
+) -> str:
+    """Save an analysis page. `html` is the CONTENT — headings, prose, tables,
+    inline SVG — not a document: the render shell supplies <html>, the masthead,
+    the Thai typeface and the section tabs, which are built from your <h2>/<h3>.
+    Read `research/graphs/_template.html` before writing the first one.
+
+    Two rules are enforced on save: no resource may be loaded over the network
+    (the render CSP blocks every off-box request, so an external <img> or
+    stylesheet is a hole in the page — inline the SVG or embed a data: URI), and
+    the page needs at least one <h2> or the reader gets no way to navigate.
+    Anything else that will render badly comes back in `warnings`.
+
+    Attach it: `thesis_id` puts it on that thesis and writes a GRAPH_ADDED event,
+    `zettel_refs` ("Z-0019,Z-0021") points back at the notes it draws on, `as_of`
+    is the date of the DATA, not today. `sources` is a list of {title, url} and
+    is printed at the foot of the page.
+    Returns `render_url` — the link the user can open in a browser tab."""
+    return _out(_call("POST", GRAPHS, body=_clean({
+        "title": title, "html": html, "slug": slug, "description": description,
+        "symbol": symbol, "thesis_id": thesis_id, "zettel_refs": zettel_refs,
+        "tags": tags, "as_of": as_of, "sources": sources or [],
+    })))
+
+
+@mcp.tool()
+def graph_update(
+    slug: str,
+    html: Optional[str] = None,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    symbol: Optional[str] = None,
+    thesis_id: Optional[str] = None,
+    zettel_refs: Optional[str] = None,
+    tags: Optional[str] = None,
+    as_of: Optional[str] = None,
+    sources: Optional[list] = None,
+    reason: str = "",
+) -> str:
+    """Revise a page in place. Passing `html` bumps the version and keeps the
+    previous one beside it (openable at ?v=<n>), so a correction never erases
+    what the chart used to claim. Say why in `reason` — it lands on the timeline.
+
+    `html` follows the same contract as graph_create: content only, no network
+    resources, at least one <h2>. Changing how a page LOOKS is never a reason to
+    rewrite it — the shell restyles every page at render time."""
+    return _out(_call("PATCH", f"{GRAPHS}/{slug}", body=_clean({
+        "html": html, "title": title, "description": description, "symbol": symbol,
+        "thesis_id": thesis_id, "zettel_refs": zettel_refs, "tags": tags,
+        "as_of": as_of, "sources": sources, "reason": reason,
+    })))
 
 
 # ── Prompts ──────────────────────────────────────────────────────────────────

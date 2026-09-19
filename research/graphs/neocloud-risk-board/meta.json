@@ -1,0 +1,42 @@
+{
+  "id": "854f35d2-afe2-4451-b28c-a94ff59dac1d",
+  "slug": "neocloud-risk-board",
+  "title": "Neocloud Risk Board",
+  "description": "รายชื่อ neocloud ทั้งจดทะเบียนและเอกชน พร้อมชนิดความเสี่ยง 8 แบบ หนี้ต่อรายได้ และระยะห่างจากจุดสูงสุด 52 สัปดาห์",
+  "kind": "html",
+  "symbol": "SNDK",
+  "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+  "zettel_refs": "Z-0027,Z-0028,Z-0022,Z-0024,Z-0025,Z-0029,Z-0030,Z-0031,Z-0032,Z-0033,Z-0034",
+  "tags": "neocloud,risk,leverage,circular-financing,screen",
+  "as_of": "2026-09-18",
+  "sources": [
+    {
+      "title": "MCP quote — CRWV/NBIS/IREN/HUT/WULF/APLD/CIFR/CORZ/GLXY/BTDR",
+      "url": "http://localhost:9317/api/stock/quote"
+    },
+    {
+      "title": "Aethir — neocloud debt & GPU collateral value",
+      "url": "https://aethir.com/blog-posts/neocloud-debt-and-the-gpu-collateral-value-problem"
+    },
+    {
+      "title": "S&P Global — CoreWeave 'B+' issuer credit rating",
+      "url": "https://www.spglobal.com/ratings/en/regulatory/article/-/view/type/HTML/id/3372088"
+    },
+    {
+      "title": "Moody's — A3 to CoreWeave Compute notes",
+      "url": "https://ratings.moodys.com/ratings-news/462400"
+    },
+    {
+      "title": "MarkTechPost — best GPU neoclouds 2026",
+      "url": "https://www.marktechpost.com/2026/08/23/best-gpu-neoclouds-2026/"
+    }
+  ],
+  "version": 2,
+  "bytes": 25331,
+  "actor": "agent:desktop",
+  "deleted_at": null,
+  "created_at": "2026-09-18T17:35:19.262482",
+  "updated_at": "2026-09-19T05:03:55.799781",
+  "render_url": "/api/v2/graphs/neocloud-risk-board/render",
+  "file": "D:/Agents/Claude/bloomberg-terminal-main/research/graphs/neocloud-risk-board/index.html"
+}

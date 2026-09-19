@@ -1,0 +1,98 @@
+<!--
+  TEMPLATE — what `graph_create` expects in `html`.
+
+  Send the CONTENT of the page, not a document. The render shell
+  (backend/graph_shell.py) supplies <html>, <head>, the masthead, the Thai
+  typeface (Laksaman), the academic typography and the sticky section tabs.
+  A page that ships its own <html>/<head> is unwrapped; a page that ships its
+  own <style> overrides the shell, which is allowed but is rarely what you want
+  — the point of the shell is that every analysis page in the book reads alike.
+
+  Rules the backend enforces on write:
+    • no network resources. <img src="https://…">, <script src=…>, <link rel=
+      stylesheet> and friends are REFUSED — the render CSP blocks every off-box
+      request, so they would be holes in the page. Inline the SVG, or embed the
+      asset as a data: URI.
+    • at least one <h2>. The tabs along the top ARE the <h2>/<h3> of the page,
+      so a page without them gives the reader no way to move around.
+
+  Structure that the shell styles for you:
+    <p class="lede">     one paragraph under a heading, larger, sets up the section
+    <div class="note">   an aside — a caveat, a definition, a "why this number"
+    <figure class="fig"> a chart; put inline <svg> in it and a <figcaption>
+    <div class="tablebox"> wrap a wide <table> so it scrolls on a phone
+    class="mono"/"num"   tabular figures inside prose
+    <ul class="src">     the sources at the end (the shell also appends the
+                         `sources` you passed to graph_create)
+
+  Write dates as they appear in the data (2026-09-19), and say what the figure
+  is AS OF in `as_of` rather than in the prose — the masthead prints it.
+-->
+
+<p class="lede">
+  หนึ่งย่อหน้าบอกว่าหน้านี้ตอบคำถามอะไร และผู้อ่านควรได้อะไรกลับไป —
+  เขียนให้จบความในตัวเอง เพราะหน้านี้จะถูกอ่านแยกจากบทสนทนาที่สร้างมัน
+</p>
+
+<h2>คำถามและขอบเขต</h2>
+
+<p>
+  ตั้งคำถามให้ตรวจสอบได้ ระบุช่วงเวลา หน่วย และสิ่งที่ <em>ไม่</em> อยู่ในขอบเขต
+  ตัวเลขทุกตัวในหน้านี้ต้องสาวกลับไปหาแหล่งได้
+</p>
+
+<div class="note">
+  <strong>นิยาม:</strong> อธิบายศัพท์ที่หน้านี้ใช้ในความหมายเฉพาะ
+  เพื่อให้คนอ่านซ้ำอีกหกเดือนยังตีความเหมือนเดิม
+</div>
+
+<h2>ข้อมูล</h2>
+
+<div class="tablebox">
+  <table>
+    <thead>
+      <tr><th>บริษัท</th><th>รายได้</th><th>หนี้สุทธิ</th><th>หมายเหตุ</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>ตัวอย่าง A</td><td>1,240</td><td>860</td><td>FY2025, 10-K</td></tr>
+      <tr><td>ตัวอย่าง B</td><td>410</td><td>1,020</td><td>ประมาณการ</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>อ่านตารางนี้อย่างไร</h3>
+
+<p>
+  บอกด้วยว่าอะไรคือตัวเลขจากงบ อะไรคือตัวเลขที่คุณคำนวณเอง และคำนวณด้วยสมมติฐานอะไร
+  ตัวเลขที่ประมาณการต้องติดป้ายว่าประมาณการ
+</p>
+
+<h2>ภาพ</h2>
+
+<figure class="fig">
+  <svg viewBox="0 0 640 200" role="img" aria-label="ตัวอย่างกราฟแท่ง">
+    <title>ตัวอย่างกราฟแท่ง</title>
+    <line x1="40" y1="170" x2="620" y2="170" stroke="currentColor" stroke-width="1" opacity=".35"/>
+    <rect x="70"  y="70"  width="54" height="100" fill="currentColor" opacity=".78"/>
+    <rect x="160" y="110" width="54" height="60"  fill="currentColor" opacity=".55"/>
+    <rect x="250" y="40"  width="54" height="130" fill="currentColor" opacity=".78"/>
+    <text x="70"  y="188" font-size="12" fill="currentColor" opacity=".7">2024</text>
+    <text x="160" y="188" font-size="12" fill="currentColor" opacity=".7">2025</text>
+    <text x="250" y="188" font-size="12" fill="currentColor" opacity=".7">2026E</text>
+  </svg>
+  <figcaption>
+    คำบรรยายบอกสิ่งที่ภาพ <em>แสดง</em> ไม่ใช่ชื่อภาพ — ใช้ <code>currentColor</code>
+    ในเส้นและแท่ง เพื่อให้ภาพอ่านได้ทั้งพื้นสว่างและพื้นมืด
+  </figcaption>
+</figure>
+
+<h2>สิ่งที่จะทำให้ข้อสรุปนี้ผิด</h2>
+
+<p>
+  ระบุเงื่อนไขที่หักล้างได้จริง พร้อมตัวเลขที่ต้องเห็นถึงจะถือว่าหักล้าง
+  หน้าวิเคราะห์ที่ไม่มีหัวข้อนี้คือความเห็น ไม่ใช่การวิเคราะห์
+</p>
+
+<ul class="src">
+  <li>ชื่อแหล่ง — วันที่ของข้อมูล — ตัวเลขที่หยิบมาจากตรงไหน</li>
+</ul>

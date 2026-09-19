@@ -1,0 +1,294 @@
+<title>ดอกเบี้ยสูง น้ำมันแพง แล้ว SNDK ไปทางไหน</title>
+<style>
+  :root{
+    --bg:#F1F3F3; --surface:#FFFFFF; --surface-2:#F7F9F9;
+    --ink:#0F1618; --ink-2:#3E4F53; --muted:#6B7B80; --hair:#D5DDDE;
+    --bear:#B02347; --bear-soft:#F8DFE6;
+    --side:#8A6212; --side-soft:#F6EAD3;
+    --bull:#0C7A6B; --bull-soft:#DAEFEB;
+    --accent:#0B6F79;
+    --shadow:0 1px 2px rgba(15,22,24,.06), 0 8px 24px rgba(15,22,24,.05);
+    --mono:ui-monospace,"SF Mono","Cascadia Mono","Segoe UI Mono",Menlo,Consolas,monospace;
+    --sans:"Segoe UI","Noto Sans Thai",system-ui,-apple-system,"Helvetica Neue",sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0A1214; --surface:#121B1E; --surface-2:#172225;
+      --ink:#E9F0F1; --ink-2:#BDCBCE; --muted:#87999E; --hair:#253134;
+      --bear:#FF7594; --bear-soft:#341620;
+      --side:#E6B252; --side-soft:#2C2214;
+      --bull:#3FC9B4; --bull-soft:#0D2E2B;
+      --accent:#3FC4CC;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0A1214; --surface:#121B1E; --surface-2:#172225;
+    --ink:#E9F0F1; --ink-2:#BDCBCE; --muted:#87999E; --hair:#253134;
+    --bear:#FF7594; --bear-soft:#341620;
+    --side:#E6B252; --side-soft:#2C2214;
+    --bull:#3FC9B4; --bull-soft:#0D2E2B;
+    --accent:#3FC4CC;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.35);
+  }
+
+  body{background:var(--bg); color:var(--ink); font-family:var(--sans); font-size:15px; line-height:1.7; margin:0; -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1080px; margin:0 auto; padding-inline:20px; padding-block:36px 68px;}
+  h1,h2,h3{text-wrap:balance; line-height:1.3; margin:0;}
+  h1{font-size:clamp(26px,4.6vw,40px); font-weight:700; letter-spacing:-.02em;}
+  h2{font-size:clamp(19px,2.8vw,25px); font-weight:600;}
+  h3{font-size:16px; font-weight:600;}
+  p{margin:0;}
+  .mono{font-family:var(--mono); font-variant-numeric:tabular-nums;}
+  .eyebrow{font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted);}
+
+  header{display:flex; flex-direction:column; gap:14px; padding-bottom:24px; border-bottom:1px solid var(--hair);}
+  .lede{font-size:clamp(15px,2vw,18px); color:var(--ink-2); max-width:64ch;}
+  .stamp{display:flex; flex-wrap:wrap; gap:6px 18px; color:var(--muted); font-size:12.5px;}
+
+  section{margin-top:44px; display:flex; flex-direction:column; gap:18px;}
+  .sec-head{display:flex; flex-direction:column; gap:6px;}
+  .sec-head p{color:var(--ink-2); max-width:70ch;}
+
+  /* macro strip */
+  .now{display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:1px; background:var(--hair); border:1px solid var(--hair); border-radius:10px; overflow:hidden;}
+  .now div{background:var(--surface); padding:12px 14px; display:flex; flex-direction:column; gap:2px;}
+  .now .k{font-family:var(--mono); font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted);}
+  .now .v{font-family:var(--mono); font-size:19px; font-weight:600;}
+  .now .d{font-size:11.5px; color:var(--muted);}
+
+  /* price ladder */
+  .ladder{background:var(--surface); border:1px solid var(--hair); border-radius:10px; padding:22px 20px 16px; box-shadow:var(--shadow); overflow-x:auto;}
+  .ladder svg{display:block; width:100%; min-width:640px; height:auto; max-width:100%;}
+
+  /* scenario cards */
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:18px;}
+  .card{background:var(--surface); border:1px solid var(--hair); border-top-width:3px; border-radius:10px; padding:20px; display:flex; flex-direction:column; gap:12px; box-shadow:var(--shadow);}
+  .card.bear{border-top-color:var(--bear);} .card.side{border-top-color:var(--side);} .card.bull{border-top-color:var(--bull);}
+  .card .head{display:flex; align-items:baseline; justify-content:space-between; gap:10px;}
+  .card .name{font-family:var(--mono); font-size:12px; letter-spacing:.12em; text-transform:uppercase; font-weight:600;}
+  .card.bear .name{color:var(--bear);} .card.side .name{color:var(--side);} .card.bull .name{color:var(--bull);}
+  .card .prob{font-family:var(--mono); font-size:22px; font-weight:600;}
+  .card .target{font-family:var(--mono); font-size:15px; padding:6px 0; border-block:1px dashed var(--hair);}
+  .card ul{margin:0; padding-left:17px; font-size:13.5px; color:var(--ink-2); display:flex; flex-direction:column; gap:6px;}
+  .card .kill{font-size:12.5px; color:var(--muted); padding-top:8px; border-top:1px solid var(--hair);}
+
+  /* gauge */
+  .gauge{background:var(--surface); border:1px solid var(--hair); border-radius:10px; padding:20px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:14px;}
+  .gauge .bar{position:relative; height:34px; border-radius:6px; overflow:hidden; background:linear-gradient(90deg, var(--bull-soft) 0%, var(--bull-soft) 41%, var(--side-soft) 41%, var(--side-soft) 67%, var(--bear-soft) 67%, var(--bear-soft) 100%);}
+  .gauge .tick{position:absolute; top:0; bottom:0; width:2px; background:var(--hair);}
+  .gauge .pin{position:absolute; top:-4px; bottom:-4px; width:3px; background:var(--accent);}
+  .gauge .labels{position:relative; height:20px; font-family:var(--mono); font-size:11px; color:var(--muted);}
+  .gauge .labels span{position:absolute; transform:translateX(-50%); white-space:nowrap;}
+
+  /* transmission */
+  .chan{display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:16px;}
+  .chan article{background:var(--surface); border:1px solid var(--hair); border-radius:10px; padding:18px; display:flex; flex-direction:column; gap:8px;}
+  .chan .w{font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted);}
+  .chan p{font-size:13.5px; color:var(--ink-2);}
+
+  /* table */
+  .tablebox{overflow-x:auto; border:1px solid var(--hair); border-radius:10px; background:var(--surface); box-shadow:var(--shadow);}
+  table{border-collapse:collapse; width:100%; min-width:680px; font-size:13.5px;}
+  th,td{padding:11px 14px; text-align:left; border-bottom:1px solid var(--hair); vertical-align:top;}
+  thead th{font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); font-weight:500; background:var(--surface-2);}
+  tbody td:not(:first-child){font-family:var(--mono); font-variant-numeric:tabular-nums; white-space:nowrap;}
+  tbody tr:last-child td{border-bottom:none;}
+  .cbear{color:var(--bear); font-weight:600;} .cside{color:var(--side); font-weight:600;} .cbull{color:var(--bull); font-weight:600;}
+  caption{caption-side:bottom; padding:12px 14px; text-align:left; color:var(--muted); font-size:12px; line-height:1.6;}
+
+  .callout{background:var(--surface); border:1px solid var(--hair); border-left:3px solid var(--accent); border-radius:8px; padding:18px 20px; display:flex; flex-direction:column; gap:8px;}
+  .callout p{color:var(--ink-2); font-size:14px;}
+  .callout strong{color:var(--ink);}
+
+  footer{margin-top:48px; padding-top:22px; border-top:1px solid var(--hair); color:var(--muted); font-size:12.5px;}
+</style>
+
+<div class="wrap">
+
+<header>
+  <span class="eyebrow">SNDK · scenario map · ดอกเบี้ยสูง + น้ำมันแพง</span>
+  <h1>ดอกเบี้ยสูง น้ำมันแพง แล้ว SNDK ไปทางไหน</h1>
+  <p class="lede">สมมติฐานตั้งต้นคือ “ดอกเบี้ยและน้ำมันยังอยู่ระดับสูง” — ซึ่ง<strong>เกิดขึ้นแล้วตอนนี้</strong> (UST 10Y แตะ 5.00%, WTI $96.6) คำถามจึงไม่ใช่ว่ามันจะสูงไหม แต่คือ <strong>ตัวแปรไหนเป็นตัวตัดสิน</strong> — และคำตอบจากงบของทั้งห่วงโซ่คือ สเปรดเครดิต ไม่ใช่ระดับดอกเบี้ย</p>
+  <div class="stamp mono">
+    <span>ข้อมูล ณ 18 ก.ย. 2026</span><span>SNDK $1,699.42</span><span>อ้างอิง Z-0025, Z-0026</span>
+  </div>
+</header>
+
+<section>
+  <div class="sec-head"><h2>จุดตั้งต้นวันนี้</h2></div>
+  <div class="now">
+    <div><span class="k">UST 10Y</span><span class="v">5.00%</span><span class="d">2Y 4.74 · 30Y 5.33</span></div>
+    <div><span class="k">Fed funds</span><span class="v">3.63%</span><span class="d">HOLD ตั้งแต่ ม.ค. 26</span></div>
+    <div><span class="k">WTI</span><span class="v">$96.6</span><span class="d">+24% ใน 6 สัปดาห์</span></div>
+    <div><span class="k">CPI</span><span class="v">3.71%</span><span class="d">เร่งจาก 3.54</span></div>
+    <div><span class="k">GDP</span><span class="v">1.5%</span><span class="d">ชะลอจาก 2.1</span></div>
+    <div><span class="k">HY OAS</span><span class="v">2.70%</span><span class="d">เกณฑ์วิกฤต 5.0</span></div>
+    <div><span class="k">Nat gas</span><span class="v">$2.92</span><span class="d">52w low 2.48</span></div>
+    <div><span class="k">USD/JPY</span><span class="v">156.8</span><span class="d">เยนอ่อน = ต้นทุน JV ถูก</span></div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>สามกรณี บนสมมติฐานเดียวกัน</h2>
+    <p>ทั้งสามกรณี “ดอกเบี้ยและน้ำมันสูง” เหมือนกันหมด สิ่งที่ต่างคือ<strong>ตลาดเครดิตยังเปิดอยู่ไหม</strong> และ<strong>ดีมานด์ดาต้าเซ็นเตอร์สะดุดหรือไม่</strong></p>
+  </div>
+
+  <div class="ladder">
+    <svg viewBox="0 0 900 250" role="img" aria-label="แถบราคาเป้าหมายของสามกรณี เทียบราคาปัจจุบัน">
+      <!-- axis 900..2500 mapped to x 60..860 -->
+      <g font-family="ui-monospace, monospace" font-size="11" fill="var(--muted)">
+        <text x="60" y="232" text-anchor="middle">900</text>
+        <text x="160" y="232" text-anchor="middle">1,100</text>
+        <text x="310" y="232" text-anchor="middle">1,400</text>
+        <text x="460" y="232" text-anchor="middle">1,700</text>
+        <text x="610" y="232" text-anchor="middle">2,000</text>
+        <text x="760" y="232" text-anchor="middle">2,300</text>
+        <text x="860" y="232" text-anchor="middle">2,500</text>
+      </g>
+      <line x1="60" y1="212" x2="860" y2="212" stroke="var(--hair)" stroke-width="1"/>
+
+      <!-- BEAR 1000-1300 -->
+      <rect x="110" y="42" width="150" height="34" rx="5" fill="var(--bear-soft)" stroke="var(--bear)" stroke-width="1.3"/>
+      <text x="120" y="64" font-size="13" font-weight="600" fill="var(--bear)" font-family="ui-monospace, monospace">1,000–1,300</text>
+      <text x="272" y="64" font-size="13" fill="var(--ink)">BEAR · ~25% — สเปรดกาง เครดิตปิด</text>
+
+      <!-- SIDEWAYS 1400-1900 -->
+      <rect x="310" y="96" width="250" height="34" rx="5" fill="var(--side-soft)" stroke="var(--side)" stroke-width="1.3"/>
+      <text x="320" y="118" font-size="13" font-weight="600" fill="var(--side)" font-family="ui-monospace, monospace">1,400–1,900</text>
+      <text x="572" y="118" font-size="13" fill="var(--ink)">SIDEWAYS · ~40% — กำไรโต multiple หด</text>
+
+      <!-- BULL 2100-2400 -->
+      <rect x="660" y="150" width="150" height="34" rx="5" fill="var(--bull-soft)" stroke="var(--bull)" stroke-width="1.3"/>
+      <text x="670" y="172" font-size="13" font-weight="600" fill="var(--bull)" font-family="ui-monospace, monospace">2,100–2,400</text>
+      <text x="650" y="200" font-size="13" fill="var(--ink)" text-anchor="end">BULL · ~35% — เครดิตเปิด ดีมานด์ไม่สะดุด</text>
+
+      <!-- current price marker 1699 -->
+      <line x1="459" y1="26" x2="459" y2="212" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 4"/>
+      <text x="459" y="20" text-anchor="middle" font-size="12" font-weight="600" fill="var(--accent)" font-family="ui-monospace, monospace">วันนี้ $1,699</text>
+
+      <!-- June peak 2354 -->
+      <line x1="787" y1="130" x2="787" y2="212" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>
+      <text x="787" y="126" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="ui-monospace, monospace">พีค มิ.ย. $2,354</text>
+    </svg>
+  </div>
+
+  <div class="cards">
+    <article class="card bear">
+      <div class="head"><span class="name">Bear</span><span class="prob">~25%</span></div>
+      <div class="target">เป้า <strong>$1,000–1,300</strong> · EPS FY27 $150–180 × 6.5–8x</div>
+      <ul>
+        <li><strong>จุดชนวน:</strong> HY OAS &gt; <b class="mono">4.0%</b> นาน 4+ สัปดาห์ · 10Y &gt; 5.5% · WTI &gt; $110 ดัน CPI &gt; 4.5%</li>
+        <li>neocloud กู้ต่อไม่ได้ — CRWV หนี้ <b class="mono">$51.6bn</b> ต่อทุน <b class="mono">$5.0bn</b>, เผาเงิน $5.7bn/ไตรมาส, ทุก +100bp ≈ ดอกเบี้ยเพิ่ม $516m/ปี</li>
+        <li>เลื่อนรับมอบ GPU → ดีมานด์ HBM/eSSD อ่อน → <strong>MU โดนก่อน SNDK</strong></li>
+        <li>น้ำมัน &gt; $110 บีบผู้บริโภคซ้ำ — Consumer ลดไปแล้ว 32% QoQ</li>
+      </ul>
+      <p class="kill"><strong>ยกเลิกเมื่อ:</strong> HY OAS กลับต่ำกว่า 3.25% · เงินล่วงหน้า NBM ยังโต · Datacenter ยังโต QoQ</p>
+    </article>
+
+    <article class="card side">
+      <div class="head"><span class="name">Sideways · ฐานหลัก</span><span class="prob">~40%</span></div>
+      <div class="target">กรอบ <strong>$1,400–1,900</strong> · EPS $200–215 × 7–9x</div>
+      <ul>
+        <li><strong>Fed ถูกตรึงสองทาง:</strong> CPI 3.71% เร่ง ⇒ ลดไม่ได้ · GDP 1.5% ชะลอ ⇒ ขึ้นไม่ได้</li>
+        <li><strong>เกิดขึ้นแล้ว 3 เดือน:</strong> ราคาลงจาก $2,354 มา $1,699 (−27.8%) ทั้งที่กำไรยังเพิ่มทุกไตรมาส = multiple หดสวนกำไร</li>
+        <li>Datacenter โต / Consumer + Edge อ่อน — ตลาดแยกทางต่อไป</li>
+        <li><strong>กับดัก:</strong> beat เล็กลงเรื่อย ๆ (+75.0 → +59.7 → +13.7%) และคอนเซนซัส $46.21 <em>สูงกว่า</em> ปลายบน guidance $46.00 ⇒ ทำได้ตาม guide = พลาดคาด</li>
+      </ul>
+      <p class="kill"><strong>ออกจากกรอบ:</strong> ขึ้น → OAS &lt; 3.25% + beat ชัด · ลง → OAS &gt; 4.0% + prepayment หด</p>
+    </article>
+
+    <article class="card bull">
+      <div class="head"><span class="name">Bull</span><span class="prob">~35%</span></div>
+      <div class="target">เป้า <strong>$2,100–2,400</strong> · EPS ถึง $238 × 9–10x</div>
+      <ul>
+        <li><strong>ดอกเบี้ยสูงไม่กัด</strong> ตราบใดที่สเปรดแคบ: 10Y 5.00% แต่ HY OAS แค่ 2.70% = ตลาดยังปล่อยกู้เต็มที่</li>
+        <li>ผู้ซื้อใหญ่ไม่ได้พึ่งหนี้ — Alphabet เพิ่มทุน <b class="mono">$84.75bn</b> ด้วย equity · MSFT FCF ยังบวก $19.6bn/ไตรมาส</li>
+        <li>NBM ล็อกไว้แล้ว: RPO <b class="mono">$91.1bn</b> ที่ราคาขั้นต่ำ = ~50% ของบิต FY27</li>
+        <li>น้ำมันไม่ใช่ต้นทุนตรง — โรงงานกินไฟ/ก๊าซ (NG $2.92 ถูก) และเยนอ่อน 156.8 ทำให้ต้นทุน JV ในรูป USD ถูกลง</li>
+      </ul>
+      <p class="kill"><strong>ยกเลิกเมื่อ:</strong> HY OAS &gt; 3.5% · consumer/edge ติดลบ 2 ไตรมาสติด · guidance ถัดไปต่ำกว่า $44</p>
+    </article>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>ตัวแปรเดียวที่แยกสามกรณีออกจากกัน</h2>
+    <p>ถ้าจะเฝ้าแค่ตัวเดียว เฝ้า <strong>US HY OAS</strong> ไม่ใช่ Fed funds — ต้นทุนเงินของผู้กู้คือ risk-free + สเปรด และตัวที่สองคือตัวที่ยังไม่ขยับ</p>
+  </div>
+  <div class="gauge">
+    <div>
+      <div class="bar" aria-label="แถบวัด HY OAS">
+        <span class="tick" style="left:41.7%"></span>
+        <span class="tick" style="left:66.7%"></span>
+        <span class="pin" style="left:23.3%" title="ตอนนี้ 2.70%"></span>
+      </div>
+      <div class="labels">
+        <span style="left:0%">2.0</span>
+        <span style="left:23.3%; color:var(--accent); font-weight:600">▲ วันนี้ 2.70</span>
+        <span style="left:41.7%">3.25</span>
+        <span style="left:66.7%">4.00</span>
+        <span style="left:97%">5.00</span>
+      </div>
+    </div>
+    <div class="chan">
+      <article><span class="w" style="color:var(--bull)">&lt; 3.25% — BULL</span><p>เงินยังไหลเข้า AI capex ตามแผน ดอกเบี้ยสูงเป็นแค่พาดหัว</p></article>
+      <article><span class="w" style="color:var(--side)">3.25–4.00% — SIDEWAYS</span><p>เริ่มแพงขึ้นแต่ยังกู้ได้ โครงการถูกเลื่อน ไม่ถูกยกเลิก</p></article>
+      <article><span class="w" style="color:var(--bear)">&gt; 4.00% — BEAR</span><p>ปลายที่อ่อนแอที่สุด (neocloud) ต่อเงินไม่ได้ วงจรขาดจากตรงนั้น</p></article>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>ทำไมดอกเบี้ยไม่เข้าทางงบของ SNDK เอง</h2>
+    <p>ตัวเลขจาก <span class="mono">/api/ir-stress/SNDK/exposure</span> — บริษัทนี้แทบไม่มีช่องให้ดอกเบี้ยเข้าโดยตรง</p>
+  </div>
+  <div class="now">
+    <div><span class="k">หนี้กู้ยืม</span><span class="v">$0</span><span class="d">หนี้ $177m เป็น lease ล้วน</span></div>
+    <div><span class="k">Net debt</span><span class="v">−$4.59bn</span><span class="d">เงินสดสุทธิเป็นบวก</span></div>
+    <div><span class="k">ICR</span><span class="v">179x</span><span class="d">EBIT 13.1bn / ดอกเบี้ย 73m</span></div>
+    <div><span class="k">ครบกำหนด/ปี</span><span class="v">$20m</span><span class="d">คงที่ 5 ปี</span></div>
+  </div>
+  <div class="chan">
+    <article><span class="w">ช่องทางที่ 1 · ใหญ่สุด</span><h3>ต้นทุนเงินของลูกค้า</h3><p>capex AI ถูกอุดด้วยหนี้ 32% ของยอด และ neocloud ใช้หนี้เป็นทุนหลัก ⇒ ดีมานด์ของ SNDK ขึ้นกับว่าคนอื่นกู้ได้ไหม</p></article>
+    <article><span class="w">ช่องทางที่ 2</span><h3>Multiple</h3><p>เทรด 7.9x FY27E = กระแสเงินสด duration สั้น discount rate ขึ้น 100bp กระทบน้อยกว่าหุ้นโต 40x มาก</p></article>
+    <article><span class="w">ช่องทางที่ 3</span><h3>กระเป๋าผู้บริโภค</h3><p>น้ำมันแพง + ดอกเบี้ยสูงกด Edge (60% ของรายได้) และ Consumer (14.5%) ก่อนถึง Datacenter เสมอ</p></article>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><h2>ตารางเฝ้าระวัง — เช็กทุกไตรมาส เริ่ม 6 พ.ย. 2026</h2></div>
+  <div class="tablebox">
+    <table>
+      <thead><tr><th>ตัวชี้</th><th>วันนี้</th><th class="cbear">BEAR</th><th class="cside">SIDEWAYS</th><th class="cbull">BULL</th></tr></thead>
+      <tbody>
+        <tr><td><strong>US HY OAS</strong> — ตัวตัดสิน</td><td>2.70%</td><td class="cbear">&gt; 4.00%</td><td class="cside">2.5–3.5%</td><td class="cbull">&lt; 3.25%</td></tr>
+        <tr><td>UST 10Y</td><td>5.00%</td><td class="cbear">&gt; 5.50%</td><td class="cside">4.75–5.25%</td><td class="cbull">≤ 5.00%</td></tr>
+        <tr><td>WTI</td><td>$96.6</td><td class="cbear">&gt; $110</td><td class="cside">$90–105</td><td class="cbull">&lt; $95</td></tr>
+        <tr><td>CPI</td><td>3.71%</td><td class="cbear">&gt; 4.5%</td><td class="cside">3.3–4.0%</td><td class="cbull">&lt; 3.3%</td></tr>
+        <tr><td>เงินล่วงหน้า NBM</td><td>$2,476m</td><td class="cbear">ลด QoQ</td><td class="cside">ทรงตัว</td><td class="cbull">โต QoQ</td></tr>
+        <tr><td>DIO</td><td>178 วัน</td><td class="cbear">&gt; 190</td><td class="cside">170–190</td><td class="cbull">&lt; 165</td></tr>
+        <tr><td>Consumer QoQ</td><td>−32%</td><td class="cbear">ลบต่อ + Edge ลบ</td><td class="cside">ลบแต่ Edge บวก</td><td class="cbull">กลับมาบวก</td></tr>
+        <tr><td>EPS ไตรมาสถัดไป</td><td>guide $44–46</td><td class="cbear">&lt; $44</td><td class="cside">$44–46</td><td class="cbull">&gt; $46</td></tr>
+      </tbody>
+      <caption>“วันนี้” = ค่าที่ดึงจาก backend 18 ก.ย. 2026 · เกณฑ์ในสามคอลัมน์เป็นเส้นที่ตั้งไว้ล่วงหน้าเพื่อกันการตีความย้อนหลัง ไม่ใช่การพยากรณ์</caption>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="callout">
+    <p><strong>ข้อสรุปที่ขัดกับสัญชาตญาณ:</strong> “ดอกเบี้ยสูง + น้ำมันแพง” ที่คนกลัวกัน <strong>เกิดขึ้นแล้วทั้งคู่</strong> และ SNDK ก็ยังทำกำไรสูงสุดเป็นประวัติการณ์ในไตรมาสล่าสุด เพราะสองตัวนี้ไม่ได้เข้าทางงบของบริษัท และไม่ได้เข้าทางดีมานด์ดาต้าเซ็นเตอร์โดยตรง สิ่งที่จะเปลี่ยนเกมจริงคือ<strong>วันที่ตลาดเครดิตเลิกให้เงินกับคนที่กู้มาซื้อ GPU</strong> ซึ่งวัดได้จากสเปรด ไม่ใช่จากพาดหัวเรื่องดอกเบี้ยหรือราคาน้ำมัน</p>
+  </div>
+</section>
+
+<footer>
+  ⚠️ วิเคราะห์ข้อมูล ไม่ใช่คำแนะนำการลงทุน · ความน่าจะเป็นเป็นการประเมินเชิงอัตวิสัยจากหลักฐานในฐานความรู้ ไม่ได้ผ่าน backtest ·
+  ตัวเลขแมโครจาก <span class="mono">/api/macro</span>, <span class="mono">/api/crisis</span>, <span class="mono">/api/ir-stress</span> และ quote CL=F · NG=F · JPY=X ณ 18 ก.ย. 2026 ·
+  ตัวเลขบริษัทจาก 10-K FY26 และข่าวผล Q4 FY26 · หลักฐานเต็ม: Z-0019 ถึง Z-0026
+</footer>
+
+</div>

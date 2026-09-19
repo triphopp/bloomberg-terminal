@@ -1,0 +1,262 @@
+{
+  "id": "a4817494-e8eb-47c7-b483-cab9d1850b21",
+  "slug": "neocloud-accounting-review-2026-09-19",
+  "title": "ใครคือ Neocloud และแต่ละเจ้าเสี่ยงอะไร — ตรวจงบสามปี",
+  "description": "รายงานภาษาไทย 34 profiles รวมสิบรายเดิมและค้นเพิ่มทั่วโลก: งบสามปี ข้อผิดพลาดบัญชี cash conversion หนี้/leases ลูกค้า และสัญญาณวัฏจักร; ช่องว่างหลักฐานระบุชัด",
+  "kind": "html",
+  "symbol": "SNDK",
+  "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+  "zettel_refs": "Z-0029,Z-0030,Z-0031,Z-0032,Z-0033,Z-0034",
+  "tags": "neocloud,accounting,three-year-review,global,Thai",
+  "as_of": "2026-09-19",
+  "sources": [
+    {
+      "title": "CRWV — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1769628/000176962826000104/crwv-20251231.htm"
+    },
+    {
+      "title": "NBIS — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1513845/000110465926052948/nbis-20251231x20f.htm"
+    },
+    {
+      "title": "IREN — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1878848/000187884826000052/iren-20260630.htm"
+    },
+    {
+      "title": "HUT — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1964789/000110465926019392/hut-20251231x10k.htm"
+    },
+    {
+      "title": "WULF — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1083301/000108330126000031/wulf-20251231.htm"
+    },
+    {
+      "title": "APLD — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1144879/000114487926000048/apld-20260531.htm"
+    },
+    {
+      "title": "CIFR — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1819989/000181998926000009/cifr-20251231.htm"
+    },
+    {
+      "title": "CORZ — primary filing/company report",
+      "url": "https://investors.corescientific.com/sec-filings/all-sec-filings/content/0001628280-26-013305/core-20251231.htm"
+    },
+    {
+      "title": "GLXY — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1859392/000185939226000016/glxy-20251231.htm"
+    },
+    {
+      "title": "BTDR — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1899123/000121390026049770/ea0282628-20f_bitdeer.htm"
+    },
+    {
+      "title": "WYFI — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/2042022/000121390026034341/ea0278305-10k_white.htm"
+    },
+    {
+      "title": "BTBT — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1710350/000121390026035544/ea0279621-10k_bitdigit.htm"
+    },
+    {
+      "title": "HIVE — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1720424/000106299326002973/form10k.htm"
+    },
+    {
+      "title": "DOCN — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1582961/000158296126000019/docn-20251231.htm"
+    },
+    {
+      "title": "RUM — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1830081/000121390026024099/ea0277968-10k_rumble.htm"
+    },
+    {
+      "title": "SHAZ — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/2068385/000149315226014068/form10-k.htm"
+    },
+    {
+      "title": "CRWVQ2 — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1769628/000176962826000366/crwv-20260630.htm"
+    },
+    {
+      "title": "CORZ24A — primary filing/company report",
+      "url": "https://investors.corescientific.com/sec-filings/all-sec-filings/content/0001628280-26-013232/core-20241231.htm"
+    },
+    {
+      "title": "CORZ8K — primary filing/company report",
+      "url": "https://investors.corescientific.com/sec-filings/all-sec-filings/content/0001628280-26-013214/core-20260302.htm"
+    },
+    {
+      "title": "BTDRmirror — primary filing/company report",
+      "url": "https://cdn.yahoofinance.com/prod/sec-filings/0001899123/000121390026049770/ea0282628-20f_bitdeer.htm"
+    },
+    {
+      "title": "CHRN — primary filing/company report",
+      "url": "https://ir.chronoscale.com/financials-filings/all-sec-filings/content/0001628280-26-058018/chrn-20260531.htm"
+    },
+    {
+      "title": "CHRNpre — primary filing/company report",
+      "url": "https://ir.chronoscale.com/financials-filings/all-sec-filings/content/0001437749-26-009267/ekso-20251231.htm"
+    },
+    {
+      "title": "MOVE — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1734750/000121390026036609/ea0278320-10k_corvex.htm"
+    },
+    {
+      "title": "MOVE26 — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1734750/000121390026090115/ea030200401ex99-1.htm"
+    },
+    {
+      "title": "MOVEopco — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1734750/000121390026050668/ea028834301ex99-2.htm"
+    },
+    {
+      "title": "NBISmirror — primary filing/company report",
+      "url": "https://cdn.yahoofinance.com/prod/sec-filings/0001513845/000110465926052948/nbis-20251231x20f.htm"
+    },
+    {
+      "title": "NDannual — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1830081/000121390026043611/ea0270012-05.htm"
+    },
+    {
+      "title": "RUMdeal — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1830081/000121390026095047/ea0303717-8ka1_rumgroup.htm"
+    },
+    {
+      "title": "KC — primary filing/company report",
+      "url": "https://ir.ksyun.com/static-files/47c93910-2590-4dca-992d-ca3a2779fb16"
+    },
+    {
+      "title": "SIFY — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1094324/000155485526001437/sify-20260331.htm"
+    },
+    {
+      "title": "SIFYmirror — primary filing/company report",
+      "url": "https://cdn.yahoofinance.com/prod/sec-filings/0001094324/000155485526001437/sify-20260331.htm"
+    },
+    {
+      "title": "AKAM — primary filing/company report",
+      "url": "https://www.ir.akamai.com/static-files/984955f9-2334-48f7-9312-5245579ec14d"
+    },
+    {
+      "title": "OVH — primary filing/company report",
+      "url": "https://corporate.ovhcloud.com/sites/default/files/2025-11/ovh_urd_2025_en_mel_25_11_14.pdf"
+    },
+    {
+      "title": "OVH24 — primary filing/company report",
+      "url": "https://corporate.ovhcloud.com/sites/default/files/2024-12/ovh_urd_2024_en_mel_24_12_02_0.pdf"
+    },
+    {
+      "title": "IONOS — primary filing/company report",
+      "url": "https://www.ionos-group.com/fileadmin/Publications/Berichte/FY_2025/IONOS_Annual_Report_2025.pdf"
+    },
+    {
+      "title": "IONOS23 — primary filing/company report",
+      "url": "https://www.ionos-group.com/fileadmin/Publications/Berichte/IONOS_Group_SE_Annual_Report_2023.pdf"
+    },
+    {
+      "title": "DHH — primary filing/company report",
+      "url": "https://www.dhh.international/wp-content/uploads/2026/04/FBC31122025_EN.pdf"
+    },
+    {
+      "title": "DHH24 — primary filing/company report",
+      "url": "https://www.dhh.international/wp-content/uploads/2025/04/FBC31122024_EN.pdf"
+    },
+    {
+      "title": "SAKURA — primary filing/company report",
+      "url": "https://www.sakura.ad.jp/corporate/wp-content/uploads/2026/04/260427-ir_1.pdf"
+    },
+    {
+      "title": "SAKURA25 — primary filing/company report",
+      "url": "https://www.sakura.ad.jp/corporate/wp-content/uploads/2025/04/250428-ir_1.pdf"
+    },
+    {
+      "title": "GMO — primary filing/company report",
+      "url": "https://internet.gmo/pdf/presen/gmointernet_fy2025_full-year_j_financial_report.pdf"
+    },
+    {
+      "title": "GMO24 — primary filing/company report",
+      "url": "https://internet.gmo/pdf/shareholder/gmointernet_j_stockholders_20250319_01.pdf"
+    },
+    {
+      "title": "DATASECTION — primary filing/company report",
+      "url": "https://www.datasection.co.jp/en-financial-report/en-ir-20260608001.pdf"
+    },
+    {
+      "title": "DATASECTION25 — primary filing/company report",
+      "url": "https://www.datasection.co.jp/en-financial-report/en-ir-20250515004.pdf"
+    },
+    {
+      "title": "DATASECTION26annual — primary filing/company report",
+      "url": "https://regfis.com/reports/20260629_S100YMGV_E31131_null_010_030000_120"
+    },
+    {
+      "title": "E2E — primary filing/company report",
+      "url": "https://e2e-mainsite-ui.objectstore.e2enetworks.net/Financial_Compliance/Financial_Information/Financial_Results/20252026/Audit_financial_Results_for_the_Financial_year_ended_March_31_03_2026.pdf"
+    },
+    {
+      "title": "E2E25 — primary filing/company report",
+      "url": "https://e2e-mainsite-ui.objectstore.e2enetworks.net/Financial_Compliance/Financial_Information/Financial_Results/20242025/Audit_financial_Results_for_the_Financial_year_ended_March_31_2025_31_03_2025.pdf"
+    },
+    {
+      "title": "UCLOUD — primary filing/company report",
+      "url": "https://vip.stock.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=12394452"
+    },
+    {
+      "title": "UCLOUDcorrection — primary filing/company report",
+      "url": "https://money.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=12394451&stockid=688158"
+    },
+    {
+      "title": "UCLOUDestimate — primary filing/company report",
+      "url": "https://vip.stock.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=11575513&stockid=688158"
+    },
+    {
+      "title": "QING — primary filing/company report",
+      "url": "https://vip.stock.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=12277316"
+    },
+    {
+      "title": "QINGpdf — primary filing/company report",
+      "url": "https://static.cninfo.com.cn/finalpage/2026-04-30/1225257030.PDF"
+    },
+    {
+      "title": "CAPITAL — primary filing/company report",
+      "url": "https://money.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=12005520&stockid=300846"
+    },
+    {
+      "title": "DUG — primary filing/company report",
+      "url": "https://dug.com/wp-content/uploads/2026/08/260827_DUG_FY26_Consolidated_Annual_Report_ASX.pdf"
+    },
+    {
+      "title": "DUG25 — primary filing/company report",
+      "url": "https://dug.com/wp-content/uploads/2025/08/DUG_Annual_Report_FY25_ASX.pdf"
+    },
+    {
+      "title": "RXT — primary filing/company report",
+      "url": "https://ir.rackspace.com/static-files/0dc12411-3dc0-4989-a5f9-4c17aa51cccb"
+    },
+    {
+      "title": "RXTdeal — primary filing/company report",
+      "url": "https://www.rackspace.com/newsroom/amd-and-rackspace-technology-sign-definitive-agreement-phased-deployment"
+    },
+    {
+      "title": "FPT — primary filing/company report",
+      "url": "https://bctn2025.fpt.com/wp-content/uploads/2026/04/Annual-Report-2025.pdf"
+    },
+    {
+      "title": "YTL — primary filing/company report",
+      "url": "https://www.ytlpowerinternational.com/wp-content/uploads/sites/2/2025/10/YTLPower_AR2025.pdf"
+    },
+    {
+      "title": "BSAI — primary filing/company report",
+      "url": "https://www.sec.gov/Archives/edgar/data/1416090/000149315226014362/form10-k.htm"
+    }
+  ],
+  "version": 2,
+  "bytes": 188113,
+  "actor": "agent:codex",
+  "deleted_at": null,
+  "created_at": "2026-09-19T05:00:29.010866",
+  "updated_at": "2026-09-19T05:05:16.538113",
+  "render_url": "/api/v2/graphs/neocloud-accounting-review-2026-09-19/render",
+  "file": "D:/Agents/Claude/bloomberg-terminal-main/research/graphs/neocloud-accounting-review-2026-09-19/index.html"
+}

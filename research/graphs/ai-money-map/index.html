@@ -1,0 +1,428 @@
+<title>เงิน AI ไหลจากไหนไปไหน</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#EEF1F2; --surface:#FFFFFF; --surface-2:#F6F8F8;
+    --ink:#0E1618; --ink-2:#3C4C50; --muted:#69797E; --hair:#D3DBDD;
+    --teal:#0B6F79; --teal-soft:#DCEDEF;
+    --crimson:#A81F47; --crimson-soft:#F7DFE6;
+    --violet:#5B4593; --violet-soft:#E6E0F4;
+    --amber:#94610F; --amber-soft:#F5E8D2;
+    --shadow:0 1px 2px rgba(14,22,24,.06), 0 8px 24px rgba(14,22,24,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0A1113; --surface:#111A1D; --surface-2:#162124;
+      --ink:#E8EFF0; --ink-2:#BCCBCE; --muted:#84979C; --hair:#243033;
+      --teal:#3FC4CC; --teal-soft:#0E2E31;
+      --crimson:#FF7092; --crimson-soft:#331520;
+      --violet:#A98BE0; --violet-soft:#1E1830;
+      --amber:#E2A94F; --amber-soft:#2B2113;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0A1113; --surface:#111A1D; --surface-2:#162124;
+    --ink:#E8EFF0; --ink-2:#BCCBCE; --muted:#84979C; --hair:#243033;
+    --teal:#3FC4CC; --teal-soft:#0E2E31;
+    --crimson:#FF7092; --crimson-soft:#331520;
+    --violet:#A98BE0; --violet-soft:#1E1830;
+    --amber:#E2A94F; --amber-soft:#2B2113;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.35);
+  }
+
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:"IBM Plex Sans Thai","IBM Plex Sans",system-ui,-apple-system,sans-serif;
+    font-size:15px; line-height:1.72; margin:0;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px; margin:0 auto; padding-inline:20px; padding-block:40px 72px;}
+  h1,h2,h3{text-wrap:balance; line-height:1.3; margin:0;}
+  h1{font-size:clamp(28px,5.2vw,44px); font-weight:700; letter-spacing:-.02em;}
+  h2{font-size:clamp(20px,3vw,26px); font-weight:600; letter-spacing:-.01em;}
+  h3{font-size:17px; font-weight:600;}
+  p{margin:0;}
+  a{color:var(--teal); text-decoration-thickness:1px; text-underline-offset:2px;}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums;}
+  .eyebrow{
+    font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--muted);
+  }
+
+  header.hero{display:flex; flex-direction:column; gap:16px; padding-bottom:28px; border-bottom:1px solid var(--hair);}
+  .lede{font-size:clamp(16px,2.2vw,19px); color:var(--ink-2); max-width:62ch;}
+  .stamp{display:flex; flex-wrap:wrap; gap:8px 20px; color:var(--muted); font-size:13px;}
+
+  section{margin-top:52px; display:flex; flex-direction:column; gap:20px;}
+  .sec-head{display:flex; flex-direction:column; gap:6px;}
+  .sec-head p{color:var(--ink-2); max-width:70ch;}
+
+  /* flow diagram */
+  .diagram{
+    background:var(--surface); border:1px solid var(--hair); border-radius:10px;
+    padding:8px; box-shadow:var(--shadow); overflow-x:auto;
+  }
+  .diagram svg{display:block; width:100%; min-width:720px; height:auto; max-width:100%;}
+  .legend{display:flex; flex-wrap:wrap; gap:10px 22px; font-size:13px; color:var(--ink-2);}
+  .legend span{display:inline-flex; align-items:center; gap:8px;}
+  .swatch{width:22px; height:0; border-top-width:3px; border-top-style:solid; display:inline-block;}
+
+  /* loop cards */
+  .loops{display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:18px;}
+  .loop{
+    background:var(--surface); border:1px solid var(--hair); border-radius:10px;
+    padding:20px; display:flex; flex-direction:column; gap:12px; box-shadow:var(--shadow);
+  }
+  .loop .tag{
+    align-self:flex-start; font-family:"IBM Plex Mono",monospace; font-size:11px;
+    letter-spacing:.1em; text-transform:uppercase; padding:3px 9px; border-radius:99px;
+  }
+  .t-debt{background:var(--crimson-soft); color:var(--crimson);}
+  .t-equity{background:var(--violet-soft); color:var(--violet);}
+  .t-contract{background:var(--amber-soft); color:var(--amber);}
+  .t-wc{background:var(--teal-soft); color:var(--teal);}
+  .loop ul{margin:0; padding-left:18px; color:var(--ink-2); font-size:14px; display:flex; flex-direction:column; gap:6px;}
+  .loop .verdict{font-size:14px; padding-top:10px; border-top:1px dashed var(--hair); color:var(--ink);}
+
+  /* table */
+  .tablebox{overflow-x:auto; border:1px solid var(--hair); border-radius:10px; background:var(--surface); box-shadow:var(--shadow);}
+  table{border-collapse:collapse; width:100%; min-width:760px; font-size:14px;}
+  th,td{padding:11px 14px; text-align:right; border-bottom:1px solid var(--hair); white-space:nowrap;}
+  th:first-child,td:first-child{text-align:left; white-space:normal;}
+  thead th{
+    font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--muted); font-weight:500; background:var(--surface-2);
+    position:sticky; top:0;
+  }
+  tbody td:not(:first-child){font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums;}
+  tbody tr:last-child td{border-bottom:none;}
+  .neg{color:var(--crimson); font-weight:600;}
+  .pos{color:var(--teal); font-weight:600;}
+  .rowgroup td{background:var(--surface-2); font-weight:600; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); font-family:"IBM Plex Mono",monospace;}
+  caption{caption-side:bottom; padding:12px 14px; text-align:left; color:var(--muted); font-size:12.5px; line-height:1.6;}
+
+  /* net flow bars */
+  .netflow{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:18px;}
+  .side{background:var(--surface); border:1px solid var(--hair); border-radius:10px; padding:20px; display:flex; flex-direction:column; gap:14px; box-shadow:var(--shadow);}
+  .side h3{display:flex; justify-content:space-between; align-items:baseline; gap:12px;}
+  .side h3 .sum{font-family:"IBM Plex Mono",monospace; font-size:20px;}
+  .bar{display:grid; grid-template-columns:minmax(74px,auto) 1fr auto; align-items:center; gap:10px; font-size:13.5px;}
+  .bar .track{height:9px; background:var(--surface-2); border-radius:99px; overflow:hidden;}
+  .bar .fill{display:block; height:100%; border-radius:99px;}
+  .bar .val{font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; font-size:13px;}
+
+  .callout{
+    background:var(--surface); border:1px solid var(--hair); border-left:3px solid var(--teal);
+    border-radius:8px; padding:18px 20px; display:flex; flex-direction:column; gap:10px;
+  }
+  .callout.warn{border-left-color:var(--crimson);}
+  .callout p{color:var(--ink-2); font-size:14.5px;}
+  .callout strong{color:var(--ink);}
+
+  ol.chain{margin:0; padding-left:0; list-style:none; display:flex; flex-direction:column; gap:0;}
+  ol.chain li{display:grid; grid-template-columns:34px 1fr; gap:14px; padding:14px 0; border-bottom:1px solid var(--hair);}
+  ol.chain li:last-child{border-bottom:none;}
+  ol.chain .step{
+    font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+    border:1px solid var(--hair); border-radius:6px; height:26px; display:grid; place-items:center;
+  }
+  ol.chain .body{display:flex; flex-direction:column; gap:3px;}
+  ol.chain .body b{font-weight:600;}
+  ol.chain .body span{font-size:13.5px; color:var(--ink-2);}
+
+  footer{margin-top:56px; padding-top:24px; border-top:1px solid var(--hair); color:var(--muted); font-size:13px; display:flex; flex-direction:column; gap:12px;}
+  footer a{color:var(--ink-2);}
+  .srcs{display:flex; flex-wrap:wrap; gap:6px 14px;}
+</style>
+
+<div class="wrap">
+
+<header class="hero">
+  <span class="eyebrow">Circular financing · แผนที่กระแสเงิน AI</span>
+  <h1>เงิน AI ไหลจากไหนไปไหน</h1>
+  <p class="lede">ตามรอยเงินจากตลาดทุน → ผู้ซื้อ compute → NVIDIA → ผู้ผลิตหน่วยความจำ (MU, SNDK) โดยใช้ตัวเลขจากงบการเงินของแต่ละบริษัทเอง เพื่อดูว่าวงจรนี้ "หมุนด้วยเงินสดจากการดำเนินงาน" หรือ "หมุนด้วยหนี้และการลงทุนไขว้กันเอง"</p>
+  <div class="stamp mono">
+    <span>ข้อมูล ณ 18 ก.ย. 2026</span>
+    <span>ตัวเลขทั้งหมด USD</span>
+    <span>ไตรมาสล่าสุดที่รายงานของแต่ละบริษัท</span>
+  </div>
+</header>
+
+<section>
+  <div class="sec-head">
+    <h2>แผนที่เงิน 4 ชั้น</h2>
+    <p>ลูกศรทึบ = เงินจากการซื้อขายจริง · ลูกศรประ = เงินที่ไหลย้อนกลับไปหาผู้ซื้อ (การลงทุน / เงินจ่ายล่วงหน้า) ซึ่งเป็นส่วนที่ทำให้วงจร "เป็นวง" ความหนาของลูกศรสะท้อนขนาดคร่าว ๆ ไม่ใช่มาตราส่วนที่แม่นยำ</p>
+  </div>
+
+  <div class="diagram">
+    <svg viewBox="0 0 1000 600" role="img" aria-label="แผนภาพกระแสเงินจากตลาดทุนไปยังผู้ผลิตหน่วยความจำ">
+      <defs>
+        <marker id="ah-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--teal)"/>
+        </marker>
+        <marker id="ah-crimson" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--crimson)"/>
+        </marker>
+        <marker id="ah-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--violet)"/>
+        </marker>
+        <marker id="ah-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--amber)"/>
+        </marker>
+      </defs>
+
+      <!-- column headers -->
+      <g font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--muted)" letter-spacing="1.2">
+        <text x="20" y="28">1 · แหล่งทุน</text>
+        <text x="272" y="28">2 · ผู้ซื้อ COMPUTE</text>
+        <text x="576" y="28">3 · ผู้ขาย COMPUTE</text>
+        <text x="812" y="28">4 · หน่วยความจำ</text>
+      </g>
+
+      <!-- L1 capital markets -->
+      <rect x="20" y="212" width="186" height="118" rx="8" fill="var(--crimson-soft)" stroke="var(--crimson)" stroke-width="1.2"/>
+      <text x="36" y="240" font-size="15" font-weight="600" fill="var(--ink)">ตลาดทุน</text>
+      <text x="36" y="262" font-size="12.5" fill="var(--ink-2)">หุ้นกู้ · เงินกู้ · เพิ่มทุน</text>
+      <text x="36" y="288" font-size="12.5" font-family="IBM Plex Mono, monospace" fill="var(--crimson)">หนี้ออกใหม่ H1&#39;26 ≈ $200bn</text>
+      <text x="36" y="306" font-size="12.5" font-family="IBM Plex Mono, monospace" fill="var(--crimson)">GOOGL เพิ่มทุน $84.75bn</text>
+      <text x="36" y="322" font-size="11.5" fill="var(--muted)">หนี้ = 32% ของ capex (LTM)</text>
+
+      <!-- L2 buyers -->
+      <rect x="272" y="48" width="196" height="96" rx="8" fill="var(--surface-2)" stroke="var(--hair)" stroke-width="1.2"/>
+      <text x="288" y="74" font-size="14.5" font-weight="600" fill="var(--ink)">Hyperscalers</text>
+      <text x="288" y="94" font-size="12" fill="var(--ink-2)">MSFT · GOOGL · AMZN · META</text>
+      <text x="288" y="114" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">capex 2026E $660–690bn</text>
+      <text x="288" y="132" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--crimson)">FCF: GOOGL −5.9 / AMZN −18.2</text>
+
+      <rect x="272" y="170" width="196" height="96" rx="8" fill="var(--surface-2)" stroke="var(--hair)" stroke-width="1.2"/>
+      <text x="288" y="196" font-size="14.5" font-weight="600" fill="var(--ink)">Oracle + Neoclouds</text>
+      <text x="288" y="216" font-size="12" fill="var(--ink-2)">ORCL · CoreWeave · Nebius</text>
+      <text x="288" y="236" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--crimson)">ORCL หนี้ $156bn · FCF −23.7</text>
+      <text x="288" y="254" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--crimson)">CRWV หนี้ $51.6bn : ทุน $5.0bn</text>
+
+      <rect x="272" y="292" width="196" height="88" rx="8" fill="var(--violet-soft)" stroke="var(--violet)" stroke-width="1.2"/>
+      <text x="288" y="318" font-size="14.5" font-weight="600" fill="var(--ink)">AI labs</text>
+      <text x="288" y="338" font-size="12" fill="var(--ink-2)">OpenAI · Anthropic (ไม่จดทะเบียน)</text>
+      <text x="288" y="358" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--violet)">ภาระผูกพัน compute &gt; $700bn</text>
+      <text x="288" y="374" font-size="11.5" fill="var(--muted)">ตัวเลขจากข่าว ไม่ใช่งบที่ตรวจสอบได้</text>
+
+      <!-- L3 NVDA -->
+      <rect x="560" y="170" width="180" height="120" rx="8" fill="var(--teal-soft)" stroke="var(--teal)" stroke-width="1.4"/>
+      <text x="576" y="198" font-size="15" font-weight="600" fill="var(--ink)">NVIDIA</text>
+      <text x="576" y="220" font-size="12.5" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">รายได้ไตรมาส $96.2bn</text>
+      <text x="576" y="238" font-size="12.5" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">กำไรสุทธิ $59.7bn</text>
+      <text x="576" y="256" font-size="12.5" font-family="IBM Plex Mono, monospace" fill="var(--amber)">FCF $21.4bn = 36% ของกำไร</text>
+      <text x="576" y="276" font-size="12.5" font-family="IBM Plex Mono, monospace" fill="var(--amber)">ลูกหนี้ $63.1bn · DSO 60 วัน</text>
+
+      <!-- L4 memory -->
+      <rect x="812" y="128" width="176" height="94" rx="8" fill="var(--surface-2)" stroke="var(--hair)" stroke-width="1.2"/>
+      <text x="828" y="154" font-size="14.5" font-weight="600" fill="var(--ink)">Micron</text>
+      <text x="828" y="174" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">รายได้ $41.5bn</text>
+      <text x="828" y="192" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--teal)">FCF +$17.6bn</text>
+      <text x="828" y="210" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">ลูกหนี้ $31.0bn · DSO 69</text>
+
+      <rect x="812" y="242" width="176" height="110" rx="8" fill="var(--surface-2)" stroke="var(--teal)" stroke-width="1.4"/>
+      <text x="828" y="268" font-size="14.5" font-weight="600" fill="var(--ink)">Sandisk</text>
+      <text x="828" y="288" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">รายได้ $8.97bn</text>
+      <text x="828" y="306" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--teal)">FCF +$7.08bn</text>
+      <text x="828" y="324" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">ลูกหนี้ $4.73bn · DSO ~50</text>
+      <text x="828" y="342" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--amber)">หนี้กู้ยืม $0</text>
+
+      <!-- flows L1 -> L2 -->
+      <path d="M206,250 C240,250 244,110 272,100" fill="none" stroke="var(--crimson)" stroke-width="7" opacity=".85" marker-end="url(#ah-crimson)"/>
+      <path d="M206,268 C240,268 248,218 272,218" fill="none" stroke="var(--crimson)" stroke-width="9" opacity=".85" marker-end="url(#ah-crimson)"/>
+      <path d="M206,292 C240,292 248,330 272,336" fill="none" stroke="var(--crimson)" stroke-width="5" opacity=".7" marker-end="url(#ah-crimson)"/>
+
+      <!-- L2 -> L3 -->
+      <path d="M468,96 C512,96 520,196 560,204" fill="none" stroke="var(--teal)" stroke-width="10" opacity=".85" marker-end="url(#ah-teal)"/>
+      <path d="M468,218 C510,218 520,228 560,230" fill="none" stroke="var(--teal)" stroke-width="8" opacity=".85" marker-end="url(#ah-teal)"/>
+      <path d="M468,336 C512,336 522,268 560,258" fill="none" stroke="var(--teal)" stroke-width="5" opacity=".7" marker-end="url(#ah-teal)"/>
+      <text x="486" y="150" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--teal)">ซื้อ GPU</text>
+
+      <!-- L3 -> L4 -->
+      <path d="M740,206 C776,206 782,176 812,176" fill="none" stroke="var(--teal)" stroke-width="7" opacity=".85" marker-end="url(#ah-teal)"/>
+      <text x="748" y="166" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--teal)">HBM</text>
+
+      <!-- L2 -> L4 direct (eSSD) -->
+      <path d="M468,64 C640,44 760,70 900,124" fill="none" stroke="var(--teal)" stroke-width="6" opacity=".8" marker-end="url(#ah-teal)"/>
+      <text x="624" y="54" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--teal)">ซื้อ eSSD / NAND ตรง</text>
+
+      <!-- return: NVDA equity into AI labs (violet dashed) -->
+      <path d="M626,290 C620,420 470,430 370,392" fill="none" stroke="var(--violet)" stroke-width="5" stroke-dasharray="9 7" marker-end="url(#ah-violet)"/>
+      <text x="436" y="452" font-size="12.5" font-family="IBM Plex Mono, monospace" fill="var(--violet)">NVDA ลงทุนในบริษัทลูกค้า: หุ้นนอกตลาด $47.9bn (26 ก.ค. 2026)</text>
+
+      <!-- return: prepayment to SNDK (amber dashed) -->
+      <path d="M430,380 C560,520 740,500 880,362" fill="none" stroke="var(--amber)" stroke-width="5" stroke-dasharray="9 7" marker-end="url(#ah-amber)"/>
+      <text x="556" y="556" font-size="12.5" font-family="IBM Plex Mono, monospace" fill="var(--amber)">ลูกค้าจ่ายเงินล่วงหน้าให้ SNDK $2.48bn · RPO $91.1bn</text>
+
+      <!-- SNDK highlight ring label -->
+      <text x="812" y="378" font-size="11.5" fill="var(--muted)">จุดที่เราถืออยู่</text>
+    </svg>
+  </div>
+
+  <div class="legend mono">
+    <span><i class="swatch" style="border-top-color:var(--crimson)"></i> เงินจากหนี้/เพิ่มทุน</span>
+    <span><i class="swatch" style="border-top-color:var(--teal)"></i> เงินจากการซื้อขายจริง</span>
+    <span><i class="swatch" style="border-top-color:var(--violet); border-top-style:dashed"></i> เงินลงทุนย้อนกลับ</span>
+    <span><i class="swatch" style="border-top-color:var(--amber); border-top-style:dashed"></i> เงินจ่ายล่วงหน้า/สัญญา</span>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>ไตรมาสเดียว: ใครเผาเงิน ใครเก็บเงิน</h2>
+    <p>รวม FCF ของไตรมาสล่าสุดที่แต่ละบริษัทรายงาน — ฝั่งซ้ายคือผู้ซื้อ compute ที่กระแสเงินสดติดลบ ฝั่งขวาคือผู้ขายชิป/หน่วยความจำที่เก็บเงินเข้า <strong>ส่วนต่างนี้ถูกอุดด้วยหนี้และการเพิ่มทุน ไม่ใช่เงินสดจากการดำเนินงาน</strong></p>
+  </div>
+
+  <div class="netflow">
+    <div class="side">
+      <h3>เงินไหลออก (ผู้ซื้อ) <span class="sum neg">−$38.6bn</span></h3>
+      <div class="bar"><span>Amazon</span><span class="track"><i class="fill" style="width:100%; background:var(--crimson)"></i></span><span class="val neg">−18.2</span></div>
+      <div class="bar"><span>Oracle</span><span class="track"><i class="fill" style="width:29.7%; background:var(--crimson)"></i></span><span class="val neg">−5.4</span></div>
+      <div class="bar"><span>Alphabet</span><span class="track"><i class="fill" style="width:32.2%; background:var(--crimson)"></i></span><span class="val neg">−5.9</span></div>
+      <div class="bar"><span>CoreWeave</span><span class="track"><i class="fill" style="width:31.6%; background:var(--crimson)"></i></span><span class="val neg">−5.7</span></div>
+      <div class="bar"><span>Nebius</span><span class="track"><i class="fill" style="width:18.8%; background:var(--crimson)"></i></span><span class="val neg">−3.4</span></div>
+    </div>
+    <div class="side">
+      <h3>เงินไหลเข้า (ผู้ขายชิป) <span class="sum pos">+$46.1bn</span></h3>
+      <div class="bar"><span>NVIDIA</span><span class="track"><i class="fill" style="width:100%; background:var(--teal)"></i></span><span class="val pos">+21.4</span></div>
+      <div class="bar"><span>Micron</span><span class="track"><i class="fill" style="width:82.2%; background:var(--teal)"></i></span><span class="val pos">+17.6</span></div>
+      <div class="bar"><span>Sandisk</span><span class="track"><i class="fill" style="width:33.2%; background:var(--teal)"></i></span><span class="val pos">+7.1</span></div>
+      <div class="bar" style="margin-top:6px"><span style="color:var(--muted)">ยังบวกแต่หด</span><span class="track" style="background:transparent"></span><span class="val" style="color:var(--muted)">—</span></div>
+      <div class="bar"><span>Microsoft</span><span class="track"><i class="fill" style="width:91.6%; background:var(--muted); opacity:.45"></i></span><span class="val">+19.6</span></div>
+      <div class="bar"><span>Meta</span><span class="track"><i class="fill" style="width:7.9%; background:var(--muted); opacity:.45"></i></span><span class="val">+1.7</span></div>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <p><strong>อ่านตัวเลขนี้อย่างระวัง:</strong> แต่ละบริษัทปิดไตรมาสคนละวัน (AMZN = ไตรมาส มี.ค. 2026 · NVDA = ไตรมาส ก.ค. 2026 · ORCL = ไตรมาส ส.ค. 2026) จึงเป็นการ<strong>เทียบขนาด ไม่ใช่สมการกระแสเงินสดที่ปิดกัน</strong> · ยอด +$46.1bn นับเฉพาะผู้ขายชิป 3 ราย ส่วน MSFT และ META เป็นผู้ซื้อที่ FCF ยังบวก จึงแสดงไว้แยกแบบจาง — จุดที่ต้องสังเกตคือ META เหลือ FCF $1.7bn จาก $9.0bn เมื่อปีก่อน และ MSFT เหลือ $19.6bn จาก $25.6bn</p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>วงจร 4 วงที่ทำให้เงิน "หมุนกลับ"</h2>
+    <p>แต่ละวงมีหลักฐานจากงบการเงินคนละชุด — และแต่ละวงมีจุดขาดคนละจุด</p>
+  </div>
+
+  <div class="loops">
+    <article class="loop">
+      <span class="tag t-debt">วง A · หนี้ → capex</span>
+      <h3>ลงทุนด้วยเงินที่ยังไม่ได้หามา</h3>
+      <ul>
+        <li>capex 5 รายใหญ่ปี 2026 ≈ <b class="mono">$660–690bn</b> กินเกือบ 100% ของกระแสเงินสดจากการดำเนินงาน (ค่าเฉลี่ย 10 ปี = 40%)</li>
+        <li>หนี้ออกใหม่ครึ่งปีแรก 2026 ≈ <b class="mono">$200bn</b> · สัดส่วนหนี้ต่อ capex ขึ้นจาก 9% (FY24) เป็น <b class="mono">32%</b></li>
+        <li>Alphabet เพิ่มทุน <b class="mono">$84.75bn</b> (มิ.ย. 2026) · Oracle FY26 ระดมหนี้ $43bn + ทุน $5bn</li>
+      </ul>
+      <p class="verdict"><b>จุดขาด:</b> ต้นทุนการกู้ขึ้น หรือตลาดตราสารหนี้ปิดรับ → capex ลดทันทีโดยไม่ต้องรอดีมานด์หาย</p>
+    </article>
+
+    <article class="loop">
+      <span class="tag t-equity">วง B · ผู้ขายลงทุนในผู้ซื้อ</span>
+      <h3>NVIDIA ถือหุ้นในลูกค้าตัวเอง</h3>
+      <ul>
+        <li>เงินลงทุนในหุ้นนอกตลาดของ NVDA = <b class="mono">$47.898bn</b> ณ 26 ก.ค. 2026 (10-Q) จากที่แทบไม่มีเมื่อ 2 ปีก่อน</li>
+        <li>CFO ระบุว่าเงินลงทุนใน frontier AI labs อย่างเดียวเข้าใกล้ <b class="mono">$50bn</b></li>
+        <li>มีรายงานข่าวเรื่องการค้ำประกัน/จัดหาเงินให้ OpenAI ระดับหลายแสนล้าน — <b>ยังเป็นข่าว ไม่ใช่ตัวเลขในงบ</b></li>
+      </ul>
+      <p class="verdict"><b>จุดขาด:</b> ถ้ามูลค่าบริษัทที่ลงทุนไว้ลดลง NVDA รับขาดทุนทางบัญชี <em>พร้อมกับ</em> คำสั่งซื้อที่หายไป — ความเสี่ยงซ้อนกันสองชั้น</p>
+    </article>
+
+    <article class="loop">
+      <span class="tag t-contract">วง C · ลูกค้าออกเงินสร้างกำลังผลิต</span>
+      <h3>เงินล่วงหน้าที่ SNDK ได้รับ</h3>
+      <ul>
+        <li>FY26 CFO ของ SNDK มีเงินรับล่วงหน้า/มัดจำจากสัญญา NBM <b class="mono">$2,476m</b> — หักออกแล้ว adjusted FCF เหลือ <b class="mono">$8.74bn</b> จาก $11.49bn</li>
+        <li>RPO <b class="mono">$91.1bn</b> ที่ราคาขั้นต่ำ จากลูกค้า 8 ราย · การค้ำประกันรวม $16.5bn (เงินสดจริงราว $2.5bn)</li>
+        <li>ครอบคลุม ~50% ของบิต FY27 และ ~2 ใน 3 ของ FY28</li>
+      </ul>
+      <p class="verdict"><b>จุดขาด:</b> เงินล่วงหน้าคือ<em>ภาระส่งมอบ</em> ไม่ใช่กำไร ถ้ายอดนี้หยุดโต แปลว่าลูกค้าเริ่มถอยก่อนที่ยอดขายจะลด</p>
+    </article>
+
+    <article class="loop">
+      <span class="tag t-wc">วง D · เครดิตการค้า</span>
+      <h3>ห่วงโซ่กำลังปล่อยเครดิตให้กันเอง</h3>
+      <ul>
+        <li>NVDA: ลูกหนี้ <b class="mono">$63.1bn</b> = 66% ของรายได้ไตรมาส · DSO ขยับจาก 55 → <b class="mono">60 วัน</b> · FCF/กำไรสุทธิ ลดจาก 51% → <b class="mono">36%</b></li>
+        <li>MU: ลูกหนี้ <b class="mono">$31.0bn</b> · DSO ~69 วัน (ทรงตัว)</li>
+        <li>SNDK: ลูกหนี้ <b class="mono">$4.73bn</b> · DSO ~50 วัน <b>ดีขึ้น</b>จาก 54 วันปีก่อน · ไม่มีลูกค้ารายใดเกิน 10% ของรายได้</li>
+      </ul>
+      <p class="verdict"><b>จุดขาด:</b> ถ้า DSO ยืดขึ้นพร้อมกันทั้งห่วงโซ่ แปลว่ากำไรที่รายงานยังไม่กลายเป็นเงินสด — <b>SNDK คือรายที่สะอาดที่สุดในกลุ่มตอนนี้</b></p>
+    </article>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>หลักฐานจากงบการเงิน</h2>
+    <p>ทุกตัวเลขมาจากงบไตรมาสล่าสุดที่แต่ละบริษัทรายงาน (ยกเว้น Oracle ที่ระบุเป็นปีบัญชี) DSO คำนวณจาก ลูกหนี้ปลายงวด ÷ รายได้ไตรมาส × จำนวนวัน</p>
+  </div>
+
+  <div class="tablebox">
+    <table>
+      <thead>
+        <tr>
+          <th>บริษัท / งวด</th>
+          <th>รายได้</th>
+          <th>FCF</th>
+          <th>หนี้รวม</th>
+          <th>ลูกหนี้</th>
+          <th>DSO</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="rowgroup"><td colspan="6">ผู้ซื้อ compute</td></tr>
+        <tr><td>Alphabet · Q2 CY26</td><td>119.8</td><td class="neg">−5.9</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr><td>Microsoft · Q4 FY26</td><td>90.0</td><td class="pos">+19.6</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr><td>Amazon · Q1 CY26</td><td>181.5</td><td class="neg">−18.2</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr><td>Meta · Q2 CY26</td><td>60.8</td><td class="pos">+1.7</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr><td>Oracle · FY26 (ทั้งปี)</td><td>67.4</td><td class="neg">−23.7</td><td>156.2</td><td>10.4</td><td>—</td></tr>
+        <tr><td>CoreWeave · Q2 CY26</td><td>2.58</td><td class="neg">−5.7</td><td>51.6</td><td>2.54</td><td>90</td></tr>
+        <tr><td>Nebius · Q2 CY26</td><td>0.58</td><td class="neg">−3.4</td><td>10.2</td><td>0.56</td><td>87</td></tr>
+        <tr class="rowgroup"><td colspan="6">ผู้ขายชิป / หน่วยความจำ</td></tr>
+        <tr><td>NVIDIA · Q2 FY27</td><td>96.2</td><td class="pos">+21.4</td><td>38.4</td><td>63.1</td><td>60</td></tr>
+        <tr><td>Micron · Q3 FY26</td><td>41.5</td><td class="pos">+17.6</td><td>6.4</td><td>31.0</td><td>69</td></tr>
+        <tr><td>Sandisk · Q4 FY26</td><td>8.97</td><td class="pos">+7.1</td><td>0.18</td><td>4.73</td><td>~50</td></tr>
+      </tbody>
+      <caption>หน่วย: พันล้านดอลลาร์ · "หนี้รวม" ของ SNDK คือภาระสัญญาเช่า หนี้กู้ยืมเป็นศูนย์ · CoreWeave และ Nebius มีภาระสัญญาเช่าเพิ่มอีก $16.5bn และ $1.6bn ตามลำดับ ซึ่งไม่รวมในคอลัมน์หนี้ · ช่อง "—" คือข้อมูลที่ไม่ได้ดึงมาในรอบนี้ ไม่ใช่ศูนย์</caption>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>ถ้าวงจรขาด เงินจะหยุดไหลตามลำดับนี้</h2>
+    <p>SNDK อยู่ปลายน้ำสุด แปลว่าได้เงินเป็นคนท้าย ๆ และรู้ข่าวร้ายเป็นคนท้าย ๆ เช่นกัน</p>
+  </div>
+
+  <ol class="chain">
+    <li><span class="step mono">1</span><span class="body"><b>ตลาดทุนปิดรับความเสี่ยง</b><span>สเปรดหุ้นกู้ AI/ดาต้าเซ็นเตอร์กว้างขึ้น · neocloud ออกหนี้ใหม่ไม่ได้ตามแผน — เห็นก่อนงบการเงินทุกใบ</span></span></li>
+    <li><span class="step mono">2</span><span class="body"><b>Neocloud ชะลอก่อน เพราะเปราะที่สุด</b><span>CoreWeave หนี้ $51.6bn ต่อทุน $5.0bn และเผาเงิน $5.7bn ในไตรมาสเดียว — รายแรกที่ต้องเลื่อนการรับมอบ</span></span></li>
+    <li><span class="step mono">3</span><span class="body"><b>คำสั่งซื้อ GPU ถูกเลื่อน</b><span>ดูที่ลูกหนี้ NVDA ($63.1bn) ว่ายืดขึ้นอีกไหม และ backlog/ภาระผูกพันซัพพลายที่บริษัทเปิดเผย</span></span></li>
+    <li><span class="step mono">4</span><span class="body"><b>ดีมานด์ HBM/eSSD ชะลอ</b><span>MU กระทบก่อน SNDK เพราะผูกกับ HBM และ server DRAM มากกว่า</span></span></li>
+    <li><span class="step mono">5</span><span class="body"><b>ราคา spot ลง → contract ตามใน 1–2 ไตรมาส</b><span>ฝั่ง consumer ของ SNDK ลดไปแล้ว 32% QoQ — ไฟไหม้บ้านหลังแรกติดแล้ว</span></span></li>
+    <li><span class="step mono">6</span><span class="body"><b>เงินล่วงหน้า NBM หยุดโต / RPO หดผิดจังหวะ</b><span>สัญญาณที่ชัดที่สุดสำหรับ SNDK โดยเฉพาะ และมาก่อนรายได้ลด</span></span></li>
+    <li><span class="step mono">7</span><span class="body"><b>รายได้ SNDK ลด</b><span>ขั้นสุดท้าย ตลาดรู้ก่อนหน้านี้แล้วหลายเดือน — ราคาหุ้นลงไปก่อน 27.8% จากจุดสูงสุดตั้งแต่ตอนนี้</span></span></li>
+  </ol>
+
+  <div class="callout">
+    <p><strong>ข้อดีที่ต้องพูดให้ครบ:</strong> SNDK ไม่ได้อยู่ใน<em>วงจรการเงิน</em> — บริษัทไม่ได้ปล่อยกู้ให้ลูกค้า ไม่ได้ถือหุ้นในลูกค้า ไม่มีหนี้กู้ยืม และ DSO ดีขึ้น ความเชื่อมโยงของ SNDK กับวงจรนี้คือ<strong>ดีมานด์ล้วน ๆ</strong> ไม่ใช่ความเสี่ยงด้านเครดิต ต่างจาก NVDA ที่ถือหุ้นในลูกค้า $47.9bn และต่างจาก CoreWeave ที่กู้มาซื้อของ</p>
+  </div>
+</section>
+
+<footer>
+  <p><strong>ข้อจำกัดของแผนที่นี้:</strong> ตัวเลขที่ไม่ได้มาจากงบการเงิน (ภาระผูกพัน compute ของ OpenAI, แผนการค้ำประกันของ NVIDIA, capex รวมของอุตสาหกรรม) เป็นรายงานข่าวหรือประมาณการของนักวิเคราะห์ ไม่ใช่ข้อมูลที่ผ่านการสอบบัญชี · ไตรมาสของแต่ละบริษัทไม่ตรงกัน · เอกสารนี้เป็นการวิเคราะห์ข้อมูล ไม่ใช่คำแนะนำการลงทุน</p>
+  <div class="srcs">
+    <span>แหล่งงบการเงิน:</span>
+    <a href="https://www.sec.gov/Archives/edgar/data/2023554/000162828026057406/sndk-20260703.htm">SNDK 10-K FY26</a>
+    <a href="https://www.sec.gov/Archives/edgar/data/1045810/000104581026000075/nvda-20260726.htm">NVDA 10-Q ก.ค. 2026</a>
+    <a href="https://insight.factset.com/hyperscalers-tap-external-financing-as-ai-capex-outruns-cash-flow">FactSet · hyperscaler financing</a>
+    <a href="https://io-fund.com/ai-stocks/nvidia-coreweave-nebius-circular-financing-gpu-boom">io-fund · circular financing</a>
+    <a href="https://www.cnbc.com/2026/02/06/google-microsoft-meta-amazon-ai-cash.html">CNBC · AI spending vs cash</a>
+  </div>
+</footer>
+
+</div>

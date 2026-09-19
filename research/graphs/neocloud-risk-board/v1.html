@@ -1,0 +1,221 @@
+<title>ใครคือ neocloud และแต่ละเจ้าเสี่ยงอะไร</title>
+<style>
+  :root{
+    --bg:#F1F2F1; --surface:#FFFFFF; --surface-2:#F7F9F8;
+    --ink:#101715; --ink-2:#3D4F4A; --muted:#6A7A76; --hair:#D4DCDA;
+    --hot:#A8203F; --warm:#9A6410; --ok:#0B6E58; --cool:#0A6272;
+    --hot-s:#F8DEE4; --warm-s:#F6EBD5; --ok-s:#D9EEE8; --cool-s:#DAECF0;
+    --shadow:0 1px 2px rgba(16,23,21,.06), 0 8px 24px rgba(16,23,21,.05);
+    --mono:ui-monospace,"SF Mono","Cascadia Mono","Segoe UI Mono",Menlo,Consolas,monospace;
+    --sans:"Segoe UI","Noto Sans Thai",system-ui,-apple-system,sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#080F0E; --surface:#101917; --surface-2:#16211F; --ink:#E8F0EE; --ink-2:#BACAC6; --muted:#849692; --hair:#233130;
+      --hot:#FF7391; --warm:#E4B057; --ok:#3FC9A6; --cool:#43BFD4;
+      --hot-s:#33151E; --warm-s:#2B2113; --ok-s:#0C2B25; --cool-s:#0C2A31;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#080F0E; --surface:#101917; --surface-2:#16211F; --ink:#E8F0EE; --ink-2:#BACAC6; --muted:#849692; --hair:#233130;
+    --hot:#FF7391; --warm:#E4B057; --ok:#3FC9A6; --cool:#43BFD4;
+    --hot-s:#33151E; --warm-s:#2B2113; --ok-s:#0C2B25; --cool-s:#0C2A31;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.35);
+  }
+  body{background:var(--bg); color:var(--ink); font-family:var(--sans); font-size:15px; line-height:1.7; margin:0; -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1120px; margin:0 auto; padding-inline:20px; padding-block:36px 68px;}
+  h1,h2,h3{text-wrap:balance; line-height:1.3; margin:0;}
+  h1{font-size:clamp(26px,4.4vw,40px); font-weight:700; letter-spacing:-.02em;}
+  h2{font-size:clamp(19px,2.8vw,25px); font-weight:600;}
+  h3{font-size:15.5px; font-weight:600;}
+  p{margin:0;}
+  .mono{font-family:var(--mono); font-variant-numeric:tabular-nums;}
+  .eyebrow{font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted);}
+  header{display:flex; flex-direction:column; gap:14px; padding-bottom:24px; border-bottom:1px solid var(--hair);}
+  .lede{font-size:clamp(15px,2vw,18px); color:var(--ink-2); max-width:66ch;}
+  .stamp{display:flex; flex-wrap:wrap; gap:6px 18px; color:var(--muted); font-size:12.5px;}
+  section{margin-top:42px; display:flex; flex-direction:column; gap:18px;}
+  .sec-head{display:flex; flex-direction:column; gap:6px;}
+  .sec-head p{color:var(--ink-2); max-width:72ch;}
+
+  /* risk legend */
+  .rlegend{display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:1px; background:var(--hair); border:1px solid var(--hair); border-radius:10px; overflow:hidden;}
+  .rlegend div{background:var(--surface); padding:12px 14px; display:flex; flex-direction:column; gap:2px;}
+  .rlegend .c{font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.06em;}
+  .rlegend .t{font-size:13px; color:var(--ink-2);}
+
+  /* charts */
+  .chart{background:var(--surface); border:1px solid var(--hair); border-radius:10px; padding:20px 18px 14px; box-shadow:var(--shadow); overflow-x:auto;}
+  .chart svg{display:block; width:100%; min-width:600px; height:auto; max-width:100%;}
+
+  /* table */
+  .tablebox{overflow-x:auto; border:1px solid var(--hair); border-radius:10px; background:var(--surface); box-shadow:var(--shadow);}
+  table{border-collapse:collapse; width:100%; min-width:860px; font-size:13.5px;}
+  th,td{padding:10px 12px; text-align:right; border-bottom:1px solid var(--hair); white-space:nowrap;}
+  th:first-child,td:first-child,th:last-child,td:last-child{text-align:left; white-space:normal;}
+  thead th{font-family:var(--mono); font-size:10.5px; letter-spacing:.07em; text-transform:uppercase; color:var(--muted); font-weight:500; background:var(--surface-2); position:sticky; top:0;}
+  tbody td:not(:first-child):not(:last-child){font-family:var(--mono); font-variant-numeric:tabular-nums;}
+  tbody tr:last-child td{border-bottom:none;}
+  .chip{display:inline-block; font-family:var(--mono); font-size:10px; font-weight:600; padding:2px 6px; border-radius:4px; margin:1px 2px 1px 0;}
+  .r-hot{background:var(--hot-s); color:var(--hot);} .r-warm{background:var(--warm-s); color:var(--warm);} .r-cool{background:var(--cool-s); color:var(--cool);}
+  .bad{color:var(--hot); font-weight:600;} .mid{color:var(--warm); font-weight:600;} .good{color:var(--ok); font-weight:600;}
+  caption{caption-side:bottom; padding:12px; text-align:left; color:var(--muted); font-size:12px; line-height:1.6;}
+
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(255px,1fr)); gap:16px;}
+  .card{background:var(--surface); border:1px solid var(--hair); border-radius:10px; padding:16px 18px; display:flex; flex-direction:column; gap:8px;}
+  .card .nm{display:flex; justify-content:space-between; align-items:baseline; gap:8px;}
+  .card .nm b{font-size:15px;} .card .nm span{font-family:var(--mono); font-size:11px; color:var(--muted);}
+  .card p{font-size:13px; color:var(--ink-2);}
+  .card .chips{display:flex; flex-wrap:wrap;}
+
+  .callout{background:var(--surface); border:1px solid var(--hair); border-left:3px solid var(--cool); border-radius:8px; padding:18px 20px; display:flex; flex-direction:column; gap:8px;}
+  .callout p{color:var(--ink-2); font-size:14px;} .callout strong{color:var(--ink);}
+  footer{margin-top:46px; padding-top:22px; border-top:1px solid var(--hair); color:var(--muted); font-size:12.5px;}
+</style>
+
+<div class="wrap">
+
+<header>
+  <span class="eyebrow">neocloud risk board · 18 ก.ย. 2026</span>
+  <h1>ใครคือ neocloud และแต่ละเจ้าเสี่ยงอะไร</h1>
+  <p class="lede">กลุ่มที่กู้เงินมาซื้อ GPU แล้วปล่อยเช่า — ปลายที่อ่อนแอที่สุดของวงจร AI ทั้งสิบรายที่จดทะเบียนอยู่ <strong>ต่ำกว่าจุดสูงสุด 12 เดือน 26–55% พร้อมกันหมด</strong> ขณะที่ผู้ผลิตหน่วยความจำยังทำกำไรสถิติ ชั้นการเงินถูกตีราคาใหม่ไปก่อนชั้นฮาร์ดแวร์แล้ว</p>
+  <div class="stamp mono"><span>ตัวเลขบริษัทจดทะเบียนจาก MCP quote</span><span>เอกชน = ข่าว/รายงาน</span><span>อ้างอิง Z-0027, Z-0028</span></div>
+</header>
+
+<section>
+  <div class="sec-head"><h2>ความเสี่ยง 8 ชนิดที่ใช้แยกแต่ละเจ้า</h2></div>
+  <div class="rlegend">
+    <div><span class="c" style="color:var(--hot)">R1 · LEVERAGE</span><span class="t">หนี้ต่อรายได้ / เงินสดต่อหนี้ / ต้องรีไฟแนนซ์เมื่อไหร่</span></div>
+    <div><span class="c" style="color:var(--hot)">R2 · CONCENTRATION</span><span class="t">ลูกค้ารายเดียวกินสัดส่วนรายได้เท่าไร</span></div>
+    <div><span class="c" style="color:var(--hot)">R3 · COLLATERAL</span><span class="t">มูลค่า GPU ที่ใช้ค้ำลดลง 60–75% จากพีค</span></div>
+    <div><span class="c" style="color:var(--warm)">R4 · CONTRACT</span><span class="t">backlog เป็นการจองกำลัง ไม่ใช่รายได้ที่รับรู้</span></div>
+    <div><span class="c" style="color:var(--warm)">R5 · COUNTERPARTY</span><span class="t">คู่สัญญาเป็น IG หรือบริษัทที่ยังเผาเงิน</span></div>
+    <div><span class="c" style="color:var(--warm)">R6 · POWER</span><span class="t">ไฟฟ้า/ที่ดิน/วันจ่ายไฟจริง คือข้อจำกัดตัวจริง</span></div>
+    <div><span class="c" style="color:var(--cool)">R7 · CIRCULAR</span><span class="t">ผู้ขายชิปเป็นทั้งผู้ถือหุ้นและผู้ค้ำ</span></div>
+    <div><span class="c" style="color:var(--cool)">R8 · CRYPTO</span><span class="t">รายได้เดิมผูกกับ BTC งบอ่านยาก</span></div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>หนี้เทียบรายได้ — ใครหายใจสั้นที่สุด</h2>
+    <p>หนี้รวมหารด้วยรายได้ 12 เดือนล่าสุด ยิ่งสูงยิ่งต้องพึ่งการต่อเงินจากตลาด ไม่ใช่กระแสเงินจากการดำเนินงาน</p>
+  </div>
+  <div class="chart">
+    <svg viewBox="0 0 860 330" role="img" aria-label="หนี้ต่อรายได้ของ neocloud ที่จดทะเบียน">
+      <g font-family="ui-monospace, monospace" font-size="11" fill="var(--muted)">
+        <text x="150" y="322" text-anchor="middle">0x</text>
+        <text x="320" y="322" text-anchor="middle">8x</text>
+        <text x="490" y="322" text-anchor="middle">16x</text>
+        <text x="660" y="322" text-anchor="middle">24x</text>
+        <text x="830" y="322" text-anchor="middle">32x</text>
+      </g>
+      <line x1="150" y1="302" x2="830" y2="302" stroke="var(--hair)"/>
+      <!-- x = 150 + v*21.25 ; rows 28px apart -->
+      <g font-size="12.5" font-family="ui-monospace, monospace">
+        <text x="140" y="26" text-anchor="end" fill="var(--ink)">WULF</text>
+        <rect x="150" y="14" width="674" height="16" rx="3" fill="var(--hot)"/>
+        <text x="816" y="26" text-anchor="end" fill="var(--bg)" font-weight="600">31.7x</text>
+
+        <text x="140" y="58" text-anchor="end" fill="var(--ink)">CIFR</text>
+        <rect x="150" y="46" width="620" height="16" rx="3" fill="var(--hot)"/>
+        <text x="762" y="58" text-anchor="end" fill="var(--bg)" font-weight="600">29.2x</text>
+
+        <text x="140" y="90" text-anchor="end" fill="var(--ink)">HUT</text>
+        <rect x="150" y="78" width="512" height="16" rx="3" fill="var(--hot)"/>
+        <text x="654" y="90" text-anchor="end" fill="var(--bg)" font-weight="600">24.1x</text>
+
+        <text x="140" y="122" text-anchor="end" fill="var(--ink)">IREN</text>
+        <rect x="150" y="110" width="236" height="16" rx="3" fill="var(--warm)"/>
+        <text x="394" y="122" fill="var(--ink-2)">11.1x</text>
+
+        <text x="140" y="154" text-anchor="end" fill="var(--ink)">CORZ</text>
+        <rect x="150" y="142" width="213" height="16" rx="3" fill="var(--warm)"/>
+        <text x="371" y="154" fill="var(--ink-2)">10.0x · ส่วนผู้ถือหุ้นติดลบ</text>
+
+        <text x="140" y="186" text-anchor="end" fill="var(--ink)">APLD</text>
+        <rect x="150" y="174" width="176" height="16" rx="3" fill="var(--warm)"/>
+        <text x="334" y="186" fill="var(--ink-2)">8.3x</text>
+
+        <text x="140" y="218" text-anchor="end" fill="var(--ink)">NBIS</text>
+        <rect x="150" y="206" width="159" height="16" rx="3" fill="var(--ok)"/>
+        <text x="317" y="218" fill="var(--ink-2)">7.5x · เงินสด 79% ของหนี้</text>
+
+        <text x="140" y="250" text-anchor="end" fill="var(--ink)">CRWV</text>
+        <rect x="150" y="238" width="145" height="16" rx="3" fill="var(--warm)"/>
+        <text x="303" y="250" fill="var(--ink-2)">6.8x · แต่หนี้ $51.6bn ใหญ่สุดในกลุ่ม</text>
+
+        <text x="140" y="282" text-anchor="end" fill="var(--ink)">BTDR</text>
+        <rect x="150" y="270" width="51" height="16" rx="3" fill="var(--ok)"/>
+        <text x="209" y="282" fill="var(--ink-2)">2.4x · แต่เผาเงินสด $1.6bn</text>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>บริษัทจดทะเบียน 10 ราย</h2>
+    <p>หน่วยเป็นพันล้านดอลลาร์ · “ต่ำกว่าพีค” คือระยะจากจุดสูงสุด 52 สัปดาห์</p>
+  </div>
+  <div class="tablebox">
+    <table>
+      <thead><tr><th>บริษัท</th><th>mcap</th><th>หนี้</th><th>เงินสด</th><th>รายได้</th><th>เงินสด/หนี้</th><th>ต่ำกว่าพีค</th><th>ความเสี่ยงเด่น</th></tr></thead>
+      <tbody>
+        <tr><td><strong>CoreWeave</strong> · CRWV</td><td>44.3</td><td class="bad">51.6</td><td>5.54</td><td>7.59</td><td class="bad">10.7%</td><td class="bad">−47.5%</td><td><span class="chip r-hot">R1</span><span class="chip r-hot">R2</span><span class="chip r-hot">R3</span><span class="chip r-warm">R5</span><span class="chip r-cool">R7</span> ลูกค้ารายเดียว ~67% ของรายได้ปี 25</td></tr>
+        <tr><td><strong>Nebius</strong> · NBIS</td><td>59.9</td><td>10.2</td><td class="good">8.04</td><td>1.36</td><td class="good">78.9%</td><td>−26.5%</td><td><span class="chip r-warm">R4</span><span class="chip r-warm">R5</span><span class="chip r-warm">R6</span> งบดุลดีสุดในกลุ่ม แต่ P/S 44x</td></tr>
+        <tr><td><strong>IREN</strong></td><td>17.9</td><td>7.84</td><td class="good">5.90</td><td>0.71</td><td class="good">75.2%</td><td>−41.1%</td><td><span class="chip r-warm">R1</span><span class="chip r-warm">R6</span><span class="chip r-cool">R8</span> เงินสดหนา แต่รายได้ยังเล็ก</td></tr>
+        <tr><td><strong>Hut 8</strong> · HUT</td><td>11.5</td><td>7.67</td><td class="bad">0.23</td><td>0.32</td><td class="bad">3.0%</td><td>−33.7%</td><td><span class="chip r-hot">R1</span><span class="chip r-hot">R3</span><span class="chip r-cool">R8</span> เงินสดต่อหนี้ต่ำสุดในกลุ่ม</td></tr>
+        <tr><td><strong>TeraWulf</strong> · WULF</td><td>8.23</td><td>5.24</td><td>2.62</td><td class="bad">0.17</td><td>50.0%</td><td class="bad">−44.8%</td><td><span class="chip r-hot">R1</span><span class="chip r-hot">R3</span><span class="chip r-warm">R6</span><span class="chip r-cool">R8</span> หนี้ 31.7 เท่าของรายได้</td></tr>
+        <tr><td><strong>Applied Digital</strong> · APLD</td><td>7.75</td><td>5.10</td><td>1.59</td><td>0.61</td><td>31.2%</td><td class="bad">−46.2%</td><td><span class="chip r-hot">R1</span><span class="chip r-warm">R4</span><span class="chip r-warm">R6</span> EBITDA ติดลบ</td></tr>
+        <tr><td><strong>Cipher</strong> · CIFR</td><td>7.38</td><td>5.59</td><td>0.83</td><td class="bad">0.19</td><td class="bad">14.9%</td><td>−41.0%</td><td><span class="chip r-hot">R1</span><span class="chip r-hot">R3</span><span class="chip r-cool">R8</span> D/E 951% · op CF −$256m</td></tr>
+        <tr><td><strong>Core Scientific</strong> · CORZ</td><td>5.65</td><td>4.41</td><td>1.77</td><td>0.44</td><td>40.1%</td><td>−42.3%</td><td><span class="chip r-hot">R1</span><span class="chip r-warm">R6</span><span class="chip r-cool">R8</span> ส่วนผู้ถือหุ้นติดลบ</td></tr>
+        <tr><td><strong>Galaxy Digital</strong> · GLXY</td><td>14.2</td><td>5.08</td><td>1.55</td><td>—*</td><td>30.6%</td><td class="bad">−47.6%</td><td><span class="chip r-warm">R1</span><span class="chip r-warm">R6</span><span class="chip r-cool">R8</span> ธุรกิจเทรดปนกับดาต้าเซ็นเตอร์</td></tr>
+        <tr><td><strong>Bitdeer</strong> · BTDR</td><td>3.39</td><td>1.95</td><td>0.46</td><td>0.81</td><td>23.6%</td><td class="bad">−55.2%</td><td><span class="chip r-hot">R1</span><span class="chip r-cool">R8</span> op CF −$1.62bn</td></tr>
+      </tbody>
+      <caption>*GLXY รายได้ที่ฟีดรายงาน 58.4bn รวมรายการเทรดสินทรัพย์ดิจิทัล เทียบกับรายอื่นไม่ได้ · ตัวเลข operating cash flow ของ IREN/GLXY/BTDR มีรายการคริปโตปน อ่านตรง ๆ ไม่ได้ · IREN และ WULF ถูกจัดหมวดผิดเป็น Financial Services ในฟีดข้อมูล</caption>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <h2>รายที่ยังไม่จดทะเบียน — เห็นเฉพาะที่เขาแถลง</h2>
+    <p>ไม่มีงบให้ตรวจ จึงประเมินได้จากขนาดสัญญาและวิธีระดมทุนเท่านั้น <strong>ตัวเลข backlog เหล่านี้คือการจองกำลัง ไม่ใช่รายได้ที่รับรู้หรือเงินที่ได้รับแล้ว</strong></p>
+  </div>
+  <div class="cards">
+    <article class="card"><div class="nm"><b>Lambda</b><span>เตรียม IPO H2 2026</span></div><p>Series E &gt; $1.5bn (พ.ย. 2025) · คุยระดมเพิ่มถึง $3bn ที่มูลค่า $12bn+ · มีหนี้ค้ำด้วย GPU $500m จาก Macquarie · สัญญา Anthropic ~$35bn</p><div class="chips"><span class="chip r-hot">R3</span><span class="chip r-warm">R4</span><span class="chip r-warm">R5</span></div></article>
+    <article class="card"><div class="nm"><b>Nscale</b><span>ยื่น IPO สหรัฐ</span></div><p>มูลค่า $14.6bn · อ้าง backlog สัญญา $51bn · สัญญา Anthropic ~$45bn · ระดมหนี้ค้ำด้วย GPU ก้อนใหญ่เพื่อสร้าง</p><div class="chips"><span class="chip r-hot">R1</span><span class="chip r-hot">R3</span><span class="chip r-warm">R4</span><span class="chip r-warm">R5</span></div></article>
+    <article class="card"><div class="nm"><b>Crusoe</b><span>เอกชน</span></div><p>ระดมทุน $3bn (ก.ย. 2026) · จุดแข็งคือพลังงานที่ควบคุมเอง · ความเสี่ยงหลักอยู่ที่การส่งมอบและวันจ่ายไฟจริง</p><div class="chips"><span class="chip r-warm">R4</span><span class="chip r-warm">R6</span></div></article>
+    <article class="card"><div class="nm"><b>Fluidstack</b><span>เอกชน</span></div><p>สัญญา Anthropic ~$50bn — ก้อนใหญ่กว่าฐานธุรกิจเดิมมาก ⇒ ความเสี่ยงคือการหาเงินมาสร้างให้ทัน และคู่สัญญารายเดียว</p><div class="chips"><span class="chip r-hot">R2</span><span class="chip r-hot">R4</span><span class="chip r-warm">R5</span></div></article>
+    <article class="card"><div class="nm"><b>Together AI</b><span>เอกชน</span></div><p>เน้น inference/แพลตฟอร์มมากกว่าเช่าเครื่องเปล่า ⇒ R3 ต่ำกว่า แต่แข่งกับ API ของ hyperscaler ตรง ๆ</p><div class="chips"><span class="chip r-warm">R4</span></div></article>
+    <article class="card"><div class="nm"><b>Vultr · Voltage Park</b><span>เอกชน</span></div><p>ขนาดกลาง เน้นราคาถูกกว่า hyperscaler 70–80% ⇒ กำไรบาง ถ้าราคาเช่า GPU ลงอีกจะโดนก่อน</p><div class="chips"><span class="chip r-hot">R3</span><span class="chip r-warm">R4</span></div></article>
+    <article class="card"><div class="nm"><b>RunPod · Vast.ai · Thunder Compute</b><span>เอกชน</span></div><p>โมเดล serverless/มาร์เก็ตเพลส สินทรัพย์เบากว่า ⇒ ความเสี่ยงหนี้ต่ำ แต่รายได้ผันผวนตาม spot และไม่มีสัญญายาวรองรับ</p><div class="chips"><span class="chip r-warm">R4</span></div></article>
+    <article class="card"><div class="nm"><b>Modal · Baseten</b><span>เอกชน</span></div><p>ชั้น inference/serving ไม่ได้เป็นเจ้าของ GPU เอง ⇒ ไม่มี R1/R3 แต่ขึ้นกับซัพพลายที่เช่าจากรายอื่น</p><div class="chips"><span class="chip r-cool">R4</span></div></article>
+  </div>
+</section>
+
+<section>
+  <div class="callout">
+    <p><strong>ตัวเลขเดียวที่อธิบายกลุ่มนี้ได้ทั้งหมด:</strong> ค่าเช่า GPU ระดับ H100 ลดจาก ~$7–10 ต่อชั่วโมง (ต้นปี 2024) เหลือ ~$2–4 (ปลายปี 2025) และมูลค่าหลักประกัน GPU ลดลง <strong>60–75% จากจุดสูงสุด</strong> ขณะที่ทั้งอุตสาหกรรมมีเงินกู้ที่ใช้ชิป NVIDIA ค้ำมากกว่า <strong>$20bn</strong> — นี่คือเหตุผลที่หุ้นทั้งกลุ่มถูกตีราคาใหม่พร้อมกัน ทั้งที่สัญญา backlog ยังประกาศกันเป็นหลักหมื่นล้าน</p>
+    <p><strong>ช่องว่างที่สำคัญที่สุด:</strong> S&amp;P ให้เครดิต <em>บริษัท</em> CoreWeave ที่ <strong>B+</strong> (มุมมอง positive เม.ย. 2026) ขณะ Moody's ให้ <strong>A3</strong> กับตราสารระดับ SPV ที่พิงกระแสเงินจากคู่สัญญาเครดิตดี — ห่างกัน 7–8 ขั้น ความเสี่ยงที่แท้จริงจึงไม่ได้อยู่ที่ตัวสัญญา แต่อยู่ที่ <em>ตัวบริษัทที่ต้องต่อเงินระหว่างทาง</em></p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><h2>เชื่อมกลับมาที่ SNDK</h2></div>
+  <div class="cards">
+    <article class="card"><div class="nm"><b>ทำไมต้องเฝ้ากลุ่มนี้</b></div><p>neocloud คือผู้ซื้อที่เปราะที่สุดในวงจร ถ้ารีไฟแนนซ์ยากพร้อมกับหลักประกันเสื่อม จะเกิดการเลื่อนคำสั่งซื้อ <strong>ก่อน</strong> ที่ราคา NAND จะขยับ</p></article>
+    <article class="card"><div class="nm"><b>สัญญาณที่ใช้จริง</b></div><p>ดีลหนี้ใหม่ที่ถูกเลื่อน/ยกเลิก · สเปรดที่จ่ายเพิ่มขึ้นในดีลถัดไป · การลดค่าเสื่อม/ยืดอายุ GPU ในงบ · US HY OAS &gt; 4.0% (วันนี้ 2.70%)</p></article>
+    <article class="card"><div class="nm"><b>สิ่งที่ยังไม่เกิด</b></div><p>ยังไม่มีรายงานการผิดนัดหรือ covenant breach ในกลุ่มนี้ · ราคาหุ้นที่ลงเป็นการตีมูลค่าใหม่ ไม่ใช่การล้มละลาย — อย่าเร่งสรุปเกินหลักฐาน</p></article>
+  </div>
+</section>
+
+<footer>
+  ⚠️ วิเคราะห์ข้อมูล ไม่ใช่คำแนะนำการลงทุน · ตัวเลขบริษัทจดทะเบียนดึงจากฟีด quote ณ 18 ก.ย. 2026 ยังไม่ได้ทวนกับ 10-Q รายฉบับ ·
+  ตัวเลขของบริษัทเอกชนและสัญญา backlog มาจากรายงานข่าว ไม่ใช่เอกสารที่ตรวจสอบได้ · การให้ชิป R1–R8 เป็นการประเมินจากหลักฐานที่มี ไม่ใช่เรตติ้งเครดิต ·
+  หลักฐานเต็ม: Z-0027, Z-0028 · เชื่อมกับ Z-0022, Z-0024, Z-0025
+</footer>
+
+</div>
