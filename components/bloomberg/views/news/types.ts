@@ -127,4 +127,4 @@ export interface SocialPost {
   thumbnail: string | null;
 }
 
-export type NewsTab = "watchlist" | "feed" | "social";
+export type NewsTab = "watchlist" | "feed" | "social" | "data";
