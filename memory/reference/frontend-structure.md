@@ -79,7 +79,8 @@ components/bloomberg/
 │           │   ├── ThesisTimeline.tsx ← thesis_events feed + manual notes
 │           │   ├── markdown.tsx       ← renderMarkdown
 │           │   └── types.ts
-│           └── ImportTab.tsx         ← Excel drag-drop + manual form (IS OPTION checkbox, VAT field)
+│           └── ImportTab.tsx         ← Excel drag-drop + manual form. **ENTRY shows six fields only** (ACCOUNT · SYMBOL · DATE ENTRY · PRICE ENTRY · VOLUME · STRATEGY) plus the IS OPTION / REINVEST checkboxes; SECTOR · STOP LOSS · TARGET · ENTRY TRIGGER · VAT · SUB-PORT · NOTE sit behind the ADD FIELD row (`ui/useEntryExtras.tsx`). Grids size themselves from how many optional cells are on, so a hidden field leaves no gap. `autoFillSector()` reads `/api/stock/sector/{resolved}` and takes the first of `[set_sector, us_sector]` that the account's list offers; anything undecidable reveals the SECTOR picker instead of guessing
+│               ui/useEntryExtras.tsx ← `useEntryExtras()` (state in `localStorage["bloomberg_entry_extra_fields"]`, `showExtra` reveals but never hides) + `<ExtraFieldToggles>`, the text-only `+ FIELD` / `− FIELD` row
 │
 ├── chart/
 │   ├── ModularChart.tsx         ← reusable chart container (candle + overlay/pane indicators + event rail). **Grid in the price pane only** — the library's chart-wide grid is `visible: false`; the price pane draws its own via `createPriceGridOverlay()` (`price-grid-overlay.ts`), an `OverlayPrimitive` at `zOrder: "bottom"`, always first in `allOverlays`. Indicator sub-panes have no grid because nothing draws one there. No `createSeriesMarkers` — events are drawn by the rail overlay. `onBarClick(time, ctx)` reports every marker within 2 bars of the click + viewport coords

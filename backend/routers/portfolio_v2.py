@@ -1090,6 +1090,38 @@ def bulk_patch_sector(body: dict):
     return {"ok": True, "updated": updated}
 
 
+def _rebase_open_lots_to_avco(conn, account_id, symbol, avg_cost: float,
+                              exclude_id: str | None = None) -> int:
+    """Set every still-open lot of this symbol to the pooled average cost.
+
+    A sell is priced off the AVCO of all open lots, so the shares left behind
+    must carry that same average — otherwise selling the cheap lot silently
+    re-prices the remainder upward and the position's ENTRY column stops
+    matching the broker. Cost basis is conserved: after the rewrite the pool is
+    avg_cost x remaining_volume, exactly the pre-sale pool minus what was sold.
+    """
+    lots = conn.execute(
+        "SELECT id, price_entry, volume FROM trades "
+        "WHERE account_id = ? AND symbol = ? AND win_loss = 'P'",
+        (account_id, symbol),
+    ).fetchall()
+    touched = 0
+    for lot in lots:
+        if exclude_id and lot["id"] == exclude_id:
+            continue
+        old_entry = float(lot["price_entry"] or 0)
+        if abs(old_entry - avg_cost) < 1e-9:
+            continue
+        conn.execute("UPDATE trades SET price_entry = ? WHERE id = ?",
+                     (avg_cost, lot["id"]))
+        _write_audit_log(conn, lot["id"], "AVCO_REBASE",
+                         {"price_entry": old_entry, "volume": lot["volume"]},
+                         {"price_entry": avg_cost},
+                         f"rebased to pooled avg cost {round(avg_cost, 4)} after a sell")
+        touched += 1
+    return touched
+
+
 class SellIn(BaseModel):
     trade_id: str                        # ID of the open position being sold
     sell_volume: float = 0               # How many shares/units to sell (0 = all)
@@ -1161,22 +1193,30 @@ def sell_position(body: SellIn):
                 "pnl_amount": pnl_net, "win_loss": wl, "pnl_percent": pnl_pct,
                 "exit_exchange_rate": exit_fx,
             }
+            # price_entry follows the AVCO the P&L was computed from, so the
+            # closed row's entry, exit and P&L agree in the trade log.
+            new_vals["price_entry"] = entry_price
             conn.execute(
                 """UPDATE trades SET date_exit = ?, price_exit = ?,
+                   price_entry = ?,
                    pnl_amount = ?, win_loss = ?, pnl_percent = ?,
                    exit_exchange_rate = ?, note = note || ?
                    WHERE id = ?""",
-                (body.sell_date, exit_price, pnl_net, wl, pnl_pct, exit_fx,
+                (body.sell_date, exit_price, entry_price, pnl_net, wl, pnl_pct, exit_fx,
                   f"\n[SOLD {body.sell_date}] @ {exit_price} | P&L: {pnl_net}",
                   body.trade_id),
             )
             _write_audit_log(conn, body.trade_id, "SELL_FULL", pos, new_vals,
-                             f"full sell {total_volume} @ {exit_price}")
+                             f"full sell {total_volume} @ {exit_price}, avg_cost={round(avg_cost, 4)}")
+            # Other lots of the same symbol may still be open — keep them on the
+            # same average this sale was priced at.
+            _rebase_open_lots_to_avco(conn, pos["account_id"], pos["symbol"], avg_cost)
 
             return {
                 "ok": True,
                 "action": "full_sell",
                 "trade_id": body.trade_id,
+                "avg_cost": round(avg_cost, 4),
                 "pnl_amount": pnl_net,
                 "pnl_percent": pnl_pct,
                 "win_loss": wl,
@@ -1210,13 +1250,16 @@ def sell_position(body: SellIn):
             # Reduce the remaining open lot. The partial sell is captured in the
             # audit log (below) — no auto-note appended to keep notes user-owned.
             conn.execute(
-                "UPDATE trades SET volume = ? WHERE id = ?",
-                (remaining, body.trade_id),
+                "UPDATE trades SET volume = ?, price_entry = ? WHERE id = ?",
+                (remaining, avg_cost, body.trade_id),
             )
+            # Any sibling lot still open carries the same average from here on.
+            _rebase_open_lots_to_avco(conn, pos["account_id"], pos["symbol"], avg_cost,
+                                      exclude_id=body.trade_id)
 
             # Log on BOTH the original lot (volume reduced) and the new sold record
             _write_audit_log(conn, body.trade_id, "SELL_PARTIAL", pos,
-                             {"volume": remaining},
+                             {"volume": remaining, "price_entry": avg_cost},
                              f"partial sell {sold_volume} @ {exit_price}, avg_cost={round(avg_cost,4)}, remaining={remaining}")
             sold_snap = {k: pos.get(k) for k in ["symbol", "price_entry", "date_entry"]}
             _write_audit_log(conn, sold_id, "SELL_PARTIAL_CREATED", sold_snap,
@@ -1229,6 +1272,7 @@ def sell_position(body: SellIn):
             return {
                 "ok": True,
                 "action": "partial_sell",
+                "avg_cost": round(avg_cost, 4),
                 "sold_trade_id": sold_id,
                 "remaining_trade_id": body.trade_id,
                 "sold_volume": sold_volume,
@@ -1275,15 +1319,23 @@ def sell_all_lots(body: SellAllLotsIn):
             exit_fx = _capture_thb_rate(
                 _position_currency(pos), body.sell_date, conn=conn
             )
+            # Entry follows the pooled AVCO the P&L was priced at, so every
+            # closed lot of this sale reports the same cost basis.
             conn.execute(
                 """UPDATE trades SET date_exit = ?, price_exit = ?,
+                   price_entry = ?,
                    pnl_amount = ?, win_loss = ?, pnl_percent = ?,
                    exit_exchange_rate = ?, note = note || ?
                    WHERE id = ?""",
-                (body.sell_date, exit_price, pnl_net, wl, pnl_pct, exit_fx,
+                (body.sell_date, exit_price, avg_cost, pnl_net, wl, pnl_pct, exit_fx,
                   f"\n[SOLD {body.sell_date}] @ {exit_price} | P&L: {pnl_net}",
                   pos["id"]),
             )
+            _write_audit_log(conn, pos["id"], "SELL_ALL_LOTS", pos,
+                             {"price_entry": avg_cost, "price_exit": exit_price,
+                              "date_exit": body.sell_date, "win_loss": wl,
+                              "pnl_amount": pnl_net},
+                             f"sell all lots {vol} @ {exit_price}, avg_cost={round(avg_cost, 4)}")
             closed_ids.append(pos["id"])
 
         return {"ok": True, "action": "sell_all_lots", "closed_ids": closed_ids, "lots_closed": len(closed_ids)}

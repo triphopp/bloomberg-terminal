@@ -1138,3 +1138,42 @@ interface SmileTenor { months: number[]; expiry: string | null; days: number | n
 ```
 
 Successful HTTP200 can contain unavailable series (too few strikes, narrow coverage, no convergence), always with `parameters:null` and `reason`. `a` may be negative: the constrained minimum is `a+b*sigma*sqrt(1-rho²)>0`. These are independent slices, not an arbitrage-free surface. `smileTenorDate` uses calendar months; `selectSmileTenors` merges months sharing one expiry, or returns null expiry/DTE for an unavailable target. `smileSamples` returns named observed series by side. `smilePlotRows` returns shared numeric strike rows with dynamic `<id>_observed` and `<id>_fit` fields (missing/null, never zero-filled); `sviIvAtStrike` returns percent IV only within each fit's observed K span.
+
+## Symbol classification (`GET /api/stock/sector/{symbol}`) — 2026-09-22
+
+```jsonc
+{
+  "symbol": "CPALL.BK",
+  "sector": "Consumer Defensive",       // raw provider sector (kept for back-compat)
+  "industry": "Grocery Stores",
+  "sector_raw": "Consumer Defensive",   // same values, named so the mapping is legible
+  "industry_raw": "Grocery Stores",
+  "quote_type": "EQUITY",
+  "asset_class": "equity",  // equity|etf|fund|crypto|fx|index|future|option|dw|warrant
+  "set_sector": "COMM",     // SET code   — TH accounts (TH_SECTORS)
+  "us_sector": "Consumer Staples"  // GICS label — USD accounts (US_SECTORS)
+}
+```
+
+`set_sector` / `us_sector` are **never null** — undecidable resolves to `"Other"`. The two lists
+overlap only on `ETF` and `Other`, so a caller can take the first of `[set_sector, us_sector]`
+that its own list contains and be unambiguous. `asset_class` is what settles the rows that have
+no sector at all: an ETF, a coin, a Thai DW (`BBL13C2512A`) or warrant (`PTT-W1`).
+Source: `backend/sector_map.py` (`classify()`), tests in `tests/test_sector_map.py`.
+
+## `POST /api/v2/portfolio/sell` response — 2026-09-22
+
+```jsonc
+// partial
+{ "ok": true, "action": "partial_sell", "avg_cost": 1616.2403,
+  "sold_trade_id": "...", "remaining_trade_id": "...",
+  "sold_volume": 1.5923943, "remaining_volume": 4.4628775,
+  "pnl_amount": 217.15, "pnl_percent": 8.44, "win_loss": "W" }
+// full
+{ "ok": true, "action": "full_sell", "avg_cost": 1616.2403, "trade_id": "...",
+  "pnl_amount": 185.82, "pnl_percent": 8.44, "win_loss": "W" }
+```
+
+`avg_cost` is the pooled average the sale was priced at **and** the value written into
+`price_entry` on the closed row and on every lot still open for that account+symbol. Read it when
+you need to show the user what the position's ENTRY became.
