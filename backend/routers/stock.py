@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 from cache import TTLCache
 from config import STOCK_CACHE_TTL, MAX_HISTORY_CACHE_TTL, PERIOD_TO_YF, HISTORY_PERIOD_MAP, VALID_INTERVALS
 from market_session import is_today_at, local_date_of
+from sector_map import classify
 from sources import market_data
 
 _DETAIL_TTL = 3600  # 1 hour — financials, events, SEC filings
@@ -522,12 +523,31 @@ def get_stock(symbol: str, period: str = "6mo"):
 
 @router.get("/api/stock/sector/{symbol}")
 def stock_sector(symbol: str):
+    """Raw provider classification plus the sector in each list the UI offers.
+
+    The caller picks `set_sector` or `us_sector` by which list its account uses;
+    `asset_class` is what settles the cases that have no sector at all — an ETF,
+    a coin, a warrant. See sector_map for why the translation cannot be a string
+    match.
+    """
     try:
         ticker = market_data.get_ticker(symbol)
         info = ticker.info or {}
-        return {"symbol": symbol.upper(), "sector": info.get("sector"), "industry": info.get("industry")}
     except Exception:
-        return {"symbol": symbol.upper(), "sector": None, "industry": None}
+        info = {}
+    mapped = classify(
+        symbol,
+        quote_type=info.get("quoteType"),
+        sector=info.get("sector"),
+        industry=info.get("industry"),
+        name=info.get("longName") or info.get("shortName") or "",
+    )
+    return {
+        "symbol": symbol.upper(),
+        "sector": info.get("sector"),
+        "industry": info.get("industry"),
+        **mapped,
+    }
 
 
 # ── Real-time Quote ──────────────────────────────────────────────────────────

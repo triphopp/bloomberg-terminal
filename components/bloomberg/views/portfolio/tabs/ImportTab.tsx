@@ -11,6 +11,7 @@ import {
 import { type Colors, composeNote, splitNote } from "../helpers";
 import type { Account } from "../types";
 import { SubPortSelect } from "../ui/SubPortSelect";
+import { ExtraFieldToggles, useEntryExtras } from "../ui/useEntryExtras";
 
 const FALLBACK_ACCOUNTS: Account[] = [
   {
@@ -81,6 +82,9 @@ export function ImportTab({
   const [saveOk, setSaveOk] = useState(false);
   const [saveErr, setSaveErr] = useState("");
   const [resolve, setResolve] = useState<ResolveState>({ status: "idle" });
+  // Optional fields start hidden: a trade needs account, symbol, date, price,
+  // volume and strategy, and showing the other seven at once buries those six.
+  const { extras, toggleExtra, showExtra } = useEntryExtras();
 
   // Keep form.account_id valid once real accounts load
   useEffect(() => {
@@ -157,16 +161,29 @@ export function ImportTab({
   const autoFillSector = async (sym: string) => {
     try {
       const r = await fetch(`/api/stock/sector/${encodeURIComponent(sym)}`);
-      if (!r.ok) return;
+      if (!r.ok) {
+        showExtra("sector");
+        return;
+      }
       const d = await r.json();
-      const rawSector: string = d.sector ?? "";
-      if (!rawSector) return;
-      const match = sectorList.find((s) =>
-        s.toLowerCase().includes(rawSector.toLowerCase().split(" ")[0])
+      // The backend answers in both vocabularies (SET codes and GICS labels)
+      // plus the asset class, because a symbol alone cannot say which list the
+      // account uses. Whichever candidate this account offers is the answer —
+      // the two lists share only ETF and Other, so there is no ambiguity.
+      const candidates: string[] = [d.set_sector, d.us_sector].filter(
+        (x): x is string => typeof x === "string" && x.length > 0
       );
-      if (match) setForm((f) => ({ ...f, sector: match }));
+      const match = candidates.find((c) => sectorList.includes(c));
+      if (match && match !== "Other") {
+        setForm((f) => ({ ...f, sector: match }));
+        return;
+      }
+      // Nothing decisive came back — show the picker rather than filing the
+      // trade under a sector nobody chose.
+      setForm((f) => ({ ...f, sector: "" }));
+      showExtra("sector");
     } catch {
-      /* silent */
+      showExtra("sector");
     }
   };
 
@@ -451,9 +468,15 @@ export function ImportTab({
             </span>
           </div>
 
+          <ExtraFieldToggles extras={extras} onToggle={toggleExtra} colors={colors} />
+
           <div
             className="grid gap-2"
-            style={{ gridTemplateColumns: side === "sell" ? "1fr 1fr 1fr 80px" : "1fr 1fr 1fr" }}
+            style={{
+              gridTemplateColumns: `repeat(${2 + (extras.sector || form.is_option ? 1 : 0)}, minmax(0, 1fr))${
+                side === "sell" ? " 80px" : ""
+              }`,
+            }}
           >
             <div>
               <div
@@ -497,36 +520,38 @@ export function ImportTab({
                 onBlur={handleSymbolBlur}
               />
             </div>
-            <div>
-              <div
-                className="text-[8px] mb-0.5 font-bold tracking-wider"
-                style={{ color: colors.textSecondary }}
-              >
-                SECTOR
-              </div>
-              {form.is_option ? (
+            {(extras.sector || form.is_option) && (
+              <div>
                 <div
-                  className="text-[9px] px-2 py-1 border font-mono"
-                  style={{ ...iStyle, border: `1px solid ${colors.border}`, color: "#ff9900" }}
+                  className="text-[8px] mb-0.5 font-bold tracking-wider"
+                  style={{ color: colors.textSecondary }}
                 >
-                  {form.sector || "Option — ?"}
+                  SECTOR
                 </div>
-              ) : (
-                <select
-                  className={inputCls}
-                  style={iStyle}
-                  value={form.sector}
-                  onChange={set("sector")}
-                >
-                  <option value="">— select —</option>
-                  {sectorList.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
+                {form.is_option ? (
+                  <div
+                    className="text-[9px] px-2 py-1 border font-mono"
+                    style={{ ...iStyle, border: `1px solid ${colors.border}`, color: "#ff9900" }}
+                  >
+                    {form.sector || "Option — ?"}
+                  </div>
+                ) : (
+                  <select
+                    className={inputCls}
+                    style={iStyle}
+                    value={form.sector}
+                    onChange={set("sector")}
+                  >
+                    <option value="">— select —</option>
+                    {sectorList.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
             {side === "sell" && (
               <div>
                 <div
@@ -641,29 +666,31 @@ export function ImportTab({
             </div>
           )}
 
-          <div style={{ maxWidth: 220 }}>
-            <div
-              className="text-[8px] mb-0.5 font-bold tracking-wider"
-              style={{ color: colors.textSecondary }}
-            >
-              SUB-PORT
+          {extras.sub_port && (
+            <div style={{ maxWidth: 220 }}>
+              <div
+                className="text-[8px] mb-0.5 font-bold tracking-wider"
+                style={{ color: colors.textSecondary }}
+              >
+                SUB-PORT
+              </div>
+              <SubPortSelect
+                accountId={form.account_id}
+                value={splitNote(form.note).subPort}
+                onChange={(v) =>
+                  setForm((f) => ({ ...f, note: composeNote(v, splitNote(f.note).rest) }))
+                }
+                colors={colors}
+                inputStyle={{
+                  ...iStyle,
+                  padding: "3px 6px",
+                  fontSize: 10,
+                  width: "100%",
+                  border: `1px solid ${colors.border}`,
+                }}
+              />
             </div>
-            <SubPortSelect
-              accountId={form.account_id}
-              value={splitNote(form.note).subPort}
-              onChange={(v) =>
-                setForm((f) => ({ ...f, note: composeNote(v, splitNote(f.note).rest) }))
-              }
-              colors={colors}
-              inputStyle={{
-                ...iStyle,
-                padding: "3px 6px",
-                fontSize: 10,
-                width: "100%",
-                border: `1px solid ${colors.border}`,
-              }}
-            />
-          </div>
+          )}
 
           {/* Option toggle + attributes */}
           <div className="flex items-center gap-3 flex-wrap">
@@ -859,7 +886,16 @@ export function ImportTab({
           </div>
 
           <div
-            className={`grid gap-2 grid-cols-2 ${side === "sell" ? "md:grid-cols-5" : "md:grid-cols-4"}`}
+            className="grid gap-2"
+            style={{
+              gridTemplateColumns: `repeat(${
+                1 +
+                (side === "sell" ? 1 : 0) +
+                (extras.stop_loss ? 1 : 0) +
+                (extras.target ? 1 : 0) +
+                (extras.vat ? 1 : 0)
+              }, minmax(0, 1fr))`,
+            }}
           >
             <div>
               <div
@@ -905,70 +941,83 @@ export function ImportTab({
                 />
               </div>
             )}
-            <div>
-              <div
-                className="text-[8px] mb-0.5 font-bold tracking-wider"
-                style={{ color: colors.textSecondary }}
-              >
-                STOP LOSS
-              </div>
-              <input
-                className={inputCls}
-                style={{ ...iStyle, color: "#f87171" }}
-                placeholder="0.00"
-                type="number"
-                step="any"
-                value={form.price_stoploss}
-                onChange={set("price_stoploss")}
-              />
-            </div>
-            <div>
-              <div
-                className="text-[8px] mb-0.5 font-bold tracking-wider"
-                style={{ color: colors.textSecondary }}
-              >
-                TARGET
-              </div>
-              <input
-                className={inputCls}
-                style={{ ...iStyle, color: "#4ade80" }}
-                placeholder="0.00"
-                type="number"
-                step="any"
-                value={form.price_target}
-                onChange={set("price_target")}
-              />
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-0.5">
-                <span className="text-[8px] font-bold tracking-wider" style={{ color: "#facc15" }}>
-                  VAT
-                </span>
-                <button
-                  type="button"
-                  className="text-[7px] px-1 py-0 border font-bold hover:opacity-80"
-                  style={{ borderColor: "#facc1544", color: "#facc15", background: "#facc1510" }}
-                  onClick={autoVat}
-                  title="Auto 7%"
+            {extras.stop_loss && (
+              <div>
+                <div
+                  className="text-[8px] mb-0.5 font-bold tracking-wider"
+                  style={{ color: colors.textSecondary }}
                 >
-                  7%
-                </button>
+                  STOP LOSS
+                </div>
+                <input
+                  className={inputCls}
+                  style={{ ...iStyle, color: "#f87171" }}
+                  placeholder="0.00"
+                  type="number"
+                  step="any"
+                  value={form.price_stoploss}
+                  onChange={set("price_stoploss")}
+                />
               </div>
-              <input
-                className={inputCls}
-                style={{ ...iStyle, color: "#facc15" }}
-                placeholder="0.00"
-                type="number"
-                step="any"
-                value={form.vat_amount}
-                onChange={set("vat_amount")}
-              />
-            </div>
+            )}
+            {extras.target && (
+              <div>
+                <div
+                  className="text-[8px] mb-0.5 font-bold tracking-wider"
+                  style={{ color: colors.textSecondary }}
+                >
+                  TARGET
+                </div>
+                <input
+                  className={inputCls}
+                  style={{ ...iStyle, color: "#4ade80" }}
+                  placeholder="0.00"
+                  type="number"
+                  step="any"
+                  value={form.price_target}
+                  onChange={set("price_target")}
+                />
+              </div>
+            )}
+            {extras.vat && (
+              <div>
+                <div className="flex items-center justify-between mb-0.5">
+                  <span
+                    className="text-[8px] font-bold tracking-wider"
+                    style={{ color: "#facc15" }}
+                  >
+                    VAT
+                  </span>
+                  <button
+                    type="button"
+                    className="text-[7px] px-1 py-0 border font-bold hover:opacity-80"
+                    style={{ borderColor: "#facc1544", color: "#facc15", background: "#facc1510" }}
+                    onClick={autoVat}
+                    title="Auto 7%"
+                  >
+                    7%
+                  </button>
+                </div>
+                <input
+                  className={inputCls}
+                  style={{ ...iStyle, color: "#facc15" }}
+                  placeholder="0.00"
+                  type="number"
+                  step="any"
+                  value={form.vat_amount}
+                  onChange={set("vat_amount")}
+                />
+              </div>
+            )}
           </div>
 
           <div
             className="grid gap-2"
-            style={{ gridTemplateColumns: side === "sell" ? "1fr 1fr 1fr" : "1fr 1fr" }}
+            style={{
+              gridTemplateColumns: `repeat(${
+                1 + (extras.entry_trigger ? 1 : 0) + (side === "sell" ? 1 : 0)
+              }, minmax(0, 1fr))`,
+            }}
           >
             <div>
               <div
@@ -991,21 +1040,23 @@ export function ImportTab({
                 ))}
               </select>
             </div>
-            <div>
-              <div
-                className="text-[8px] mb-0.5 font-bold tracking-wider"
-                style={{ color: colors.textSecondary }}
-              >
-                ENTRY TRIGGER
+            {extras.entry_trigger && (
+              <div>
+                <div
+                  className="text-[8px] mb-0.5 font-bold tracking-wider"
+                  style={{ color: colors.textSecondary }}
+                >
+                  ENTRY TRIGGER
+                </div>
+                <input
+                  className={inputCls}
+                  style={iStyle}
+                  placeholder="e.g. Breakout above 52W high"
+                  value={form.entry_trigger}
+                  onChange={set("entry_trigger")}
+                />
               </div>
-              <input
-                className={inputCls}
-                style={iStyle}
-                placeholder="e.g. Breakout above 52W high"
-                value={form.entry_trigger}
-                onChange={set("entry_trigger")}
-              />
-            </div>
+            )}
             {side === "sell" && (
               <div>
                 <div
@@ -1025,26 +1076,28 @@ export function ImportTab({
             )}
           </div>
 
-          <div>
-            <div
-              className="text-[8px] mb-0.5 font-bold tracking-wider"
-              style={{ color: colors.textSecondary }}
-            >
-              NOTE
+          {extras.note && (
+            <div>
+              <div
+                className="text-[8px] mb-0.5 font-bold tracking-wider"
+                style={{ color: colors.textSecondary }}
+              >
+                NOTE
+              </div>
+              <textarea
+                className="text-[10px] font-mono px-2 py-1 border outline-none w-full resize-none"
+                style={{ ...iStyle, height: 48 }}
+                placeholder="บันทึกเพิ่มเติม…"
+                value={splitNote(form.note).rest}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    note: composeNote(splitNote(f.note).subPort, e.target.value),
+                  }))
+                }
+              />
             </div>
-            <textarea
-              className="text-[10px] font-mono px-2 py-1 border outline-none w-full resize-none"
-              style={{ ...iStyle, height: 48 }}
-              placeholder="บันทึกเพิ่มเติม…"
-              value={splitNote(form.note).rest}
-              onChange={(e) =>
-                setForm((f) => ({
-                  ...f,
-                  note: composeNote(splitNote(f.note).subPort, e.target.value),
-                }))
-              }
-            />
-          </div>
+          )}
 
           {form.pnl_amount && (
             <div

@@ -1499,3 +1499,40 @@ LPDDR/GDDR/Wafer redirect ไป login
 list ว่างแปลว่า "วันนี้เขาไม่ประกาศ" ซึ่งเป็นสถานะจริงคนละเรื่องกัน
 (`backend/series_sources/dramexchange.py:ParseError`)
 
+## ขาย partial แล้วราคาเฉลี่ยเด้งขึ้น — AVCO ไม่ถูกเขียนกลับ (2026-09-22)
+
+`/api/v2/portfolio/sell` คิด P&L จาก AVCO ของ open lots ทั้งหมด **แต่ไม่เคยเขียนค่านั้นกลับลง row**
+ผลคือ lot ที่เหลือยังถือ `price_entry` เดิมของตัวเอง — ขาย lot ถูกออกไป ราคาเฉลี่ยที่เหลือเลยสูงขึ้นเอง
+
+SNDK: ก่อนขาย AVCO = **1616.2403** (ตรง broker) หลังขาย 4 หุ้น ENTRY เด้งเป็น **1648.8074**
+
+ซ้ำร้ายกว่านั้น `SellModal` ยิงทีละ lot (loop `for lot of allLots`) ดังนั้นทุก call หลังตัวแรก
+เห็น pool ที่ call ก่อนหน้าทำเพี้ยนไปแล้ว — closed row ของ "การขายครั้งเดียว" จึงได้ต้นทุนคนละราคา
+(1616.24 / 1631.13 / 1648.81 ในรายการเดียวกัน)
+
+**Fix:** `_rebase_open_lots_to_avco()` — ทุกครั้งที่ขาย (ทั้ง full/partial/sell-all-lots) เขียน
+`price_entry = avg_cost` ลงทั้ง closed row และ **ทุก lot ที่ยังเปิดอยู่** ของ account+symbol นั้น
+cost pool คงที่: `sold_basis + open_basis` เท่าเดิม และการยิงทีละ lot กลายเป็น idempotent
+audit action ใหม่: `AVCO_REBASE`, `SELL_ALL_LOTS`
+
+**กฎ:** ที่ไหนก็ตามที่คำนวณด้วย AVCO แล้วไม่เขียนกลับ = ตัวเลขบนจอจะค่อยๆ ห่างจาก broker
+ทุกครั้งที่ขาย และไม่มีอะไรฟ้อง เพราะแต่ละ row ยังดู "ถูก" ของมันเอง
+
+**ซ่อมข้อมูลเก่า:** `backend/scripts/repair_avco_history.py` — replay buy/sell ตามวันที่ทีละ position
+`--dry-run` ก่อนเสมอ, `--apply` backup DB ให้อัตโนมัติ, idempotent (อ่านราคาซื้อจริงคืนจาก
+`trade_audit_log` action `AVCO_REPAIR` แทนที่จะ replay ผลของตัวเอง) และ **ข้าม** position ที่ขาย
+มากกว่าที่ซื้อ (ประวัติ import ไม่ครบ เช่น VT) แทนที่จะเดา cost basis ขึ้นมาเอง
+
+## sector auto-fill: ห้าม match ด้วย substring (2026-09-22)
+
+ENTRY เคยเดา sector ด้วย `sectorList.find(s => s.toLowerCase().includes(rawSector.split(" ")[0]))`
+พังทั้งสองตลาด:
+- หุ้นไทยไม่เคยติดเลย — yfinance ตอบ `"Energy"` แต่ list เป็นรหัส SET `"ENERG"`
+- US: `"Healthcare"` ไม่มีใน `"Health Care"` (พลาด) และ `"Consumer Defensive"` → คำแรก `"consumer"`
+  ไปแมตช์ `"Consumer Discretionary"` = **sector ตรงข้าม** (ผิดแบบเงียบๆ อันตรายกว่าไม่แมตช์)
+
+`backend/sector_map.py` แปลด้วยตารางชัดเจน 2 ชั้น: asset class (quoteType + รูปแบบ symbol —
+DW `BBL13C2512A`, warrant `PTT-W1`, property fund จากชื่อ) แล้วค่อย sector โดย **industry มาก่อน
+sector** เพราะ industry คือสิ่งที่แยก BANK จาก INSUR และ PETRO จาก ENERG
+frontend เลือกจาก `[set_sector, us_sector]` ตัวแรกที่อยู่ใน list ของบัญชี — สองรายการนี้ทับกัน
+แค่ `ETF`/`Other` จึงไม่กำกวม ได้ `"Other"` หรือหาไม่เจอ = เปิดช่อง SECTOR ให้เลือกเอง ไม่เดา
