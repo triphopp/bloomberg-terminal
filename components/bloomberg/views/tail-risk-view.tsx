@@ -38,6 +38,7 @@ import {
   MacroReadPanel,
   useMacroContext,
 } from "./tail/macro-context";
+import { SectorRotationPanel } from "./tail/sector-rotation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -583,6 +584,23 @@ function HealthStrip({ health, signals }: { health: DataHealth; signals: Signal[
 
 // ── Main view ─────────────────────────────────────────────────────────────────
 
+/** A rule across the page with one label on it.
+ *
+ *  The view had three kinds of card stacked in one 208px column — evidence that
+ *  IS counted in the risk level, context that deliberately is NOT, and the
+ *  method note — with nothing marking where one kind ended and the next began.
+ *  A reader who cannot see that boundary reads the macro panels as inputs to the
+ *  composite, which is the one misreading this whole view is built to avoid. */
+function SectionRule({ label, note }: { label: string; note?: string }) {
+  return (
+    <div className="flex items-baseline gap-2 pt-1">
+      <span style={{ color: "#7a7a7a", fontSize: 8, letterSpacing: "0.18em" }}>{label}</span>
+      {note && <span style={{ color: "#3a3a3a", fontSize: 6.5 }}>{note}</span>}
+      <div className="flex-1" style={{ height: 1, background: "#181818" }} />
+    </div>
+  );
+}
+
 export function TailRiskView() {
   const { data, isLoading, error, refetch, isFetching } = useQuery<TailRiskData>({
     queryKey: ["tail-risk-signals"],
@@ -692,88 +710,109 @@ export function TailRiskView() {
       <EventStrip ctx={macro} />
 
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="flex gap-2 p-2 min-h-full">
+        <div className="flex gap-2 p-2 pb-6 min-h-full">
           {/* ── Left: raw volatility surface ──────────────────────────────── */}
           <div className="w-52 shrink-0 flex flex-col gap-2">
             <VixTermCurve term={data.vix_term} />
             <VolBoard rows={data.vol_table} />
+          </div>
 
-            <div className="flex flex-col gap-1 p-2 border" style={{ borderColor: "#1e1e1e" }}>
-              <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>CONTEXT</span>
-              {[
-                { label: "FEAR & GREED", val: data.fear_greed, warn: (data.fear_greed ?? 50) < 25 },
-                { label: "SPY RSI 14", val: data.spy_rsi, warn: (data.spy_rsi ?? 50) < 35 },
-                {
-                  label: "SECTOR REGIME",
-                  val: data.sector_regime,
-                  warn: data.sector_regime === "CONVERGENT",
-                },
-                {
-                  label: "SECTOR CORR",
-                  val: data.sector_corr,
-                  warn: (data.sector_corr ?? 0) > 0.65,
-                },
-                {
-                  label: "CRISIS LEVEL",
-                  val: data.crisis_level,
-                  warn: (data.crisis_level ?? 0) >= 2,
-                },
-                {
-                  label: "DCC V1 / HMM",
-                  val: `${data.dcc_v1_signal} / ${data.dcc_v3_signal}`,
-                  warn: data.dcc_v1_signal !== "NORMAL" || data.dcc_v3_signal !== "NORMAL",
-                },
-              ].map(({ label, val, warn }) => (
-                <div key={label} className="flex justify-between items-center gap-2">
-                  <span style={{ color: "#4a4a4a", fontSize: 7.5 }}>{label}</span>
-                  <span
-                    className="truncate"
-                    style={{
-                      color: val == null ? "#333" : warn ? "#FF8800" : "#888",
-                      fontSize: 8,
-                      fontWeight: warn ? "bold" : "normal",
-                    }}
-                  >
-                    {val == null ? "NO DATA" : typeof val === "number" ? val.toFixed(2) : val}
-                  </span>
-                </div>
+          {/* ── Right: dimensions, then evidence, then context, each named ── */}
+          <div className="flex-1 min-w-0 flex flex-col gap-2">
+            <SectionRule label="RISK DIMENSIONS" note="นับใน composite risk level" />
+            <div
+              className="grid gap-2 content-start items-start"
+              style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}
+            >
+              {data.dimensions.map((dim) => (
+                <DimensionCard
+                  key={dim.id}
+                  dim={dim}
+                  signals={data.signals}
+                  eventTagFor={eventTagFor}
+                />
               ))}
             </div>
 
-            <div className="flex flex-col gap-1 p-2 border" style={{ borderColor: "#1e1e1e" }}>
-              <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>
-                90D SIGNAL HISTORY
-              </span>
-              <HistoryChart history={data.history} events={chartEvents} />
-              <span style={{ color: "#333", fontSize: 6.5, lineHeight: 1.4 }}>
-                Bars = vol/flow signals on that day, coloured by how many dimensions reached ALERT.
-                Dashed lines = FOMC / CPI / NFP days. Credit and correlation are point-in-time only
-                and are not back-filled here.
-              </span>
+            <SectionRule label="EVIDENCE" note="ประวัติสัญญาณ + มาตรวัดรอบข้าง" />
+            <div
+              className="grid gap-2 content-start items-start"
+              style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}
+            >
+              <div className="flex flex-col gap-1 p-2 border" style={{ borderColor: "#1e1e1e" }}>
+                <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>CONTEXT</span>
+                {[
+                  {
+                    label: "FEAR & GREED",
+                    val: data.fear_greed,
+                    warn: (data.fear_greed ?? 50) < 25,
+                  },
+                  { label: "SPY RSI 14", val: data.spy_rsi, warn: (data.spy_rsi ?? 50) < 35 },
+                  {
+                    label: "SECTOR REGIME",
+                    val: data.sector_regime,
+                    warn: data.sector_regime === "CONVERGENT",
+                  },
+                  {
+                    label: "SECTOR CORR",
+                    val: data.sector_corr,
+                    warn: (data.sector_corr ?? 0) > 0.65,
+                  },
+                  {
+                    label: "CRISIS LEVEL",
+                    val: data.crisis_level,
+                    warn: (data.crisis_level ?? 0) >= 2,
+                  },
+                  {
+                    label: "DCC V1 / HMM",
+                    val: `${data.dcc_v1_signal} / ${data.dcc_v3_signal}`,
+                    warn: data.dcc_v1_signal !== "NORMAL" || data.dcc_v3_signal !== "NORMAL",
+                  },
+                ].map(({ label, val, warn }) => (
+                  <div key={label} className="flex justify-between items-center gap-2">
+                    <span style={{ color: "#4a4a4a", fontSize: 7.5 }}>{label}</span>
+                    <span
+                      className="truncate"
+                      style={{
+                        color: val == null ? "#333" : warn ? "#FF8800" : "#888",
+                        fontSize: 8,
+                        fontWeight: warn ? "bold" : "normal",
+                      }}
+                    >
+                      {val == null ? "NO DATA" : typeof val === "number" ? val.toFixed(2) : val}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-col gap-1 p-2 border" style={{ borderColor: "#1e1e1e" }}>
+                <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>
+                  90D SIGNAL HISTORY
+                </span>
+                <HistoryChart history={data.history} events={chartEvents} />
+                <span style={{ color: "#333", fontSize: 6.5, lineHeight: 1.4 }}>
+                  Bars = vol/flow signals on that day, coloured by how many dimensions reached
+                  ALERT. Dashed lines = FOMC / CPI / NFP days. Credit and correlation are
+                  point-in-time only and are not back-filled here.
+                </span>
+              </div>
             </div>
 
-            <MacroReadPanel ctx={macro} />
-            <MacroPanel ctx={macro} />
-          </div>
-
-          {/* ── Right: the six dimensions ──────────────────────────────────── */}
-          <div
-            className="flex-1 min-w-0 grid gap-2 content-start"
-            style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}
-          >
-            {data.dimensions.map((dim) => (
-              <DimensionCard
-                key={dim.id}
-                dim={dim}
-                signals={data.signals}
-                eventTagFor={eventTagFor}
-              />
-            ))}
-
+            <SectionRule
+              label="MACRO & ROTATION CONTEXT"
+              note="ไม่นับใน composite — เปลี่ยนวิธีอ่านสัญญาณ ไม่ใช่ตัวจุดสัญญาณ"
+            />
             <div
-              className="p-2 border col-span-full"
-              style={{ borderColor: "#111", backgroundColor: "#050505" }}
+              className="grid gap-2 content-start items-start"
+              style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}
             >
+              <MacroReadPanel ctx={macro} />
+              <SectorRotationPanel />
+              <MacroPanel ctx={macro} />
+            </div>
+
+            <SectionRule label="METHOD" />
+            <div className="p-2 border" style={{ borderColor: "#111", backgroundColor: "#050505" }}>
               <p style={{ color: "#333", fontSize: 6.5, lineHeight: 1.5 }}>
                 Risk level counts <b>dimensions</b> in ALERT, not raw signals — three VIX signals
                 firing together is one observation about equity vol, restated three ways. Verdicts
