@@ -1163,6 +1163,43 @@ Successful HTTP200 can contain unavailable series (too few strikes, narrow cover
 
 ---
 
+## TAIL `sector rotation` / `/api/rotation/tilt` (2026-09-23)
+
+```ts
+interface TiltRow { symbol: string; name: string;
+  bucket: "defensive" | "cyclical" | "unaligned";
+  share_pct: number|null;      // ส่วนแบ่งมูลค่าซื้อขายเฉลี่ย window วัน (%)
+  delta_bp: number|null;       // Δ เทียบหน้าต่างก่อนหน้า (bp)
+  z: number|null;              // z ของ Δ (ไม่ใช่ของ level) เทียบ 1 ปี
+  rel_return_bp: number|null;  // ผลตอบแทน window วัน เทียบ SPY (bp)
+  quadrant: string|null; mom_dir: "up"|"down"|null; }
+
+interface TiltData { as_of: string|null; window_days: number; bench: "SPY";
+  basis: "turnover_share"; basis_note: string;
+  tilt: { state: "DEFENSIVE"|"CYCLICAL"|"BALANCED"|null; tone: Tone;
+          bp: number|null; z: number|null; band_bp: number; rule: string;
+          defensive: string[]; cyclical: string[]; unaligned: string[] };
+  rows: TiltRow[]; quadrants: Record<"Leading"|"Improving"|"Weakening"|"Lagging", number>;
+  breadth: { above_bench: number; total: number };
+  aum: { available: boolean; days_stored?: number; window_days?: number;
+         first_day?: string|null; last_day?: string|null; note?: string;
+         rows?: { symbol: string; aum: number;
+                  flow_shares_method: number|null; flow_return_method: number|null }[];
+         coverage?: { days: number; first: string|null; last: string|null } };
+  counted_in_composite: false; validated: false; }
+```
+
+**turnover share ≠ fund flow.** ทุกการซื้อมีการขายเท่ากัน — ส่วนแบ่งมูลค่าซื้อขายบอกว่าความสนใจ
+กระจุกที่ไหน ไม่ได้บอกว่าเงินเข้าสุทธิ. flow จริง (creation/redemption) อยู่ใน `aum` และมาจาก
+`etf_aum_snapshots` ที่แอปบันทึกเอง — `available: false` จนกว่าจะมี ≥2 วัน.
+
+**bucket:** DEFENSIVE = XLP XLU XLV XLRE · CYCLICAL = XLK XLY XLI XLF XLB XLC ·
+XLE = `unaligned` ไม่เข้า tilt เพราะมันวิ่งตามราคาน้ำมัน ซึ่งขึ้นได้ในวันที่ risk-off พอดี —
+ถ้าโยนเข้าฝั่งใดฝั่งหนึ่ง tilt จะอ่านราคาน้ำมันเป็นอารมณ์ตลาด.
+
+**z คือ z ของการเปลี่ยนแปลง** ไม่ใช่ของระดับ: ระดับส่วนแบ่งของ XLK แทบคงที่ (~10-12% เสมอ)
+การ z-score ระดับจะตอบคำถาม "sector นี้ใหญ่ไหม" ซึ่งไม่มีใครถาม.
+
 ## TAIL `macro_read` + the ISM proxy (2026-09-20)
 
 ```ts

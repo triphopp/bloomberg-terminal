@@ -421,6 +421,7 @@ Two endpoints because they answer two different questions and only one is cheap.
 
 ## Theme/Sector Rotation (`routers/rotation.py`)
 - `GET /api/rotation/table?market=US|TH&bench=SPY` — momentum table; US: 24 theme ETF proxies (ARKG, IBB, CIBR, SMH, MAGS…) + 11 SPDR sectors vs SPY; TH: 13 equal-weight sector baskets (Banking, Energy, ICT, Commerce…) vs ^SET.BK; per row: d1/w1/m1/m3 %, m1_vs_bench, RRG quadrant + mom_dir; 15min cache, one batch yf.download 9mo
+- `GET /api/rotation/tilt?window=20` (2026-09-23) — US sector rotation ที่ TAIL ใช้: ส่วนแบ่ง **มูลค่าซื้อขาย** (close×volume) ของ 11 SPDR ต่อทั้งกลุ่ม, rolling `window` วัน, Δ เทียบหน้าต่างก่อนหน้าเป็น bp + z ของ **การเปลี่ยนแปลง** (ไม่ใช่ z ของระดับ) เทียบ 1 ปี; `tilt` = defensive share − cyclical share เป็น series ของตัวเอง; RRG quadrant tally + breadth vs SPY; `aum` = flow จริงจาก `etf_aum_snapshots` (ยังไม่พร้อมจนกว่าจะมี ≥2 วัน) และการอ่าน endpoint นี้คือสิ่งที่ trigger การบันทึก AUM ของวันนั้น. 15min cache. **ไม่ใช่ fund flow** — ทุกการซื้อมีการขาย, turnover บอกแค่ความสนใจกระจุกที่ไหน
 - `GET /api/rotation/constituents?market=US|TH&id=X` — drill-down stocks in a group with same return columns; US id=ETF symbol → yf funds_data top-10 holdings (1d cache); TH id=group name → basket members
   - Used by: MKT view REGIME panel → ROT mode (`rotation-table.tsx`) — US|TH toggle, click row to expand constituents
 
