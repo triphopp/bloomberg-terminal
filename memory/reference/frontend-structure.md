@@ -35,6 +35,7 @@ components/bloomberg/
 │   ├── clippings-view.tsx       ← CLIP: Obsidian reader + Ollama AI panel
 │   ├── tail-risk-view.tsx       ← TAIL: 6 dimensions + macro context (EventStrip under HealthStrip, MacroPanel in left column, EVENT tag on VIX signals, event ReferenceLines on 90D chart)
 │   ├── tail/macro-context.tsx   ← useMacroContext() + EventStrip + MacroPanel + KIND_COLOR (2026-09-17)
+│   ├── tail/sector-rotation.tsx ← SectorRotationPanel + useSectorRotation() — diverging bars + tilt (2026-09-23)
 │   ├── credit-view.tsx          ← CRDT: 4 tabs (overview/spreads/stress/consumer)
 │   ├── stock-view.tsx           ← Equity analysis tabs incl. DCF/RATE STRESS/REGIME — no nav button, via search/heatmap
 │   ├── stock/dcf/index.tsx      ← shared adaptive DCF lab: model/scenario controls + 5 quant sub-tabs
@@ -209,6 +210,8 @@ components/bloomberg/
 | `portfolio/constants.ts` | `ALL_COLS`, `DEFAULT_COLS`, `DENSE_COLS`, `TH_SECTORS` (34), `US_SECTORS` (11), `GROUP_COLORS`, `FINANSIA_SUBS`, `ALLOC_COLORS`, `SECTOR_COLORS`, `BLANK_CASH`, `BLANK_DIV`, `BLANK_FORM`, `STRATEGIES` |
 | `portfolio/ui/AccBadge.tsx` | `AccBadge`, `WLBadge` |
 | `portfolio/ui/SummaryBar.tsx` | `SummaryBar` |
+| `views/tail-risk-view.tsx` | `TailRiskView`, `SectionRule` (2026-09-23 — TAIL แบ่ง 4 หัวข้อ: RISK DIMENSIONS · EVIDENCE · MACRO & ROTATION CONTEXT · METHOD; คอลัมน์ซ้าย 208px เหลือแค่ VIX TERM + VOL BOARD, การ์ดที่เหลือย้ายลงกริดเต็มความกว้าง) |
+| `views/tail/sector-rotation.tsx` | `SectorRotationPanel` (TILT + 11 diverging bars + RRG tally + AUM record line), `useSectorRotation(window)` (2026-09-23) |
 | `views/tail/macro-context.tsx` | `EventStrip`, `MacroPanel`, `MacroReadPanel` (2026-09-20 — 3 axes + CPI/core CPI/PCE/core PCE cross-check row), `useMacroContext`, `MacroContextData`, `MacroRead`, `MacroAxis`, `KIND_COLOR` |
 | `portfolio/tabs/AnalyticsTab.tsx` | `AnalyticsTab` — NAV card has VALUE / INDEX modes (`localStorage["bloomberg_nav_chart_mode"]`): VALUE draws `NavValueChart` (4 labelled series: NAV area + HOLDINGS/CASH lines + dashed COST, legend chips double as show/hide so CASH can own the axis), INDEX draws `NavIndexChart` — the time-weighted curve vs the CAPM benchmark from `/api/v2/portfolio/nav-index`. Both internal to the file. CAPM card: β HEDGE / HEDGE notional / β REAL / vs IDX / α CAPM / t / R² / N; rf chip เปิดแผงตั้งค่า (override ต่อสกุลใน `localStorage["bloomberg_capm_rf"]`) |
 | `portfolio/ui/AllocationBasisCard.tsx` | `AllocationBasisCard`, `AllocRow` — ALLOCATION (OPEN) cost-vs-market card (COST/VALUE/DRIFT modes + rebalance table) |

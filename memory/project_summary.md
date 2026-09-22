@@ -243,6 +243,13 @@ iv_snapshots        (symbol, snapshot_date, expiry, dte, spot, atm_strike, iv_ca
 --   IV of a chain, so this can never be back-filled — only ACCUMULATED. Written as a
 --   side effect of GET /api/options/{symbol} (and by POST .../iv-snapshot for a cron).
 --   One row per (symbol, day, expiry); /sd-bands picks MIN(dte) per day.
+etf_aum_snapshots   (as_of, symbol, total_assets, nav, close, implied_shares, source,
+                     captured_at) PK(as_of, symbol)
+-- 2026-09-23 (sector rotation in TAIL): AUM ของ 11 SPDR sector ETF เก็บเอง วันละครั้ง.
+--   Yahoo คืน get_shares_full() = None สำหรับ ETF และให้ totalAssets/navPrice เฉพาะวันนี้ →
+--   ประวัติสร้างได้ทางเดียวคือบันทึกไว้เอง (เหตุผลเดียวกับ iv_snapshots/series_points).
+--   เขียนแบบ side effect ของ GET /api/rotation/tilt ผ่าน thread (etf_aum.capture_async),
+--   กันซ้ำด้วยแถวของวันนั้น. flow จริง = Δimplied_shares × nav (ต้องมี ≥2 วัน). อยู่ใน SYNC_TABLES.
 pm_signals          (signal_type, probability, timestamp)  -- Polymarket history for Δ24h
 allocation_signals  (id, equity_score, bond_score, recommendation, timestamp)
 country_rotation_scores (id, ticker, score, rank, timestamp)
@@ -315,7 +322,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 | `2` | NEWS | News | `news-view.tsx` → barrel for `views/news/` — WATCHLIST (default, sector rail + per-ticker stream; HEADLINES/RATE STRESS/DCF/REGIME panels) / NEWSFEED / SOCIAL tabs + Polymarket right column |
 | `3` | GMOV | Market Movers | `market-movers-view.tsx` — indices table + heatmap treemap |
 | `4` | CLIP | Clippings + AI | `clippings-view.tsx` |
-| `T` | TAIL | Tail Risk Monitor | `tail-risk-view.tsx` — 6 risk dimensions + **MACRO CONTEXT** (not in composite, 2026-09-17): event strip FOMC/SEP/CPI/NFP/PCE/GDP, EVENT tag on VIX signals inside ±1 bday window, Fed/curve/regime/latest prints panel (+ CPI CORE · PCE · PCE CORE · ISM PROXY), **MACRO READ** 3 แกนจาก core PCE / ISM proxy / MOVE, event markers on 90D chart |
+| `T` | TAIL | Tail Risk Monitor | `tail-risk-view.tsx` — 6 risk dimensions + **MACRO CONTEXT** (not in composite, 2026-09-17): event strip FOMC/SEP/CPI/NFP/PCE/GDP, EVENT tag on VIX signals inside ±1 bday window, Fed/curve/regime/latest prints panel (+ CPI CORE · PCE · PCE CORE · ISM PROXY), **MACRO READ** 3 แกนจาก core PCE / ISM proxy / MOVE, **SECTOR ROTATION** (2026-09-23 — turnover share tilt ของ 11 SPDR + AUM record ที่เก็บเอง), event markers on 90D chart |
 | `6` | CRDT | Credit / Stress | `credit-view.tsx` — 4 tabs: overview, spreads, stress, consumer |
 | `P` | PORT | Portfolio | `portfolio-view.tsx` (barrel → `portfolio/`) — 5 top-level tabs: PORTFOLIO (sub: POSITIONS\|OPTIONS\|TRADES\|CASH\|ENTRY=manual trade form; POSITIONS + OPTIONS show `% PORT` of NAV incl. cash, options also `Δ % NAV`) · ANALYTICS (sub: P&L incl. Total Return per port + CAPM β/α table\|BACKTEST) · RISK (standalone) · TOOLS (sub: THESES — sub-tabs THESIS\|NOTES\|KB (Zettelkasten: notes·conflicts·graph)\|HISTORY\|LINKED TRADES\|AI\|IMPORT) · PAPER (sub: DASHBOARD\|TRADE\|POSITIONS\|OPTIONS\|HISTORY) |
 
