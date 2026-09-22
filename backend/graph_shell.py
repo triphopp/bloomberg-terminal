@@ -3,7 +3,7 @@ The document shell that /api/v2/graphs/<slug>/render wraps an analysis page in.
 
 An agent writes the CONTENT of a page — headings, tables, inline SVG, prose.
 What a page should LOOK like is not its business: typography, the measure of a
-text column, the section tabs along the top and the Thai typeface are the
+text column, the table of contents down the left and the Thai typeface are the
 book's, and they have to be the same on every page including the ones written
 before this file existed. So the shell is applied at render time rather than
 baked into the stored HTML:
@@ -112,20 +112,43 @@ body{
 .gs-stamp{display:flex; flex-wrap:wrap; gap:4px 16px; font-family:var(--mono);
   font-size:11.5px; color:var(--muted);}
 
-/* section tabs — sticky, built from the page's own h2/h3 */
-.gs-tabs{position:sticky; top:0; z-index:20; background:var(--paper);
-  border-bottom:1px solid var(--hair); overflow-x:auto; scrollbar-width:thin;}
-.gs-tabs ul{display:flex; gap:2px; list-style:none; margin:0 auto; padding:0 16px;
-  max-width:var(--measure);}
-.gs-tabs a{display:block; white-space:nowrap; padding:9px 11px; text-decoration:none;
-  font-family:var(--mono); font-size:11.5px; letter-spacing:.06em; text-transform:uppercase;
-  color:var(--muted); border-bottom:2px solid transparent;}
-.gs-tabs a:hover{color:var(--ink);}
-.gs-tabs a.on{color:var(--accent); border-bottom-color:var(--accent);}
-.gs-tabs a.sub{text-transform:none; letter-spacing:0; font-size:11px; opacity:.85;}
+/* table of contents — a rail down the left, built from the page's own h2/h3.
+   Narrow screens have no room for a rail, so the same list becomes the sticky
+   strip across the top it used to be everywhere. */
+.gs-shell{display:flex; align-items:flex-start; gap:0;
+  max-width:calc(var(--measure) + 300px); margin:0 auto;}
+.gs-toc{position:sticky; top:0; align-self:flex-start; flex:0 0 244px; width:244px;
+  max-height:100vh; overflow-y:auto; overscroll-behavior:contain;
+  padding:24px 16px 40px; border-right:1px solid var(--hair);}
+.gs-toc-label{font-family:var(--mono); font-size:10px; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--muted); margin-bottom:8px;}
+.gs-toc ul{list-style:none; margin:0; padding:0; display:block;}
+.gs-toc a{display:block; padding:5px 10px; text-decoration:none; line-height:1.35;
+  font-family:var(--mono); font-size:11.5px; color:var(--muted);
+  border-left:2px solid transparent;}
+.gs-toc a:hover{color:var(--ink); background:var(--mark);}
+.gs-toc a.on{color:var(--accent); border-left-color:var(--accent); background:var(--mark);}
+.gs-toc a.sub{padding-left:22px; font-size:11px; opacity:.85;}
+.gs-toc-toggle{display:none;}
+@media (max-width:1040px){
+  .gs-shell{display:block;}
+  .gs-toc{position:sticky; top:0; z-index:20; width:auto; max-height:none;
+    background:var(--paper); border-right:0; border-bottom:1px solid var(--hair);
+    padding:0; overflow:visible;}
+  .gs-toc-label{display:none;}
+  .gs-toc-toggle{display:block; width:100%; text-align:left; cursor:pointer;
+    background:none; border:0; color:var(--muted); font-family:var(--mono);
+    font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+    padding:10px 16px;}
+  .gs-toc ul{display:none; padding:0 8px 8px; max-height:60vh; overflow-y:auto;}
+  .gs-toc.open ul{display:block;}
+  .gs-toc a{border-left:0; border-bottom:1px solid var(--hair);}
+  .gs-toc a.on{border-left:0; color:var(--accent);}
+}
 
 /* body */
-.gs-body{max-width:var(--measure); margin:0 auto; padding:26px 20px 90px;}
+.gs-body{flex:1 1 auto; min-width:0; max-width:var(--measure); margin:0 auto;
+  padding:26px 20px 90px;}
 .gs-body > *{max-width:100%;}
 .gs-body h1{font-size:clamp(23px,3.2vw,31px); line-height:1.25; margin:34px 0 10px;}
 .gs-body h2{font-size:clamp(20px,2.6vw,25px); line-height:1.3; margin:44px 0 10px;
@@ -167,7 +190,7 @@ body{
 .gs-body .src li{margin-bottom:3px;}
 
 @media print{
-  .gs-tabs{display:none;}
+  .gs-toc{display:none;}
   body{background:#fff; color:#000; font-size:11.5pt;}
   .gs-body{max-width:none;}
 }
@@ -182,7 +205,7 @@ body{
 # else — and IntersectionObserver keeps the current section lit while scrolling.
 SHELL_JS = """
 (function(){
-  var body=document.getElementById('gs-body'), bar=document.getElementById('gs-tabs');
+  var body=document.getElementById('gs-body'), bar=document.getElementById('gs-toc');
   if(!body||!bar) return;
 
   // Pages written before the shell paint their own background, and a masthead
@@ -212,7 +235,7 @@ SHELL_JS = """
   heads.forEach(function(h,i){
     if(!h.id){
       var base=(h.textContent||'').trim().toLowerCase()
-        .replace(/[^\\p{L}\\p{N}]+/gu,'-').replace(/^-|-$/g,'').slice(0,50) || ('s'+i);
+        .replace(/[^\p{L}\p{N}]+/gu,'-').replace(/^-|-$/g,'').slice(0,50) || ('s'+i);
       if(used[base]) base=base+'-'+(++used[base]); else used[base]=1;
       h.id=base;
     }
@@ -223,10 +246,26 @@ SHELL_JS = """
       e.preventDefault();
       h.scrollIntoView({behavior:'smooth',block:'start'});
       history.replaceState(null,'','#'+h.id);
+      bar.classList.remove('open');   // narrow layout: the list is a dropdown
     });
     li.appendChild(a); ul.appendChild(li);
   });
-  bar.appendChild(ul);
+
+  // The rail carries a label on wide screens; on a phone the same list hides
+  // behind this button, because a table of contents that eats the first screen
+  // is worse than no table of contents.
+  var label=document.createElement('div');
+  label.className='gs-toc-label'; label.textContent='Contents';
+  var toggle=document.createElement('button');
+  toggle.type='button'; toggle.className='gs-toc-toggle';
+  toggle.setAttribute('aria-expanded','false');
+  toggle.textContent='☰ Contents';
+  toggle.addEventListener('click',function(){
+    var open=bar.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', open?'true':'false');
+  });
+  bar.appendChild(toggle); bar.appendChild(label); bar.appendChild(ul);
+
   var links={};
   [].slice.call(ul.querySelectorAll('a')).forEach(function(a){
     links[a.getAttribute('href').slice(1)]=a;
@@ -234,13 +273,20 @@ SHELL_JS = """
   function mark(id){
     for(var k in links) links[k].classList.toggle('on',k===id);
     var a=links[id];
-    if(a && a.offsetLeft < bar.scrollLeft) bar.scrollLeft=a.offsetLeft-12;
-    else if(a && a.offsetLeft+a.offsetWidth > bar.scrollLeft+bar.clientWidth)
-      bar.scrollLeft=a.offsetLeft+a.offsetWidth-bar.clientWidth+12;
+    if(!a) return;
+    // Keep the lit entry visible in whichever direction the rail scrolls: a
+    // column on a wide screen, a dropdown list on a narrow one.
+    var box=ul.scrollHeight>ul.clientHeight+2 ? ul : bar;
+    if(box.scrollHeight>box.clientHeight+2){
+      var top=a.offsetTop-box.offsetTop;
+      if(top<box.scrollTop) box.scrollTop=top-12;
+      else if(top+a.offsetHeight>box.scrollTop+box.clientHeight)
+        box.scrollTop=top+a.offsetHeight-box.clientHeight+12;
+    }
   }
   var obs=new IntersectionObserver(function(){
     // At the very bottom the last section can never reach the top of the
-    // viewport, so scrolling to the end would leave an earlier tab lit.
+    // viewport, so scrolling to the end would leave an earlier entry lit.
     if(window.innerHeight+window.scrollY >= document.body.scrollHeight-4){
       mark(heads[heads.length-1].id); return;
     }
@@ -350,11 +396,13 @@ def wrap(html: str, meta: dict) -> str:
     <div class="gs-stamp">{"".join(f"<span>{p}</span>" for p in stamp)}</div>
   </div>
 </header>
-<nav class="gs-tabs" id="gs-tabs"></nav>
+<div class="gs-shell">
+<nav class="gs-toc" id="gs-toc"></nav>
 <main class="gs-body" id="gs-body">
 {_inner(html)}
 {src_html}
 </main>
+</div>
 <script>{SHELL_JS}</script>
 </body>
 </html>"""

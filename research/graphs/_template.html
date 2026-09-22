@@ -3,7 +3,7 @@
 
   Send the CONTENT of the page, not a document. The render shell
   (backend/graph_shell.py) supplies <html>, <head>, the masthead, the Thai
-  typeface (Laksaman), the academic typography and the sticky section tabs.
+  typeface (Laksaman), the academic typography and the table of contents rail.
   A page that ships its own <html>/<head> is unwrapped; a page that ships its
   own <style> overrides the shell, which is allowed but is rarely what you want
   — the point of the shell is that every analysis page in the book reads alike.
@@ -13,8 +13,8 @@
       stylesheet> and friends are REFUSED — the render CSP blocks every off-box
       request, so they would be holes in the page. Inline the SVG, or embed the
       asset as a data: URI.
-    • at least one <h2>. The tabs along the top ARE the <h2>/<h3> of the page,
-      so a page without them gives the reader no way to move around.
+    • at least one <h2>. The contents rail down the left IS the <h2>/<h3> of the
+      page, so a page without them gives the reader no way to move around.
 
   Structure that the shell styles for you:
     <p class="lede">     one paragraph under a heading, larger, sets up the section

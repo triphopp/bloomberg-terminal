@@ -153,7 +153,7 @@ def _lint_page(html: str) -> list[str]:
     warnings: list[str] = []
     if not re.search(r"<h2\b", html, re.I):
         warnings.append(
-            "no <h2> in the page — the render shell builds the section tabs from "
+            "no <h2> in the page — the render shell builds the contents rail from "
             "<h2>/<h3>, so the reader gets no way to navigate. See "
             "research/graphs/_template.html."
         )
@@ -242,7 +242,7 @@ def render_graph(slug: str, v: Optional[int] = None, shell: int = 1) -> HTMLResp
     module docstring. `v` opens an older version kept beside the current one.
 
     The stored file holds only what the agent wrote; `graph_shell.wrap` adds the
-    masthead, the academic typography, the Thai face and the section tabs at
+    masthead, the academic typography, the Thai face and the contents rail at
     render time, so a page written a month ago picks up today's format without
     being rewritten. `shell=0` returns the raw file — for judging what an agent
     actually produced.

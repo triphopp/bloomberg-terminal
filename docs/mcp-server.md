@@ -113,7 +113,7 @@ analysis page reads alike and an old page picks up a format change without being
 Start from `research/graphs/_template.html`, which documents the classes the shell styles
 (`.lede`, `.note`, `.fig`, `.tablebox`, `.src`). Two rules are enforced on write: **no
 external requests** (the render CSP blocks them, so an off-box `<img>`/stylesheet is a hole
-in the page — 400) and at least one `<h2>` (otherwise there are no tabs — returned in
+in the page — 400) and at least one `<h2>` (otherwise there is no contents rail — returned in
 `warnings`). `?shell=0` on the render URL shows the raw file.
 
 The page is model-written, so it is never rendered on the app's own origin: the backend

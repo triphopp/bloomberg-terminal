@@ -550,7 +550,7 @@ def graph_create(
 ) -> str:
     """Save an analysis page. `html` is the CONTENT — headings, prose, tables,
     inline SVG — not a document: the render shell supplies <html>, the masthead,
-    the Thai typeface and the section tabs, which are built from your <h2>/<h3>.
+    the Thai typeface and the contents rail, which is built from your <h2>/<h3>.
     Read `research/graphs/_template.html` before writing the first one.
 
     Two rules are enforced on save: no resource may be loaded over the network
