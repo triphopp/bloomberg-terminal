@@ -149,6 +149,12 @@ SIGNAL_META: dict[str, dict] = {
         "rule": "GVZ 63d z-score > 1.5",
         "why": "Stress in the haven itself — monetary/currency rather than growth",
     },
+    "move_spike": {
+        "label": "Rates Vol (MOVE)", "dimension": "cross_asset_vol",
+        "rule": "MOVE 63d z-score > 1.5",
+        "why": "Treasury vol — the channel policy and duration risk travel through, and the one "
+               "cross-asset gauge that moves BEFORE equity vol in a rates-led selloff",
+    },
     "vxn_vix_spread": {
         "label": "VXN−VIX Spread", "dimension": "cross_asset_vol",
         "rule": "(VXN − VIX) 63d z-score > 1.5",
@@ -220,7 +226,7 @@ SIGNAL_META: dict[str, dict] = {
 _HISTORICAL_SIGNALS = (
     "vix_level", "vix_momentum", "vix_term_inversion",
     "skew_elevated", "vvix_elevated", "vvix_vix_ratio",
-    "ovx_spike", "gvz_spike", "vxn_vix_spread",
+    "ovx_spike", "gvz_spike", "move_spike", "vxn_vix_spread",
     "rsi_oversold", "volume_surge", "layer_a_bearish",
 )
 
@@ -538,7 +544,7 @@ def _vol_signal_frame(vf: VolFrame) -> tuple[pd.DataFrame, dict[str, str]]:
         missing["vvix_vix_ratio"] = reason("VVIX", "VIX")
 
     # ── cross_asset_vol ───────────────────────────────────────────────────────
-    for sig, name in (("ovx_spike", "OVX"), ("gvz_spike", "GVZ")):
+    for sig, name in (("ovx_spike", "OVX"), ("gvz_spike", "GVZ"), ("move_spike", "MOVE")):
         s = vf.get(name)
         if s is not None:
             cols[sig] = _rolling_z(s, 63) > 1.5
@@ -626,6 +632,7 @@ def _vol_table(vf: VolFrame) -> list[dict]:
         ("VXN", "Nasdaq-100 implied vol"),
         ("OVX", "Crude oil implied vol"),
         ("GVZ", "Gold implied vol"),
+        ("MOVE", "Treasury implied vol (ICE BofA, 1m options on 2/5/10/30y)"),
     ]
     out = []
     for name, desc in spec:
@@ -677,6 +684,7 @@ def _compute() -> dict:
         ("vvix_elevated", "VVIX"),
         ("ovx_spike", "OVX"),
         ("gvz_spike", "GVZ"),
+        ("move_spike", "MOVE"),
     ):
         if sig in states:
             states[sig]["value"] = vf.value(name)
@@ -994,6 +1002,167 @@ def assess_regime(indicators: dict) -> dict:
     }
 
 
+# ── MACRO READ ────────────────────────────────────────────────────────────────
+# Three axes, each from one number and its direction, each with the rule printed
+# next to it. Deliberately NOT a model: there is no backtest behind any of this,
+# so it says what the data IS, never what the market will do. The axes are read
+# separately on purpose — "inflation sticky AND growth expanding" is a different
+# world from "inflation sticky AND growth contracting", and a single blended
+# score would hide exactly that difference.
+
+#: The Fed's target is 2% on core PCE. Everything below measures distance from it.
+INFLATION_TARGET = 2.0
+
+#: Change over three months that counts as a direction rather than noise (pp).
+INFLATION_TREND_PP = 0.15
+
+
+def _trend_3m(series: list[dict] | None, current: float | None) -> float | None:
+    """Change over ~3 prints. `series` is newest-first from /api/macro."""
+    if current is None or not series or len(series) < 4:
+        return None
+    old = series[3].get("value")
+    return None if old is None else round(current - float(old), 3)
+
+
+def _read_inflation(ind: dict) -> dict:
+    """Core PCE against the target, with headline and core CPI as cross-checks.
+
+    Core PCE is the measure the Fed's own forecasts are written in; core CPI
+    stands in only when PCE has not printed yet, and the payload says which one
+    was used so the reader is never guessing.
+    """
+    core_pce = ind.get("pce_core") or {}
+    core_cpi = ind.get("cpi_core") or {}
+    used, src = core_pce, "core PCE"
+    if used.get("value") is None:
+        used, src = core_cpi, "core CPI"
+    v = used.get("value")
+    if v is None:
+        return {
+            "id": "inflation", "label": "INFLATION", "state": None, "tone": "unknown",
+            "value": None, "unit": "%", "detail": "no print", "source": None,
+            "rule": f"core PCE YoY vs {INFLATION_TARGET}% target, direction over 3 months",
+        }
+    gap = round(v - INFLATION_TARGET, 2)
+    d3 = _trend_3m(used.get("series"), v)
+    if d3 is not None and d3 <= -INFLATION_TREND_PP:
+        state, tone = "DISINFLATION", ("good" if gap <= 0.4 else "watch")
+    elif d3 is not None and d3 >= INFLATION_TREND_PP:
+        state, tone = "REFLATION", "bad"
+    elif gap > 0.4:
+        state, tone = "STICKY", ("bad" if gap > 1.0 else "watch")
+    else:
+        state, tone = "AT TARGET", "good"
+    bits = [f"{src} {v:.2f}%", f"{gap:+.2f}pp vs target"]
+    if d3 is not None:
+        bits.append(f"3m {d3:+.2f}pp")
+    return {
+        "id": "inflation", "label": "INFLATION", "state": state, "tone": tone,
+        "value": v, "unit": "%", "gap_vs_target": gap, "trend_3m": d3,
+        "source": src, "detail": " · ".join(bits),
+        "cross_check": {
+            "cpi": (ind.get("cpi") or {}).get("value"),
+            "cpi_core": core_cpi.get("value"),
+            "pce": (ind.get("pce") or {}).get("value"),
+            "pce_core": core_pce.get("value"),
+        },
+        "rule": f"core PCE YoY vs {INFLATION_TARGET}% target; a 3m move of "
+                f"±{INFLATION_TREND_PP}pp sets the direction",
+    }
+
+
+def _read_growth(ind: dict, parts: dict | None) -> dict:
+    """The ISM proxy: regional Fed surveys, 0 = neutral, in units of their own sd."""
+    from routers.macro import ISM_PROXY_STALL_BAND
+
+    ism = ind.get("ism_proxy") or {}
+    v = ism.get("value")
+    if v is None:
+        return {
+            "id": "growth", "label": "GROWTH (ISM PROXY)", "state": None, "tone": "unknown",
+            "value": None, "unit": "sd", "detail": "no print", "proxy": True,
+            "rule": "regional Fed manufacturing composite, 0 = neutral",
+        }
+    d3 = _trend_3m(ism.get("series"), v)
+    if v > ISM_PROXY_STALL_BAND:
+        state, tone = "EXPANDING", "good"
+    elif v < -ISM_PROXY_STALL_BAND:
+        state, tone = "CONTRACTING", "bad"
+    else:
+        state, tone = "STALLING", "watch"
+    bits = [f"{v:+.2f} sd", "0 = neutral"]
+    if d3 is not None:
+        bits.append(f"3m {d3:+.2f}")
+    if parts and parts.get("parts"):
+        bits.append(" ".join(f"{k[:3].upper()} {val:+.0f}" for k, val in parts["parts"].items()))
+    return {
+        "id": "growth", "label": "GROWTH (ISM PROXY)", "state": state, "tone": tone,
+        "value": v, "unit": "sd", "trend_3m": d3, "proxy": True,
+        "components": parts, "detail": " · ".join(bits),
+        "rule": f"Philly + Empire + Dallas diffusion, each divided by its own 10y sd, "
+                f"then averaged; |x| < {ISM_PROXY_STALL_BAND} = stalling. A PROXY for "
+                f"the ISM, not the ISM — FRED dropped those series in 2022",
+    }
+
+
+#: MOVE levels. The bands are the ones traders quote, not fitted ones: sub-80 is
+#: the post-2010 calm regime, 110+ is where dealers widen, 140+ is 2022/2023
+#: territory. The z-score catches a fast move that has not yet reached a level.
+MOVE_ELEVATED, MOVE_STRESSED = 110.0, 140.0
+
+
+def _read_rates_vol(vf: VolFrame) -> dict:
+    """MOVE — implied vol on Treasuries, the channel policy risk travels through."""
+    v = vf.value("MOVE")
+    h = vf.health.get("MOVE")
+    if v is None:
+        return {
+            "id": "rates_vol", "label": "RATES VOL (MOVE)", "state": None, "tone": "unknown",
+            "value": None, "unit": "", "detail": (h.reason if h else "no data") or "no data",
+            "rule": f"MOVE level ({MOVE_ELEVATED}/{MOVE_STRESSED}) or 63d z > 1.5",
+        }
+    z = vf.zscore("MOVE", 63)
+    pct = vf.percentile("MOVE", 252)
+    if v >= MOVE_STRESSED or (z is not None and z > 1.5):
+        state, tone = "STRESSED", "bad"
+    elif v >= MOVE_ELEVATED or (z is not None and z > 0.5):
+        state, tone = "ELEVATED", "watch"
+    else:
+        state, tone = "CALM", "good"
+    bits = [f"{v:.1f}"]
+    if z is not None:
+        bits.append(f"z {z:+.2f}")
+    if pct is not None:
+        bits.append(f"{pct:.0f}th pct 1y")
+    return {
+        "id": "rates_vol", "label": "RATES VOL (MOVE)", "state": state, "tone": tone,
+        "value": round(v, 2), "unit": "", "z63": z, "pctile_1y": pct,
+        "detail": " · ".join(bits),
+        "rule": f"level >= {MOVE_STRESSED} or 63d z > 1.5 = stressed; "
+                f">= {MOVE_ELEVATED} or z > 0.5 = elevated",
+    }
+
+
+def _macro_read(indicators: dict | None, parts: dict | None) -> dict:
+    """The three axes plus a one-line summary. Never counted in the composite."""
+    ind = indicators or {}
+    try:
+        vf = load_vol_indices(("VIX", "MOVE"))
+    except Exception as exc:
+        print(f"[tail_risk] MOVE load failed: {exc}")
+        vf = VolFrame()
+    axes = [_read_inflation(ind), _read_growth(ind, parts), _read_rates_vol(vf)]
+    known = [a for a in axes if a["state"]]
+    return {
+        "counted_in_composite": False,
+        "validated": False,
+        "axes": axes,
+        "summary": " · ".join(f"{a['label'].split(' (')[0]} {a['state']}" for a in known) or None,
+        "note": "อ่านสภาพแวดล้อม ไม่ใช่การทำนาย — ไม่มี backtest รองรับ",
+    }
+
+
 def _macro_context() -> dict:
     from event_calendar import calendar_payload
     from routers.macro import get_macro
@@ -1027,10 +1196,18 @@ def _macro_context() -> dict:
         fed = macro.get("fed") or {}
         out["fed"] = {"rate": fed.get("current_rate"), "stance": fed.get("stance")}
         out["regime"] = assess_regime(ind)
+        out["ism_proxy_components"] = macro.get("ism_proxy_components")
+        # Built from the FULL macro indicators, not the trimmed copy above: the
+        # trend legs need each series' last few prints, which the payload drops.
+        out["macro_read"] = _macro_read(ind, out["ism_proxy_components"])
         out["macro_ok"] = True
     except Exception as exc:
         print(f"[tail_risk] macro context failed: {exc}")
-        out.update(indicators=None, yield_curve=None, fed=None, regime=None, macro_ok=False)
+        # The macro side is what failed; MOVE comes from the vol feed and can
+        # still be read, so the rates-vol axis survives a FRED outage.
+        out.update(indicators=None, yield_curve=None, fed=None, regime=None,
+                   ism_proxy_components=None, macro_ok=False)
+        out["macro_read"] = _macro_read(None, None)
     return out
 
 

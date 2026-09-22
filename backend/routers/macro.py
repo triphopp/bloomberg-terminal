@@ -31,6 +31,10 @@ _SERIES_CACHE_FILE = Path(__file__).parent.parent / "macro_series.json"
 # Release-frequency-based TTLs (seconds) — fetch only what actually changed
 _SERIES_TTL: dict[str, int] = {
     "cpi":                7  * 86400,   # monthly BLS release (~10th of month)
+    "cpi_core":           7  * 86400,   # same release, ex food & energy
+    "pce":                7  * 86400,   # monthly BEA (~last business day)
+    "pce_core":           7  * 86400,   # the Fed's actual 2% target
+    "ism_proxy":          3  * 86400,   # regional Feds print through the month
     "gdp":                30 * 86400,   # quarterly BEA advance (~4 wks after quarter)
     "unemployment":       7  * 86400,   # monthly BLS (first Friday)
     "nfp":                7  * 86400,   # monthly BLS (first Friday, same day)
@@ -44,7 +48,7 @@ _SERIES_TTL: dict[str, int] = {
 
 # Max data points stored per series (enough for 2-year charts; saves ~40% vs 36-60 pts)
 _SERIES_PTS: dict[str, int] = {
-    "cpi": 24, "gdp": 8, "unemployment": 24, "nfp": 24,
+    "cpi": 24, "cpi_core": 24, "pce": 24, "pce_core": 24, "ism_proxy": 24, "gdp": 8, "unemployment": 24, "nfp": 24,
     "fed_rate": 36, "retail_sales": 24, "consumer_sentiment": 24,
     "yield_2y": 24, "yield_5y": 24,
 }
@@ -58,6 +62,23 @@ _INDICATOR_CFG: dict[str, dict] = {
     "cpi": {
         "fred_id":    "CPIAUCSL",        "fred_xform": "yoy_pct",
         "av_fn":      "CPI",             "av_interval": "monthly",
+    },
+    # Ex food & energy — the one the Fed's own forecasts are written in. Headline
+    # CPI moves on oil and groceries, which monetary policy does not reach.
+    "cpi_core": {
+        "fred_id":    "CPILFESL",        "fred_xform": "yoy_pct",
+        "av_fn":      None,              "av_interval": "monthly",
+    },
+    # PCE, not CPI, is the 2% target. It differs from CPI by 0.3-0.5pp most
+    # years (different weights, substitution), so reading CPI as "the target
+    # measure" is a systematic misread of how far policy is from home.
+    "pce": {
+        "fred_id":    "PCEPI",           "fred_xform": "yoy_pct",
+        "av_fn":      None,              "av_interval": "monthly",
+    },
+    "pce_core": {
+        "fred_id":    "PCEPILFE",        "fred_xform": "yoy_pct",
+        "av_fn":      None,              "av_interval": "monthly",
     },
     "gdp": {
         "fred_id":    "A191RL1Q225SBEA", "fred_xform": "direct",       # FRED: SAAR % change directly
@@ -256,6 +277,82 @@ def _fetch_indicator(cfg: dict) -> list[dict]:
     return _apply_transform(av_raw, av_xform)
 
 
+# ── ISM proxy ─────────────────────────────────────────────────────────────────
+# ISM's own PMI is not obtainable for free: FRED dropped every NAPM* series in
+# 2022 over licensing (they 404 today) and the aggregator copies run months
+# behind. The regional Federal Reserve manufacturing surveys are free, ask the
+# same question of the same people, and land BEFORE the ISM print each month —
+# Philadelphia and New York publish mid-month, ISM on the first business day of
+# the next one. So this is a leading proxy, and every surface that shows it must
+# say PROXY: it tracks the direction of the ISM, not its level.
+_ISM_PROXY_PARTS: dict[str, str] = {
+    "philly": "GACDFSA066MSFRBPHI",   # Philadelphia Fed, current general activity
+    "empire": "GACDISA066MSFRBNY",    # New York Fed, Empire State general business
+    "dallas": "BACTSAMFRBDAL",        # Dallas Fed, general business activity
+}
+
+#: Months a component needs before its scale can be trusted (10 years).
+_ISM_SD_WINDOW = 120
+
+#: How far from neutral counts as a real reading rather than noise, in units of
+#: each survey's own standard deviation.
+ISM_PROXY_STALL_BAND = 0.25
+
+
+def _fetch_ism_proxy() -> tuple[list[dict], dict]:
+    """Composite of the regional Fed manufacturing surveys, newest first.
+
+    These are **diffusion indices**: percent of firms reporting better minus
+    percent reporting worse, so 0 is neutral and the sign is the whole message.
+    They are NOT on the ISM's 50-centred scale, and rescaling them onto one
+    would invent a precision nobody can check — so the composite keeps 0 as
+    neutral and is quoted in units of each survey's own standard deviation.
+
+    Each component is divided by its own 10-year sd before averaging, because a
+    straight mean would be Philadelphia's answer alone: its swings are three
+    times Dallas's. A month needs at least two of the three to count.
+    """
+    raw: dict[str, list[dict]] = {}
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futs = {k: pool.submit(_fetch_fred_raw, sid) for k, sid in _ISM_PROXY_PARTS.items()}
+        for k, f in futs.items():
+            try:
+                raw[k] = f.result() or []
+            except Exception:
+                raw[k] = []
+
+    scaled: dict[str, dict[str, float]] = {}   # part -> {YYYY-MM: value / sd}
+    latest: dict[str, float] = {}
+    for part, rows in raw.items():
+        vals = [r["raw"] for r in rows[:_ISM_SD_WINDOW]]
+        if len(vals) < 24:
+            continue
+        mean = sum(vals) / len(vals)
+        sd = (sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)) ** 0.5
+        if not sd:
+            continue
+        scaled[part] = {r["date"][:7]: r["raw"] / sd for r in rows}
+        latest[part] = round(rows[0]["raw"], 2)
+
+    if len(scaled) < 2:
+        return [], {}
+
+    months = sorted({m for pm in scaled.values() for m in pm}, reverse=True)
+    series: list[dict] = []
+    for m in months:
+        have = [pm[m] for pm in scaled.values() if m in pm]
+        if len(have) < 2:
+            continue
+        series.append({"date": f"{m}-01", "value": round(sum(have) / len(have), 3)})
+
+    components = {
+        "parts": latest,
+        "as_of": {p: (raw[p][0]["date"][:10] if raw.get(p) else None) for p in scaled},
+        "note": "diffusion indices (0 = neutral), scaled by each survey's own 10y sd",
+    }
+    return series, components
+
+
 def _get_yield_realtime(sym: str) -> float | None:
     try:
         return round(market_data.get_fast_info(sym).last_price or 0, 3) or None
@@ -335,7 +432,12 @@ def _refresh_series(cache: dict) -> bool:
             fred_results = {k: f.result() for k, f in futs.items()}
 
         # Phase 2: AV fallback (sequential, 350ms apart) for any FRED misses
-        still_empty = [k for k in expired if not fred_results.get(k)]
+        # A series with no Alpha Vantage equivalent (core CPI, PCE) has av_fn
+        # None — asking AV for it would send function=None and burn a quota slot.
+        still_empty = [
+            k for k in expired
+            if not fred_results.get(k) and _INDICATOR_CFG[k].get("av_fn")
+        ]
         for i, k in enumerate(still_empty):
             cfg    = _INDICATOR_CFG[k]
             av_raw = _fetch_av_raw(cfg["av_fn"], cfg["av_interval"], cfg.get("av_maturity"))
@@ -357,6 +459,25 @@ def _refresh_series(cache: dict) -> bool:
                     "s":   _pack(data, pts),
                 }
                 changed = True
+
+    # Phase 2b: the ISM proxy, which is three FRED series rather than one and so
+    # does not fit _INDICATOR_CFG.
+    if not _is_fresh(cache.get("ism_proxy")):
+        try:
+            ism, parts = _fetch_ism_proxy()
+        except Exception:
+            ism, parts = [], {}
+        if ism:
+            cache["ism_proxy"] = {
+                "ts":  time.time(),
+                "ttl": _SERIES_TTL["ism_proxy"],
+                "v":   ism[0]["value"],
+                "p":   (ism[1] if len(ism) > 1 else ism[0])["value"],
+                "d":   ism[0]["date"][:7],
+                "s":   _pack(ism, _SERIES_PTS["ism_proxy"]),
+                "c":   parts,
+            }
+            changed = True
 
     # Phase 3: real-time yields from yfinance (if expired)
     if not _is_fresh(cache.get("yields_rt")):
@@ -410,11 +531,14 @@ def _assemble_macro(cache: dict) -> dict:
         elif fed_series[0]["value"] < fed_series[2]["value"]:
             fed_stance = "CUTTING"
 
+    ism_entry = cache.get("ism_proxy") or {}
     return {
+        "ism_proxy_components": ism_entry.get("c") or None,
         "indicators": {
             k: ind(k)
-            for k in ["cpi", "gdp", "unemployment", "nfp",
-                      "fed_rate", "retail_sales", "consumer_sentiment"]
+            for k in ["cpi", "cpi_core", "pce", "pce_core", "ism_proxy", "gdp",
+                      "unemployment", "nfp", "fed_rate", "retail_sales",
+                      "consumer_sentiment"]
         },
         "yield_curve": {
             "3m":  y3m, "2y": y2, "5y": y5, "10y": y10, "30y": y30,

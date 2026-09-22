@@ -35,6 +35,7 @@ import {
   KIND_COLOR,
   type MacroEvent,
   MacroPanel,
+  MacroReadPanel,
   useMacroContext,
 } from "./tail/macro-context";
 
@@ -751,6 +752,7 @@ export function TailRiskView() {
               </span>
             </div>
 
+            <MacroReadPanel ctx={macro} />
             <MacroPanel ctx={macro} />
           </div>
 
