@@ -3229,7 +3229,135 @@ def get_nav_history(account_id: Optional[str] = Query(None), days: int = Query(3
         )
         row["cash_balance"] = round(cash, 2)
         row["nav_with_cash"] = round(_to_float_or_zero(row.get("total_value")) + cash, 2)
+        # Everything that moved NAV without being a return: deposits/withdrawals
+        # (invested_capital) plus dated reconciliation offsets. /nav-index
+        # differences this to strip external cash flows out of the curve.
+        row["cash_adjustment"] = round(adj, 2)
         out.append(row)
+    return out
+
+
+@router.get("/nav-index")
+def get_nav_index(
+    account_id: Optional[str] = Query(None),
+    days: int = Query(365),
+    benchmark: str = Query("SPY"),
+    base_currency: str = Query("THB"),
+):
+    """Time-weighted equity curve of the book, rebased to 100, against an index.
+
+    Raw NAV cannot be compared with an index: a deposit lifts it and a
+    withdrawal drops it, neither of which is performance. So each day's return
+    is taken net of that day's external flow,
+
+        r_t = (NAV_t - flow_t - NAV_{t-1}) / NAV_{t-1}
+
+    with `flow_t` = the change in invested capital plus any reconciliation
+    offset dated that day, and the curve is the geometric product of those —
+    time-weighted, which is what an index is. Gaps in the snapshot series (a day
+    nobody opened the terminal) are linked across rather than interpolated.
+
+    The benchmark is translated into `base_currency` before it is rebased, so a
+    THB book is not compared with a USD index's FX move. Both lines start at 100
+    on the first snapshot that has a NAV.
+    """
+    base = report_currency(base_currency)
+    rows = get_nav_history(account_id, days)
+
+    # Snapshots are stored in THB; a USD report converts each row at ITS OWN
+    # date, because converting at today's rate would hide the FX leg of the
+    # return instead of reporting it.
+    points: list[dict] = []
+    prev_nav = prev_flow_base = None
+    index = 100.0
+    suspect = 0
+    for r in rows:
+        day = str(r.get("snapshot_date") or "")[:10]
+        nav = convert_amount(_to_float_or_zero(r.get("nav_with_cash")), "THB", base, date=day)
+        # Cumulative external capital in the same currency as the NAV above.
+        cum_flow = convert_amount(
+            _to_float_or_zero(r.get("invested_capital")) + _to_float_or_zero(r.get("cash_adjustment")),
+            "THB", base, date=day,
+        )
+        if nav <= 0:
+            prev_nav, prev_flow_base = None, None
+            continue
+        if prev_nav is None:
+            ret = 0.0
+            flow = 0.0
+        else:
+            flow = cum_flow - (prev_flow_base or 0.0)
+            ret = (nav - flow - prev_nav) / prev_nav
+            index *= 1 + ret
+        # A day that moves more than half the book is almost always a flow the
+        # ledger did not record, not a return. It is kept in the curve and
+        # flagged rather than silently clipped.
+        flagged = abs(ret) > 0.5
+        if flagged:
+            suspect += 1
+        points.append({
+            "date": day,
+            "nav": round(nav, 2),
+            "flow": round(flow, 2),
+            "return_pct": round(ret * 100, 4),
+            "port_index": round(index, 3),
+            "bench_index": None,
+            "suspect": flagged,
+        })
+        prev_nav, prev_flow_base = nav, cum_flow
+
+    out = {
+        "benchmark": benchmark,
+        "benchmark_currency": None,
+        "benchmark_available": False,
+        "base_currency": base,
+        "points": points,
+        "n_days": len(points),
+        "suspect_days": suspect,
+        "start": points[0]["date"] if points else None,
+        "end": points[-1]["date"] if points else None,
+        "port_twr_pct": round(index - 100, 2) if points else None,
+        "bench_pct": None,
+        "excess_pct": None,
+        "net_flow": round(sum(p["flow"] for p in points), 2) if points else 0.0,
+    }
+    if len(points) < 2:
+        out["note"] = "ต้องมี snapshot อย่างน้อย 2 วันถึงจะมีเส้นผลตอบแทน"
+        return out
+
+    try:
+        import numpy as np  # noqa: F401  (pandas pulls it in; kept for parity)
+        import pandas as pd
+        from routers.risk import _benchmark_currency, _fetch_close_frame, _fx_close
+
+        span_days = max(
+            (datetime.strptime(points[-1]["date"], "%Y-%m-%d")
+             - datetime.strptime(points[0]["date"], "%Y-%m-%d")).days + 5,
+            30,
+        )
+        frame = _fetch_close_frame([benchmark], span_days)
+        if not frame.empty and benchmark in frame.columns:
+            series = frame[benchmark].dropna()
+            bccy = _benchmark_currency(benchmark)
+            out["benchmark_currency"] = bccy
+            if bccy != base:
+                fx = _fx_close(bccy, base, span_days)
+                if fx is not None:
+                    series = (series * fx.reindex(series.index).ffill()).dropna()
+            idx = pd.to_datetime([p["date"] for p in points])
+            aligned = series.reindex(series.index.union(idx)).ffill().reindex(idx)
+            first = aligned.dropna()
+            if len(first) >= 2:
+                base_px = float(first.iloc[0])
+                for p, v in zip(points, aligned.tolist()):
+                    if v is not None and v == v and base_px:
+                        p["bench_index"] = round(float(v) / base_px * 100, 3)
+                out["benchmark_available"] = True
+                out["bench_pct"] = round(float(first.iloc[-1]) / base_px * 100 - 100, 2)
+                out["excess_pct"] = round(out["port_twr_pct"] - out["bench_pct"], 2)
+    except Exception:
+        logger.exception("nav-index benchmark leg failed")
+
     return out
 
 
@@ -3431,7 +3559,32 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
     # flag (set at /sell time), not the sign of the reported base P&L — a trade
     # can win natively and lose in base after FX, and the flag is what the rest
     # of the app counts. Averages are per-trade realized P&L in base currency.
+    def _return_pct(row: dict) -> Optional[float]:
+        """Per-trade return on cost, in the trade's own currency.
+
+        Native on purpose: pnl_amount and amount share one currency, so the
+        ratio carries no FX leg. Converting both to base would only cancel the
+        same rate back out — except when entry and exit rates differ, where it
+        would silently blend currency drift into a position-sizing metric.
+        """
+        cost = _to_float_or_zero(row.get("amount")) or (
+            _to_float_or_zero(row.get("price_entry")) * _to_float_or_zero(row.get("volume"))
+        )
+        if not cost:
+            return None
+        return _to_float_or_zero(row.get("pnl_amount")) / abs(cost) * 100
+
     def _trade_stats(rows: list[dict]) -> dict:
+        win_pcts = [
+            p
+            for p in (_return_pct(r) for r in rows if r.get("win_loss") == "W")
+            if p is not None
+        ]
+        loss_pcts = [
+            p
+            for p in (_return_pct(r) for r in rows if r.get("win_loss") == "L")
+            if p is not None
+        ]
         win_pnls = [
             realized_pnl_in_report(r, base_currency) for r in rows if r.get("win_loss") == "W"
         ]
@@ -3458,6 +3611,17 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
             expectancy = avg_win
         elif closed and avg_loss is not None:
             expectancy = avg_loss
+
+        # Percent twins. Averaged across the trades that carry a cost basis,
+        # which can be fewer than wins/losses — a trade with no entry amount
+        # drops out of the % view while still counting in the money view.
+        avg_win_pct = sum(win_pcts) / len(win_pcts) if win_pcts else None
+        avg_loss_pct = sum(loss_pcts) / len(loss_pcts) if loss_pcts else None
+        expectancy_pct = None
+        pct_closed = len(win_pcts) + len(loss_pcts)
+        if pct_closed:
+            p = len(win_pcts) / pct_closed
+            expectancy_pct = p * (avg_win_pct or 0) + (1 - p) * (avg_loss_pct or 0)
         return {
             "closed":     closed,
             "wins":       wins,
@@ -3468,6 +3632,10 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
             "avg_loss":   round(avg_loss, 2) if avg_loss is not None else None,
             "payoff":     round(payoff, 2) if payoff is not None else None,
             "expectancy": round(expectancy, 2) if expectancy is not None else None,
+            "avg_win_pct":    round(avg_win_pct, 2) if avg_win_pct is not None else None,
+            "avg_loss_pct":   round(avg_loss_pct, 2) if avg_loss_pct is not None else None,
+            "expectancy_pct": round(expectancy_pct, 2) if expectancy_pct is not None else None,
+            "pct_basis":      pct_closed,
             "total_win":  round(sum(win_pnls), 2),
             "total_loss": round(sum(loss_pnls), 2),
         }

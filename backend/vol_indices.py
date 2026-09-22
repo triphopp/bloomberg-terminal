@@ -36,9 +36,18 @@ _CBOE_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{name}_Hist
 # Yahoo tickers, used only if CBOE is unreachable. Deliberately incomplete:
 # the term-structure names are the ones Yahoo gets wrong, so a fallback that
 # served them would reintroduce the exact bug this module exists to fix.
-_YF_FALLBACK = {"VIX": "^VIX", "VVIX": "^VVIX", "OVX": "^OVX", "GVZ": "^GVZ", "VXN": "^VXN"}
+_YF_FALLBACK = {
+    "VIX": "^VIX", "VVIX": "^VVIX", "OVX": "^OVX", "GVZ": "^GVZ", "VXN": "^VXN",
+    "MOVE": "^MOVE",
+}
 
-INDEX_NAMES = ("VIX", "VIX9D", "VIX3M", "VIX6M", "VVIX", "SKEW", "OVX", "GVZ", "VXN")
+#: Indices CBOE does not publish, so Yahoo is the source of record rather than a
+#: fallback. MOVE is ICE BofA's, not CBOE's — asking cdn.cboe.com for it only
+#: costs a 404 on every cold load. The freshness gate below still applies, which
+#: is what keeps the Yahoo caveat in the module docstring from biting.
+_YF_ONLY = ("MOVE",)
+
+INDEX_NAMES = ("VIX", "VIX9D", "VIX3M", "VIX6M", "VVIX", "SKEW", "OVX", "GVZ", "VXN", "MOVE")
 
 #: Series older than this many calendar days relative to the reference index
 #: (VIX) is treated as unusable. Three days covers a normal weekend gap plus a
@@ -91,6 +100,14 @@ def _load_one(name: str) -> tuple[pd.Series, str]:
     """Returns (series, source). Empty series means the index is unavailable."""
 
     def compute() -> tuple[pd.Series, str]:
+        if name in _YF_ONLY:
+            try:
+                s = _fetch_yf(name)
+                if not s.empty:
+                    return s, "yfinance"
+            except Exception as exc:
+                print(f"[vol_indices] yfinance {name} failed: {exc}")
+            return pd.Series(dtype=float, name=name), "none"
         try:
             s = _fetch_cboe(name)
             if not s.empty:

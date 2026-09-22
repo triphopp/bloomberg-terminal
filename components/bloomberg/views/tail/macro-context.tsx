@@ -40,6 +40,38 @@ interface IndicatorPoint {
   date: string | null;
 }
 
+/** One axis of MACRO READ — a number, what it means, and the rule that said so. */
+export interface MacroAxis {
+  id: "inflation" | "growth" | "rates_vol";
+  label: string;
+  state: string | null;
+  tone: Tone;
+  value: number | null;
+  unit: string;
+  detail: string;
+  rule: string;
+  proxy?: boolean;
+  gap_vs_target?: number | null;
+  trend_3m?: number | null;
+  source?: string | null;
+  z63?: number | null;
+  pctile_1y?: number | null;
+  cross_check?: Record<string, number | null>;
+  components?: {
+    parts?: Record<string, number>;
+    as_of?: Record<string, string | null>;
+    note?: string;
+  } | null;
+}
+
+export interface MacroRead {
+  counted_in_composite: false;
+  validated: false;
+  axes: MacroAxis[];
+  summary: string | null;
+  note: string;
+}
+
 export interface MacroContextData {
   ts: string;
   counted_in_composite: false;
@@ -67,6 +99,8 @@ export interface MacroContextData {
   } | null;
   fed: { rate: number | null; stance: "HIKING" | "CUTTING" | "HOLD" | null } | null;
   regime: Record<"growth" | "inflation" | "labor" | "policy", RegimeCell> | null;
+  macro_read: MacroRead | null;
+  ism_proxy_components?: MacroAxis["components"];
   macro_ok: boolean;
 }
 
@@ -177,8 +211,38 @@ export function EventStrip({ ctx }: { ctx: MacroContextData | undefined }) {
 
 // ── Macro panel (left column) ─────────────────────────────────────────────────
 
-const IND_ROWS: { key: string; label: string; fmt: (v: number) => string; unit: string }[] = [
+const IND_ROWS: {
+  key: string;
+  label: string;
+  fmt: (v: number) => string;
+  unit: string;
+  title?: string;
+}[] = [
   { key: "cpi", label: "CPI YoY", fmt: (v) => v.toFixed(2), unit: "%" },
+  {
+    key: "cpi_core",
+    label: "CPI CORE",
+    fmt: (v) => v.toFixed(2),
+    unit: "%",
+    title: "CPI ex food & energy — the part monetary policy can actually reach",
+  },
+  { key: "pce", label: "PCE YoY", fmt: (v) => v.toFixed(2), unit: "%" },
+  {
+    key: "pce_core",
+    label: "PCE CORE",
+    fmt: (v) => v.toFixed(2),
+    unit: "%",
+    title: "The Fed's 2% target is written on THIS series, not on CPI",
+  },
+  {
+    key: "ism_proxy",
+    label: "ISM PROXY",
+    fmt: (v) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}`,
+    unit: "sd",
+    title:
+      "Philly + Empire + Dallas Fed manufacturing surveys, each scaled by its own 10y sd. " +
+      "0 = neutral. A proxy for the ISM, not the ISM — FRED dropped the ISM series in 2022",
+  },
   { key: "unemployment", label: "UNEMP", fmt: (v) => v.toFixed(1), unit: "%" },
   { key: "nfp", label: "NFP", fmt: (v) => `${v > 0 ? "+" : ""}${v.toFixed(0)}`, unit: "K" },
   { key: "gdp", label: "GDP YoY", fmt: (v) => v.toFixed(2), unit: "%" },
@@ -202,6 +266,96 @@ function Row({
       <span style={{ color: "#4a4a4a", fontSize: 7.5 }}>{label}</span>
       <span className="truncate" style={{ color, fontSize: 8 }}>
         {value}
+      </span>
+    </div>
+  );
+}
+
+/** MACRO READ — three axes of the backdrop, each with its rule attached.
+ *
+ *  Not a forecast and not part of the risk level: it reads today's prints and
+ *  says what state they describe, which is the piece TAIL was missing. A lit
+ *  vol signal means one thing with growth expanding and inflation falling, and
+ *  another with growth contracting while the Fed is still tight — and the point
+ *  of keeping the three axes side by side, instead of blending them into one
+ *  score, is that the difference stays visible.
+ */
+export function MacroReadPanel({ ctx }: { ctx: MacroContextData | undefined }) {
+  const read = ctx?.macro_read;
+  const box = "flex flex-col gap-1 p-2 border";
+  if (!read) {
+    return (
+      <div className={box} style={{ borderColor: "#1e1e1e" }}>
+        <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>MACRO READ</span>
+        <span style={{ color: "#333", fontSize: 7.5 }}>loading…</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={box} style={{ borderColor: "#1e1e1e" }}>
+      <div className="flex items-center justify-between">
+        <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>MACRO READ</span>
+        <span
+          style={{ color: "#3a3a3a", fontSize: 6.5 }}
+          title="No backtest behind these rules, and a macro print is not a market forecast. Not counted in the risk level."
+        >
+          NOT IN COMPOSITE · UNVALIDATED
+        </span>
+      </div>
+
+      {read.axes.map((a) => {
+        const c = TONE_COLOR[a.tone ?? "unknown"];
+        const trend = a.trend_3m == null ? null : a.trend_3m > 0 ? "▲" : a.trend_3m < 0 ? "▼" : "·";
+        return (
+          <div key={a.id} className="px-1 py-0.5" style={{ border: `1px solid ${c}33` }}>
+            <div className="flex items-baseline justify-between gap-2">
+              <span style={{ color: "#4a4a4a", fontSize: 6.5 }}>
+                {a.label}
+                {a.proxy && (
+                  <span style={{ color: "#B06000" }} title="composed series, not the ISM itself">
+                    {" "}
+                    PROXY
+                  </span>
+                )}
+              </span>
+              <span style={{ color: c, fontSize: 8, fontWeight: "bold" }}>
+                {a.state ?? "NO DATA"}
+                {trend && <span style={{ color: "#666", fontWeight: "normal" }}> {trend}</span>}
+              </span>
+            </div>
+            <div className="truncate" style={{ color: "#666", fontSize: 6.5 }} title={a.rule}>
+              {a.detail}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* The cross-check: four inflation prints that disagree, side by side, so
+          "inflation is 3.7%" is never read off the wrong one. */}
+      {(() => {
+        const x = read.axes.find((a) => a.id === "inflation")?.cross_check;
+        if (!x) return null;
+        const cell = (k: string, lbl: string, hint: string) => (
+          <span key={k} title={hint} style={{ color: "#555", fontSize: 6.5 }}>
+            {lbl}{" "}
+            <span style={{ color: x[k] == null ? "#333" : "#888" }}>
+              {x[k] == null ? "—" : `${x[k]?.toFixed(2)}%`}
+            </span>
+          </span>
+        );
+        return (
+          <div className="flex flex-wrap gap-x-2">
+            {cell("cpi", "CPI", "Headline CPI YoY — what the news quotes")}
+            {cell("cpi_core", "CORE CPI", "CPI ex food & energy")}
+            {cell("pce", "PCE", "Headline PCE YoY")}
+            {cell("pce_core", "CORE PCE", "The Fed's target measure")}
+          </div>
+        );
+      })()}
+
+      <span style={{ color: "#333", fontSize: 6, lineHeight: 1.4 }}>
+        {read.note} — hover แต่ละแถวเพื่อดูกฎที่ใช้ตัดสิน
       </span>
     </div>
   );
@@ -305,10 +459,10 @@ export function MacroPanel({ ctx }: { ctx: MacroContextData | undefined }) {
       {ctx.indicators && (
         <>
           <div className="h-px my-0.5" style={{ backgroundColor: "#151515" }} />
-          {IND_ROWS.map(({ key, label, fmt, unit }) => {
+          {IND_ROWS.map(({ key, label, fmt, unit, title }) => {
             const p = ctx.indicators?.[key];
             if (!p || p.value == null) {
-              return <Row key={key} label={label} value="NO DATA" color="#333" />;
+              return <Row key={key} label={label} value="NO DATA" color="#333" title={title} />;
             }
             const d = p.prev == null ? 0 : p.value - p.prev;
             const arrow = Math.abs(d) < 1e-9 ? "·" : d > 0 ? "▲" : "▼";
@@ -317,7 +471,9 @@ export function MacroPanel({ ctx }: { ctx: MacroContextData | undefined }) {
                 key={key}
                 label={label}
                 value={`${fmt(p.value)}${unit} ${arrow}`}
-                title={`${p.date ?? ""} · prev ${p.prev == null ? "—" : fmt(p.prev)}${unit}`}
+                title={`${title ? `${title}\n` : ""}${p.date ?? ""} · prev ${
+                  p.prev == null ? "—" : fmt(p.prev)
+                }${unit}`}
               />
             );
           })}

@@ -1,0 +1,440 @@
+<p class="lede">
+  หน้านี้ตอบคำถามเดียว: <strong>คำสัญญาในระบบ AI ถูกส่งต่อไปจบที่กระเป๋าใคร</strong>
+  ไล่จากต้นน้ำ (NVIDIA และผู้ผลิตชิป) → neocloud → hyperscaler → SPV → ตลาดตราสารหนี้ →
+  ประกันชีวิตและกองทุนบำนาญ พร้อมวัดว่า "ค่าเสื่อมของชิปที่ใช้ค้ำประกัน" รุนแรงพอจะทำให้
+  ห่วงโซ่นี้ขาดตรงไหนก่อน ตัวเลขหลักมาจากเอกสารต้นทาง (BIS Bulletin 120, IMF GFSR เม.ย. 2026)
+  ส่วนดีลรายตัวเป็นข่าว/เอกสารบริษัทที่ติดป้ายแหล่งไว้ทุกบรรทัด
+</p>
+
+<div class="note">
+  <strong>นิยามที่ใช้ในหน้านี้</strong><br>
+  <strong>Backstop</strong> = ผู้ขายรับซื้อกำลังการผลิตที่ลูกค้าขายไม่ออก (เช่น NVIDIA ↔ CoreWeave)<br>
+  <strong>Guarantee / ค้ำประกัน</strong> = บุคคลที่สามรับผิดแทนถ้าผู้เช่าไม่จ่าย (เช่น Google ↔ Fluidstack lease)<br>
+  <strong>RVG (Residual Value Guarantee)</strong> = ผู้เช่ารับประกัน<em>มูลค่าคงเหลือ</em>ของทรัพย์สินให้เจ้าของ
+  ถ้าไม่ต่อสัญญาแล้วขายได้ต่ำกว่าเกณฑ์ ต้องจ่ายส่วนต่าง — เป็นภาระที่ GAAP ให้อยู่ใน footnote ได้<br>
+  <strong>SPV / JV</strong> = นิติบุคคลเฉพาะกิจที่ถือดาต้าเซ็นเตอร์หรือ GPU แล้วกู้เงินเอง หนี้ไม่ขึ้นงบผู้เช่า<br>
+  <strong>ไม่อยู่ในขอบเขต:</strong> การประเมินมูลค่าหุ้นรายตัว และการฟันธงว่าฟองสบู่จะแตกเมื่อไร
+</div>
+
+<h2>1 — แผนที่คู่สัญญา: ใครค้ำใคร</h2>
+
+<p>
+  โครงสร้างการค้ำประกันในวงจรนี้ไม่ได้มีชั้นเดียว มันซ้อนกันสามชั้น และแต่ละชั้น
+  <em>ย้ายความเสี่ยงไปหาคนที่มีงบดุลแข็งกว่าเสมอ</em> — ซึ่งฟังดูดี จนกระทั่งเรานับว่า
+  คนที่งบดุลแข็งที่สุดในห่วงโซ่นี้ (NVIDIA, Google, Meta, Microsoft) คือคนกลุ่มเดียวกับที่เป็น
+  <em>แหล่งรายได้</em> ของทั้งห่วงโซ่อยู่แล้ว ความเสี่ยงจึงไม่ได้ถูกกระจาย แต่ถูกกองกลับไปที่จุดเดิม
+</p>
+
+<figure class="fig">
+  <svg viewBox="0 0 760 430" role="img" aria-label="แผนที่การค้ำประกันสามชั้นจากผู้ผลิตชิปถึงตลาดตราสารหนี้">
+    <title>แผนที่การค้ำประกันสามชั้น</title>
+    <defs>
+      <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+      </marker>
+    </defs>
+    <g font-size="12" fill="currentColor">
+      <text x="8" y="40" opacity=".55">ต้นน้ำ</text>
+      <text x="8" y="140" opacity=".55">ตัวกลาง</text>
+      <text x="8" y="245" opacity=".55">ผู้ใช้จริง</text>
+      <text x="8" y="355" opacity=".55">ผู้ถือหนี้</text>
+
+      <rect x="80" y="18" width="150" height="40" rx="3" fill="none" stroke="currentColor" opacity=".85"/>
+      <text x="92" y="36" font-size="13">NVIDIA</text>
+      <text x="92" y="51" font-size="11" opacity=".7">ชิป + backstop + equity</text>
+
+      <rect x="255" y="18" width="150" height="40" rx="3" fill="none" stroke="currentColor" opacity=".5"/>
+      <text x="267" y="36" font-size="13">AMD / Broadcom</text>
+      <text x="267" y="51" font-size="11" opacity=".7">warrant / co-design</text>
+
+      <rect x="430" y="18" width="240" height="40" rx="3" fill="none" stroke="currentColor" opacity=".5"/>
+      <text x="442" y="36" font-size="12">Memory: SK hynix · Micron · Samsung · SNDK</text>
+      <text x="442" y="51" font-size="11" opacity=".7">รับเงินล่วงหน้า ~$22bn ล็อกกำลังผลิต</text>
+
+      <rect x="80" y="118" width="325" height="46" rx="3" fill="none" stroke="currentColor" opacity=".85"/>
+      <text x="92" y="136" font-size="11">NEOCLOUD — CoreWeave · Nebius · IREN · TeraWulf · Cipher · Crusoe · Lambda · Nscale</text>
+      <text x="92" y="155" font-size="11" opacity=".7">กู้โดยใช้ GPU + สัญญาลูกค้าเป็นหลักประกัน</text>
+
+      <rect x="430" y="118" width="240" height="46" rx="3" fill="none" stroke="currentColor" opacity=".7"/>
+      <text x="442" y="136" font-size="13">SPV / JV ถือทรัพย์สิน</text>
+      <text x="442" y="155" font-size="11" opacity=".7">Hyperion (Meta·Blue Owl) · Colossus 2 (xAI·Valor)</text>
+
+      <rect x="80" y="222" width="290" height="46" rx="3" fill="none" stroke="currentColor" opacity=".85"/>
+      <text x="92" y="240" font-size="12">HYPERSCALER — MSFT · GOOGL · META · AMZN · ORCL</text>
+      <text x="92" y="259" font-size="11" opacity=".7">ผู้เช่า + ผู้ค้ำ + (บางกรณี) ผู้ถือหุ้นใน neocloud</text>
+
+      <rect x="395" y="222" width="275" height="46" rx="3" fill="none" stroke="currentColor" opacity=".7"/>
+      <text x="407" y="240" font-size="12">MODEL LABS — OpenAI · Anthropic · xAI</text>
+      <text x="407" y="259" font-size="11" opacity=".7">take-or-pay ที่ยังไม่มีกระแสเงินสดรองรับเต็ม</text>
+
+      <rect x="80" y="330" width="590" height="46" rx="3" fill="none" stroke="currentColor" opacity=".85"/>
+      <text x="92" y="348" font-size="12">ผู้ถือความเสี่ยงสุดท้าย — private credit · ABS/CMBS/144A · ประกันชีวิต · กองทุนบำนาญ</text>
+      <text x="92" y="367" font-size="11" opacity=".7">Blackstone · Blue Owl · Apollo · PIMCO · BlackRock · Carlyle · Magnetar · Ares</text>
+
+      <g stroke="currentColor" fill="none" opacity=".6">
+        <path d="M150 58 L150 118" marker-end="url(#ar)"/>
+        <path d="M545 58 L545 118" marker-end="url(#ar)"/>
+        <path d="M225 164 L225 222" marker-end="url(#ar)"/>
+        <path d="M545 164 L545 222" marker-end="url(#ar)"/>
+        <path d="M225 268 L225 330" marker-end="url(#ar)"/>
+        <path d="M545 268 L545 330" marker-end="url(#ar)"/>
+      </g>
+      <g stroke="currentColor" fill="none" opacity=".85" stroke-dasharray="5 4">
+        <path d="M80 38 C 40 90, 40 200, 95 222" marker-end="url(#ar)"/>
+        <path d="M370 245 C 420 200, 420 175, 405 141" marker-end="url(#ar)"/>
+      </g>
+      <text x="16" y="120" font-size="11" opacity=".8">backstop</text>
+      <text x="16" y="134" font-size="11" opacity=".8">$6.3bn</text>
+      <text x="372" y="196" font-size="11" opacity=".8">guarantee</text>
+      <text x="372" y="210" font-size="11" opacity=".8">lease / RVG</text>
+    </g>
+  </svg>
+  <figcaption>
+    เส้นทึบ = เงินและของที่ไหลจริง · เส้นประ = ภาระผูกพันที่ยังไม่เกิด (backstop / guarantee / RVG)
+    ที่จะกลายเป็นเงินสดก็ต่อเมื่อมีอะไรผิดแผน — และมันถูกเขียนในสัญญาให้ผิดแผน<em>พร้อมกัน</em>
+  </figcaption>
+</figure>
+
+<h3>ชั้นที่ 1 — ผู้ผลิตชิปค้ำลูกค้าของตัวเอง</h3>
+
+<div class="tablebox">
+  <table>
+    <thead>
+      <tr><th>ผู้ค้ำ</th><th>ผู้รับ</th><th>รูปแบบ</th><th>ขนาด</th><th>ที่มา / วันที่</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>NVIDIA</td><td>CoreWeave</td><td>รับซื้อกำลังการผลิตที่ขายไม่ออก ถึง 13 เม.ย. 2032</td><td class="num">สูงสุด $6.3bn</td><td>8-K CRWV 9 ก.ย. 2025 (primary)</td></tr>
+      <tr><td>NVIDIA</td><td>xAI / Colossus 2</td><td>ลงทุน equity ใน SPV ที่ซื้อ GPU มาปล่อยเช่า</td><td class="num">สูงสุด $2bn ใน SPV $20bn ($7.5bn equity + $12.5bn debt)</td><td>Bloomberg/Reuters ต.ค. 2025 (secondary)</td></tr>
+      <tr><td>NVIDIA</td><td>OpenAI</td><td>LOI $100bn → ยุบเป็น equity stake</td><td class="num">$30bn ในรอบ $110bn (ก.พ. 2026)</td><td>ข่าว (secondary) — ต้องตรวจ 10-Q</td></tr>
+      <tr><td>NVIDIA</td><td>Nebius / Nscale / CoreWeave</td><td>ถือหุ้นในลูกค้าโดยตรง</td><td class="num">$2bn NBIS (มี.ค. 2026) · $2bn CRWV @ $87.20 (ม.ค. 2026)</td><td>ข่าว (secondary)</td></tr>
+      <tr><td>NVIDIA</td><td>รวมทุกราย</td><td><strong>เพดาน lease-guarantee ที่เปิดเผยใน 10-Q</strong></td><td class="num">$3.5bn (Q1 FY27)</td><td>รายงานข่าวอ้าง 10-Q — <em>ต้องยืนยันจากต้นฉบับ</em></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  ข้อสังเกตที่สำคัญที่สุดในตารางนี้คือ<strong>ช่องว่างระหว่างสองบรรทัดสุดท้าย</strong>:
+  ภาระที่ NVIDIA รับรู้เป็น "การค้ำประกัน" ตามบัญชีมีเพดาน $3.5bn ขณะที่ภาระเชิงเศรษฐกิจ
+  (backstop + equity + ความเสี่ยงว่าลูกค้าจ่ายไม่ไหว) อยู่คนละมาตราส่วน นี่คือแบบเดียวกับที่
+  BIS เรียกว่า leverage ที่ "ไม่ได้หายไปเพราะมันอยู่นอกสายตา"
+</p>
+
+<h3>ชั้นที่ 2 — hyperscaler ค้ำหนี้ของ neocloud</h3>
+
+<div class="tablebox">
+  <table>
+    <thead>
+      <tr><th>ผู้ค้ำ</th><th>ผู้รับ</th><th>สิ่งที่ค้ำ</th><th>ขนาด</th><th>สิ่งที่ผู้ค้ำได้กลับ</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Google</td><td>TeraWulf (WULF)</td><td>หนุนหลังการออกหนี้ $3bn</td><td class="num">$3.2bn (จากเดิม $1.8bn)</td><td>หุ้น ~14% + กำลังประมวลผล</td></tr>
+      <tr><td>Google</td><td>Cipher Mining (CIFR) / Fluidstack</td><td>ค้ำภาระค่าเช่าของ Fluidstack</td><td class="num">$1.4bn</td><td>หุ้น CIFR ~5.4% (~24m หุ้น)</td></tr>
+      <tr><td>Microsoft</td><td>CoreWeave · Nebius · Nscale · IREN · Lambda</td><td>สัญญาซื้อกำลังการผลิต (ไม่ใช่การค้ำโดยตรง แต่เป็นเครดิตที่ผู้ให้กู้ใช้อ้าง)</td><td class="num">รวม ~$60bn+ (NBIS $17.4–19.4bn · IREN $9.7bn)</td><td>กำลังประมวลผลโดยไม่ต้องลงทุนเอง</td></tr>
+      <tr><td>Meta</td><td>CoreWeave · Nebius</td><td>สัญญาระยะยาว</td><td class="num">CRWV $35.2bn · NBIS สูงสุด $27bn</td><td>เช่นเดียวกัน</td></tr>
+      <tr><td>OpenAI</td><td>CoreWeave · Oracle</td><td>take-or-pay</td><td class="num">CRWV $22.4bn · ORCL ~$300bn/5 ปี</td><td>—</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="note">
+  <strong>กลไกที่ต้องเข้าใจ:</strong> การค้ำของ Google ไม่ได้ทำให้ความเสี่ยงหายไป มันทำให้
+  <em>ต้นทุนการกู้ของ neocloud ถูกลง</em> ซึ่งแปลว่า neocloud กู้ได้<em>มากขึ้น</em>
+  ปริมาณหนี้รวมในระบบจึงเพิ่ม ไม่ใช่ลด — และสำนักข่าวชี้ว่ากลไกนี้ให้ส่วนลดดอกเบี้ยราว 2 จุด
+  เท่ากับ Google สร้าง "โครงสร้างเครดิต" ให้ชิป TPU ของตัวเองได้เปรียบในตลาดเงินกู้
+  <em>(secondary — ยังไม่มีเอกสารต้นฉบับยืนยันตัวเลข 2 จุด)</em>
+</div>
+
+<h3>ชั้นที่ 3 — RVG: การค้ำที่ไม่ขึ้นงบดุล</h3>
+
+<p>
+  ชั้นนี้ใหญ่ที่สุดและมองเห็นยากที่สุด Meta ตั้ง JV ชื่อ Beignet Investor กับ Blue Owl
+  (Meta 20% / Blue Owl 80%) เพื่อสร้าง Hyperion ที่ลุยเซียนา ระดมเงิน ~$30bn
+  โดยเป็นหนี้ ~$27.3bn เรตติ้งระดับ A+ จัดโครงสร้างโดย Morgan Stanley ผู้ซื้อหลักคือ
+  PIMCO (~$18bn) และ BlackRock (~$3bn) — และ Meta ให้ RVG สูงสุดราว $28bn
+  ซึ่ง<strong>ปรากฏเฉพาะในหมายเหตุประกอบงบ ไม่ถูกบันทึกเป็นหนี้สิน</strong>
+</p>
+
+<div class="tablebox">
+  <table>
+    <thead>
+      <tr><th>ตัวเลข</th><th>ค่า</th><th>ความหมาย</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>ภาระ lease นอกงบของ 5 บริษัทใหญ่ (Moody's)</td><td class="num">$662bn</td><td>META · AMZN · MSFT · ORCL · GOOGL — สัญญาเช่าที่ยังไม่เริ่ม + RVG</td></tr>
+      <tr><td>RVG ของ Meta ในดีล Hyperion</td><td class="num">สูงสุด ~$28bn</td><td>อยู่ใน footnote ของรายงานประจำปี</td></tr>
+      <tr><td>lease ของ Oracle ที่ยังไม่เริ่ม</td><td class="num">~$288bn</td><td>เทียบกับหนี้ในงบ $125.3bn (ณ 31 ส.ค.)</td></tr>
+      <tr><td>capex ที่ย้ายออกนอกงบใน ~18 เดือน</td><td class="num">&gt; $120bn</td><td>ประเมินโดย Quinn Emanuel</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  เหตุผลทางบัญชีที่ทำให้มันอยู่นอกงบได้: ถ้าบริษัทสรุปว่าการต่อสัญญาเช่า "น่าจะเกิด"
+  แต่ยังไม่ถึงขั้น "แน่นอนอย่างสมเหตุสมผล" ก็ไม่ต้องบันทึกทั้งงวดต่อสัญญาและ RVG เป็นหนี้สิน
+  Moody's จึงเตือนตรง ๆ ว่าการเปิดเผยข้อมูล "อาจไม่แสดงภาพทั้งหมด" และหนี้สินที่รายงาน
+  อาจต่ำกว่าภาระจริงอย่างมีนัยสำคัญ
+</p>
+
+<h2>2 — ท่อส่งความเสี่ยงไป Wall Street</h2>
+
+<p class="lede">
+  คำถามที่ถูกต้องไม่ใช่ "ใครให้กู้" แต่คือ "ใครถือกระดาษใบนั้นตอนที่ราคาชิปตก"
+  คำตอบตาม IMF และ BIS คือ: ไม่ใช่ธนาคาร
+</p>
+
+<h3>2.1 ช่องว่างเงินทุนที่ต้องหาจากข้างนอก</h3>
+
+<figure class="fig">
+  <svg viewBox="0 0 700 260" role="img" aria-label="แหล่งเงินทุนดาต้าเซ็นเตอร์ถึงปี 2028 ตาม IMF">
+    <title>capex ดาต้าเซ็นเตอร์ถึงปี 2028 เทียบแหล่งเงิน</title>
+    <g fill="currentColor" font-size="12">
+      <line x1="60" y1="210" x2="680" y2="210" stroke="currentColor" opacity=".35"/>
+      <rect x="70" y="30" width="80" height="180" opacity=".85"/>
+      <text x="70" y="24" font-size="12">2,900</text>
+      <text x="62" y="228" font-size="11" opacity=".75">capex</text>
+      <rect x="210" y="123" width="70" height="87" opacity=".7"/>
+      <text x="210" y="117" font-size="12">1,400</text>
+      <text x="196" y="228" font-size="11" opacity=".75">cash flow</text>
+      <rect x="300" y="160" width="70" height="50" opacity=".6"/>
+      <text x="300" y="154" font-size="12">800</text>
+      <text x="286" y="228" font-size="11" opacity=".75">private credit</text>
+      <rect x="390" y="188" width="70" height="22" opacity=".5"/>
+      <text x="390" y="182" font-size="12">350</text>
+      <text x="382" y="228" font-size="11" opacity=".75">PE / VC</text>
+      <rect x="480" y="198" width="70" height="12" opacity=".45"/>
+      <text x="480" y="192" font-size="12">200</text>
+      <text x="466" y="228" font-size="11" opacity=".75">corporate debt</text>
+      <rect x="570" y="201" width="70" height="9" opacity=".4"/>
+      <text x="570" y="195" font-size="12">150</text>
+      <text x="562" y="228" font-size="11" opacity=".75">ABS / CMBS</text>
+      <text x="196" y="248" font-size="11" opacity=".55">— แหล่งเงิน 5 ทาง รวมได้พอดี 2,900 —</text>
+    </g>
+  </svg>
+  <figcaption>
+    หน่วย: พันล้านดอลลาร์ · IMF GFSR เม.ย. 2026 กล่อง 1.3 รูป 1.3.1 — <strong>เงินสดของ hyperscaler
+    จ่ายได้ไม่ถึงครึ่ง</strong> ส่วนที่เหลือ $1.5tn ต้องมาจากตลาดเงิน และก้อนใหญ่สุดในนั้นคือ
+    private bilateral credit ($800bn) ซึ่งไม่มีราคาตลาดรายวันให้ใครเห็น
+  </figcaption>
+</figure>
+
+<h3>2.2 ใครรับไม้ต่อ</h3>
+
+<div class="tablebox">
+  <table>
+    <thead>
+      <tr><th>ชั้น</th><th>เครื่องมือ</th><th>ขนาดล่าสุด</th><th>ผู้ถือปลายทาง</th><th>ความโปร่งใส</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>สินเชื่อธนาคารช่วงก่อสร้าง</td><td class="num">—</td><td>ธนาคารพาณิชย์</td><td>มี capital requirement</td></tr>
+      <tr><td>2</td><td>private credit โดยตรง (DDTL, GPU-backed)</td><td class="num">&gt; $200bn ต่อภาค AI (BIS) → คาด $300–600bn ปี 2030</td><td>Blackstone · Blue Owl · Apollo · Magnetar · PIMCO · BlackRock · Carlyle</td><td>ไม่มีราคาตลาด</td></tr>
+      <tr><td>3</td><td>ABS / CMBS ดาต้าเซ็นเตอร์</td><td class="num">ออกสะสม $46bn ตั้งแต่ 2018 (ABS 70% / CMBS 30%) · คาดแตะ $150bn ปี 2028</td><td>ประกันชีวิต · กองทุนบำนาญ · asset manager</td><td>มีเรตติ้ง แต่เกณฑ์ยังไม่ลงตัว</td></tr>
+      <tr><td>4</td><td>144A (ไม่จดทะเบียนกับ SEC)</td><td class="num">&gt; $40bn ตั้งแต่ พ.ย. 2025 (APLD · CRWV · HUT · Related) + Hyperion $27.3bn</td><td>QIB เท่านั้น</td><td><strong>ไม่มีการเปิดเผยสาธารณะ</strong></td></tr>
+      <tr><td>5</td><td>equity ในแพลตฟอร์ม</td><td class="num">AIP: equity เป้า $30bn → รวมหนี้สูงสุด $100bn</td><td>BlackRock/GIP · MGX · Microsoft · NVIDIA · xAI · KIA · Temasek</td><td>เอกชน</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>2.3 BlackRock อยู่ตรงไหนของแผนที่นี้ — ทั้งสองฝั่ง</h3>
+
+<p>
+  BlackRock ไม่ได้เป็นแค่ผู้สังเกตการณ์ที่ออกบทวิเคราะห์เตือนเรื่อง leverage มันอยู่<strong>ในดีลเอง
+  ทั้งฝั่งทุนและฝั่งหนี้</strong>:
+</p>
+
+<ul>
+  <li><strong>ฝั่งทุน</strong> — ก่อตั้ง AI Infrastructure Partnership (AIP) ร่วมกับ GIP, MGX, Microsoft
+    (ก.ย. 2024) ต่อมารับ NVIDIA และ xAI เข้าร่วม ระดมทุนรอบแรก $12.5bn
+    และปี 2026 นำกลุ่มซื้อ <strong>Aligned Data Centers ทั้งบริษัทที่มูลค่ากิจการ ~$40bn</strong>
+    พร้อมเงินขยายกิจการอีก $5bn</li>
+  <li><strong>ฝั่งหนี้</strong> — เป็นผู้ซื้อในพันธบัตร SPV ของ Meta Hyperion (~$3bn)
+    และเป็นหนึ่งใน asset manager ที่เข้าร่วมวงเงิน $2.3bn ของ CoreWeave ที่นำโดย Magnetar/Blackstone</li>
+  <li><strong>ฝั่งความเห็น</strong> — BlackRock Investment Institute มองว่า capex hyperscaler
+    จะขึ้นเป็น ~$610bn ในปี 2026 (จาก ~$360bn ปี 2025) และย้ำว่าความต้องการเงินทุน
+    เกินกว่าที่บริษัทใหญ่ที่สุดจะหาเองได้ จึงต้องพึ่งตลาดหนี้สาธารณะและเอกชนต่อเนื่อง
+    พร้อมเตือนเรื่อง leverage ภาคเอกชนที่เพิ่มบนฐานหนี้ภาครัฐที่สูงอยู่แล้ว</li>
+</ul>
+
+<div class="note">
+  <strong>อ่านอย่างไรให้ยุติธรรม:</strong> การที่ BlackRock ทั้งเตือนและทั้งลงทุนไม่ใช่ความย้อนแย้ง
+  โดยอัตโนมัติ — มุมมองของมันคือ "โตแรงแต่ใช้หนี้มากขึ้น ⇒ เลือกจุดเข้าให้ดี"
+  แต่สำหรับผู้อ่านรายงาน ข้อเท็จจริงที่ใช้ได้คือ <em>คนที่เขียนบทวิเคราะห์กับคนที่ถือกระดาษ
+  เป็นคนเดียวกัน</em> จึงต้องอ่านบทวิเคราะห์เป็นข้อมูล ไม่ใช่คำพยากรณ์ที่เป็นกลาง
+</div>
+
+<h2>3 — ค่าเสื่อมของชิปที่ใช้ค้ำประกัน: รุนแรงแค่ไหนจริง</h2>
+
+<p class="lede">
+  นี่คือหัวใจของคำถาม ความเสี่ยงไม่ได้อยู่ที่ "GPU พังเร็ว" — มันไม่พัง
+  มันอยู่ที่ <strong>ความไม่เข้ากันระหว่างอายุของหลักประกันกับอายุของหนี้</strong>
+</p>
+
+<figure class="fig">
+  <svg viewBox="0 0 700 280" role="img" aria-label="มูลค่าคงเหลือของ GPU เทียบกับยอดหนี้คงค้าง">
+    <title>มูลค่า GPU ที่เหลือเทียบยอดหนี้คงค้าง</title>
+    <g fill="none" stroke="currentColor" font-size="12">
+      <line x1="60" y1="230" x2="660" y2="230" opacity=".35"/>
+      <line x1="60" y1="30" x2="60" y2="230" opacity=".35"/>
+      <path d="M60 40 L180 75 L300 108 L420 133 L540 152 L660 165" stroke-width="2" opacity=".9"/>
+      <path d="M60 40 L660 230" stroke-width="1.5" stroke-dasharray="6 4" opacity=".55"/>
+      <path d="M60 55 L180 82 L300 112 L420 150 L540 196 L660 230" stroke-width="1.5" stroke-dasharray="2 3" opacity=".75"/>
+      <g stroke="none" fill="currentColor">
+        <text x="20" y="44" font-size="11" opacity=".7">100%</text>
+        <text x="28" y="234" font-size="11" opacity=".7">0</text>
+        <text x="56" y="250" font-size="11" opacity=".7">0</text>
+        <text x="176" y="250" font-size="11" opacity=".7">1 ปี</text>
+        <text x="296" y="250" font-size="11" opacity=".7">2 ปี</text>
+        <text x="416" y="250" font-size="11" opacity=".7">3 ปี</text>
+        <text x="536" y="250" font-size="11" opacity=".7">4 ปี</text>
+        <text x="650" y="250" font-size="11" opacity=".7">5 ปี</text>
+        <text x="386" y="100" font-size="12">มูลค่าขายต่อจริง (ตลาดมือสอง)</text>
+        <text x="320" y="196" font-size="12" opacity=".8">มูลค่าตามบัญชี เส้นตรง 6 ปี</text>
+        <text x="96" y="214" font-size="12" opacity=".85">ยอดหนี้คงค้าง</text>
+      </g>
+    </g>
+  </svg>
+  <figcaption>
+    ภาพประกอบเชิงแนวคิด ไม่ใช่ข้อมูลรายดีล — จุดที่ต้องดูคือ <strong>ช่วงปีที่ 3–4</strong>
+    ที่เส้นมูลค่าขายต่อกับเส้นยอดหนี้เข้าใกล้กัน ถ้าเส้นหนี้อยู่<em>เหนือ</em>มูลค่าหลักประกันเมื่อไร
+    ผู้ให้กู้ต้องเรียกหลักประกันเพิ่มหรือยอมรับ LTV ที่เกิน 100% ตัวเลขขายต่อ (~61% ที่ 2 ปี,
+    45–55% ที่ 3 ปี) มาจากรายงานตลาดมือสอง ซึ่งเป็น secondary ทั้งหมด
+  </figcaption>
+</figure>
+
+<h3>หลักฐานเชิงตัวเลข</h3>
+
+<div class="tablebox">
+  <table>
+    <thead>
+      <tr><th>ตัวชี้วัด</th><th>ค่า</th><th>นัยต่อหลักประกัน</th><th>ชั้นหลักฐาน</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>อายุ PP&amp;E เฉลี่ยโดยนัยของ hyperscaler</td><td class="num">~7 ปี</td><td>IMF ระบุว่า GPU และชิปขั้นสูง "อาจล้าสมัยเร็วกว่านั้น"</td><td>primary (IMF GFSR)</td></tr>
+      <tr><td>นโยบายบัญชีรายบริษัท</td><td class="num">Meta 5.5 ปี · GOOGL/MSFT 6 ปี · AMZN ลดบางส่วนเหลือ 5 ปี</td><td>การยืดอายุของ Meta ลดค่าเสื่อม $2.3bn ใน 9 เดือนแรกปี 2025</td><td>secondary</td></tr>
+      <tr><td>ค่าเช่า H100 ต่อชั่วโมง</td><td class="num">จุดสูง $8–10 (ปลายปี 2024) → $1.80–3.50 (Q2 2026) → $2.65+ (ก.ย. 2026)</td><td>รายได้ต่อชิปที่ใช้คำนวณความสามารถชำระหนี้ตกแรงแล้วเด้งบางส่วน</td><td>secondary</td></tr>
+      <tr><td>อัตราค่าเสื่อมของมูลค่าขายต่อ</td><td class="num">~20–35% ต่อปี</td><td>เทียบกับอาคารดาต้าเซ็นเตอร์ที่อายุ 20–30 ปี — คนละสินทรัพย์ในกล่องเดียวกัน</td><td>secondary</td></tr>
+      <tr><td>มูลค่าคงเหลือ H100</td><td class="num">~61% ที่ 2 ปี · 45–55% ที่ 3 ปี</td><td>สินเชื่อ GPU อายุ ~5 ปี จะเหลือหลักประกันไม่ถึงครึ่งก่อนจบสัญญา</td><td>secondary</td></tr>
+      <tr><td>อายุเฉลี่ยของ private credit loan ให้บริษัท AI</td><td class="num">4.7 ปี (เทียบ 4.8 ปีของภาคอื่น)</td><td><strong>อายุหนี้เท่าเดิม แต่หลักประกันเสื่อมเร็วกว่า</strong></td><td>primary (BIS)</td></tr>
+      <tr><td>spread ที่ผู้ให้กู้คิด</td><td class="num">6.2 จุด (AI) เทียบ 6.1 จุด (ไม่ใช่ AI)</td><td>ผู้ให้กู้คิดราคาเหมือนกัน แปลว่า<em>ไม่ได้คิดเงินเพิ่มสำหรับความเสี่ยงหลักประกันเสื่อมเร็ว</em></td><td>primary (BIS)</td></tr>
+      <tr><td>สัดส่วนสินเชื่อที่มีหลักประกัน</td><td class="num">46% (AI) เทียบ 48% (ภาคอื่น)</td><td>ไม่ได้รัดกุมกว่า ทั้งที่สินทรัพย์เสี่ยงกว่า</td><td>primary (BIS)</td></tr>
+      <tr><td>ขนาดสินเชื่อเฉลี่ย</td><td class="num">$169m (AI) เทียบ $90m</td><td>เดิมพันต่อดีลใหญ่กว่าเกือบเท่าตัว</td><td>primary (BIS)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="note">
+  <strong>บรรทัดที่สำคัญที่สุดของหน้านี้:</strong> BIS วัดได้ว่าเงินกู้ให้บริษัท AI มี spread 6.2 จุด
+  เทียบกับ 6.1 จุดของภาคอื่น และความต่างนี้ยัง<em>ไม่มีนัยสำคัญ</em>แม้ปรับตามขนาด อายุ
+  และการมีหลักประกันแล้ว ข้อสรุปของ BIS ตรงไปตรงมา: ผู้ให้กู้อาจประเมินความเสี่ยงของการลงทุน AI
+  ต่ำเกินไปในขณะที่ exposure ของตนกำลังโตขึ้นมาก — หรือไม่ตลาดหุ้นก็กำลังประเมิน
+  กระแสเงินสดในอนาคตสูงเกินไป <strong>หนึ่งในสองต้องผิด</strong>
+</div>
+
+<h3>ข้อโต้แย้งฝั่งตรงข้าม (ต้องชั่งด้วย)</h3>
+
+<p>
+  Michael Burry อ้างว่าการยืดอายุการใช้งานคือ "การฉ้อฉลที่พบบ่อยที่สุดแบบหนึ่งของยุคนี้"
+  และประเมินว่าค่าเสื่อมถูกบันทึกต่ำไปราว $176bn ในช่วงปี 2026–2028 ฝ่ายค้านตอบว่า
+  ข้อโต้แย้งนี้<strong>สับสนระหว่างรอบล้าสมัยเชิงเทคโนโลยีกับอายุเชิงเศรษฐกิจ</strong>:
+  ชิปที่ตกรุ่นสำหรับการเทรนโมเดลแนวหน้า (18–36 เดือน) ยังทำงาน inference ได้ต่อในราคาถูกลง
+  (waterfall model) การตั้งอายุ 6 ปีจึงไม่ผิดถ้าชิปสร้างรายได้จริงตลอด 6 ปี เพียงแต่
+  <em>ไม่ใช่ที่ราคาเดิม</em> — และตรงนี้เองที่มันย้อนกลับมาเป็นปัญหาของหลักประกัน:
+  สิ่งที่ค้ำหนี้คือ<strong>มูลค่า</strong> ไม่ใช่<strong>ความสามารถในการทำงาน</strong>
+</p>
+
+<h2>4 — ความเสี่ยงเจ็ดช่องทาง เรียงตามลำดับที่น่าจะเกิดก่อน</h2>
+
+<div class="tablebox">
+  <table>
+    <thead>
+      <tr><th>#</th><th>ช่องทาง</th><th>กลไก</th><th>ใครเจ็บก่อน</th><th>สัญญาณที่ดูได้จริง</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td><strong>ตลาดปิดประตูก่อน default</strong></td><td>ดีลกู้ใหม่ขายไม่หมด ต้องเลื่อนหรือเพิ่ม spread</td><td>neocloud ที่ต้อง roll หนี้ทุกไตรมาส</td><td>เกิดแล้ว: Blue Owl ระดม $4bn ไม่สำเร็จสำหรับดาต้าเซ็นเตอร์ในเพนซิลเวเนีย · ธนาคารกระจายหนี้ $38bn ของแคมปัส Oracle ไม่ออก</td></tr>
+      <tr><td>2</td><td><strong>ต้นทุนเงินของผู้เช่าหลัก</strong></td><td>CDS ของ Oracle ขึ้นสูงสุดนับจากปี 2008 · S&amp;P ลดเป็น BBB− (9 ก.ค. 2026)</td><td>เจ้าของดาต้าเซ็นเตอร์ที่มี Oracle เป็นผู้เช่า</td><td>ผู้พัฒนาเริ่มเลี่ยง Oracle เพราะผู้ให้กู้บอกว่ารับ exposure พอแล้ว</td></tr>
+      <tr><td>3</td><td><strong>LTV ของหลักประกัน GPU</strong></td><td>มูลค่าขายต่อลดเร็วกว่าการผ่อนชำระ</td><td>ผู้ถือ DDTL / GPU-backed facility</td><td>DDTL 4.0 ($8.5bn) ได้เรตติ้ง A3 / A(low) แต่ DDTL 5.0 ถัดมาออกมา<em>ต่ำกว่า</em> investment grade</td></tr>
+      <tr><td>4</td><td><strong>RVG ถูกเรียกใช้</strong></td><td>ไม่ต่อสัญญาเช่า → ผู้ค้ำต้องจ่ายส่วนต่างเป็นเงินสด</td><td>hyperscaler ผู้ค้ำ (ภาระโผล่จาก footnote ขึ้นงบ)</td><td>ภาษาในหมายเหตุงบเปลี่ยนจาก "not probable" เป็นการบันทึกประมาณการหนี้สิน</td></tr>
+      <tr><td>5</td><td><strong>การกระจุกของผู้เช่า</strong></td><td>ABS ชั้นดีถูกให้เรตติ้งจากเครดิตผู้เช่า ไม่ใช่จากตัวโครงการ</td><td>ผู้ถือ ABS/CMBS — ประกันและบำนาญ</td><td>S&amp;P ยังไม่ให้ AAA กับ data center ABS เลย (สูงสุด A) ขณะ Moody's/Fitch ให้ถึง AAA — ความต่างนี้เองคือความเสี่ยงที่ยังไม่ถูกตกลง</td></tr>
+      <tr><td>6</td><td><strong>private credit เป็น procyclical</strong></td><td>ผู้ให้กู้ถอนตัวพร้อมกันตอนสถานการณ์แย่ แทนที่จะรองรับ</td><td>ทั้งห่วงโซ่</td><td>BIS ชี้ว่า ~20% ของกองทุน private credit มี exposure AI แล้ว (จาก 5% ปี 2010) แม้เฉลี่ยยังแค่ ~5% ของพอร์ต</td></tr>
+      <tr><td>7</td><td><strong>ย้อนกลับขึ้นต้นน้ำ</strong></td><td>คำสั่งซื้อชะลอ → ลูกหนี้ยืด → เงินล่วงหน้า memory (~$22bn) หยุดโต</td><td>NVDA (ลูกหนี้) · SK hynix / Micron / SNDK (เงินล่วงหน้า + สินค้าคงคลัง)</td><td>DSO ของผู้ผลิตชิป · ยอด prepayment รายไตรมาส · ราคา contract เทียบ spot</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>5 — ตลาดคิดราคาเรื่องนี้ไปแล้วแค่ไหน</h2>
+
+<p>
+  ราคาปิด 18 ก.ย. 2026 จาก terminal เรียงตามระยะห่างจากจุดสูงสุด 52 สัปดาห์ —
+  ลำดับนี้อ่านได้เหมือนแผนที่ความเสี่ยงข้างบนกลับหัว: <strong>คนที่อยู่ใกล้หลักประกันที่เสื่อม
+  ถูกคิดราคาแรงที่สุด ส่วนคนที่เก็บค่าธรรมเนียมยังแทบไม่ถูกแตะ</strong>
+</p>
+
+<div class="tablebox">
+  <table>
+    <thead>
+      <tr><th>สัญลักษณ์</th><th>บทบาทในห่วงโซ่</th><th>ราคา</th><th>สูงสุด 52W</th><th>ห่างจากจุดสูง</th><th>หนี้/ทุน</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>ORCL</td><td>ผู้เช่า + ผู้รับความเสี่ยง OpenAI</td><td class="num">147.61</td><td class="num">329.50</td><td class="num">−55.2%</td><td class="num">252%</td></tr>
+      <tr><td>OWL</td><td>ผู้จัดโครงสร้าง SPV / private credit</td><td class="num">9.84</td><td class="num">18.99</td><td class="num">−48.2%</td><td class="num">77%</td></tr>
+      <tr><td>CRWV</td><td>neocloud ที่กู้ด้วย GPU</td><td class="num">81.36</td><td class="num">153.20</td><td class="num">−46.9%</td><td class="num">1,027%</td></tr>
+      <tr><td>IREN</td><td>neocloud แปลงร่างจากเหมือง</td><td class="num">46.68</td><td class="num">76.87</td><td class="num">−39.3%</td><td class="num">187%</td></tr>
+      <tr><td>NBIS</td><td>neocloud</td><td class="num">223.54</td><td class="num">299.86</td><td class="num">−25.5%</td><td class="num">99%</td></tr>
+      <tr><td>APO</td><td>private credit + ประกัน</td><td class="num">125.91</td><td class="num">153.29</td><td class="num">−17.9%</td><td class="num">101%</td></tr>
+      <tr><td>BLK</td><td>เจ้าของแพลตฟอร์ม + ผู้ถือหนี้</td><td class="num">1,069.78</td><td class="num">1,219.94</td><td class="num">−12.3%</td><td class="num">23%</td></tr>
+      <tr><td>NVDA</td><td>ต้นน้ำ + ผู้ค้ำ</td><td class="num">222.27</td><td class="num">236.54</td><td class="num">−6.0%</td><td class="num">17%</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  CRWV ที่ debt/equity 1,027% กับ NVDA ที่ 17% อยู่ในวงจรเดียวกัน ถือ exposure ต่อความต้องการ
+  ชุดเดียวกัน แต่ถูกคิดราคาคนละโลก — ส่วนต่างนี้คือสิ่งที่ BIS เรียกว่าความแตกแยก
+  ระหว่างการตั้งราคาในตลาดหนี้กับมูลค่าในตลาดหุ้น ในเวอร์ชันของตลาดหุ้นเอง
+</p>
+
+<h2>6 — สิ่งที่จะทำให้ข้อสรุปนี้ผิด</h2>
+
+<ul>
+  <li><strong>ค่าเช่า GPU กลับขึ้นและยืนได้</strong> — H100 ขึ้นจากจุดต่ำ $1.70/ชม. (ต.ค. 2025)
+    เป็น $2.35 (มี.ค. 2026) ถ้าแนวโน้มนี้ต่อเนื่อง สมมติฐานค่าเสื่อมเร็วจะผิด
+    <em>เกณฑ์หักล้าง: ค่าเช่า H100 สัญญา 1 ปี ยืนเหนือ $2.50/ชม. ต่อเนื่องสี่ไตรมาส</em></li>
+  <li><strong>มูลค่าขายต่อคงที่จริง</strong> — ถ้า inference ดูดซับชิปเก่าได้ตามที่ฝ่ายค้านว่า
+    เส้นมูลค่าจะแบนที่ราว 45–55% แทนที่จะไหลต่อ <em>เกณฑ์: ราคา A100/H100 มือสองไม่ลดอีกสองไตรมาส</em></li>
+  <li><strong>เงินไหลเข้าไม่หยุด</strong> — ถ้า 144A และ ABS ยังขายหมดที่ spread เดิม
+    ช่องทางที่ 1 ก็ไม่เกิด <em>เกณฑ์: ไม่มีดีลใหญ่ถูกเลื่อนหรือลดขนาดในไตรมาสถัดไป</em></li>
+  <li><strong>RVG ไม่ถูกเรียกเลย</strong> — ถ้าสัญญาเช่าถูกต่อทุกราย ภาระ $662bn ก็ไม่เคยโผล่ขึ้นงบ</li>
+  <li><strong>ขนาดเชิงมหภาคยังเล็ก</strong> — BIS ชี้เองว่าการลงทุน AI ที่ ~1% ของ GDP สหรัฐ
+    ใกล้เคียงกับ shale boom และเป็นแค่ครึ่งเดียวของ IT boom ยุคดอตคอม
+    ⇒ <strong>ต่อให้พัง ก็ไม่จำเป็นต้องเป็นวิกฤตระบบ</strong> — แต่ BIS เตือนซ้อนว่า
+    การจบ boom ที่ผ่านมากด GDP ลงเฉลี่ยกว่า 1 จุด และดอตคอมที่ "เล็ก" กลับหดแรงที่สุด</li>
+</ul>
+
+<h2>7 — ช่องว่างหลักฐานที่ยังปิดไม่ได้</h2>
+
+<ul>
+  <li>เพดาน lease-guarantee $3.5bn ของ NVIDIA มาจากรายงานข่าวที่อ้าง 10-Q Q1 FY27 —
+    <strong>ยังไม่ได้เปิดต้นฉบับ</strong> ต้องตรวจก่อนใช้เป็นตัวเลขอ้างอิง</li>
+  <li>ตัวเลข $662bn ของ Moody's เป็นการรายงานต่อจากสื่อ ไม่ใช่รายงาน Moody's ฉบับเต็ม</li>
+  <li>ข้ออ้างว่า "สินทรัพย์เดียวถูกนำไปค้ำหลายที่" (double-pledging) ปรากฏในบทสรุปทุติยภูมิ
+    <strong>แต่ไม่พบในตัวบท BIS Bulletin 120 ที่อ่านจริง</strong> — อย่าใช้จนกว่าจะเจอต้นทาง</li>
+  <li>ไม่มีข้อมูลรายดีลว่า LTV และเงื่อนไข margin call ของสินเชื่อ GPU-backed ตั้งไว้ที่เท่าไร
+    ซึ่งเป็นตัวแปรเดียวที่ตัดสินว่าช่องทางที่ 3 จะเกิดเมื่อไร</li>
+  <li>ยังไม่ได้ตรวจว่าผู้ผลิตหน่วยความจำ (รวม SNDK) ขายตรงให้ neocloud มากขึ้นหรือไม่ —
+    ถ้าใช่ โปรไฟล์ลูกหนี้จะเปลี่ยน และช่องทางที่ 7 จะสั้นลงกว่าที่ประเมิน</li>
+</ul>
+
+<ul class="src">
+  <li>BIS Bulletin No 120 — Aldasoro, Doerr, Rees, "Financing the AI boom: from cash flows to debt", 7 ม.ค. 2026 — private credit &gt;$200bn, คาด $300–600bn ปี 2030, spread 6.2 เทียบ 6.1 จุด, secured 46% เทียบ 48%, อายุ 4.7 เทียบ 4.8 ปี, ขนาดเฉลี่ย $169m เทียบ $90m, 20% ของกองทุนมี exposure (อ่านจาก PDF ต้นฉบับ)</li>
+  <li>IMF Global Financial Stability Report เม.ย. 2026 บทที่ 1 + กล่อง 1.3 — capex $2.9tn ถึงปี 2028 เทียบแหล่งเงิน 5 ทาง, securitization $46bn สะสม → $150bn ปี 2028, อายุ PP&amp;E โดยนัย ~7 ปี, capex AI $3.4tn ถึงปี 2029 (hyperscaler 70%), พันธบัตร &gt;$100bn ตั้งแต่ ม.ค. 2025 (อ่านจาก PDF ต้นฉบับ)</li>
+  <li>Quinn Emanuel client alert — capex นอกงบ &gt;$120bn, Beignet Investor $30bn/$27bn, RVG $28bn, ค่าเช่า GPU −70–90% จากปี 2023, รายได้ภาค ~$60bn เทียบ capex ~$400bn ปี 2025, Google backstop เริ่มหลังก่อสร้างเสร็จ</li>
+  <li>CoreWeave 8-K (9 ก.ย. 2025) — NVIDIA รับซื้อกำลังการผลิตคงเหลือถึง 13 เม.ย. 2032 วงเงินสูงสุด $6.3bn</li>
+  <li>CoreWeave IR (2026) — DDTL 4.0 $8.5bn, Moody's A3 / DBRS A(low), SOFR+2.25% และคงที่ ~5.9%, ครบกำหนด มี.ค. 2032</li>
+  <li>BlackRock / GIP press release — AIP ร่วมกับ MGX, Microsoft, NVIDIA, xAI; ซื้อ Aligned Data Centers มูลค่ากิจการ ~$40bn + ทุนขยาย $5bn; เป้าระดมทุน $30bn equity และสูงสุด $100bn รวมหนี้</li>
+  <li>Meta investor release (ต.ค. 2025) + PitchBook / Bisnow — JV Hyperion กับ Blue Owl, หนี้ $27.3bn เรตติ้ง A+, PIMCO ~$18bn, BlackRock ~$3bn, จัดโครงสร้างโดย Morgan Stanley</li>
+  <li>Fortune / DCD (ก.พ.–มี.ค. 2026) รายงานบทวิเคราะห์ Moody's — ภาระ lease นอกงบ $662bn ของ 5 บริษัท และคำเตือนว่าการเปิดเผยอาจไม่ครบ</li>
+  <li>Morgan Stanley "Bridging a $1.5tr Data Center Financing Gap" · Goldman Sachs "How AI Debt Is Reshaping Credit Markets" · JPMorgan ประเมินช่องว่าง $1.4tn · ประมาณการการออกหนี้ที่เกี่ยวกับ AI ~$500–570bn ในปี 2026</li>
+  <li>BlackRock Investment Institute 2026 Outlook + รายงาน Pensions &amp; Investments — capex hyperscaler ~$610bn ปี 2026 จาก ~$360bn ปี 2025 และคำเตือนเรื่อง leverage ภาคเอกชน</li>
+  <li>รายงานตลาด GPU มือสองและค่าเช่า (SemiAnalysis, Aethir, hashrateindex, CloudZero, ก.ย. 2026) — secondary ทั้งหมด</li>
+  <li>Terminal <code>/api/stock/quote</code> — ราคาปิด 18 ก.ย. 2026 สำหรับ ORCL · OWL · CRWV · IREN · NBIS · APO · BLK · NVDA</li>
+  <li>หน้าที่เกี่ยวข้องในสมุดเล่มนี้: <code>/api/v2/graphs/neocloud-risk-board/render</code> · <code>/api/v2/graphs/neocloud-accounting-review-2026-09-19/render</code> · <code>/api/v2/graphs/ai-money-map/render</code></li>
+</ul>

@@ -5,7 +5,7 @@
   "description": "ราคาชิป DRAM/NAND ที่ DRAMeXchange กับหุ้นกลุ่มหน่วยความจำ: สหสัมพันธ์ PCA cointegration และการไหลของข้อมูลข้ามตลาด พร้อมข้อค้นพบว่าสองฝั่งกำลังบอกคนละเรื่อง",
   "kind": "html",
   "symbol": "MU",
-  "thesis_id": null,
+  "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
   "zettel_refs": "",
   "tags": "dram,nand,memory,correlation,cointegration,granger,pca,dramexchange",
   "as_of": "2026-09-18",
@@ -32,7 +32,7 @@
   "actor": "user",
   "deleted_at": null,
   "created_at": "2026-09-19T06:14:26.322546",
-  "updated_at": "2026-09-19 06:15:50.395",
+  "updated_at": "2026-09-19 07:06:05.103",
   "render_url": "/api/v2/graphs/dram-spot-vs-memory-equities/render",
   "file": "D:/Agents/Claude/bloomberg-terminal-main/research/graphs/dram-spot-vs-memory-equities/index.html"
 }

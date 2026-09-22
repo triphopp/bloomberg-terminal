@@ -8,6 +8,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Line,
   ReferenceLine,
   ResponsiveContainer,
@@ -83,6 +84,34 @@ interface RfResponse {
 }
 
 const RF_KEY = "bloomberg_capm_rf";
+const NAV_MODE_KEY = "bloomberg_nav_chart_mode";
+
+/** One day of the time-weighted equity curve (see /api/v2/portfolio/nav-index). */
+interface NavIndexPoint {
+  date: string;
+  nav: number;
+  flow: number;
+  return_pct: number;
+  port_index: number;
+  bench_index: number | null;
+  suspect: boolean;
+}
+interface NavIndexResponse {
+  benchmark: string;
+  benchmark_currency: string | null;
+  benchmark_available: boolean;
+  base_currency: string;
+  points: NavIndexPoint[];
+  n_days: number;
+  suspect_days: number;
+  start: string | null;
+  end: string | null;
+  port_twr_pct: number | null;
+  bench_pct: number | null;
+  excess_pct: number | null;
+  net_flow: number;
+  note?: string;
+}
 
 interface ReturnsRow {
   cagr_pct: number | null;
@@ -124,8 +153,335 @@ interface TradeStats {
   avg_loss: number | null;
   payoff: number | null;
   expectancy: number | null;
+  /** Per-trade return on cost, averaged. Native currency — no FX leg. */
+  avg_win_pct: number | null;
+  avg_loss_pct: number | null;
+  expectancy_pct: number | null;
+  /** Closed trades that carried a cost basis, so could be expressed as %. */
+  pct_basis: number;
   total_win: number;
   total_loss: number;
+}
+
+/** Signed percent for the small corner figure. null when the backend had no
+ *  cost basis to divide by, so the caller can drop the element entirely
+ *  instead of printing a misleading 0.0%. */
+const fmtPct = (n: number | null | undefined): string | null =>
+  n == null ? null : `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(1)}%`;
+
+/** The four lines of the NAV card, in the order they are read.
+ *
+ *  NAV = HOLDINGS + CASH is an identity, not a coincidence, so the three are
+ *  drawn as one family (the total filled, its two parts as lines) and COST sits
+ *  apart in grey: the gap between NAV and COST is the unrealized P&L. Each
+ *  series carries its own colour and a Thai gloss, because a chart with four
+ *  unlabelled lines is a chart nobody reads twice. */
+const NAV_SERIES = [
+  { key: "value", label: "NAV", color: "#60a5fa", hint: "มูลค่ารวม = หุ้นที่ถือ + เงินสด" },
+  { key: "holdings", label: "HOLDINGS", color: "#a78bfa", hint: "มูลค่าตลาดของที่ถืออยู่" },
+  { key: "cash", label: "CASH", color: "#facc15", hint: "เงินสดคงเหลือ (ประมาณจากบัญชี)" },
+  {
+    key: "cost",
+    label: "COST",
+    color: "#9ca3af",
+    hint: "ต้นทุนของที่ถืออยู่ — ช่องว่างกับ NAV คือกำไรที่ยังไม่ขาย",
+  },
+] as const;
+
+type NavRow = { date: string; value: number; holdings: number; cash: number; cost: number };
+
+/** Portfolio value over time: the total, what it is made of, and what it cost.
+ *
+ *  The previous version drew all four with no key and two of them in the same
+ *  blue, which made the card unreadable — hence the legend, which doubles as
+ *  the on/off switch (CASH next to a 2M NAV is a flat line at the floor until
+ *  you hide the big series and let the axis rescale to it). */
+function NavValueChart({
+  data,
+  colors,
+  sym,
+  tooltipContentStyle,
+}: {
+  data: NavRow[];
+  colors: Colors;
+  sym: string;
+  tooltipContentStyle: Record<string, unknown>;
+}) {
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const toggle = (k: string) =>
+    setHidden((h) => {
+      const n = new Set(h);
+      if (n.has(k)) n.delete(k);
+      else n.add(k);
+      // Hiding everything leaves an empty frame; the last one stays on.
+      return n.size >= NAV_SERIES.length ? h : n;
+    });
+
+  const last = data[data.length - 1];
+  const first = data[0];
+  const navChange = last && first ? last.value - first.value : 0;
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-1">
+        {NAV_SERIES.map((s) => {
+          const off = hidden.has(s.key);
+          return (
+            <button
+              type="button"
+              key={s.key}
+              onClick={() => toggle(s.key)}
+              title={`${s.hint} — คลิกเพื่อซ่อน/แสดง`}
+              className="flex items-center gap-1 text-[8px] font-mono"
+              style={{ color: off ? "#555" : colors.textSecondary }}
+            >
+              <span
+                className="inline-block"
+                style={{
+                  width: 10,
+                  height: s.key === "cost" ? 0 : 2,
+                  borderTop: s.key === "cost" ? `2px dashed ${off ? "#555" : s.color}` : undefined,
+                  background: s.key === "cost" ? undefined : off ? "#555" : s.color,
+                }}
+              />
+              {s.label}
+              {last && (
+                <span style={{ color: off ? "#555" : colors.text }}>
+                  {sym}
+                  {fmtK(Math.abs(last[s.key]))}
+                </span>
+              )}
+            </button>
+          );
+        })}
+        {data.length > 1 && (
+          <span className="text-[8px] font-mono ml-auto" style={{ color: colors.textSecondary }}>
+            ตั้งแต่ {first.date}: NAV{" "}
+            <span style={{ color: pnlColor(navChange) }}>
+              {navChange >= 0 ? "+" : "−"}
+              {sym}
+              {fmtK(Math.abs(navChange))}
+            </span>
+          </span>
+        )}
+      </div>
+      <ResponsiveContainer width="100%" height={160}>
+        {/* Composed, not Area: recharts 2.x renders <Line> children only inside
+            ComposedChart, so holdings/cash/cost were silently dropped. */}
+        <ComposedChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id="navGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.3} />
+              <stop offset="95%" stopColor="#60a5fa" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
+          <XAxis dataKey="date" tick={{ fill: "#666", fontSize: 8 }} tickLine={false} />
+          <YAxis
+            tick={{ fill: "#666", fontSize: 8 }}
+            tickLine={false}
+            axisLine={false}
+            tickFormatter={(v) => fmtK(v)}
+          />
+          <Tooltip
+            content={({ active, payload, label }) => {
+              const row = payload?.[0]?.payload as NavRow | undefined;
+              if (!active || !row) return null;
+              const unreal = row.value - row.cash - row.cost;
+              return (
+                <div style={{ ...tooltipContentStyle, padding: 6 }}>
+                  <div style={{ color: "#e5e5e5", marginBottom: 2 }}>{label}</div>
+                  {NAV_SERIES.filter((s) => !hidden.has(s.key)).map((s) => (
+                    <div key={s.key} style={{ color: s.color }}>
+                      {s.label} {row[s.key] < 0 ? "−" : ""}
+                      {sym}
+                      {fmtK(Math.abs(row[s.key]))}
+                    </div>
+                  ))}
+                  <div style={{ color: pnlColor(unreal), marginTop: 2 }}>
+                    ยังไม่ขาย (HOLDINGS − COST) {unreal >= 0 ? "+" : "−"}
+                    {sym}
+                    {fmtK(Math.abs(unreal))}
+                  </div>
+                </div>
+              );
+            }}
+          />
+          {!hidden.has("value") && (
+            <Area
+              dataKey="value"
+              stroke="#60a5fa"
+              strokeWidth={1.8}
+              fill="url(#navGrad)"
+              dot={data.length < 2}
+            />
+          )}
+          {!hidden.has("holdings") && (
+            <Line dataKey="holdings" stroke="#a78bfa" strokeWidth={1.2} dot={false} />
+          )}
+          {!hidden.has("cash") && (
+            <Line dataKey="cash" stroke="#facc15" strokeWidth={1.2} dot={false} />
+          )}
+          {!hidden.has("cost") && (
+            <Line
+              dataKey="cost"
+              stroke="#9ca3af"
+              strokeWidth={1.2}
+              strokeDasharray="4 3"
+              dot={false}
+            />
+          )}
+        </ComposedChart>
+      </ResponsiveContainer>
+      <div className="text-[7px] mt-1" style={{ color: "#666" }}>
+        NAV = HOLDINGS + CASH — ขายของแล้วเงินย้ายจากเส้นม่วงไปเส้นเหลือง NAV ไม่ขยับ. เส้นประคือต้นทุน
+        ช่องว่างระหว่าง HOLDINGS กับ COST = กำไร/ขาดทุนที่ยังไม่ขาย. คลิกชื่อเส้นเพื่อซ่อน
+      </div>
+    </>
+  );
+}
+
+/** The book's time-weighted return against an index, both rebased to 100.
+ *
+ *  Raw NAV answers "how much money is in here", which moves on a deposit and is
+ *  therefore not comparable with an index. This chart answers "how did the
+ *  money that WAS in here do" — the backend nets each day's external flow out
+ *  of that day's return and links the rest geometrically. */
+function NavIndexChart({
+  data,
+  loading,
+  colors,
+  benchmark,
+  tooltipContentStyle,
+  tooltipLabelStyle,
+  tooltipItemStyle,
+}: {
+  data: NavIndexResponse | null;
+  loading: boolean;
+  colors: Colors;
+  benchmark: string;
+  tooltipContentStyle: Record<string, unknown>;
+  tooltipLabelStyle: Record<string, unknown>;
+  tooltipItemStyle: Record<string, unknown>;
+}) {
+  const pts = data?.points ?? [];
+  if (loading && pts.length === 0) {
+    return (
+      <div className="h-[160px] flex items-center justify-center">
+        <Loader2 className="w-4 h-4 animate-spin" style={{ color: colors.accent }} />
+      </div>
+    );
+  }
+  if (pts.length < 2) {
+    return (
+      <div
+        className="h-[160px] flex items-center justify-center text-[8px] text-center px-4"
+        style={{ color: colors.textSecondary }}
+      >
+        {data?.note ?? "ยังไม่มี snapshot พอจะสร้างเส้นผลตอบแทน — NAV ถูกเก็บวันละครั้งตอนเปิดหน้า"}
+      </div>
+    );
+  }
+
+  const chart = pts.map((p) => ({
+    date: p.date.slice(5),
+    port: p.port_index,
+    bench: p.bench_index,
+  }));
+  const twr = data?.port_twr_pct ?? null;
+  const bench = data?.bench_pct ?? null;
+  const excess = data?.excess_pct ?? null;
+
+  return (
+    <>
+      <div
+        className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-1 text-[8px] font-mono"
+        style={{ color: colors.textSecondary }}
+      >
+        <span title="Time-weighted return over the snapshot span — external cash flows removed">
+          TWR{" "}
+          <span style={{ color: pnlColor(twr ?? 0) }} className="font-bold">
+            {twr == null ? "—" : `${twr >= 0 ? "+" : ""}${twr.toFixed(2)}%`}
+          </span>
+        </span>
+        <span>
+          {benchmark}{" "}
+          <span style={{ color: pnlColor(bench ?? 0) }} className="font-bold">
+            {bench == null ? "—" : `${bench >= 0 ? "+" : ""}${bench.toFixed(2)}%`}
+          </span>
+        </span>
+        <span title="TWR − benchmark over the same dates">
+          EXCESS{" "}
+          <span style={{ color: pnlColor(excess ?? 0) }} className="font-bold">
+            {excess == null ? "—" : `${excess >= 0 ? "+" : ""}${excess.toFixed(2)}%`}
+          </span>
+        </span>
+        <span>
+          {data?.start} → {data?.end} · {data?.n_days}d
+        </span>
+        {(data?.suspect_days ?? 0) > 0 && (
+          <span
+            style={{ color: "#f87171" }}
+            title="วันที่ NAV ขยับเกิน 50% — มักเป็นเงินฝาก/ถอนที่ยังไม่ได้บันทึกใน CASH ไม่ใช่ผลตอบแทน"
+          >
+            ⚠ {data?.suspect_days} วันน่าสงสัย
+          </span>
+        )}
+        {data && !data.benchmark_available && <span style={{ color: "#f87171" }}>ไม่มีราคาดัชนี</span>}
+      </div>
+      <ResponsiveContainer width="100%" height={160}>
+        <ComposedChart data={chart} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id="twrGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.25} />
+              <stop offset="95%" stopColor="#60a5fa" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
+          <XAxis dataKey="date" tick={{ fill: "#666", fontSize: 8 }} tickLine={false} />
+          <YAxis
+            tick={{ fill: "#666", fontSize: 8 }}
+            tickLine={false}
+            axisLine={false}
+            domain={["auto", "auto"]}
+            tickFormatter={(v: number) => v.toFixed(0)}
+          />
+          <Tooltip
+            contentStyle={tooltipContentStyle}
+            labelStyle={tooltipLabelStyle}
+            itemStyle={tooltipItemStyle}
+            // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
+            formatter={(v: any, name: any) => [
+              v == null ? "—" : `${Number(v).toFixed(2)} (${(Number(v) - 100).toFixed(2)}%)`,
+              name === "port" ? "Portfolio (TWR)" : benchmark,
+            ]}
+          />
+          {/* 100 = the first snapshot. Above it the book made money, below it lost. */}
+          <ReferenceLine y={100} stroke="#444" strokeDasharray="3 3" />
+          <Area
+            dataKey="port"
+            stroke="#60a5fa"
+            strokeWidth={1.6}
+            fill="url(#twrGrad)"
+            dot={false}
+          />
+          <Line
+            dataKey="bench"
+            stroke="#facc15"
+            strokeWidth={1.2}
+            dot={false}
+            connectNulls
+            fill="none"
+          />
+        </ComposedChart>
+      </ResponsiveContainer>
+      <div className="text-[7px] mt-1" style={{ color: "#666" }}>
+        Time-weighted: r = (NAV − flow − NAV₋₁) / NAV₋₁ ต่อวัน แล้วคูณทบ — เงินฝาก/ถอนถูกหักออกก่อน
+        จึงเทียบกับดัชนีได้ตรงๆ (ต่างจาก XIRR ด้านบนซึ่งเป็น money-weighted). ดัชนีแปลงเป็น {data?.base_currency}{" "}
+        ก่อน rebase แล้ว
+      </div>
+    </>
+  );
 }
 
 export function AnalyticsTab({
@@ -175,6 +531,44 @@ export function AnalyticsTab({
   });
   const [rfDraft, setRfDraft] = useState("");
   const [vol, setVol] = useState<VolMetrics | null>(null);
+  // VALUE = the money in the book; INDEX = the time-weighted curve, which is
+  // the only one of the two that can be laid next to an index.
+  const [navMode, setNavMode] = useState<"VALUE" | "INDEX">(() => {
+    if (typeof window === "undefined") return "VALUE";
+    try {
+      const s = localStorage.getItem(NAV_MODE_KEY);
+      if (s === "INDEX" || s === "VALUE") return s;
+    } catch {
+      /* ignore */
+    }
+    return "VALUE";
+  });
+  const [navIndex, setNavIndex] = useState<NavIndexResponse | null>(null);
+  const [navIndexLoading, setNavIndexLoading] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(NAV_MODE_KEY, navMode);
+    } catch {
+      /* ignore */
+    }
+  }, [navMode]);
+
+  // Only fetched when the curve is on screen — it pulls the benchmark's price
+  // history, which the value chart has no use for.
+  useEffect(() => {
+    if (navMode !== "INDEX") return;
+    const ac = new AbortController();
+    const qs = new URLSearchParams({ base_currency: currency, benchmark, days: "365" });
+    if (accountId !== "all") qs.set("account_id", accountId);
+    setNavIndexLoading(true);
+    fetch(`/api/v2/portfolio/nav-index?${qs}`, { signal: ac.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setNavIndex(d && !d.error ? d : null))
+      .catch(() => {})
+      .finally(() => setNavIndexLoading(false));
+    return () => ac.abort();
+  }, [navMode, accountId, currency, benchmark]);
 
   useEffect(() => {
     try {
@@ -698,6 +1092,7 @@ export function AnalyticsTab({
             {[
               {
                 label: "WIN RATE",
+                pct: null as string | null,
                 value: ts.win_rate == null ? "—" : `${ts.win_rate.toFixed(1)}%`,
                 color: ts.win_rate == null ? "#555" : ts.win_rate >= 50 ? "#4ade80" : "#f87171",
                 hint: `${ts.wins}W / ${ts.losses}L · closed`,
@@ -705,6 +1100,7 @@ export function AnalyticsTab({
               },
               {
                 label: "HIT RATE",
+                pct: null as string | null,
                 value: hitRate == null ? "—" : `${hitRate.pct.toFixed(1)}%`,
                 color: hitRate == null ? "#555" : hitRate.pct >= 50 ? "#4ade80" : "#f87171",
                 hint: hitRate == null ? "—" : `${hitRate.hits} / ${hitRate.total} · incl. open`,
@@ -713,6 +1109,7 @@ export function AnalyticsTab({
               },
               {
                 label: "W/L RATIO",
+                pct: null as string | null,
                 value: ts.wl_ratio == null ? "—" : `${ts.wl_ratio.toFixed(2)}×`,
                 color: ts.wl_ratio == null ? "#555" : ts.wl_ratio >= 1 ? "#4ade80" : "#f87171",
                 hint: "wins ÷ losses (count)",
@@ -721,19 +1118,24 @@ export function AnalyticsTab({
               {
                 label: "AVG WIN",
                 value: ts.avg_win == null ? "—" : `${sym}${fmtK(Math.abs(ts.avg_win))}`,
+                pct: fmtPct(ts.avg_win_pct),
                 color: ts.avg_win == null ? "#555" : "#4ade80",
                 hint: "per winning trade",
-                title: "Mean realized P&L across winning closed trades, in the display currency.",
+                title:
+                  "Mean realized P&L across winning closed trades, in the display currency. The % is the mean return on cost of those same trades, in each trade's own currency.",
               },
               {
                 label: "AVG LOSS",
                 value: ts.avg_loss == null ? "—" : `${sym}${fmtK(Math.abs(ts.avg_loss))}`,
+                pct: fmtPct(ts.avg_loss_pct),
                 color: ts.avg_loss == null ? "#555" : "#f87171",
                 hint: "per losing trade",
-                title: "Mean realized P&L across losing closed trades, in the display currency.",
+                title:
+                  "Mean realized P&L across losing closed trades, in the display currency. The % is the mean return on cost of those same trades, in each trade's own currency.",
               },
               {
                 label: "PAYOFF",
+                pct: null as string | null,
                 value: ts.payoff == null ? "—" : `${ts.payoff.toFixed(2)}×`,
                 color: ts.payoff == null ? "#555" : ts.payoff >= 1 ? "#4ade80" : "#f87171",
                 hint: "avg win ÷ avg loss",
@@ -745,8 +1147,12 @@ export function AnalyticsTab({
                 <div className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
                   {t.label}
                 </div>
-                <div className="text-[11px] font-mono font-bold mt-0.5" style={{ color: t.color }}>
-                  {t.value}
+                <div
+                  className="flex items-baseline justify-between gap-1 mt-0.5"
+                  style={{ color: t.color }}
+                >
+                  <span className="text-[11px] font-mono font-bold">{t.value}</span>
+                  {t.pct && <span className="text-[8px] font-mono opacity-70">{t.pct}</span>}
                 </div>
                 <div className="text-[7px] font-mono mt-0.5" style={{ color: "#555" }}>
                   {t.hint}
@@ -777,6 +1183,9 @@ export function AnalyticsTab({
                 : `${ts.expectancy >= 0 ? "+" : "−"}${sym}${fmtK(Math.abs(ts.expectancy))} ${
                     ts.expectancy >= 0 ? "▲" : "▼"
                   }`}
+              {fmtPct(ts.expectancy_pct) && (
+                <span className="ml-1 text-[9px] opacity-70">{fmtPct(ts.expectancy_pct)}</span>
+              )}
               <span className="ml-2 text-[9px]" style={{ color: colors.textSecondary }}>
                 {sym}
                 {fmtK(Math.abs(ts.total_win))} won / {sym}
@@ -1362,73 +1771,56 @@ export function AnalyticsTab({
       {/* Portfolio value (NAV) over time — built from daily capture-on-view snapshots */}
       {navData.length > 0 && (
         <div className="mx-2 mb-2 border p-2" style={{ borderColor: colors.border }}>
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
             <div className="text-[9px] font-bold tracking-widest" style={{ color: colors.accent }}>
-              PORTFOLIO VALUE (NAV)
+              {navMode === "VALUE" ? "PORTFOLIO VALUE (NAV)" : `EQUITY CURVE vs ${benchmark}`}
             </div>
-            {navData.length < 2 && (
-              <div className="text-[7px] font-mono" style={{ color: "#666" }}>
-                เก็บข้อมูลรายวัน — กราฟจะสมบูรณ์ขึ้นเมื่อมีหลายวัน
-              </div>
-            )}
+            <div className="flex items-center gap-1">
+              {navData.length < 2 && (
+                <div className="text-[7px] font-mono mr-1" style={{ color: "#666" }}>
+                  เก็บข้อมูลรายวัน — กราฟจะสมบูรณ์ขึ้นเมื่อมีหลายวัน
+                </div>
+              )}
+              {(["VALUE", "INDEX"] as const).map((m) => (
+                <button
+                  type="button"
+                  key={m}
+                  onClick={() => setNavMode(m)}
+                  title={
+                    m === "VALUE"
+                      ? "NAV เป็นเงิน — ฝาก/ถอนทำให้เส้นขยับ จึงเทียบกับดัชนีตรงๆ ไม่ได้"
+                      : "Time-weighted: หักกระแสเงินเข้า-ออกออกจากผลตอบแทนรายวัน แล้ว rebase = 100 เทียบกับดัชนีได้"
+                  }
+                  className="text-[7px] font-bold px-1.5 py-0.5 border"
+                  style={{
+                    borderColor: navMode === m ? colors.accent : colors.border,
+                    color: navMode === m ? colors.accent : colors.textSecondary,
+                    background: navMode === m ? "#ff990015" : "transparent",
+                  }}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
           </div>
-          <ResponsiveContainer width="100%" height={160}>
-            <AreaChart data={navData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="navGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#60a5fa" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
-              <XAxis dataKey="date" tick={{ fill: "#666", fontSize: 8 }} tickLine={false} />
-              <YAxis
-                tick={{ fill: "#666", fontSize: 8 }}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(v) => fmtK(v)}
-              />
-              <Tooltip
-                contentStyle={tooltipContentStyle}
-                labelStyle={tooltipLabelStyle}
-                itemStyle={tooltipItemStyle}
-                // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
-                formatter={(v: any, name: any) => [
-                  `${v < 0 ? "-" : ""}${sym}${fmtK(Math.abs(v))}`,
-                  (
-                    {
-                      value: "NAV (holdings + cash)",
-                      holdings: "Holdings",
-                      cash: "Cash",
-                      cost: "Cost basis",
-                    } as Record<string, string>
-                  )[name] ?? name,
-                ]}
-              />
-              <Area
-                dataKey="value"
-                stroke="#60a5fa"
-                strokeWidth={1.5}
-                fill="url(#navGrad)"
-                dot={navData.length < 2}
-              />
-              <Line
-                dataKey="holdings"
-                stroke="#60a5fa"
-                strokeWidth={1}
-                strokeOpacity={0.5}
-                dot={false}
-              />
-              <Line dataKey="cash" stroke="#facc15" strokeWidth={1} dot={false} />
-              <Line
-                dataKey="cost"
-                stroke="#888"
-                strokeWidth={1}
-                strokeDasharray="4 3"
-                dot={false}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+          {navMode === "INDEX" ? (
+            <NavIndexChart
+              data={navIndex}
+              loading={navIndexLoading}
+              colors={colors}
+              benchmark={benchmark}
+              tooltipContentStyle={tooltipContentStyle}
+              tooltipLabelStyle={tooltipLabelStyle}
+              tooltipItemStyle={tooltipItemStyle}
+            />
+          ) : (
+            <NavValueChart
+              data={navData}
+              colors={colors}
+              sym={sym}
+              tooltipContentStyle={tooltipContentStyle}
+            />
+          )}
         </div>
       )}
 

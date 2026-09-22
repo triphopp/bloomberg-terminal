@@ -1,0 +1,448 @@
+<p class="lede">
+  Situational Awareness LP ของ Leopold Aschenbrenner (ร่วมกับ Carl Shulman) ยื่น 13F-HR มาแล้ว 7 ไตรมาสติดกัน
+  ตั้งแต่ Q4 2024 ถึง Q2 2026 มูลค่าที่รายงานโตจาก 255 ล้านดอลลาร์เป็น 20,242 ล้านดอลลาร์ — 79 เท่าในเจ็ดไตรมาส
+  หน้านี้อ่านสมุดนั้นทั้งเล่ม: เส้นทางการหมุนธีม (COMPUTE → ไฟฟ้า → นีโอคลาวด์ → หน่วยความจำ), ว่าของทุกชิ้นที่ถือเชื่อมกันตรงไหน
+  และสถิติพฤติกรรมที่วัดได้จริงจากตัวเลข — ระยะถือ อัตราหมุนพอร์ต การกระจุกตัว จังหวะเข้าออก และรูปแบบการใช้ออปชัน
+  ข้อสรุปหลักข้อเดียว: <strong>นี่คือพอร์ตที่ซื้อคอขวดทางกายภาพของ AI แล้วขายหรือป้องกันความเสี่ยงฝั่งที่ตลาดตีราคาไปแล้ว</strong>
+  โดยยอมกระจุกตัวสูงมากและหมุนของเร็วมาก
+</p>
+
+<h2>ขอบเขตและสิ่งที่ 13F ไม่บอก</h2>
+
+<p>
+  ตัวเลขทุกตัวในหน้านี้มาจากแบบ 13F-HR, SCHEDULE 13D/13G และ Form 3/4 ที่ยื่นต่อ SEC โดย CIK 0002045724
+  (Situational Awareness LP) และ CIK 0002038540 (Situational Awareness Partners LP — กองทุนตัวจริง ยื่นตารางซ้ำกันหนึ่งไตรมาส จึงตัดออกไม่ให้นับซ้ำ)
+  โครงสร้างผู้ควบคุมจากหน้า 13D: Situational Awareness LP เป็นที่ปรึกษาการลงทุน, SAF AI GP LP เป็น GP,
+  Situational Awareness LLC เป็นบริษัทแม่ และผู้ควบคุมสองคนคือ <strong>Leopold Aschenbrenner</strong> และ <strong>Carl Shulman</strong>
+</p>
+
+<div class="note">
+  <strong>สิ่งที่ 13F มองไม่เห็น และต้องจำไว้ตลอดการอ่านหน้านี้:</strong>
+  <br>1. <em>ไม่เห็นการขายชอร์ตหุ้นรายตัว</em> — 13F รายงานเฉพาะสถานะซื้อ (long) ในหลักทรัพย์ 13(f) เท่านั้น
+  <br>2. <em>ไม่บอกว่าออปชันเป็นฝั่งซื้อหรือฝั่งขาย</em> — บรรทัด "Put" อาจเป็น put ที่ซื้อ (ป้องกัน/เก็ง) หรือ put ที่ขาย (สังเคราะห์สถานะซื้อ) ก็ได้ นี่คือความกำกวมที่ใหญ่ที่สุดของหน้านี้
+  <br>3. <em>ไม่เห็นเงินสด พันธบัตร ทองคำ หุ้นนอกสหรัฐ ตราสารเอกชน</em> — เงินที่ลงใน SPV ของ OpenAI/Anthropic หรือของที่ไม่จดทะเบียนในสหรัฐไม่ปรากฏ
+  <br>4. <em>เป็นภาพ ณ วันสิ้นไตรมาสเท่านั้น</em> — ของที่ซื้อแล้วขายภายในไตรมาสเดียวหายไปทั้งหมด ตัวเลขอัตราหมุนพอร์ตในหน้านี้จึงเป็น <em>ขอบล่าง</em> เสมอ
+  <br>5. <em>ยื่นช้า 45 วัน</em> — Q2 2026 ยื่น 14 ส.ค. 2026 ภาพล่าสุดที่มีคือ 30 มิ.ย. 2026
+</div>
+
+<h3>ค่าของออปชันในตารางนี้คือ "มูลค่าอ้างอิง" ไม่ใช่ค่าพรีเมียม</h3>
+
+<p>
+  ตรวจแล้วทุกบรรทัด: เอาช่อง <span class="mono">value</span> หารด้วย <span class="mono">sshPrnamt</span> แล้วเทียบกับราคาปิดของหลักทรัพย์อ้างอิง ณ วันสิ้นไตรมาส
+  ได้อัตราส่วน 1.000–1.011 ทั้ง 32 บรรทัด แปลว่ากองทุนรายงานออปชันด้วย <em>มูลค่าหุ้นอ้างอิงเต็มจำนวน</em>
+  ตัวอย่าง: put ของ MICRON ณ 31 มี.ค. 2026 = 583.7 ล้านดอลลาร์ ÷ 1,727,700 หุ้น = 337.84 ดอลลาร์/หุ้น ขณะที่ MU ปิดที่ 337.79 ดอลลาร์
+</p>
+
+<div class="note">
+  ผลที่ตามมาสำคัญมาก: ตัวเลข "put 8,459 ล้านดอลลาร์" ใน Q1 2026 <strong>ไม่ใช่</strong> เงินที่วางไป
+  ถ้าเป็น put ที่ซื้อจริง ค่าพรีเมียมน่าจะราว 3–8% ของมูลค่าอ้างอิง คือประมาณ 250–680 ล้านดอลลาร์
+  การอ่าน 13F แบบดิบ ๆ แล้วสรุปว่า "กองทุนนี้ชอร์ตเซมิคอนดักเตอร์ 62% ของพอร์ต" จึงผิดโดยโครงสร้าง
+  สิ่งที่ตีความได้คือ <em>มูลค่าอ้างอิงที่ถูกครอบ</em> ไม่ใช่ <em>ทุนที่เสี่ยง</em>
+</div>
+
+<h2>1. แผนที่การหมุนสินทรัพย์ 7 ไตรมาส</h2>
+
+<p class="lede">
+  ถ้าดูเฉพาะหุ้นสามัญ (ตัดออปชันออก) พอร์ตนี้เปลี่ยนหน้าตาไปสามรอบใหญ่ในสองปี และทุกรอบเป็นการ
+  <em>เลื่อนตำแหน่งไปตามห่วงโซ่เดียวกัน</em> ไม่ใช่การกระโดดข้ามอุตสาหกรรม
+</p>
+
+<figure class="fig"><svg viewBox="0 0 760 330" role="img" aria-label="ส่วนผสมธีมของพอร์ตหุ้นสามัญ 7 ไตรมาส"><title>ส่วนผสมธีมของพอร์ตหุ้นสามัญ</title><line x1="54" y1="290" x2="610" y2="290" stroke="currentColor" stroke-width=".5" opacity=".18"/><text x="46" y="294" font-size="11" text-anchor="end" fill="currentColor" opacity=".55">0%</text><line x1="54" y1="222" x2="610" y2="222" stroke="currentColor" stroke-width=".5" opacity=".18"/><text x="46" y="226" font-size="11" text-anchor="end" fill="currentColor" opacity=".55">25%</text><line x1="54" y1="154" x2="610" y2="154" stroke="currentColor" stroke-width=".5" opacity=".18"/><text x="46" y="158" font-size="11" text-anchor="end" fill="currentColor" opacity=".55">50%</text><line x1="54" y1="86" x2="610" y2="86" stroke="currentColor" stroke-width=".5" opacity=".18"/><text x="46" y="90" font-size="11" text-anchor="end" fill="currentColor" opacity=".55">75%</text><line x1="54" y1="18" x2="610" y2="18" stroke="currentColor" stroke-width=".5" opacity=".18"/><text x="46" y="22" font-size="11" text-anchor="end" fill="currentColor" opacity=".55">100%</text><polygon points="54.0,290.0 146.7,229.6 239.3,216.8 332.0,87.1 424.7,163.9 517.3,147.0 610.0,225.2 610.0,290.0 517.3,290.0 424.7,290.0 332.0,290.0 239.3,290.0 146.7,290.0 54.0,290.0" fill="currentColor" opacity="0.82"/><polygon points="54.0,290.0 146.7,229.6 239.3,216.8 332.0,81.9 424.7,146.5 517.3,95.5 610.0,73.5 610.0,225.2 517.3,147.0 424.7,163.9 332.0,87.1 239.3,216.8 146.7,229.6 54.0,290.0" fill="currentColor" opacity="0.62"/><polygon points="54.0,110.7 146.7,111.9 239.3,99.2 332.0,32.4 424.7,66.8 517.3,21.8 610.0,45.3 610.0,73.5 517.3,95.5 424.7,146.5 332.0,81.9 239.3,216.8 146.7,229.6 54.0,290.0" fill="currentColor" opacity="0.44"/><polygon points="54.0,18.0 146.7,18.0 239.3,18.0 332.0,28.3 424.7,60.9 517.3,18.1 610.0,20.0 610.0,45.3 517.3,21.8 424.7,66.8 332.0,32.4 239.3,99.2 146.7,111.9 54.0,110.7" fill="currentColor" opacity="0.28"/><polygon points="54.0,18.0 146.7,18.0 239.3,18.0 332.0,18.0 424.7,21.4 517.3,18.0 610.0,20.0 610.0,20.0 517.3,18.1 424.7,60.9 332.0,28.3 239.3,18.0 146.7,18.0 54.0,18.0" fill="currentColor" opacity="0.16"/><polygon points="54.0,18.0 146.7,18.0 239.3,18.0 332.0,18.0 424.7,18.0 517.3,18.0 610.0,18.0 610.0,20.0 517.3,18.0 424.7,21.4 332.0,18.0 239.3,18.0 146.7,18.0 54.0,18.0" fill="currentColor" opacity="0.10"/><polygon points="54.0,18.0 146.7,18.0 239.3,18.0 332.0,18.0 424.7,18.0 517.3,18.0 610.0,18.0 610.0,18.0 517.3,18.0 424.7,18.0 332.0,18.0 239.3,18.0 146.7,18.0 54.0,18.0" fill="currentColor" opacity="0.06"/><text x="332" y="193" font-size="12" font-weight="600" text-anchor="middle" fill="currentColor" opacity=".95" paint-order="stroke" stroke="var(--bg,#fff)" stroke-width="3">NEOCLOUD</text><text x="610" y="153" font-size="12" font-weight="600" text-anchor="middle" fill="currentColor" opacity=".95" paint-order="stroke" stroke="var(--bg,#fff)" stroke-width="3">MEMORY</text><text x="54" y="204" font-size="12" font-weight="600" text-anchor="middle" fill="currentColor" opacity=".95" paint-order="stroke" stroke="var(--bg,#fff)" stroke-width="3">ENERGY</text><text x="147" y="69" font-size="12" font-weight="600" text-anchor="middle" fill="currentColor" opacity=".95" paint-order="stroke" stroke="var(--bg,#fff)" stroke-width="3">CHIP</text><text x="425" y="45" font-size="12" font-weight="600" text-anchor="middle" fill="currentColor" opacity=".95" paint-order="stroke" stroke="var(--bg,#fff)" stroke-width="3">OPTICS</text><text x="54" y="308" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q4 24</text><text x="147" y="308" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q1 25</text><text x="239" y="308" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q2 25</text><text x="332" y="308" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q3 25</text><text x="425" y="308" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q4 25</text><text x="517" y="308" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q1 26</text><text x="610" y="308" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q2 26</text><rect x="620" y="24" width="12" height="12" fill="currentColor" opacity="0.82"/><text x="638" y="34" font-size="11" fill="currentColor" opacity=".75">NEOCLOUD</text><rect x="620" y="44" width="12" height="12" fill="currentColor" opacity="0.62"/><text x="638" y="54" font-size="11" fill="currentColor" opacity=".75">MEMORY</text><rect x="620" y="64" width="12" height="12" fill="currentColor" opacity="0.44"/><text x="638" y="74" font-size="11" fill="currentColor" opacity=".75">ENERGY</text><rect x="620" y="84" width="12" height="12" fill="currentColor" opacity="0.28"/><text x="638" y="94" font-size="11" fill="currentColor" opacity=".75">CHIP</text><rect x="620" y="104" width="12" height="12" fill="currentColor" opacity="0.16"/><text x="638" y="114" font-size="11" fill="currentColor" opacity=".75">OPTICS</text><rect x="620" y="124" width="12" height="12" fill="currentColor" opacity="0.10"/><text x="638" y="134" font-size="11" fill="currentColor" opacity=".75">DC-REIT</text><rect x="620" y="144" width="12" height="12" fill="currentColor" opacity="0.06"/><text x="638" y="154" font-size="11" fill="currentColor" opacity=".75">OTHER</text></svg><figcaption>ส่วนผสมธีมของ<em>พอร์ตหุ้นสามัญ</em>ล้วน (ตัดออปชันออก) คิดเป็น % ของมูลค่าที่รายงานแต่ละไตรมาส ไฟฟ้าถูกแทนที่ด้วยนีโอคลาวด์ แล้วนีโอคลาวด์ถูกแทนที่ด้วยหน่วยความจำ ทั้งสามคือข้อต่อคนละจุดของห่วงโซ่เดียวกัน</figcaption></figure>
+
+<p>
+  อ่านภาพนี้เป็นสี่ยุค:
+</p>
+
+<div class="tablebox">
+  <table>
+    <thead><tr><th>ยุค</th><th>ไตรมาส</th><th>แกนกลาง</th><th>ตัวแทน</th><th>เหตุผลที่อ่านได้จากตัวเลข</th></tr></thead>
+    <tbody>
+      <tr><td><strong>I — ไฟฟ้ากับซิลิคอน</strong></td><td>Q4 24 – Q2 25</td><td>ENERGY 43–66% + CHIP 30–35%, ไม่มีนีโอคลาวด์เลยในไตรมาสแรก</td><td>MRVL, VRT, MOD, VST, TLN, CEG</td><td>ธีม "AI ขาดไฟ" ล้วน ๆ ยังไม่มีบริษัทที่ขายคอมพิวต์จริง เพราะ CoreWeave ยังไม่ IPO</td></tr>
+      <tr><td><strong>II — นีโอคลาวด์</strong></td><td>Q3 25 – Q1 26</td><td>NEOCLOUD 46–75% ของพอร์ตหุ้น, CHIP ร่วงเหลือ 1.4–2.2%</td><td>CRWV, CORZ, IREN, APLD, RIOT, CIFR, CLSK, BTDR, HIVE, WYFI</td><td>ย้ายจาก "คนขายไฟ" ไป "คนที่เอาไฟไปแปลงเป็นค่าเช่า GPU" — และเข้าทาง <em>เหมืองบิตคอยน์ที่เปลี่ยนตัวเอง</em> เกือบทั้งกลุ่ม</td></tr>
+      <tr><td><strong>III — ครอบด้วย put ทั้งอุตสาหกรรม</strong></td><td>Q1 26</td><td>มูลค่าอ้างอิง put 8,459 ล้าน = 219% ของพอร์ตหุ้น โดย 80% อยู่บนกลุ่มชิป</td><td>SMH, NVDA, ORCL, AVGO, AMD, MU, TSM, ASML, INTC</td><td>ฝั่งหุ้นถือชิปแค่ 1.4% ฝั่งออปชันครอบชิปทั้งกลุ่ม — เป็นคู่ตรงข้ามกันโดยตั้งใจ</td></tr>
+      <tr><td><strong>IV — หน่วยความจำ</strong></td><td>Q2 26</td><td>MEMORY 55.8% (SNDK 28.0% + MU 27.5%), ออปชันหายเกลี้ยง</td><td>SNDK, MU, TSM, NBIS, STM</td><td>ขยับไปอีกชั้นของคอขวด: จาก "ที่ตั้ง+ไฟ" เป็น "ชิ้นส่วนที่ขาดที่สุดในเครื่อง"</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>ขนาดพอร์ตหุ้นเทียบกับมูลค่าอ้างอิงของออปชัน</h3>
+
+<figure class="fig"><svg viewBox="0 0 760 300" role="img" aria-label="ขนาดพอร์ตหุ้นเทียบกับมูลค่าอ้างอิงของออปชัน"><title>หุ้นสามัญเทียบกับมูลค่าอ้างอิงของออปชัน (พันล้านดอลลาร์ สเกลลอการิทึม)</title><line x1="56" y1="258" x2="610" y2="258" stroke="currentColor" stroke-width=".5" opacity=".18"/><text x="48" y="262" font-size="11" text-anchor="end" fill="currentColor" opacity=".55">0.02</text><line x1="56" y1="203" x2="610" y2="203" stroke="currentColor" stroke-width=".5" opacity=".18"/><text x="48" y="207" font-size="11" text-anchor="end" fill="currentColor" opacity=".55">0.1</text><line x1="56" y1="149" x2="610" y2="149" stroke="currentColor" stroke-width=".5" opacity=".18"/><text x="48" y="153" font-size="11" text-anchor="end" fill="currentColor" opacity=".55">0.5</text><line x1="56" y1="102" x2="610" y2="102" stroke="currentColor" stroke-width=".5" opacity=".18"/><text x="48" y="106" font-size="11" text-anchor="end" fill="currentColor" opacity=".55">2</text><line x1="56" y1="47" x2="610" y2="47" stroke="currentColor" stroke-width=".5" opacity=".18"/><text x="48" y="51" font-size="11" text-anchor="end" fill="currentColor" opacity=".55">10</text><line x1="56" y1="16" x2="610" y2="16" stroke="currentColor" stroke-width=".5" opacity=".18"/><text x="48" y="20" font-size="11" text-anchor="end" fill="currentColor" opacity=".55">25</text><rect x="64.0" y="171.6" width="18.0" height="86.4" fill="currentColor" opacity="0.85"/><text x="73.0" y="167.6" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">0.25</text><rect x="143.1" y="145.8" width="18.0" height="112.2" fill="currentColor" opacity="0.85"/><text x="152.2" y="141.8" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">0.55</text><rect x="164.2" y="151.6" width="18.0" height="106.4" fill="currentColor" opacity="0.5"/><text x="173.2" y="147.6" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">0.46</text><rect x="222.3" y="122.0" width="18.0" height="136.0" fill="currentColor" opacity="0.85"/><text x="231.3" y="118.0" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">1.10</text><rect x="243.3" y="152.1" width="18.0" height="105.9" fill="currentColor" opacity="0.5"/><text x="252.4" y="148.1" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">0.45</text><rect x="264.4" y="144.3" width="18.0" height="113.7" fill="currentColor" opacity="0.24"/><text x="273.4" y="140.3" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">0.57</text><rect x="301.4" y="97.8" width="18.0" height="160.2" fill="currentColor" opacity="0.85"/><text x="310.5" y="93.8" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">2.24</text><rect x="322.5" y="125.0" width="18.0" height="133.0" fill="currentColor" opacity="0.5"/><text x="331.5" y="121.0" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">1.01</text><rect x="343.5" y="129.3" width="18.0" height="128.7" fill="currentColor" opacity="0.24"/><text x="352.5" y="125.3" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">0.89</text><rect x="380.6" y="78.9" width="18.0" height="179.1" fill="currentColor" opacity="0.85"/><text x="389.6" y="74.9" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">3.91</text><rect x="401.6" y="109.4" width="18.0" height="148.6" fill="currentColor" opacity="0.5"/><text x="410.6" y="105.4" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">1.59</text><rect x="422.7" y="258.0" width="18.0" height="0.0" fill="currentColor" opacity="0.24"/><text x="431.7" y="254.0" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">0.01</text><rect x="459.7" y="79.4" width="18.0" height="178.6" fill="currentColor" opacity="0.85"/><text x="468.7" y="75.4" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">3.86</text><rect x="480.8" y="114.8" width="18.0" height="143.2" fill="currentColor" opacity="0.5"/><text x="489.8" y="110.8" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">1.36</text><rect x="501.8" y="52.8" width="18.0" height="205.2" fill="currentColor" opacity="0.24"/><text x="510.8" y="48.8" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">8.46</text><rect x="538.9" y="23.3" width="18.0" height="234.7" fill="currentColor" opacity="0.85"/><text x="547.9" y="19.3" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">20.17</text><rect x="559.9" y="216.5" width="18.0" height="41.5" fill="currentColor" opacity="0.5"/><text x="568.9" y="212.5" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">0.07</text><rect x="581.0" y="258.0" width="18.0" height="0.0" fill="currentColor" opacity="0.24"/><text x="590.0" y="254.0" font-size="9.5" text-anchor="middle" fill="currentColor" opacity=".7">0.01</text><text x="96" y="276" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q4 24</text><text x="175" y="276" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q1 25</text><text x="254" y="276" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q2 25</text><text x="333" y="276" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q3 25</text><text x="412" y="276" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q4 25</text><text x="491" y="276" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q1 26</text><text x="570" y="276" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q2 26</text><rect x="620" y="24" width="12" height="12" fill="currentColor" opacity="0.85"/><text x="638" y="34" font-size="10.5" fill="currentColor" opacity=".75">หุ้นสามัญ</text><rect x="620" y="44" width="12" height="12" fill="currentColor" opacity="0.5"/><text x="638" y="54" font-size="10.5" fill="currentColor" opacity=".75">call — มูลค่าอ้างอิง</text><rect x="620" y="64" width="12" height="12" fill="currentColor" opacity="0.24"/><text x="638" y="74" font-size="10.5" fill="currentColor" opacity=".75">put — มูลค่าอ้างอิง</text></svg><figcaption>หน่วยเป็นพันล้านดอลลาร์ สเกลลอการิทึม ออปชันแสดงด้วย<em>มูลค่าหุ้นอ้างอิง</em>ตามที่กองทุนรายงาน ไม่ใช่ค่าพรีเมียม สังเกต Q1 2026 ที่พอร์ตหุ้นหยุดโตพอดีกับตอนที่ put พุ่งขึ้น</figcaption></figure>
+
+<p>
+  เส้นเรื่องที่ภาพนี้เล่า: พอร์ตหุ้นโตแบบทบต้นทุกไตรมาสยกเว้น Q1 2026 ที่หยุดนิ่ง (3.91 → 3.86 พันล้าน)
+  แล้วระเบิดเป็น 20.17 พันล้านใน Q2 2026 — และ<strong>ไตรมาสที่พอร์ตหุ้นหยุดโต คือไตรมาสเดียวกับที่ put พุ่งขึ้น 8.46 พันล้าน</strong>
+  ไตรมาสถัดมา put หายทั้งหมด พอร์ตหุ้นโต 5.2 เท่า นี่ไม่ใช่เรื่องบังเอิญ มันคือลำดับเดียวกับการ
+  "หยุดซื้อ → ครอบด้วยออปชัน → รอ → กลับเข้าด้วยขนาดที่ใหญ่กว่าเดิมมาก"
+</p>
+
+<h3>การกระจุกตัว</h3>
+
+<figure class="fig"><svg viewBox="0 0 760 230" role="img" aria-label="จำนวนสถานะประสิทธิผลและน้ำหนัก 5 อันดับแรก"><title>จำนวนสถานะประสิทธิผล 1/HHI</title><line x1="50" y1="190" x2="630" y2="190" stroke="currentColor" stroke-width=".5" opacity=".15"/><text x="42" y="194" font-size="10.5" text-anchor="end" fill="currentColor" opacity=".55">0</text><line x1="50" y1="146" x2="630" y2="146" stroke="currentColor" stroke-width=".5" opacity=".15"/><text x="42" y="150" font-size="10.5" text-anchor="end" fill="currentColor" opacity=".55">4</text><line x1="50" y1="103" x2="630" y2="103" stroke="currentColor" stroke-width=".5" opacity=".15"/><text x="42" y="107" font-size="10.5" text-anchor="end" fill="currentColor" opacity=".55">8</text><line x1="50" y1="60" x2="630" y2="60" stroke="currentColor" stroke-width=".5" opacity=".15"/><text x="42" y="64" font-size="10.5" text-anchor="end" fill="currentColor" opacity=".55">12</text><line x1="50" y1="16" x2="630" y2="16" stroke="currentColor" stroke-width=".5" opacity=".15"/><text x="42" y="20" font-size="10.5" text-anchor="end" fill="currentColor" opacity=".55">16</text><polyline points="50,21.3 147,57.7 243,47.8 340,95.0 437,85.5 533,105.3 630,55.5" fill="none" stroke="currentColor" stroke-width="1.6" opacity=".4" stroke-dasharray="5 4"/><circle cx="50" cy="21.3" r="3" fill="currentColor" opacity=".45"/><circle cx="147" cy="57.7" r="3" fill="currentColor" opacity=".45"/><circle cx="243" cy="47.8" r="3" fill="currentColor" opacity=".45"/><circle cx="340" cy="95.0" r="3" fill="currentColor" opacity=".45"/><circle cx="437" cy="85.5" r="3" fill="currentColor" opacity=".45"/><circle cx="533" cy="105.3" r="3" fill="currentColor" opacity=".45"/><circle cx="630" cy="55.5" r="3" fill="currentColor" opacity=".45"/><polyline points="50,142.9 147,145.3 243,125.3 340,58.8 437,73.7 533,35.6 630,128.3" fill="none" stroke="currentColor" stroke-width="2.4"/><circle cx="50" cy="142.9" r="3.5" fill="currentColor"/><text x="50" y="134" font-size="10" text-anchor="middle" fill="currentColor" opacity=".8">4.3</text><circle cx="147" cy="145.3" r="3.5" fill="currentColor"/><text x="147" y="136" font-size="10" text-anchor="middle" fill="currentColor" opacity=".8">4.1</text><circle cx="243" cy="125.3" r="3.5" fill="currentColor"/><text x="243" y="116" font-size="10" text-anchor="middle" fill="currentColor" opacity=".8">6.0</text><circle cx="340" cy="58.8" r="3.5" fill="currentColor"/><text x="340" y="50" font-size="10" text-anchor="middle" fill="currentColor" opacity=".8">12.1</text><circle cx="437" cy="73.7" r="3.5" fill="currentColor"/><text x="437" y="65" font-size="10" text-anchor="middle" fill="currentColor" opacity=".8">10.7</text><circle cx="533" cy="35.6" r="3.5" fill="currentColor"/><text x="533" y="27" font-size="10" text-anchor="middle" fill="currentColor" opacity=".8">14.2</text><circle cx="630" cy="128.3" r="3.5" fill="currentColor"/><text x="630" y="119" font-size="10" text-anchor="middle" fill="currentColor" opacity=".8">5.7</text><text x="50" y="208" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q4 24</text><text x="147" y="208" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q1 25</text><text x="243" y="208" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q2 25</text><text x="340" y="208" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q3 25</text><text x="437" y="208" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q4 25</text><text x="533" y="208" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q1 26</text><text x="630" y="208" font-size="11" text-anchor="middle" fill="currentColor" opacity=".6">Q2 26</text><text x="640" y="38" font-size="11" fill="currentColor" opacity=".85">— 1/HHI (ซ้าย)</text><text x="640" y="58" font-size="11" fill="currentColor" opacity=".6">- - 5 อันดับแรก %</text></svg><figcaption>เส้นทึบคือ 1/HHI หรือจำนวนสถานะประสิทธิผล เส้นประคือน้ำหนักรวมของห้าอันดับแรก พอร์ตกระจายตัวตอนกำลังค้นหา และหดกลับมาแคบทุกครั้งที่ตัดสินใจได้แล้ว</figcaption></figure>
+
+<p>
+  1/HHI คือ "จำนวนสถานะประสิทธิผล" — พอร์ตที่ถือ 42 ชื่อแต่ 1/HHI = 14.2 มีค่าเท่ากับพอร์ตที่ถือ 14 ชื่อเท่ากันหมด
+  ค่านี้แกว่งระหว่าง 4.1 ถึง 14.2 และ <em>กลับมาแคบทุกครั้งที่มั่นใจ</em>: Q1 2025 (4.1 เพราะ Intel call กินไป 45.7%)
+  และ Q2 2026 (5.7 เพราะ SNDK+MU กินไป 55.6%) ส่วนช่วงที่กระจาย (Q3 25 – Q1 26) คือช่วงที่กำลังค้นหาและกำลังป้องกัน
+</p>
+
+<div class="tablebox">
+  <table>
+    <thead><tr><th>ไตรมาส</th><th>มูลค่ารวมที่รายงาน</th><th>จำนวนบรรทัด</th><th>อันดับ 1</th><th>5 อันดับแรก</th><th>HHI</th><th>1/HHI</th><th>หุ้น %</th><th>call %</th><th>put %</th></tr></thead>
+    <tbody>
+      <tr><td>Q4 2024</td><td>0.25 พันล้าน</td><td>6</td><td>34.1%</td><td>97.0%</td><td>0.231</td><td>4.3</td><td>100.0</td><td>0.0</td><td>0.0</td></tr>
+      <tr><td>Q1 2025</td><td>1.01 พันล้าน</td><td>12</td><td>45.7%</td><td>76.1%</td><td>0.243</td><td>4.1</td><td>54.3</td><td>45.7</td><td>0.0</td></tr>
+      <tr><td>Q2 2025</td><td>2.12 พันล้าน</td><td>9</td><td>26.9%</td><td>81.7%</td><td>0.168</td><td>6.0</td><td>51.8</td><td>21.4</td><td>26.9</td></tr>
+      <tr><td>Q3 2025</td><td>4.14 พันล้าน</td><td>28</td><td>16.4%</td><td>54.6%</td><td>0.083</td><td>12.1</td><td>54.2</td><td>24.4</td><td>21.4</td></tr>
+      <tr><td>Q4 2025</td><td>5.52 พันล้าน</td><td>29</td><td>15.9%</td><td>60.0%</td><td>0.094</td><td>10.7</td><td>70.9</td><td>28.9</td><td>0.2</td></tr>
+      <tr><td>Q1 2026</td><td>13.68 พันล้าน</td><td>42</td><td>14.9%</td><td>48.7%</td><td>0.070</td><td>14.2</td><td>28.2</td><td>10.0</td><td>61.9</td></tr>
+      <tr><td>Q2 2026</td><td>20.24 พันล้าน</td><td>26</td><td>28.0%</td><td>77.3%</td><td>0.176</td><td>5.7</td><td>99.6</td><td>0.3</td><td>0.0</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>2. ของที่ถืออยู่คืออะไร และเชื่อมกันตรงไหน</h2>
+
+<p class="lede">
+  คำตอบสั้น ๆ: มันไม่ใช่ตะกร้าหุ้น AI มันคือ <em>ห่วงโซ่การผลิตคอมพิวต์หนึ่งสาย</em> ที่ถูกซื้อไล่จากต้นน้ำมาปลายน้ำ
+  ทุกชื่อในพอร์ตตอบคำถามเดียวกัน — "ถ้าจะสร้างศูนย์ข้อมูลเพิ่มอีกหนึ่งกิกะวัตต์ อะไรคือสิ่งที่ขาด"
+</p>
+<figure class="fig"><svg viewBox="0 0 770 472" role="img" aria-label="ห่วงโซ่การผลิตคอมพิวต์ที่พอร์ตถือ ห้าชั้น"><title>ห่วงโซ่คอมพิวต์: จากก๊าซถึงหน่วยความจำ</title><text x="4" y="52" font-size="11.5" font-weight="600" fill="currentColor" opacity=".8">ต้นน้ำพลังงาน</text><rect x="106" y="26" width="658" height="68" fill="currentColor" opacity="0.030" rx="4"/><rect x="112" y="31" width="72" height="22" rx="3" fill="currentColor" opacity=".30"/><text x="148" y="46" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">EQT ก๊าซ</text><rect x="191.0" y="31" width="163" height="22" rx="3" fill="currentColor" opacity=".30"/><text x="272" y="46" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Bloom เซลล์เชื้อเพลิง</text><rect x="361.0" y="31" width="135" height="22" rx="3" fill="currentColor" opacity=".30"/><text x="428" y="46" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Solaris เทอร์ไบน์</text><rect x="503.0" y="31" width="128" height="22" rx="3" fill="currentColor" opacity=".30"/><text x="567" y="46" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">PSIX เครื่องยนต์</text><rect x="638.0" y="31" width="107" height="22" rx="3" fill="currentColor" opacity=".30"/><text x="692" y="46" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">B&W หม้อไอน้ำ</text><rect x="112" y="58" width="79" height="22" rx="3" fill="currentColor" opacity=".30"/><text x="152" y="73" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">T1 โซลาร์</text><rect x="198.0" y="58" width="156" height="22" rx="3" fill="currentColor" opacity=".30"/><text x="276" y="73" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Vistra / Talen / CEG</text><path d="M245.0 92 l0 12 m-5 -5 l5 6 l5 -6" stroke="currentColor" stroke-width="1.4" fill="none" opacity=".55"/><text x="253.0" y="101" font-size="10" fill="currentColor" opacity=".6">ไฟป้อนศูนย์ข้อมูล</text><text x="4" y="138" font-size="11.5" font-weight="600" fill="currentColor" opacity=".8">ที่ตั้ง + ไฟ + ตึก</text><rect x="106" y="112" width="658" height="68" fill="currentColor" opacity="0.052" rx="4"/><rect x="112" y="117" width="121" height="22" rx="3" fill="currentColor" opacity=".52"/><text x="172" y="132" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Core Scientific</text><rect x="240.0" y="117" width="58" height="22" rx="3" fill="currentColor" opacity=".52"/><text x="269" y="132" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">IREN</text><rect x="305.0" y="117" width="121" height="22" rx="3" fill="currentColor" opacity=".52"/><text x="366" y="132" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Applied Digital</text><rect x="433.0" y="117" width="156" height="22" rx="3" fill="currentColor" opacity=".52"/><text x="511" y="132" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Keel (เดิม Bitfarms)</text><rect x="596.0" y="117" width="58" height="22" rx="3" fill="currentColor" opacity=".52"/><text x="625" y="132" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Riot</text><rect x="661.0" y="117" width="86" height="22" rx="3" fill="currentColor" opacity=".52"/><text x="704" y="132" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">CleanSpark</text><rect x="112" y="144" width="58" height="22" rx="3" fill="currentColor" opacity=".52"/><text x="141" y="159" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Cipher</text><rect x="177" y="144" width="58" height="22" rx="3" fill="currentColor" opacity=".52"/><text x="206" y="159" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Hut 8</text><rect x="242" y="144" width="65" height="22" rx="3" fill="currentColor" opacity=".52"/><text x="274" y="159" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Bitdeer</text><rect x="314.0" y="144" width="58" height="22" rx="3" fill="currentColor" opacity=".52"/><text x="343" y="159" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">HIVE</text><rect x="379.0" y="144" width="86" height="22" rx="3" fill="currentColor" opacity=".52"/><text x="422" y="159" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">WhiteFiber</text><rect x="472.0" y="144" width="93" height="22" rx="3" fill="currentColor" opacity=".52"/><text x="518" y="159" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Kilroy REIT</text><path d="M245.0 178 l0 12 m-5 -5 l5 6 l5 -6" stroke="currentColor" stroke-width="1.4" fill="none" opacity=".55"/><text x="253.0" y="187" font-size="10" fill="currentColor" opacity=".6">พื้นที่ให้เช่า/โฮสต์</text><text x="4" y="224" font-size="11.5" font-weight="600" fill="currentColor" opacity=".8">คลาวด์ GPU</text><rect x="106" y="198" width="658" height="68" fill="currentColor" opacity="0.072" rx="4"/><rect x="112" y="203" width="79" height="22" rx="3" fill="currentColor" opacity=".72"/><text x="152" y="218" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">CoreWeave</text><rect x="198.0" y="203" width="58" height="22" rx="3" fill="currentColor" opacity=".72"/><text x="227" y="218" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Nebius</text><rect x="263.0" y="203" width="114" height="22" rx="3" fill="currentColor" opacity=".72"/><text x="320" y="218" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">SharonAI 21.1%</text><path d="M245.0 264 l0 12 m-5 -5 l5 6 l5 -6" stroke="currentColor" stroke-width="1.4" fill="none" opacity=".55"/><text x="253.0" y="273" font-size="10" fill="currentColor" opacity=".6">สั่งซื้อชิ้นส่วน</text><text x="4" y="310" font-size="11.5" font-weight="600" fill="currentColor" opacity=".8">ชิ้นส่วนคอขวด</text><rect x="106" y="284" width="658" height="68" fill="currentColor" opacity="0.088" rx="4"/><rect x="112" y="289" width="114" height="22" rx="3" fill="currentColor" opacity=".88"/><text x="169" y="304" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">SanDisk (NAND)</text><rect x="233.0" y="289" width="135" height="22" rx="3" fill="currentColor" opacity=".88"/><text x="300" y="304" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Micron (HBM/DRAM)</text><rect x="375.0" y="289" width="72" height="22" rx="3" fill="currentColor" opacity=".88"/><text x="411" y="304" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Lumentum</text><rect x="454.0" y="289" width="72" height="22" rx="3" fill="currentColor" opacity=".88"/><text x="490" y="304" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Coherent</text><rect x="533.0" y="289" width="65" height="22" rx="3" fill="currentColor" opacity=".88"/><text x="566" y="304" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Corning</text><rect x="605.0" y="289" width="65" height="22" rx="3" fill="currentColor" opacity=".88"/><text x="638" y="304" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">STMicro</text><rect x="677.0" y="289" width="58" height="22" rx="3" fill="currentColor" opacity=".88"/><text x="706" y="304" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">Vishay</text><text x="4" y="396" font-size="11.5" font-weight="600" fill="currentColor" opacity=".8">ฝั่งที่ถูกครอบด้วย put</text><rect x="106" y="370" width="658" height="68" fill="currentColor" opacity="0.018" rx="4"/><rect x="112" y="375" width="58" height="22" rx="3" fill="currentColor" opacity=".18"/><text x="141" y="390" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">NVDA</text><rect x="177" y="375" width="58" height="22" rx="3" fill="currentColor" opacity=".18"/><text x="206" y="390" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">AVGO</text><rect x="242" y="375" width="58" height="22" rx="3" fill="currentColor" opacity=".18"/><text x="271" y="390" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">AMD</text><rect x="307" y="375" width="58" height="22" rx="3" fill="currentColor" opacity=".18"/><text x="336" y="390" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">TSM</text><rect x="372" y="375" width="58" height="22" rx="3" fill="currentColor" opacity=".18"/><text x="401" y="390" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">ASML</text><rect x="437" y="375" width="58" height="22" rx="3" fill="currentColor" opacity=".18"/><text x="466" y="390" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">ORCL</text><rect x="502" y="375" width="121" height="22" rx="3" fill="currentColor" opacity=".18"/><text x="562" y="390" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">SMH (ทั้งกลุ่ม)</text><rect x="630.0" y="375" width="58" height="22" rx="3" fill="currentColor" opacity=".18"/><text x="659" y="390" font-size="10.5" text-anchor="middle" fill="var(--bg,#fff)" opacity=".98">INTC</text><line x1="106" y1="346" x2="762" y2="346" stroke="currentColor" stroke-width="1" stroke-dasharray="4 4" opacity=".4"/></svg><figcaption>ทุกชื่อในพอร์ตวางตามตำแหน่งในห่วงโซ่การผลิตคอมพิวต์ สี่ชั้นบนคือของที่ซื้อ ชั้นล่างใต้เส้นประคือของที่ครอบด้วย put เงินไหลลงจากบนลงล่าง — ก๊าซกลายเป็นไฟ ไฟกลายเป็นค่าเช่าแร็ค ค่าเช่ากลายเป็นคำสั่งซื้อหน่วยความจำ</figcaption></figure>
+
+<p>
+  เส้นประคั่นสองชั้นล่างไว้: สี่ชั้นบนคือของที่ <em>ซื้อ</em> ชั้นล่างสุดคือของที่ <em>ครอบด้วย put</em>
+  จุดสำคัญคือไม่มีชื่อไหนอยู่สองฝั่งพร้อมกันเป็นเวลานาน ยกเว้นตอนเปลี่ยนสถานะ (Intel, Micron, TSMC)
+  ซึ่งเป็นสัญญาณของการ <em>พลิกฝั่ง</em> ไม่ใช่การถือคู่
+</p>
+
+<h3>รายชื่อ: แต่ละตัวถืออะไรอยู่จริง</h3>
+
+<div class="tablebox">
+  <table>
+    <thead><tr><th>ชื่อ</th><th>ทำอะไร</th><th>ตำแหน่งในห่วงโซ่</th><th>ไตรมาสที่อยู่</th><th>สูงสุดในพอร์ต</th></tr></thead>
+    <tbody>
+      <tr><td><strong>SanDisk</strong> (SNDK)</td><td>NAND flash แยกตัวออกจาก Western Digital ก.พ. 2025</td><td>ชิ้นส่วน — พื้นที่เก็บข้อมูลของคลัสเตอร์ AI</td><td>Q3 25 → Q2 26 (4)</td><td>5,674 ล้าน / 28.0%</td></tr>
+      <tr><td><strong>Micron</strong> (MU)</td><td>DRAM + HBM ผู้ผลิตหน่วยความจำสหรัฐรายเดียว</td><td>ชิ้นส่วน — HBM คือคอขวดที่แท้จริงของ GPU</td><td>Q1 26 → Q2 26 (2, เป็น put ก่อนใน Q3 25)</td><td>5,574 ล้าน / 27.5%</td></tr>
+      <tr><td><strong>Bloom Energy</strong> (BE)</td><td>เซลล์เชื้อเพลิงก๊าซธรรมชาติ ติดตั้งได้ในไม่กี่เดือน ไม่ต้องรอสายส่ง</td><td>พลังงาน — ทางลัดของศูนย์ข้อมูลที่รอไฟไม่ไหว</td><td>Q3 25 → Q2 26 (4)</td><td>1,899 ล้าน / 15.9%</td></tr>
+      <tr><td><strong>CoreWeave</strong> (CRWV)</td><td>ผู้ให้เช่า GPU รายใหญ่ที่สุดนอก hyperscaler ลูกค้าหลักคือ Microsoft/OpenAI</td><td>คลาวด์ — ตัวกลางระหว่างชิปกับผู้ใช้โมเดล</td><td>Q1 25 → Q2 26 (5 จาก 6 ที่เป็นไปได้)</td><td>774 ล้าน (call) / 14.0%</td></tr>
+      <tr><td><strong>Core Scientific</strong> (CORZ)</td><td>เหมืองบิตคอยน์เดิม เปลี่ยนเป็นผู้ให้เช่าพื้นที่ HPC ลูกค้าหลักคือ CoreWeave</td><td>ที่ตั้ง — คู่สัญญาโฮสต์ของ CoreWeave โดยตรง</td><td>Q1 25 → Q2 26 (6/6) <strong>ยื่น 13D</strong></td><td>666 ล้าน / 8.8%</td></tr>
+      <tr><td><strong>IREN</strong></td><td>เหมืองบิตคอยน์ออสเตรเลีย ย้ายไปคลาวด์ GPU มีที่ดินและใบอนุญาตไฟเอง</td><td>ที่ตั้ง + คลาวด์ (ทำเองทั้งสองชั้น)</td><td>Q1 25 → Q2 26 (6/6)</td><td>433 ล้าน / 8.2%</td></tr>
+      <tr><td><strong>Applied Digital</strong> (APLD)</td><td>สร้างและให้เช่าศูนย์ข้อมูล HPC ในดาโกตาเหนือ</td><td>ที่ตั้ง</td><td>Q1 25 → Q2 26 (6/6)</td><td>469 ล้าน / 5.0%</td></tr>
+      <tr><td><strong>SharonAI</strong> (SHAZ)</td><td>คลาวด์ GPU ขนาดเล็ก IPO ก.พ. 2026 ได้ 125 ล้าน แล้วระดมเอกชนอีก 1.6 พันล้าน</td><td>คลาวด์ — <strong>กองทุนถือ 21.1% + เป็นผู้ถือหุ้นภายใน (Form 3/4)</strong></td><td>Q1 26 → Q2 26 (2)</td><td>457 ล้าน / 2.3%</td></tr>
+      <tr><td><strong>Nebius</strong> (NBIS)</td><td>คลาวด์ GPU ยุโรป ที่แยกออกจาก Yandex</td><td>คลาวด์ — ยื่น 13G 5.6% พ.ค. 2026</td><td>Q2 26 (1)</td><td>1,233 ล้าน / 6.1%</td></tr>
+      <tr><td><strong>Keel Infrastructure</strong> (KEEL)</td><td>Bitfarms เดิม ย้ายทะเบียนมาสหรัฐ + เปลี่ยนชื่อ 1 เม.ย. 2026 เลิกขุดบิตคอยน์ไปทำศูนย์ข้อมูล</td><td>ที่ตั้ง — เคสตัวอย่างของธีม "เหมืองแปลงร่าง"</td><td>Q4 25 → Q2 26 ในชื่อเดิมและชื่อใหม่ (3)</td><td>152 ล้าน / 0.8%</td></tr>
+      <tr><td><strong>Riot / CleanSpark / Cipher / Hut 8 / Bitdeer / HIVE / WhiteFiber</strong></td><td>เหมืองบิตคอยน์ที่มีสัญญาไฟและที่ดินอยู่แล้ว กำลังแปลงเป็นศูนย์ข้อมูล AI</td><td>ที่ตั้ง — ตะกร้าออปชันบนธีมเดียวกัน ถือทีละ 0.3–2.3%</td><td>กระจาย Q3 25 → Q2 26</td><td>รวมกันสูงสุด ~7% ของพอร์ตหุ้น</td></tr>
+      <tr><td><strong>Solaris Energy Infrastructure</strong> (SEI)</td><td>ให้เช่าเทอร์ไบน์ก๊าซเคลื่อนที่</td><td>พลังงาน — ไฟชั่วคราวระหว่างรอสายส่ง</td><td>Q3 25 → Q2 26 (4)</td><td>91 ล้าน</td></tr>
+      <tr><td><strong>EQT</strong></td><td>ผู้ผลิตก๊าซธรรมชาติรายใหญ่ที่สุดในสหรัฐ</td><td>ต้นน้ำสุด — เชื้อเพลิงที่ป้อน Bloom และเทอร์ไบน์</td><td>Q1 25 → Q4 25 (4) แล้วขายหมด</td><td>133 ล้าน</td></tr>
+      <tr><td><strong>Lumentum / Coherent / Corning</strong></td><td>ออปติกส์ ทรานซีฟเวอร์ และไฟเบอร์เชื่อมระหว่างแร็ค</td><td>ชิ้นส่วน — คอขวดของ scale-out</td><td>Q3 25 → Q4 25 เป็นหลัก แล้วออก</td><td>479 ล้าน (LITE) / 8.7%</td></tr>
+      <tr><td><strong>Vistra / Talen / Constellation</strong></td><td>ผู้ผลิตไฟฟ้าอิสระ ฐานนิวเคลียร์</td><td>พลังงาน — ธีมแรกสุดของกองทุน</td><td>Q4 24 → Q3 25 แล้วออกหมด</td><td>252 ล้าน (VST)</td></tr>
+      <tr><td><strong>Kilroy Realty</strong> (KRC)</td><td>REIT สำนักงาน — มีที่ดินและไฟในตลาดชายฝั่งตะวันตก</td><td>ที่ตั้ง — เดิมพันการแปลงสำนักงานเป็นศูนย์ข้อมูล ถือไตรมาสเดียว</td><td>Q4 25 (1)</td><td>50 ล้าน</td></tr>
+      <tr><td><strong>Cerebras</strong> (10,000 หุ้น, 2.2 ล้าน)</td><td>ชิป wafer-scale คู่แข่ง NVIDIA</td><td>สถานะเฝ้าดู ไม่ใช่สถานะลงทุน</td><td>Q2 26 (1)</td><td>0.01%</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>ของทุกชิ้นเสริมกันหรือทับกัน</h3>
+
+<p>
+  <strong>เสริมกันในเชิงห่วงโซ่ แต่ทับกันอย่างรุนแรงในเชิงปัจจัยเสี่ยง</strong> — สองข้อนี้จริงพร้อมกัน และเป็นหัวใจของการประเมินพอร์ตนี้
+</p>
+
+<p>
+  เสริมกันอย่างไร: EQT ขายก๊าซให้เครื่องที่ Bloom และ Solaris ติดตั้ง ไฟนั้นไปเข้าตึกของ Core Scientific / IREN / Applied Digital / Keel
+  ตึกนั้นให้ CoreWeave กับ Nebius เช่า และเครื่องในตึกนั้นต้องใช้ HBM ของ Micron กับ NAND ของ SanDisk และออปติกส์ของ Lumentum
+  พอร์ตนี้จึงถือ <em>ทุกชั้นของต้นทุนหนึ่งเมกะวัตต์</em> พร้อมกัน การถือแบบนี้ทำให้ได้กำไรหลายรอบจากเหตุการณ์เดียว —
+  สัญญา CoreWeave ฉบับใหม่หนึ่งฉบับ ยกราคา CORZ (คนโฮสต์), IREN (คนแข่งที่ถูกตีราคาใหม่), BE (คนป้อนไฟ) และ MU/SNDK (คนขายชิ้นส่วน) พร้อมกัน
+</p>
+
+<p>
+  ทับกันอย่างไร: ด้วยเหตุผลเดียวกันเป๊ะ ถ้าปัจจัยต้นทางพัง — งบลงทุนของ hyperscaler ถูกตัด หรือสินเชื่อของนีโอคลาวด์ปิด —
+  ทุกชั้นพังพร้อมกันในวันเดียวกัน ตัวเลขยืนยันเรื่องนี้: ไตรมาสที่พอร์ตหุ้นขาดทุน (Q1 2025 −28.1%, Q4 2025 −17.5%)
+  ขาดทุนแรงกว่า S&P 500 หลายเท่า ทั้งที่ถือ 12 และ 24 ชื่อตามลำดับ การกระจายชื่อในพอร์ตนี้
+  <strong>ไม่ได้ลดความเสี่ยง มันแค่เพิ่มจำนวนวิธีที่จะชนะบนเดิมพันเดียวกัน</strong>
+</p>
+
+<div class="note">
+  <strong>ความเชื่อมโยงที่ใกล้ชิดที่สุดในพอร์ต:</strong> CoreWeave เป็นลูกค้าโฮสต์รายใหญ่ของ Core Scientific
+  กองทุนถือทั้งสองฝั่งพร้อมกันตั้งแต่ Q1 2025 และในเดือน ส.ค. 2025 ยื่น <strong>13D</strong> (ไม่ใช่ 13G) บน Core Scientific ที่ 5.8%
+  ก่อนเพิ่มเป็น 9.4% ในเดือน ต.ค. 2025 ซึ่งตรงกับช่วงที่ CoreWeave เสนอซื้อ Core Scientific
+  การเลือกยื่น 13D แปลว่าตั้งใจมีอิทธิพลต่อผลลัพธ์ ไม่ใช่ถือเฉย ๆ — และกองทุนยังยื่น N-PX (รายงานการใช้สิทธิออกเสียง) ในเดือน ส.ค. 2026
+</div>
+<h2>3. สถิติพฤติกรรม</h2>
+
+<p class="lede">
+  ทุกตัวเลขในส่วนนี้คำนวณจากตาราง 13F ทั้ง 7 ไตรมาส (194 บรรทัดดิบ รวมเป็น 74 สถานะที่ต่างกัน เมื่อนับ CUSIP คู่กับฝั่ง หุ้น/call/put)
+  และจากราคาปิดรายวันของหลักทรัพย์อ้างอิงแต่ละตัว
+</p>
+
+<h3>3.1 ระยะเวลาถือสินทรัพย์</h3>
+
+<div class="tablebox">
+  <table>
+    <thead><tr><th>ตัวชี้วัด</th><th>ค่า</th><th>อ่านว่าอย่างไร</th></tr></thead>
+    <tbody>
+      <tr><td>ค่าเฉลี่ยจำนวนไตรมาสที่อยู่ในพอร์ต (นับเท่ากันทุกสถานะ)</td><td class="num"><strong>2.05</strong> ไตรมาส</td><td>ประมาณ 6 เดือน</td></tr>
+      <tr><td>ค่าเฉลี่ยถ่วงน้ำหนักด้วยเงิน</td><td class="num"><strong>3.01</strong> ไตรมาส</td><td>เงินก้อนใหญ่อยู่นานกว่าค่าเฉลี่ยชื่ออย่างมีนัย</td></tr>
+      <tr><td>ค่ามัธยฐานของสถานะที่ปิดไปแล้ว</td><td class="num"><strong>1</strong> ไตรมาส</td><td>ของที่ตัดทิ้ง ตัดเร็วมาก</td></tr>
+      <tr><td>สัดส่วนสถานะที่ปิดแล้วซึ่งอยู่แค่ไตรมาสเดียว</td><td class="num"><strong>60%</strong> (29 จาก 48)</td><td>ทดลองแล้วทิ้งเป็นเรื่องปกติ ไม่ใช่ข้อยกเว้น</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  ช่องว่างระหว่าง 2.05 กับ 3.01 คือข้อค้นพบ ไม่ใช่ความคลาดเคลื่อน มันบอกว่าพอร์ตนี้ทำงานแบบ
+  <strong>แกน + ดาวบริวาร</strong> ชัดเจน แกนมีสี่ชื่อที่อยู่เกือบทุกไตรมาสตั้งแต่เข้ามา:
+</p>
+
+<div class="tablebox">
+  <table>
+    <thead><tr><th>ชื่อ</th><th>Q4 24</th><th>Q1 25</th><th>Q2 25</th><th>Q3 25</th><th>Q4 25</th><th>Q1 26</th><th>Q2 26</th><th>ไตรมาส</th></tr></thead>
+    <tbody>
+      <tr><td>Core Scientific</td><td>·</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td><td class="num">6/6</td></tr>
+      <tr><td>IREN</td><td>·</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td><td class="num">6/6</td></tr>
+      <tr><td>Applied Digital</td><td>·</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td><td class="num">6/6</td></tr>
+      <tr><td>CoreWeave (หุ้น)</td><td>·</td><td>●</td><td>·</td><td>●</td><td>●</td><td>●</td><td>●</td><td class="num">5/6</td></tr>
+      <tr><td>Intel (call)</td><td>·</td><td>●</td><td>●</td><td>●</td><td>●</td><td>·</td><td>·</td><td class="num">4</td></tr>
+      <tr><td>SanDisk</td><td>·</td><td>·</td><td>·</td><td>●</td><td>●</td><td>●</td><td>●</td><td class="num">4</td></tr>
+      <tr><td>Bloom Energy</td><td>·</td><td>·</td><td>·</td><td>●</td><td>●</td><td>●</td><td>●</td><td class="num">4</td></tr>
+      <tr><td>Vistra</td><td>●</td><td>●</td><td>●</td><td>●</td><td>·</td><td>·</td><td>·</td><td class="num">4</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  สัดส่วนของพอร์ตที่อยู่ในสถานะซึ่งรอดอย่างน้อย 4 ไตรมาส แกว่งอยู่ที่ 19–69%
+  ต่ำสุดใน Q1 2026 (19.2%) เพราะ put ทั้งกองเป็นของใหม่ทั้งหมด — อีกหลักฐานว่าออปชันในพอร์ตนี้เป็นเครื่องมือชั่วคราว ไม่ใช่สถานะหลัก
+</p>
+
+<h3>3.2 ระยะเวลาในการ rebalance</h3>
+
+<div class="tablebox">
+  <table>
+    <thead><tr><th>ไตรมาส</th><th>ชื่อใหม่</th><th>ชื่อที่ออก</th><th>ชื่อที่อยู่ต่อ</th><th>Jaccard</th><th>อัตราหมุนตามน้ำหนักเงิน</th><th>อัตราหมุนตามจำนวนหุ้น</th></tr></thead>
+    <tbody>
+      <tr><td>Q1 2025</td><td class="num">8</td><td class="num">2</td><td class="num">4</td><td class="num">0.29</td><td class="num">84.2%</td><td class="num">96.3%</td></tr>
+      <tr><td>Q2 2025</td><td class="num">1</td><td class="num">4</td><td class="num">8</td><td class="num">0.62</td><td class="num">44.4%</td><td class="num">19.1%</td></tr>
+      <tr><td>Q3 2025</td><td class="num">18</td><td class="num">2</td><td class="num">7</td><td class="num">0.26</td><td class="num">61.9%</td><td class="num">35.8%</td></tr>
+      <tr><td>Q4 2025</td><td class="num">12</td><td class="num">12</td><td class="num">13</td><td class="num">0.35</td><td class="num">47.5%</td><td class="num">39.5%</td></tr>
+      <tr><td>Q1 2026</td><td class="num">12</td><td class="num">8</td><td class="num">17</td><td class="num">0.46</td><td class="num">72.5%</td><td class="num">46.5%</td></tr>
+      <tr><td>Q2 2026</td><td class="num">5</td><td class="num">10</td><td class="num">19</td><td class="num">0.56</td><td class="num">73.6%</td><td class="num">39.5%</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  ค่ากลางของอัตราหมุนตามน้ำหนักเงินอยู่ที่ <strong>ราว 67% ต่อไตรมาส</strong> — พอร์ตหมุนตัวเองครบรอบทุก ๆ 1.5 ไตรมาสโดยประมาณ
+  และเพราะ 13F เห็นเฉพาะวันสิ้นไตรมาส ตัวเลขนี้เป็นขอบล่าง ของจริงสูงกว่านี้แน่นอน
+</p>
+
+<p>
+  แต่จังหวะการปรับไม่ได้สม่ำเสมอ มันเป็น <em>เหตุการณ์</em> ไม่ใช่ <em>ตารางเวลา</em> Jaccard ตกลงถึง 0.26 สองครั้ง
+  (Q1 2025 และ Q3 2025) ซึ่งทั้งสองครั้งตรงกับการเปลี่ยนธีมใหญ่ ส่วนไตรมาสที่ไม่มีอะไรเปลี่ยนธีม Jaccard อยู่ที่ 0.46–0.62
+  สรุปเป็นกฎได้ว่า: <strong>ปรับน้ำหนักเล็ก ๆ ทุกไตรมาส ปรับใหญ่เมื่อเปลี่ยนสมมติฐาน ไม่มีหลักฐานของการ rebalance ตามปฏิทิน</strong>
+</p>
+
+<h3>3.3 จังหวะการเลือกซื้อ — ซื้อตอนลงหรือซื้อตอนขึ้น</h3>
+
+<p>
+  ทดสอบตรง ๆ: ทุกครั้งที่มีสถานะหุ้นเกิดใหม่ เพิ่ม ลด หรือปิด เอาผลตอบแทนของหลักทรัพย์อ้างอิง <em>ในไตรมาสที่การกระทำนั้นเกิด</em>
+  มาดูว่าเป็นบวกหรือลบ
+</p>
+
+<div class="tablebox">
+  <table>
+    <thead><tr><th>การกระทำ</th><th>จำนวน</th><th>มัธยฐานผลตอบแทนอ้างอิงในไตรมาสนั้น</th><th>% ที่ทำตอนราคากำลังขึ้น</th><th>มัธยฐานผลตอบแทนไตรมาสถัดไป</th></tr></thead>
+    <tbody>
+      <tr><td><strong>เปิดสถานะใหม่</strong></td><td class="num">23</td><td class="num">+16.2%</td><td class="num"><strong>70%</strong></td><td class="num"><strong>+50.9%</strong></td></tr>
+      <tr><td>เพิ่มน้ำหนัก (มากกว่า +15% ของจำนวนหุ้น)</td><td class="num">26</td><td class="num">+8.8%</td><td class="num">62%</td><td class="num">+6.6%</td></tr>
+      <tr><td>ลดน้ำหนัก</td><td class="num">3</td><td class="num">+33.4%</td><td class="num">67%</td><td class="num">+2.1%</td></tr>
+      <tr><td>ปิดสถานะ</td><td class="num">18</td><td class="num">+19.5%</td><td class="num"><strong>78%</strong></td><td class="num">+6.3%</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  ผลชัดเจนและสวนทางกับภาพจำของ &ldquo;นักลงทุนสายคิดหนัก&rdquo;:
+  <strong>นี่คือผู้ซื้อตามโมเมนตัม ไม่ใช่ผู้ซื้อของถูก</strong>
+  70% ของสถานะใหม่เปิดเข้าไปในหุ้นที่เพิ่งขึ้นมาแล้ว และมัธยฐานของสิ่งที่เกิดหลังจากนั้นคือ +50.9% อีกหนึ่งไตรมาส
+  ส่วนการปิดสถานะ 78% ทำตอนราคากำลังขึ้น — <em>ขายให้แรงซื้อ</em> ไม่ใช่ขายหนีตอนพัง
+</p>
+
+<div class="note">
+  ข้อควรระวังเชิงสถิติ: ตัวอย่างมีเพียง 6 ช่วงเปลี่ยนไตรมาส และอยู่ในตลาดขาขึ้นของธีมเดียวเกือบทั้งหมด
+  ค่า &ldquo;+50.9% ไตรมาสถัดไป&rdquo; จึงสะท้อนทั้งฝีมือและ <em>ภาวะตลาด</em> ปนกัน แยกออกจากกันไม่ได้ด้วยข้อมูลชุดนี้
+</div>
+
+<h3>3.4 แนวคิดที่อ่านได้จากพฤติกรรม</h3>
+
+<p>
+  ประกอบทุกอย่างเข้าด้วยกัน กฎการเลือกของพอร์ตนี้อ่านได้เป็นสี่ข้อ:
+</p>
+
+<div class="tablebox">
+  <table>
+    <thead><tr><th>กฎที่อนุมานได้</th><th>หลักฐานในตัวเลข</th></tr></thead>
+    <tbody>
+      <tr><td><strong>1. ซื้อคอขวดทางกายภาพ ไม่ซื้อผู้ชนะที่ประกาศแล้ว</strong></td><td>NVIDIA ปรากฏเป็นหุ้น 2,855 หุ้น (0.003%) ครั้งเดียวในเจ็ดไตรมาส แต่ปรากฏเป็น put สองครั้ง มูลค่าอ้างอิงรวมกว่า 1.8 พันล้านดอลลาร์</td></tr>
+      <tr><td><strong>2. คอขวดย้ายที่ได้ และต้องย้ายตาม</strong></td><td>ไฟฟ้า (Q4 24) → ที่ตั้ง (Q3 25) → หน่วยความจำ (Q2 26) แต่ละครั้งคือการขยับหนึ่งข้อต่อในห่วงโซ่เดียวกัน</td></tr>
+      <tr><td><strong>3. เมื่อเจอของที่ใช่ ใส่ให้ใหญ่พอที่จะเปลี่ยนผลตอบแทนทั้งกอง</strong></td><td>Intel call 45.7% ใน Q1 2025; SNDK+MU 55.6% ใน Q2 2026; ห้าอันดับแรกกินพอร์ต 48.7–97.0% ทุกไตรมาส</td></tr>
+      <tr><td><strong>4. ทดลองด้วยของเล็ก ตัดทิ้งเร็ว</strong></td><td>60% ของสถานะที่ปิด อยู่แค่ไตรมาสเดียว; Cerebras 10,000 หุ้น (0.01%) คือสถานะเฝ้าดู ไม่ใช่สถานะลงทุน</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>3.5 สัดส่วนการถือ แบ่งจากแนวคิดอะไร</h3>
+
+<p>
+  การกระจายน้ำหนักไม่เท่ากันแบบรุนแรงและมีรูปทรงคงที่: ทุกไตรมาส
+  <strong>เพียง 6–8 สถานะก็ถึง 80% ของพอร์ตหุ้นแล้ว</strong> ไม่ว่าจะถือ 6 ชื่อหรือ 26 ชื่อ
+</p>
+
+<div class="tablebox">
+  <table>
+    <thead><tr><th>ไตรมาส</th><th>จำนวนหุ้นที่ถือ</th><th>น้ำหนักอันดับ 1</th><th>ต้องใช้กี่ชื่อจึงถึง 80% ของพอร์ต</th><th>คิดเป็น % ของชื่อทั้งหมด</th></tr></thead>
+    <tbody>
+      <tr><td>Q4 2024</td><td class="num">6</td><td class="num">34.1%</td><td class="num">4</td><td class="num">67%</td></tr>
+      <tr><td>Q1 2025</td><td class="num">11</td><td class="num">21.5%</td><td class="num">7</td><td class="num">64%</td></tr>
+      <tr><td>Q2 2025</td><td class="num">7</td><td class="num">29.9%</td><td class="num">5</td><td class="num">71%</td></tr>
+      <tr><td>Q3 2025</td><td class="num">19</td><td class="num">25.1%</td><td class="num">7</td><td class="num">37%</td></tr>
+      <tr><td>Q4 2025</td><td class="num">24</td><td class="num">22.4%</td><td class="num">8</td><td class="num">33%</td></tr>
+      <tr><td>Q1 2026</td><td class="num">26</td><td class="num">22.8%</td><td class="num">6</td><td class="num">23%</td></tr>
+      <tr><td>Q2 2026</td><td class="num">23</td><td class="num">28.1%</td><td class="num">6</td><td class="num">26%</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  แปลว่าน้ำหนักไม่ได้มาจากสูตรความเสี่ยง (ถ้าใช้ risk parity หรือ equal weight ตัวเลขคอลัมน์สุดท้ายจะอยู่แถว 80% ตลอด)
+  แต่มาจาก <strong>ระดับความเชื่อมั่นที่แบ่งเป็นชั้น ๆ</strong>: ชั้นบนสุด 15–30% ต่อชื่อสำหรับความคิดหลัก
+  ชั้นกลาง 2–8% สำหรับวิธีเล่นธีมเดียวกันคนละทาง และชั้นล่าง 0.1–1% เป็นตั๋วเข้าชมไว้บังคับตัวเองให้ติดตาม
+  ตะกร้าเหมืองบิตคอยน์ทั้งเจ็ดชื่อคือชั้นกลางที่ชัดที่สุด — ไม่รู้ว่าเหมืองไหนจะแปลงร่างสำเร็จ จึงซื้อทุกเหมือง
+</p>
+
+<h3>3.6 การจัดการความเสี่ยงช่วงวิกฤต</h3>
+
+<p>
+  ในกรอบเจ็ดไตรมาสนี้ พอร์ต (คิดเฉพาะหุ้นสามัญ ถือตามน้ำหนักวันสิ้นไตรมาส ไม่คิดการซื้อขายระหว่างงวดและไม่คิดค่าธรรมเนียม) ให้ผลดังนี้:
+</p>
+
+<div class="tablebox">
+  <table>
+    <thead><tr><th>ถือ ณ สิ้น</th><th>ผลในไตรมาสถัดไป</th><th>พอร์ตหุ้น</th><th>S&amp;P 500</th><th>Nasdaq 100</th><th>SMH</th><th>มี put ในพอร์ตหรือไม่</th></tr></thead>
+    <tbody>
+      <tr><td>Q4 2024</td><td>Q1 2025</td><td class="num"><strong>−28.1%</strong></td><td class="num">−4.3%</td><td class="num">−8.1%</td><td class="num">−12.7%</td><td>ไม่มี</td></tr>
+      <tr><td>Q1 2025</td><td>Q2 2025</td><td class="num">+87.8%</td><td class="num">+10.8%</td><td class="num">+17.8%</td><td class="num">+31.9%</td><td>ไม่มี</td></tr>
+      <tr><td>Q2 2025</td><td>Q3 2025</td><td class="num">+32.9%</td><td class="num">+8.1%</td><td class="num">+9.0%</td><td class="num">+17.0%</td><td>SMH 52% ของพอร์ตหุ้น</td></tr>
+      <tr><td>Q3 2025</td><td>Q4 2025</td><td class="num"><strong>−17.5%</strong></td><td class="num">+2.7%</td><td class="num">+2.5%</td><td class="num">+10.7%</td><td>มี 40%</td></tr>
+      <tr><td>Q4 2025</td><td>Q1 2026</td><td class="num">+39.5%</td><td class="num">−4.4%</td><td class="num">−5.9%</td><td class="num">+6.5%</td><td>เกือบไม่มี</td></tr>
+      <tr><td>Q1 2026</td><td>Q2 2026</td><td class="num">+114.1%</td><td class="num">+15.1%</td><td class="num">+27.7%</td><td class="num">+71.1%</td><td>219% ของพอร์ตหุ้น</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  ทบต้นได้ <strong>+342%</strong> สำหรับพอร์ตหุ้นล้วนในหกไตรมาส เทียบกับ S&amp;P 500 +30% และ SMH +172%
+  แต่ข้อสังเกตเรื่องความเสี่ยงสำคัญกว่าตัวเลขผลตอบแทน:
+</p>
+
+<div class="tablebox">
+  <table>
+    <thead><tr><th>ข้อสังเกต</th><th>รายละเอียด</th></tr></thead>
+    <tbody>
+      <tr><td><strong>ไตรมาสแรกไม่มีการป้องกันความเสี่ยงเลย</strong></td><td>Q1 2025 ขาดทุน 28.1% ขณะที่ตลาดลง 4.3% ค่าเบตาของพอร์ตต่อ SMH ในไตรมาสนั้นอยู่ราว 2.2 เท่า</td></tr>
+      <tr><td><strong>put ตัวแรกมาหลังบทเรียนนั้นพอดี</strong></td><td>put บน SMH ปรากฏครั้งแรก Q2 2025 ที่มูลค่าอ้างอิง 570 ล้านดอลลาร์ = 52% ของพอร์ตหุ้น — เป็น put บน <em>ดัชนี</em> ไม่ใช่รายตัว นั่นคือการลดเบตา ไม่ใช่การเก็งขาลง</td></tr>
+      <tr><td><strong>เครื่องมือคือ put ไม่ใช่เงินสด</strong></td><td>ไม่เคยมีไตรมาสไหนที่ลดขนาดพอร์ตหุ้นลงเพื่อถือเงินสด แม้แต่ไตรมาสเดียว การลดความเสี่ยงทำผ่านออปชันเสมอ ซึ่งรักษาโอกาสขาขึ้นไว้ครบ</td></tr>
+      <tr><td><strong>ป้องกันที่ตัวแทนของธีม ไม่ใช่ที่ของที่ตัวเองถือ</strong></td><td>สิ่งที่ถือคือนีโอคลาวด์และหน่วยความจำ แต่สิ่งที่ครอบด้วย put คือ SMH, NVDA, AVGO, AMD, ORCL — ของที่สภาพคล่องสูง ออปชันถูก และร่วงพร้อมกันถ้าธีมพัง</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="note">
+  <strong>ผลของ put กอง Q1 2026 — และความกำกวมที่แก้ไม่ได้:</strong> ในไตรมาสถัดมา หลักทรัพย์อ้างอิงเกือบทุกตัวขึ้นแรง
+  (SMH +71.1%, AMD +185.6%, MU +241.7%, INTC +216.4%, ASML +50.9%, TSM +41.6%, AVGO +22.2%, NVDA +14.9%; มีเพียง ORCL ที่แบน)
+  <br>• ถ้าเป็น put ที่ <em>ซื้อ</em>: หมดค่าเกือบทั้งหมด เสียพรีเมียมราว 250–680 ล้านดอลลาร์ — เป็นค่าประกันที่แพงแต่ไม่ถึงตาย เพราะพอร์ตหุ้นทำ +114.1% ในไตรมาสเดียวกัน
+  <br>• ถ้าเป็น put ที่ <em>ขาย</em>: เก็บพรีเมียมได้เต็ม และหลักฐานหนึ่งชิ้นชี้ทางนี้ — ใน Q1 2026 มีทั้ง put และ call บน Micron และ TSMC พร้อมกัน
+  ซึ่งคือรูป <em>risk reversal</em> (ขาย put บวกซื้อ call เท่ากับสถานะซื้อสังเคราะห์) และไตรมาสถัดมา Micron กลายเป็นหุ้นก้อน 5,574 ล้านดอลลาร์
+  <br>13F แยกสองกรณีนี้ไม่ได้ ใครก็ตามที่บอกว่ารู้ กำลังเดา
+</div>
+
+<h3>3.7 การแบ่งน้ำหนักพอร์ต</h3>
+
+<p>
+  สรุปโครงสร้างน้ำหนักที่วัดได้ ออกมาเป็นทรงนี้:
+</p>
+
+<div class="tablebox">
+  <table>
+    <thead><tr><th>ชั้น</th><th>น้ำหนักต่อชื่อ</th><th>จำนวนชื่อ</th><th>หน้าที่</th><th>ตัวอย่างจริง</th></tr></thead>
+    <tbody>
+      <tr><td>ความคิดหลัก</td><td class="num">15–46%</td><td class="num">1–2</td><td>เป็นตัวกำหนดผลตอบแทนของทั้งกอง</td><td>Intel call 45.7% (Q1 25); SanDisk 28.0% บวก Micron 27.5% (Q2 26)</td></tr>
+      <tr><td>แกนถาวร</td><td class="num">3–9%</td><td class="num">4–5</td><td>อยู่ข้ามทุกยุคของธีม</td><td>CORZ, IREN, APLD, CRWV</td></tr>
+      <tr><td>ตะกร้าธีม</td><td class="num">0.3–2.5%</td><td class="num">7–12</td><td>ซื้อทั้งกลุ่มเพราะไม่รู้ว่าตัวไหนจะรอด</td><td>เหมืองบิตคอยน์ 7 ชื่อ, ผู้ผลิตไฟรายเล็ก</td></tr>
+      <tr><td>ตั๋วเข้าชม</td><td class="num">ต่ำกว่า 0.1%</td><td class="num">3–6</td><td>เปิดไว้เพื่อบังคับตัวเองให้ติดตาม</td><td>Cerebras 10,000 หุ้น; NVDA 2,855 หุ้น; Corning 5,283 หุ้น</td></tr>
+      <tr><td>ชั้นออปชัน</td><td class="num">0–219% ของพอร์ตหุ้น</td><td class="num">1–11</td><td>ปรับเบตาขึ้นลงโดยไม่แตะพอร์ตหุ้น</td><td>SMH put; Intel call; ตะกร้า put ทั้งอุตสาหกรรม Q1 26</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  สิ่งที่ <em>ไม่</em> ปรากฏเลยในเจ็ดไตรมาสก็บอกอะไรเยอะพอกัน: ไม่มีพันธบัตร ไม่มีทองคำ ไม่มี ETF ป้องกันความผันผวน
+  ไม่มีหุ้นนอกธีม AI แม้แต่ตัวเดียว ไม่มีการถือเงินสดที่มองเห็นได้ และไม่มีเพดานน้ำหนักรายชื่อที่บังคับใช้จริง
+</p>
+
+<h3>3.8 การใช้ออปชันและเลเวอเรจ</h3>
+
+<p>
+  ออปชันในพอร์ตนี้ไม่ได้ใช้แบบเดียว มันมีสามหน้าที่ต่างกันชัดเจน และเลือกใช้ตามสถานการณ์:
+</p>
+
+<div class="tablebox">
+  <table>
+    <thead><tr><th>รูปแบบ</th><th>ตัวอย่าง</th><th>ลักษณะสัญญา</th><th>ทำไมถึงเลือกแบบนี้</th></tr></thead>
+    <tbody>
+      <tr><td><strong>1. call แทนหุ้น ถือยาว</strong></td><td>Intel call 20,237,400 หุ้นอ้างอิง <em>เท่ากันเป๊ะสี่ไตรมาสติด</em> (Q1 25 ถึง Q4 25) มูลค่าอ้างอิงโตจาก 460 เป็น 747 ล้านดอลลาร์ตามราคาหุ้น</td><td>จำนวนที่ไม่ขยับเลยสี่ไตรมาสแปลว่าไม่ได้ roll สัญญา จึงเป็นออปชันอายุยาวแบบ LEAPS ไม่ใช่รายเดือน</td><td>Intel ตอนนั้นคือเดิมพันพลิกฟื้นที่มีทางล้มเหลวจริง — call จำกัดขาดทุนไว้ที่พรีเมียม ขณะที่ให้มูลค่าอ้างอิงถึง 45.7% ของพอร์ตด้วยเงินเพียงเศษเสี้ยว</td></tr>
+      <tr><td><strong>2. put บนดัชนีเพื่อลดเบตา</strong></td><td>SMH put 570 ล้าน (Q2 25), 196 ล้าน (Q3 25), 2,043 ล้านดอลลาร์ (Q1 26)</td><td>put บน ETF ทั้งกลุ่ม ไม่ใช่รายตัว</td><td>สิ่งที่ถือเป็นหุ้นเล็กสภาพคล่องต่ำ ออปชันแพงหรือไม่มีเลย การป้องกันจึงต้องทำที่ตัวแทนที่ซื้อขายง่ายที่สุดของธีมเดียวกัน</td></tr>
+      <tr><td><strong>3. ตะกร้า put ทั้งอุตสาหกรรม</strong></td><td>Q1 2026: 9 ชื่อ มูลค่าอ้างอิงรวม 8,459 ล้านดอลลาร์ = 219% ของพอร์ตหุ้น โดย 80% เป็นกลุ่มชิป</td><td>กระจาย 9 ชื่อ ไม่กระจุกตัวเดียว</td><td>ครอบฝั่งที่ตลาดตีราคาไปแล้วทั้งแถบ ขณะที่ฝั่งหุ้นถือชิปเพียง 1.4% — เป็นการเดิมพันส่วนต่าง ไม่ใช่เดิมพันทิศทางตลาด</td></tr>
+      <tr><td><strong>4. call กับ put บนชื่อเดียวกัน</strong></td><td>Q1 2026: Micron (put 584 บวก call 422), TSMC (put 535 บวก call 355); Q3 2025: CoreWeave (หุ้น 563 บวก call 317 บวก put 192)</td><td>โครงสร้างสองขา</td><td>อ่านได้สองทาง — collar (ป้องกันหุ้นที่ถืออยู่) หรือ risk reversal (ขาย put ซื้อ call เท่ากับสถานะซื้อสังเคราะห์) สิ่งที่เกิดขึ้นจริงในไตรมาสถัดมาคือ Micron กลายเป็นหุ้นก้อน 5,574 ล้านดอลลาร์ ซึ่งเข้ากับทางที่สอง</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>
+  <strong>ระดับเลเวอเรจ:</strong> มูลค่าอ้างอิงรวม (หุ้นบวก call บวก put) เทียบกับพอร์ตหุ้น อยู่ที่ 100% → 184% → 193% → 185% → 141% → <strong>355%</strong> → 100%
+  จุดสูงสุดคือ Q1 2026 และจุดต่ำสุดคือหัวกับท้าย นี่คือกองทุนที่ <em>เปิดและปิดชั้นออปชันทั้งชั้นได้ภายในไตรมาสเดียว</em>
+  ไม่ใช่กองทุนที่รันเลเวอเรจคงที่
+</p>
+
+<div class="note">
+  <strong>เลเวอเรจอีกชนิดที่ 13F ไม่นับ — การลงทุนในตลาดแรก:</strong>
+  กองทุนถือ SharonAI 21.1% ซึ่งประกอบด้วยหุ้นสามัญ 5,396,127 หุ้น <em>และใบสำคัญแสดงสิทธิจ่ายล่วงหน้า (pre-funded warrant) อีก 2,674,823 หน่วย</em>
+  ที่ใช้สิทธิไปเมื่อ 15 ก.ย. 2026 พร้อมยื่น Form 3 และ Form 4 ในฐานะผู้ถือหุ้นภายใน
+  นี่ไม่ใช่การซื้อในกระดาน แต่คือการเข้าไปเป็นผู้ให้ทุนในรอบระดมทุนเอกชน 1.6 พันล้านดอลลาร์ของบริษัท
+  แปลว่าอย่างน้อยส่วนหนึ่งของกองทุนทำงานแบบ crossover — ซื้อของในตลาดแรกด้วยเงื่อนไขที่คนซื้อในกระดานไม่ได้
+</div>
+
+<h2>สิ่งที่จะทำให้ข้อสรุปในหน้านี้ผิด</h2>
+
+<div class="tablebox">
+  <table>
+    <thead><tr><th>ข้อสรุป</th><th>สิ่งที่จะหักล้างมัน</th></tr></thead>
+    <tbody>
+      <tr><td>ตะกร้า put คือการป้องกันความเสี่ยง</td><td>ถ้าเอกสารของกองทุน หนังสือถึงผู้ลงทุน หรือข้อมูล OCC แสดงว่า put เหล่านั้นเป็นฝั่งขาย ข้อสรุปเรื่องการจัดการความเสี่ยงทั้งหมดในข้อ 3.6 และ 3.8 ต้องพลิกกลับด้าน — จะกลายเป็นการ<em>เพิ่ม</em>สถานะซื้อ ไม่ใช่ลด</td></tr>
+      <tr><td>อัตราหมุนพอร์ตราว 67% ต่อไตรมาส</td><td>ถ้ามีข้อมูลการซื้อขายจริงรายวัน ตัวเลขจะสูงขึ้นเท่านั้น ไม่มีทางต่ำลง — ข้อสรุปนี้ผิดได้ทางเดียวคือผิดในทิศที่แรงกว่าเดิม</td></tr>
+      <tr><td>พอร์ตหุ้นทำได้ +342%</td><td>เป็นการจำลองแบบถือนิ่งตามน้ำหนักวันสิ้นไตรมาส ไม่ใช่ผลตอบแทนจริงของกองทุน ผลจริงต่างออกไปแน่นอนจากการซื้อขายระหว่างงวด ต้นทุนออปชัน ค่าธรรมเนียม และของที่ 13F มองไม่เห็น</td></tr>
+      <tr><td>ซื้อตามโมเมนตัม</td><td>ถ้าการซื้อจริงเกิดในช่วงต้นไตรมาสตอนราคายังต่ำ แล้วราคาวิ่งทีหลัง ตัวเลข 70% ที่ว่าเข้าตอนขาขึ้นจะเป็นภาพลวงจากการวัดที่ความละเอียดรายไตรมาส — ข้อมูล 13F แก้ปัญหานี้ไม่ได้</td></tr>
+      <tr><td>พอร์ตทั้งหมดอยู่ในธีม AI เดียว</td><td>ถ้ากองทุนถือพันธบัตร ทองคำ เงินสด หรือสถานะชอร์ตรายตัวในสัดส่วนมาก สิ่งเหล่านั้นไม่ปรากฏใน 13F เลย และภาพความเสี่ยงจริงจะกระจายกว่าที่หน้านี้แสดง</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<ul class="src">
+  <li>SEC EDGAR — Situational Awareness LP (CIK 0002045724) แบบ 13F-HR ทั้ง 7 ฉบับ ยื่น 12 ก.พ. 2025 ถึง 14 ส.ค. 2026 รวม 194 บรรทัด infoTable</li>
+  <li>SEC EDGAR — Situational Awareness Partners LP (CIK 0002038540) 13F-HR ยื่น 18 พ.ค. 2026 ตารางซ้ำกับฉบับของ CIK 2045724 จึงไม่นับซ้ำ</li>
+  <li>SEC EDGAR — SCHEDULE 13D Core Scientific ยื่น 19 ส.ค. 2025 ที่ 5.8% (17,682,918 หุ้น), 13D/A 14 ต.ค. 2025 ที่ 9.4% (28,756,478 หุ้น), 13D/A 4 ส.ค. 2026 ที่ 4.4% (14,089,395 หุ้น)</li>
+  <li>SEC EDGAR — SCHEDULE 13G Nebius 27 พ.ค. 2026 ที่ 5.6%; SCHEDULE 13G SharonAI 29 มิ.ย. 2026 ที่ 19.9%; SCHEDULE 13D SharonAI 28 ส.ค. 2026 ที่ 21.1% รวม pre-funded warrant 2,674,823 หน่วย; Form 3 ยื่น 29 มิ.ย. 2026 และ Form 4 ยื่น 2 ก.ค. กับ 17 ก.ย. 2026</li>
+  <li>ราคาปิดรายวันของหลักทรัพย์อ้างอิง 29 ตัว จาก terminal /api/stock/history ช่วง ก.ย. 2021 ถึง 18 ก.ย. 2026 ใช้คำนวณผลตอบแทนรายไตรมาส จังหวะเข้าออก และการตรวจสอบว่าค่าออปชันเป็นมูลค่าอ้างอิง</li>
+  <li>Nasdaq — Bitfarms เปลี่ยนชื่อเป็น Keel Infrastructure และย้ายทะเบียนมาสหรัฐ มีผล 1 เม.ย. 2026 เริ่มซื้อขายชื่อ KEEL วันที่ 6 เม.ย. 2026</li>
+  <li>Businesswire และ SEC — SharonAI IPO ก.พ. 2026 ระดมทุน 125 ล้านดอลลาร์ และรอบเอกชน 1.6 พันล้านดอลลาร์ (หุ้นสามัญกับ pre-funded warrant 900 ล้าน, หุ้นกู้แปลงสภาพ 700 ล้าน)</li>
+</ul>

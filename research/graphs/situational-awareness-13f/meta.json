@@ -1,0 +1,42 @@
+{
+  "id": "8520bd6c-0db8-46f3-aa63-d2eecbca29ea",
+  "slug": "situational-awareness-13f",
+  "title": "Situational Awareness LP — อ่านพอร์ตของ Leopold Aschenbrenner จาก 13F เจ็ดไตรมาส",
+  "description": "แผนที่การหมุนสินทรัพย์ Q4 2024 – Q2 2026 (ไฟฟ้า → นีโอคลาวด์ → หน่วยความจำ), ห่วงโซ่ที่ของทุกชิ้นเชื่อมกัน และสถิติพฤติกรรม: ระยะถือ อัตราหมุน การกระจุกตัว จังหวะเข้าออก การใช้ออปชันและเลเวอเรจ",
+  "kind": "html",
+  "symbol": "PORTFOLIO",
+  "thesis_id": "51e2cba6-e6bc-426d-83ce-8694eb54441e",
+  "zettel_refs": "Z-0035,Z-0036,Z-0037,Z-0040",
+  "tags": "13F,aschenbrenner,situational-awareness,rotation,neocloud,memory,options,behaviour",
+  "as_of": "2026-06-30",
+  "sources": [
+    {
+      "title": "SEC EDGAR — Situational Awareness LP (CIK 0002045724), 13F-HR ทั้ง 7 ฉบับ",
+      "url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0002045724&type=13F"
+    },
+    {
+      "title": "SEC EDGAR — SCHEDULE 13D/13G/Form 3-4 (Core Scientific, Nebius, SharonAI)",
+      "url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0002045724&type=SC+13"
+    },
+    {
+      "title": "Terminal price history — /api/stock/history, 5y daily, 29 หลักทรัพย์อ้างอิง",
+      "url": "http://localhost:9317/api/stock/history/SMH?period=5y&interval=1d"
+    },
+    {
+      "title": "Nasdaq — Bitfarms rebrands as Keel Infrastructure, completes U.S. redomiciliation",
+      "url": "https://www.nasdaq.com/press-release/bitfarms-officially-rebrands-keel-infrastructure-completes-us-redomiciliation-2026-04"
+    },
+    {
+      "title": "Businesswire — Sharon AI $125M IPO and $1.6B private placement",
+      "url": "https://briefglance.com/companies/sharonai-holdings-inc/pulses/18939"
+    }
+  ],
+  "version": 1,
+  "bytes": 89299,
+  "actor": "agent:claude",
+  "deleted_at": null,
+  "created_at": "2026-09-19T12:20:04.691523",
+  "updated_at": "2026-09-19 12:22:18.089",
+  "render_url": "/api/v2/graphs/situational-awareness-13f/render",
+  "file": "D:/Agents/Claude/bloomberg-terminal-main/research/graphs/situational-awareness-13f/index.html"
+}
