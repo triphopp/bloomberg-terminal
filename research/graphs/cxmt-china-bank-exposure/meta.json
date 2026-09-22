@@ -1,0 +1,66 @@
+{
+  "id": "b328f10a-0c0e-4aa6-a1ca-aaab3fedcd38",
+  "slug": "cxmt-china-bank-exposure",
+  "title": "CXMT กับธนาคารจีน — เจ้าหนี้ที่กลายเป็นเจ้าของ",
+  "description": "ธนาคาร 15 แห่งกับ CXMT: เงินกู้ร่วม 7 ฉบับ ¥82.4bn+US$1.07bn ที่ไม่มีตราสารหนี้แม้ชุดเดียว · SWAP ตัวจริงคือการแปลงหนี้เป็นทุน · ช่องโหว่งบ 12 ข้อ · และช่องทาง LGFV เหอเฝยที่ค้ำ CXMT ไว้ ¥34.7bn โดยไม่มีหลักประกันย้อนกลับ พร้อมฉากทัศน์ Bull/Sideway/Bear",
+  "kind": "html",
+  "symbol": "MU",
+  "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+  "zettel_refs": "Z-0045,Z-0046,Z-0047,Z-0048,Z-0049,Z-0050,Z-0051,Z-0052,Z-0053,Z-0054",
+  "tags": "CXMT,china,banks,AIC,debt-for-equity,syndicated-loan,DRAM,collateral,scenario,LGFV,688825",
+  "as_of": "2026-06-30",
+  "sources": [
+    {
+      "title": "长鑫科技集团股份有限公司 2026 年半年度报告 (688825.SH) — งบแสดงฐานะการเงิน, หมายเหตุ 32/46/52/53, ตารางอนุพันธ์, ภาระผูกพัน",
+      "url": "https://static.cninfo.com.cn/finalpage/2026-08-29/1225529534.PDF"
+    },
+    {
+      "title": "长鑫科技集团股份有限公司 招股说明书 (申报稿, 17 พ.ค. 2026) — 重大借款合同 7 ฉบับ, ตารางผู้ถือหุ้น, ประวัติเพิ่มทุน, 关联担保",
+      "url": "https://static.sse.com.cn/stock/disclosure/announcement/c/202605/002170_20260517_MGLN.pdf"
+    },
+    {
+      "title": "หนังสือตอบข้อซักถามรอบแรกของ SSE (30 ธ.ค. 2025) — โครงสร้างเงินกู้ระยะยาว ตารางชำระ ดอกเบี้ยที่ตั้งเป็นทุน ช่องว่างเงินทุน ¥40.8bn",
+      "url": "https://static.sse.com.cn/stock/disclosure/announcement/c/202512/002170_20251230_XS2U.pdf"
+    },
+    {
+      "title": "หนังสือตอบความเห็นศูนย์พิจารณา SSE (20 พ.ค. 2026) — ความเสี่ยงวัฏจักร DRAM, ช่วงราคา Omdia $1.78–7.89/GB",
+      "url": "https://static.sse.com.cn/stock/disclosure/announcement/c/202605/002170_20260520_QVFW.pdf"
+    },
+    {
+      "title": "合肥市建设投资控股（集团）有限公司 2025 年度跟踪评级报告 (中诚信国际) — ตารางที่ 30 การค้ำประกันภายนอก รวมถึง 长鑫存储 ¥346.66亿",
+      "url": "http://qxb-pdf-osscache.qixin.com/AnBaseinfo/5b94b02e87a3ef409d96ee943246d218.pdf"
+    },
+    {
+      "title": "合肥市产业投资控股（集团）有限公司 评级报告 (28 พ.ค. 2026) — การค้ำประกันภายนอกทั้งหมดผูกกับ CXMT, หนี้แข็ง ¥602.23亿, EBITDA/หนี้ 0.08 เท่า",
+      "url": "http://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/BOND/2026/2026-5/2026-05-28/24674900.PDF"
+    },
+    {
+      "title": "惠誉上调合肥产投集团评级至 BBB+ — SCP 'bb', พอร์ต ¥920亿, หุ้นกู้ USD 2 ชุด",
+      "url": "https://caifuhao.eastmoney.com/news/20260617161040317759790"
+    },
+    {
+      "title": "2.61元/股增资长鑫科技 五大行AIC账面浮盈超230% (21经济网) — การจัดประเภท FVTPL, ประมาณการ 光大证券 และ 国联民生",
+      "url": "https://www.21jingji.com/article/20260721/herald/c6731b749bf0549a6bd14f29399a6338.html"
+    },
+    {
+      "title": "长鑫科技申购！六家银行间接持股4.2%，合计账面金额或超66亿元 (新浪财经) — มูลค่าตามบัญชีรายธนาคารตาม 光大证券",
+      "url": "https://finance.sina.com.cn/jjxw/2026-07-17/doc-iniianxm8203747.shtml"
+    },
+    {
+      "title": "长鑫科技首日暴涨465%，银行资金兵分两路：AIC浮盈超1200亿 (财联社)",
+      "url": "https://www.cls.cn/detail/2438772"
+    },
+    {
+      "title": "TrendForce — U.S. rumored to mull adding CXMT to Entity List",
+      "url": "https://www.trendforce.com/news/2025/05/16/news-u-s-rumored-to-mull-adding-dram-giant-cxmt-and-more-chinese-tech-firms-to-entity-list/"
+    }
+  ],
+  "version": 2,
+  "bytes": 67776,
+  "actor": "agent:desktop",
+  "deleted_at": null,
+  "created_at": "2026-09-19T13:27:15.107356",
+  "updated_at": "2026-09-19 14:11:17.629",
+  "render_url": "/api/v2/graphs/cxmt-china-bank-exposure/render",
+  "file": "D:/Agents/Claude/bloomberg-terminal-main/research/graphs/cxmt-china-bank-exposure/index.html"
+}

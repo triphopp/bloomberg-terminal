@@ -1,0 +1,78 @@
+{
+  "id": "e1185078-60e0-4a37-9523-97e49520e8c9",
+  "slug": "neocloud-guarantee-chain",
+  "title": "ใครค้ำใครในวงจร Neocloud — และหนี้ที่ค้ำด้วยชิปไปจบที่กระเป๋าใคร",
+  "description": "แผนที่คู่สัญญาสามชั้น (NVIDIA backstop → hyperscaler guarantee → RVG นอกงบ) ท่อส่งความเสี่ยงผ่าน SPV/ABS/144A ไปถึงประกันและบำนาญ พร้อมวัดความรุนแรงของค่าเสื่อม GPU ที่ใช้เป็นหลักประกัน",
+  "kind": "html",
+  "symbol": "CRWV",
+  "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+  "zettel_refs": "Z-0038,Z-0039,Z-0041,Z-0042,Z-0043,Z-0044",
+  "tags": "neocloud,counterparty,guarantee,RVG,GPU-collateral,private-credit,securitization,BlackRock,systemic",
+  "as_of": "2026-09-19",
+  "sources": [
+    {
+      "title": "BIS Bulletin 120 — Financing the AI boom: from cash flows to debt (7 Jan 2026)",
+      "url": "https://www.bis.org/publications/bulletin-120-financing-ai-boom-cash-flows-debt.pdf"
+    },
+    {
+      "title": "IMF Global Financial Stability Report, April 2026 — Chapter 1 + Box 1.3",
+      "url": "https://www.imf.org/-/media/files/publications/gfsr/2026/april/english/ch1.pdf"
+    },
+    {
+      "title": "Quinn Emanuel — Emerging Litigation Risks in Financing AI Data Centers Boom",
+      "url": "https://www.quinnemanuel.com/the-firm/publications/client-alert-emerging-litigation-risks-in-financing-ai-data-centers-boom/"
+    },
+    {
+      "title": "CoreWeave 8-K — NVIDIA residual capacity backstop through 13 Apr 2032 (up to $6.3bn)",
+      "url": "https://www.sec.gov/Archives/edgar/data/1769628/000176962825000047/crwv-20250909.htm"
+    },
+    {
+      "title": "CoreWeave IR — $8.5bn DDTL 4.0, first investment-grade GPU-backed financing",
+      "url": "https://investors.coreweave.com/news/news-details/2026/CoreWeave-Closes-Landmark-8-5-Billion-Financing-Facility-Achieving-First-Investment-Grade-Rated-GPU-backed-Financing/default.aspx"
+    },
+    {
+      "title": "BlackRock/GIP — AIP, MGX and GIP to acquire all equity in Aligned Data Centers (~$40bn EV)",
+      "url": "https://www.global-infra.com/news/ai-infrastructure-partnership-aip-mgx-and-blackrocks-global-infrastructure-partners-gip-to-acquire-all-equity-in-aligned-data-centers/"
+    },
+    {
+      "title": "Meta — Joint venture with Blue Owl Capital to develop Hyperion data center",
+      "url": "https://investor.atmeta.com/investor-news/press-release-details/2025/Meta-Announces-Joint-Venture-with-Funds-Managed-by-Blue-Owl-Capital-to-Develop-Hyperion-Data-Center/default.aspx"
+    },
+    {
+      "title": "Fortune — Moody's flags $662bn of off-balance-sheet data center commitments at five companies",
+      "url": "https://fortune.com/2026/02/25/hyperscaler-risk-off-balance-sheet-662-billion-data-center-commitments-meta-amazon-microsoft-oracle-alphabet/"
+    },
+    {
+      "title": "Morgan Stanley Research — Bridging a $1.5tr Data Center Financing Gap",
+      "url": "https://www.morganstanley.com/content/dam/msdotcom/en/assets/pdfs/Research_Bridging-Data-Center-Gap.pdf"
+    },
+    {
+      "title": "BlackRock Investment Institute — 2026 Investment Outlook",
+      "url": "https://www.blackrock.com/corporate/insights/blackrock-investment-institute/publications/outlook"
+    },
+    {
+      "title": "Bisnow — 144A private placements have funded $60bn of data center development",
+      "url": "https://www.bisnow.com/news/national/data-center-development/a-quiet-corner-of-private-credit-has-fueled-60b-in-data-center-development-134982"
+    },
+    {
+      "title": "Aethir — GPU depreciation in 2026: what a used GPU is worth",
+      "url": "https://aethir.com/blog-posts/gpu-depreciation-in-2026-what-a-used-gpu-is-worth"
+    },
+    {
+      "title": "CNBC — How long before a GPU depreciates (Burry, CoreWeave, Nvidia)",
+      "url": "https://www.cnbc.com/2025/11/14/ai-gpu-depreciation-coreweave-nvidia-michael-burry.html"
+    },
+    {
+      "title": "Terminal /api/stock/quote — closes 2026-09-18 (ORCL, OWL, CRWV, IREN, NBIS, APO, BLK, NVDA)",
+      "url": "http://localhost:9317/api/stock/quote"
+    }
+  ],
+  "version": 1,
+  "bytes": 50301,
+  "actor": "agent:desktop",
+  "deleted_at": null,
+  "created_at": "2026-09-19T12:21:28.186689",
+  "updated_at": "2026-09-19 12:23:03.535",
+  "render_url": "/api/v2/graphs/neocloud-guarantee-chain/render",
+  "file": "D:/Agents/Claude/bloomberg-terminal-main/research/graphs/neocloud-guarantee-chain/index.html"
+}

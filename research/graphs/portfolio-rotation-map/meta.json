@@ -1,0 +1,30 @@
+{
+  "id": "e055e93d-75da-4100-b957-d72bbe5f5eba",
+  "slug": "portfolio-rotation-map",
+  "title": "Situational Awareness — Rotation Map",
+  "description": "อ่านวิธีคิดของพอร์ตจากสมุดซื้อขาย 101 ไม้: แผนที่การหมุนของธีม ตั้งแต่ COMPUTE → ทอง → เงินสด → MEMORY, คอฮอร์ตที่เปลี่ยนพฤติกรรม, และขอบที่อยู่ฝั่งขาออก",
+  "kind": "html",
+  "symbol": "PORTFOLIO",
+  "thesis_id": "51e2cba6-e6bc-426d-83ce-8694eb54441e",
+  "zettel_refs": "",
+  "tags": "portfolio,rotation,behaviour,cohort,concentration,discipline",
+  "as_of": "2026-09-19",
+  "sources": [
+    {
+      "title": "Terminal portfolio ledger — /api/v2/portfolio/trades, /open-positions, /summary, /analytics (USD, 2026-09-19)",
+      "url": "http://localhost:9317/api/v2/portfolio/trades?base_currency=USD"
+    },
+    {
+      "title": "Terminal price history — /api/stock/history, 1y daily, every symbol ever held",
+      "url": "http://localhost:9317/api/stock/history/SNDK?period=1y&interval=1d"
+    }
+  ],
+  "version": 1,
+  "bytes": 97437,
+  "actor": "user",
+  "deleted_at": null,
+  "created_at": "2026-09-19T07:03:17.253271",
+  "updated_at": "2026-09-19 07:06:59.906",
+  "render_url": "/api/v2/graphs/portfolio-rotation-map/render",
+  "file": "D:/Agents/Claude/bloomberg-terminal-main/research/graphs/portfolio-rotation-map/index.html"
+}
