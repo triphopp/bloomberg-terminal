@@ -1401,6 +1401,34 @@ def init_series_schema() -> None:
         )
 
 
+def init_etf_aum_schema() -> None:
+    """Self-built AUM record for the sector ETF complex.
+
+    One row is what a fund was worth on one day. Yahoo publishes only TODAY's
+    `totalAssets` and `navPrice` and has no history behind either, so a day
+    nobody recorded can never be recovered — the same argument as
+    `series_points`, and the reason this is a stored fact rather than a derived
+    one. Keyed on (as_of, symbol), which makes a cross-device merge a union.
+    """
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS etf_aum_snapshots (
+                as_of          TEXT NOT NULL,
+                symbol         TEXT NOT NULL,
+                total_assets   REAL,
+                nav            REAL,
+                close          REAL,
+                implied_shares REAL,
+                source         TEXT NOT NULL DEFAULT 'yfinance',
+                captured_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (as_of, symbol)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_etf_aum_symbol ON etf_aum_snapshots(symbol, as_of)"
+        )
+
+
 def init_alerts_schema() -> None:
     """Alert Rule Engine tables (memory/plans/alert-rule-engine.md §5)."""
     from alerts.schema import create_alert_tables

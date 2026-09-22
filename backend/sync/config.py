@@ -146,6 +146,14 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     # in practice: two devices recording the same day agree, and different days
     # never contend.
     ("iv_snapshots",             ["symbol", "snapshot_date", "expiry"]),
+    # Sector-ETF AUM, recorded daily by this app because nobody sells the
+    # history: Yahoo returns None for an ETF's shares outstanding and publishes
+    # only today's totalAssets. Same class of row as iv_snapshots — an immutable
+    # fact about one (symbol, day) that cannot be re-derived afterwards — so the
+    # merge is a union and a day only one machine was awake for is filled in for
+    # both. Without this, two machines each hold half a flow series and neither
+    # can compute a flow across the gap.
+    ("etf_aum_snapshots",        ["as_of", "symbol"]),     # composite PK
 ]
 
 TABLE_PK: dict[str, list[str]] = {t: pk for t, pk in SYNC_TABLES}

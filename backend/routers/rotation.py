@@ -321,3 +321,199 @@ def rotation_constituents(
         if rows:
             _cache[cache_key] = (now, val)
     return val
+
+
+# ── Sector tilt — where the turnover is going, and the AUM record behind it ───
+# The honest name for this is ROTATION, not FLOW. Every buy is a sale, so a
+# share of dollar volume says where the market's attention is concentrated, not
+# that money entered a sector on net. Real flow is creation/redemption, which
+# needs the AUM series this app records for itself (backend/etf_aum.py) — the
+# panel reports it as soon as two days exist and says how young the record is
+# until then.
+#
+# Everything is a SHARE OF THE COMPLEX, never a raw number: XLK is ~$121bn
+# against XLB's ~$9bn, so absolute dollar volume would show the same three
+# funds every day. And every share is z-scored against its own trailing year,
+# because "+20bp" means something different for a fund that normally holds 25%
+# of the complex than for one that holds 3%.
+
+#: Defensive = the four sectors people buy to stay invested while de-risking.
+#: Cyclical = the ones that need the expansion to continue. XLE is in NEITHER:
+#: it trades on crude, which can rise in exactly the risk-off tape that sends
+#: money into XLU, and folding it into either bucket would make the tilt read
+#: the oil price as sentiment.
+DEFENSIVE = ("XLP", "XLU", "XLV", "XLRE")
+CYCLICAL = ("XLK", "XLY", "XLI", "XLF", "XLB", "XLC")
+UNALIGNED = ("XLE",)
+
+_SECTOR_NAME = {sym: name.split(" (")[0] for name, sym in SECTORS}
+SECTOR_ETFS_ORDER = tuple(sym for _, sym in SECTORS)
+
+#: A tilt smaller than this is noise in the turnover data rather than a move.
+TILT_BAND_BP = 10.0
+
+
+def _download_ohlcv(symbols: list[str], period: str = "2y") -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(closes, volumes) for the symbols, aligned on one index."""
+    raw = yf.download(
+        sorted(set(symbols)), period=period, interval="1d",
+        auto_adjust=True, progress=False, threads=True,
+    )
+    if isinstance(raw.columns, pd.MultiIndex):
+        return raw["Close"], raw["Volume"]
+    return raw[["Close"]], raw[["Volume"]]
+
+
+def _z_last(series: pd.Series, lookback: int = 252) -> Optional[float]:
+    s = series.dropna().iloc[-lookback:]
+    if len(s) < 60:
+        return None
+    mean = float(s.mean())
+    sd = float(s.std())
+    # A share that never moved has an sd of ~1e-17 rather than 0 — the mean and
+    # the values do not cancel exactly in floating point — and dividing by that
+    # turns a flat series into a confident ±1σ reading. The floor is relative to
+    # the level being scored, because these are fractions of 1, not prices.
+    if not (sd > max(abs(mean), 1e-12) * 1e-9):
+        return None
+    return round((float(s.iloc[-1]) - mean) / sd, 2)
+
+
+def _window_delta_bp(series: pd.Series, window: int) -> Optional[float]:
+    """Change in a share between this window and the one before it, in bp."""
+    s = series.dropna()
+    if len(s) < window + 1:
+        return None
+    return round((float(s.iloc[-1]) - float(s.iloc[-1 - window])) * 10_000, 1)
+
+
+def _delta_z(series: pd.Series, window: int) -> Optional[float]:
+    """z of the CHANGE, not of the level.
+
+    The level of a sector's turnover share is nearly constant — XLK is always
+    around a tenth of the complex — so z-scoring it answers "is this sector big
+    today", which nobody asked. The question the panel poses is "is this much
+    movement unusual", and that is the distribution of the same window's change
+    over the trailing year.
+    """
+    return _z_last(series.diff(window))
+
+
+def _build_tilt(window: int) -> dict:
+    syms = list(SECTOR_ETFS_ORDER)
+    closes, volumes = _download_ohlcv(syms + [_DEFAULT_BENCH])
+    have = [s for s in syms if s in closes.columns and s in volumes.columns]
+    if len(have) < 6 or _DEFAULT_BENCH not in closes.columns:
+        return {"rows": [], "error": "sector data unavailable"}
+
+    dollar_vol = (closes[have] * volumes[have]).dropna(how="all")
+    total = dollar_vol.sum(axis=1)
+    share = dollar_vol.div(total.where(total > 0), axis=0)
+    share_w = share.rolling(window).mean()
+
+    bench = closes[_DEFAULT_BENCH].dropna()
+    bench_ret = None
+    if len(bench) > window:
+        bench_ret = float(bench.iloc[-1]) / float(bench.iloc[-1 - window]) - 1
+
+    rows = []
+    for sym in have:
+        bucket = (
+            "defensive" if sym in DEFENSIVE
+            else "cyclical" if sym in CYCLICAL
+            else "unaligned"
+        )
+        c = closes[sym].dropna()
+        rel_bp = None
+        if bench_ret is not None and len(c) > window:
+            own = float(c.iloc[-1]) / float(c.iloc[-1 - window]) - 1
+            rel_bp = round((own - bench_ret) * 10_000, 0)
+        quad, mom_dir = _rrg_state(c, bench)
+        rows.append({
+            "symbol": sym,
+            "name": _SECTOR_NAME.get(sym, sym),
+            "bucket": bucket,
+            "share_pct": round(float(share_w[sym].dropna().iloc[-1]) * 100, 2)
+            if not share_w[sym].dropna().empty else None,
+            "delta_bp": _window_delta_bp(share_w[sym], window),
+            "z": _delta_z(share_w[sym], window),
+            "rel_return_bp": rel_bp,
+            "quadrant": quad,
+            "mom_dir": mom_dir,
+        })
+    rows.sort(key=lambda r: r["delta_bp"] if r["delta_bp"] is not None else -1e9, reverse=True)
+
+    # The tilt is one series, not a sum of two numbers: defensive share minus
+    # cyclical share, rolled and z-scored like any other. Built that way it has
+    # its own history, so "+34bp" can be read against how far this book's tape
+    # normally swings rather than against zero.
+    def_cols = [s for s in have if s in DEFENSIVE]
+    cyc_cols = [s for s in have if s in CYCLICAL]
+    tilt_bp = tilt_z = None
+    if def_cols and cyc_cols:
+        tilt_series = (share[def_cols].sum(axis=1) - share[cyc_cols].sum(axis=1)).rolling(window).mean()
+        tilt_bp = _window_delta_bp(tilt_series, window)
+        tilt_z = _delta_z(tilt_series, window)
+    if tilt_bp is None:
+        state, tone = None, "unknown"
+    elif tilt_bp > TILT_BAND_BP:
+        state, tone = "DEFENSIVE", "bad"
+    elif tilt_bp < -TILT_BAND_BP:
+        state, tone = "CYCLICAL", "good"
+    else:
+        state, tone = "BALANCED", "watch"
+
+    quads = {"Leading": 0, "Improving": 0, "Weakening": 0, "Lagging": 0}
+    for r in rows:
+        if r["quadrant"] in quads:
+            quads[r["quadrant"]] += 1
+    above = sum(1 for r in rows if (r["rel_return_bp"] or 0) > 0)
+
+    # The AUM leg. Reading it also records today's row, which is the only way
+    # the series ever gets longer — see etf_aum.capture_async.
+    aum: dict = {"available": False}
+    try:
+        import etf_aum
+        etf_aum.capture_async()
+        aum = etf_aum.flows(window=window)
+        aum["coverage"] = etf_aum.coverage()
+    except Exception:
+        aum = {"available": False, "error": "aum record unavailable"}
+
+    return {
+        "as_of": str(closes.index[-1].date()) if len(closes.index) else None,
+        "window_days": window,
+        "bench": _DEFAULT_BENCH,
+        "basis": "turnover_share",
+        "basis_note": "ส่วนแบ่งมูลค่าซื้อขายของทั้งกลุ่ม ไม่ใช่เงินเข้าออกกองจริง",
+        "tilt": {
+            "state": state, "tone": tone, "bp": tilt_bp, "z": tilt_z,
+            "band_bp": TILT_BAND_BP,
+            "rule": f"defensive share − cyclical share, เฉลี่ย {window} วัน, "
+                    f"เทียบกับหน้าต่างก่อนหน้า; |Δ| < {TILT_BAND_BP}bp = balanced",
+            "defensive": list(def_cols), "cyclical": list(cyc_cols),
+            "unaligned": [s for s in have if s in UNALIGNED],
+        },
+        "rows": rows,
+        "quadrants": quads,
+        "breadth": {"above_bench": above, "total": len(rows)},
+        "aum": aum,
+        "counted_in_composite": False,
+        "validated": False,
+    }
+
+
+@router.get("/tilt")
+def rotation_tilt(window: int = Query(20, ge=5, le=90)):
+    """US sector rotation: share of complex turnover, z-scored, plus the tilt."""
+    key = f"tilt|{window}"
+    now = time.time()
+    with _lock:
+        hit = _cache.get(key)
+        if hit and now - hit[0] < _TTL:
+            return hit[1]
+    val = _build_tilt(window)
+    with _lock:
+        if val.get("rows"):
+            _cache[key] = (now, val)
+    return val

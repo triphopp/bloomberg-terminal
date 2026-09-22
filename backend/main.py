@@ -56,6 +56,7 @@ from db import (
     init_zettel_schema,
     init_graphs_schema,
     init_series_schema,
+    init_etf_aum_schema,
     seed_symbol_lists,
     sync_symbol_lists,
 )
@@ -104,6 +105,7 @@ init_thesis_schema()   # must precede init_sync_layer(): it adds updated_at + tr
 init_zettel_schema()   # same ordering reason as the thesis schema above
 init_graphs_schema()   # index for research/graphs; no sync triggers, order free
 init_series_schema()   # generic indicator series; must precede init_sync_layer()
+init_etf_aum_schema()  # self-built ETF AUM record; must precede init_sync_layer()
 init_sync_layer()
 init_audit_layer()     # after sync layer: needs _sync_guard + final column set
 init_alerts_schema()
