@@ -1499,6 +1499,65 @@ LPDDR/GDDR/Wafer redirect ไป login
 list ว่างแปลว่า "วันนี้เขาไม่ประกาศ" ซึ่งเป็นสถานะจริงคนละเรื่องกัน
 (`backend/series_sources/dramexchange.py:ParseError`)
 
+
+## recharts 2.x: `<Line>` ข้างใน `<AreaChart>` หายเงียบ (2026-09-20)
+
+`AreaChart` เรนเดอร์เฉพาะลูกที่เป็น `Area` — `<Line dataKey="cash" .../>` ที่ใส่ไว้ข้างในไม่ขึ้น
+และ **ไม่มี error ไม่มี warning** ตรวจได้จาก DOM: `.recharts-curve` มีแค่ 2 เส้น (area fill + area
+stroke) ทั้งที่โค้ดใส่ Line ไว้ 3 เส้น
+
+การ์ด PORTFOLIO VALUE (NAV) เป็นแบบนี้มาตลอด — เส้น holdings / cash / cost basis ไม่เคยวาดจริง
+แก้โดยเปลี่ยนเป็น `<ComposedChart>` (import จาก recharts ตัวเดียวกัน props เหมือนกัน)
+
+**กฎ:** กราฟที่ผสมชนิด (Area + Line + Bar) ต้องใช้ `ComposedChart` เสมอ
+
+## NAV ดิบเทียบกับดัชนีไม่ได้ (2026-09-20)
+
+เงินฝากดัน NAV ขึ้น เงินถอนกดลง ทั้งสองอย่างไม่ใช่ผลตอบแทน — เอาเส้น NAV ไปวางข้าง SPY คือ
+เทียบคนละหน่วย ต้องใช้ time-weighted return: `r = (NAV − flow − NAV₋₁)/NAV₋₁` ต่อวันแล้วคูณทบ
+(`/api/v2/portfolio/nav-index`, โหมด INDEX ในการ์ด PORTFOLIO VALUE)
+
+`flow` มาจาก Δ`invested_capital` + Δ`cash_adjustment` ของ snapshot — ถ้ามีวันที่ NAV ขยับเกิน 50%
+แปลว่าเงินเข้า-ออกที่ยังไม่ได้ลง `cash_ledger` ไม่ใช่ผลตอบแทน API ติดธง `suspect` ให้ ไม่ตัดทิ้ง
+และอย่าสับสนกับ XIRR ในการ์ด RETURNS ซึ่งเป็น money-weighted คนละคำถามกัน
+
+## ISM ไม่มีแหล่งฟรี และ CPI ไม่ใช่เป้าของ Fed (2026-09-20)
+
+**ISM:** FRED ถอดซีรีส์ `NAPM*` ทั้งหมดออกปี 2022 (ลิขสิทธิ์ ISM) — ขอวันนี้ได้ 404 ทุกตัว
+DBnomics มี `ISM/pmi` แต่ค้างตั้งแต่ 2025-12 และค่าล่าสุด 10.3 ซึ่งไม่ใช่สเกล PMI ด้วยซ้ำ
+ทางออกที่ใช้: composite ของ regional Fed (Philly `GACDFSA066MSFRBPHI`, Empire
+`GACDISA066MSFRBNY`, Dallas `BACTSAMFRBDAL`) — ฟรี และ **ออกก่อน ISM** ทุกเดือน
+
+⚠️ พวกนี้เป็น **diffusion index กลางที่ 0 ไม่ใช่ 50** และสเกลต่างกันมาก (Philly แกว่ง ~3 เท่าของ
+Dallas) ห้ามเฉลี่ยตรงๆ ต้องหารด้วย sd ของตัวเองก่อน และห้ามแปลงเป็นเลข PMI ปลอม
+
+**CPI vs PCE:** เป้า 2% ของ Fed เขียนไว้บน **core PCE** ไม่ใช่ CPI สองตัวนี้ต่างกัน 0.3–0.5pp
+เป็นปกติ (น้ำหนักคนละชุด + substitution) — อ่าน CPI headline แล้วคิดว่า "ห่างเป้าเท่านี้"
+คือการอ่านผิดอย่างเป็นระบบ TAIL จึงโชว์ทั้ง 4 ตัวเรียงกัน (CPI / core CPI / PCE / core PCE)
+
+## MOVE ไม่ได้อยู่บน CBOE (2026-09-20)
+
+`vol_indices.py` ดึงจาก `cdn.cboe.com` เป็นหลัก แต่ MOVE เป็นของ ICE BofA — ขอ CBOE ได้ 404 เปล่าๆ
+ทุกครั้งที่ cache หมด จึงมี `_YF_ONLY = ("MOVE",)` ข้ามไป yfinance (`^MOVE`) ตรง
+แต่ยังผ่านเกณฑ์ freshness เดิม (stale > 4 วันเทียบ VIX = `unknown` ไม่ใช่ `off`)
+
+เพิ่มสัญญาณใหม่ใน tail_risk ต้องแตะ **3 จุด** ไม่ใช่จุดเดียว:
+`SIGNAL_META` · ลูปที่สร้าง boolean column · `_HISTORICAL_SIGNALS` (ไม่งั้นหายจากกราฟ 90 วัน)
+และถ้าต้องการโชว์ค่า/z ในการ์ด ต้องเพิ่มใน tuple ที่เซ็ต `states[sig]["value"]` ด้วย —
+ลืมข้อนี้แล้วการ์ดจะขึ้นชื่อสัญญาณลอยๆ ไม่มีตัวเลข
+
+## น้ำหนักพอร์ตคิดจาก market value ไม่ใช่ cost (2026-09-20)
+
+หัวกลุ่มบัญชีใน POSITIONS เคยเขียน `Cost ฿1.85M · 46.6% of NAV` ติดกัน ทั้งที่ % มาจาก
+`navPct(groupMv)` คนละตัวกับ `groupCost` — บัญชีที่จ่ายไป ฿1.00M กับ ฿1.85M จึงมีน้ำหนัก
+เท่ากันได้ (Dime mv ฿1.02M vs Finansia mv ฿1.01M เพราะ Finansia −45%) อ่านแล้วเหมือนบั๊ก
+
+**ตัวเลขถูกแล้ว** — น้ำหนักต้องคิดจากของที่ถือวันนี้ ถ้าคิดจาก cost บัญชีที่ขาดทุนหนักจะดู
+ใหญ่เกินจริง แก้ที่ป้าย: พิมพ์ `MV` คั่นกลางเสมอ (`OpenPositionsTab.tsx` หัวกลุ่ม)
+
+**กฎ:** ที่ไหนก็ตามที่โชว์ cost กับ % ติดกัน ต้องมี MV อยู่ตรงกลาง ไม่งั้นผู้อ่านจะจับคู่
+ตัวเลขผิดคู่
+
 ## ขาย partial แล้วราคาเฉลี่ยเด้งขึ้น — AVCO ไม่ถูกเขียนกลับ (2026-09-22)
 
 `/api/v2/portfolio/sell` คิด P&L จาก AVCO ของ open lots ทั้งหมด **แต่ไม่เคยเขียนค่านั้นกลับลง row**

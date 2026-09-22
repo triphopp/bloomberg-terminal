@@ -240,6 +240,28 @@ NAV+cash 2.08M→2.06M.
 
 ---
 
+### `/nav-index` — TWR curve vs index (2026-09-20)
+
+`/nav-history` rows also carry `cash_adjustment` now (the dated reconciliation offset that was
+already folded into `cash_balance`), because `/nav-index` needs the two external-flow terms
+separately from the returns.
+
+```ts
+interface NavIndexPoint { date: string; nav: number; flow: number; return_pct: number;
+  port_index: number; bench_index: number | null; suspect: boolean; }
+interface NavIndexResponse { benchmark: string; benchmark_currency: string | null;
+  benchmark_available: boolean; base_currency: string; points: NavIndexPoint[]; n_days: number;
+  suspect_days: number; start: string | null; end: string | null;
+  port_twr_pct: number | null; bench_pct: number | null; excess_pct: number | null;
+  net_flow: number; note?: string; }
+```
+
+`port_index`/`bench_index` both start at 100 on the first snapshot. TWR is NOT the XIRR on the
+RETURNS card: XIRR is money-weighted (it rewards the timing of deposits), TWR is what an index is.
+Real data 2026-07-03→09-20: TWR +18.36% THB / +18.87% USD vs SPY +2.43%, net flow ฿77.6K stripped.
+
+---
+
 ## Option Payoff (`POST /api/options/payoff`)
 
 Three kinds of number, and conflating them is how a payoff screen misleads:
@@ -400,9 +422,9 @@ ACCUMULATED — Yahoo serves only the current chain, so no back-fill is possible
 - Economic fields use stored trade FX when present; otherwise nearest-prior daily market FX. Treat them as an attribution estimate, not broker-exact realized P&L.
 - `analytics.trade_stats` (+ `trade_stats_by_account`, keyed by account id) — closed-trade skill metrics, values already in `base_currency`:
   ```ts
-  interface TradeStats { closed: number; wins: number; losses: number; win_rate: number|null; wl_ratio: number|null; avg_win: number|null; avg_loss: number|null; payoff: number|null; expectancy: number|null; total_win: number; total_loss: number; }
+  interface TradeStats { closed: number; wins: number; losses: number; win_rate: number|null; wl_ratio: number|null; avg_win: number|null; avg_loss: number|null; payoff: number|null; expectancy: number|null; avg_win_pct: number|null; avg_loss_pct: number|null; expectancy_pct: number|null; pct_basis: number; total_win: number; total_loss: number; }
   ```
-  W/L classification follows the stored `win_loss` flag, not the sign of base P&L (a trade can win natively, lose in base after FX). `payoff` is `null` when there are no losses — never infinite. HIT RATE is **not** here: it mixes in live open positions, so `AnalyticsTab` computes it from `trade_stats.wins` + `/open-positions` rows with `unrealized_pnl_base > 0`.
+  The `*_pct` twins are per-trade return on cost (`pnl_amount / |amount|`), averaged, computed in the trade's **own** currency — no FX leg, because both numerator and denominator are native. `pct_basis` counts the closed trades that carried a cost basis, so it can be lower than `closed`; the UI hides the small corner % when the value is null. W/L classification follows the stored `win_loss` flag, not the sign of base P&L (a trade can win natively, lose in base after FX). `payoff` is `null` when there are no losses — never infinite. HIT RATE is **not** here: it mixes in live open positions, so `AnalyticsTab` computes it from `trade_stats.wins` + `/open-positions` rows with `unrealized_pnl_base > 0`.
 
 ## Allocation Detail (`GET /api/v2/portfolio/allocation-detail?base_currency=THB`)
 
@@ -1138,6 +1160,34 @@ interface SmileTenor { months: number[]; expiry: string | null; days: number | n
 ```
 
 Successful HTTP200 can contain unavailable series (too few strikes, narrow coverage, no convergence), always with `parameters:null` and `reason`. `a` may be negative: the constrained minimum is `a+b*sigma*sqrt(1-rho²)>0`. These are independent slices, not an arbitrage-free surface. `smileTenorDate` uses calendar months; `selectSmileTenors` merges months sharing one expiry, or returns null expiry/DTE for an unavailable target. `smileSamples` returns named observed series by side. `smilePlotRows` returns shared numeric strike rows with dynamic `<id>_observed` and `<id>_fit` fields (missing/null, never zero-filled); `sviIvAtStrike` returns percent IV only within each fit's observed K span.
+
+---
+
+## TAIL `macro_read` + the ISM proxy (2026-09-20)
+
+```ts
+interface MacroAxis {
+  id: "inflation" | "growth" | "rates_vol";
+  label: string; state: string | null; tone: "good"|"watch"|"bad"|"unknown";
+  value: number | null; unit: string; detail: string; rule: string;
+  proxy?: boolean; gap_vs_target?: number|null; trend_3m?: number|null;
+  source?: string|null; z63?: number|null; pctile_1y?: number|null;
+  cross_check?: { cpi; cpi_core; pce; pce_core };   // inflation axis only
+  components?: { parts: Record<string, number>; as_of: Record<string,string>; note: string };
+}
+interface MacroRead { counted_in_composite: false; validated: false;
+  axes: MacroAxis[]; summary: string | null; note: string; }
+```
+
+**`ism_proxy` is not the ISM.** FRED dropped every `NAPM*` series in 2022 over licensing
+(they 404 today) and the free aggregator copies run 9–12 months behind. The value is a composite
+of the Philadelphia Fed, Empire State and Dallas Fed manufacturing surveys — **diffusion indices,
+so 0 is neutral, not 50** — each divided by its own 10-year sd before averaging (a straight mean
+would be Philadelphia alone: its swings are ~3× Dallas's). A month needs ≥2 of the 3. Unit is
+`sd`; `|x| < 0.25` reads as STALLING. Any UI showing it must print PROXY next to it.
+
+Real data 2026-09-20: core PCE 3.34% (target +1.34pp) → STICKY · ISM proxy +1.13sd → EXPANDING ·
+MOVE 80.6, z +1.41, 87th pct → ELEVATED.
 
 ## Symbol classification (`GET /api/stock/sector/{symbol}`) — 2026-09-22
 
