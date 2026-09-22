@@ -884,20 +884,36 @@ export function OpenPositionsTab({
                         <span className="text-[8px]" style={{ color: colors.textSecondary }}>
                           {groupPositions.length} pos
                         </span>
-                        <span className="text-[8px]" style={{ color: colors.textSecondary }}>
+                        <span
+                          className="text-[8px]"
+                          style={{ color: colors.textSecondary }}
+                          title="What this account paid for the positions it still holds"
+                        >
                           Cost {csym}
                           {fmtK(groupCost)}
+                        </span>
+                        {/* MV is printed next to cost because the weight below is
+                            computed from IT, not from cost. Two accounts that paid
+                            ฿1.0M and ฿1.85M can carry the same weight today, and
+                            without this number in between that reads as a bug. */}
+                        <span
+                          className="text-[8px]"
+                          style={{ color: colors.textSecondary }}
+                          title="Market value today — what the weight below is computed from"
+                        >
+                          MV {csym}
+                          {fmtK(groupMv)}
                         </span>
                         {navPct(groupMv) != null && (
                           <span
                             className="text-[8px]"
                             style={{ color: colors.textSecondary }}
-                            title="This account's equity market value ÷ NAV of the selected scope"
+                            title="Market value ÷ NAV of the selected scope — weight is what you hold TODAY, not what you paid for it"
                           >
                             <span className="font-bold" style={{ color: colors.text }}>
                               {fmtWeight(navPct(groupMv))}
                             </span>{" "}
-                            of NAV
+                            of NAV <span style={{ color: "#555" }}>(MV)</span>
                           </span>
                         )}
                         <span
