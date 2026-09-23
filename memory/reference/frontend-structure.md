@@ -195,7 +195,8 @@ components/bloomberg/
 | `chart/useAutoExtendRange.ts` | `useAutoExtendRange({symbol, period, interval, barCount, isLoading, enabled})` → `{ effectivePeriod, onLogicalRange, atMaxHistory, extended, viewportKey }` — ซูมออกสุดข้อมูล → ไต่ period ladder โหลดประวัติเพิ่มเอง; plus `periodSpanDays`, `ladderSteps` |
 | `chartkit/prefetch.ts` | `isApproachingEdge`, `planPrefetch` — warm history window ถัดไปล่วงหน้า (เทคนิค stream LOD); คู่กับ `usePrefetchStockHistory()` ใน `hooks/useStockData.ts` |
 | `chartkit/` (lib ของเราเอง) | `buildLadder`, `nextWider`, `needsExtend`, `planExtend`, types `LogicalRange`/`TimeRange`/`ViewportSample`; `chartkit/adapters/lightweight-charts` → `watchLogicalRange`, `captureVisibleRange`, `applyVisibleRange`. **กฎ:** core บริสุทธิ์ (ห้าม import engine/React), engine อยู่ใน `adapters/` เท่านั้น — ดู `chartkit/README.md` |
-| `chart/ModularChart.tsx` (perf contract) | props `indicators`/`overlays`/`eventMarkers` = **โครงสร้าง** (ต้อง memo ที่ call site); `data` ไม่ใช่ — บาร์ใหม่ถูก push เข้า series เดิมผ่าน refill path, rebuild เฉพาะเมื่อ refill ทำไม่ได้ |
+| `chart/ModularChart.tsx` (perf contract) | props `indicators`/`overlays`/`eventMarkers` = **โครงสร้าง** (ต้อง memo ที่ call site); `data` ไม่ใช่ — บาร์ใหม่ถูก push เข้า series เดิมผ่าน refill path, rebuild เฉพาะเมื่อ refill ทำไม่ได้. Optional `referencePriceLine` วาดเส้นประพร้อมป้ายราคาบน candle pane; quote update/remove ใช้ price-line API และ autoscale ใน series เดิม จึงไม่ reset viewport |
+| `core/market-session.tsx` | `extendedHoursPriceLine(quote)` คืนราคาและสีสำหรับ `PRE`/`POST` ที่มีราคา valid เท่านั้น; MKT, stock-view และ `ChartPanel` (floating/detached) ส่งเข้า `ModularChart`. `PREPRE`/`POSTPOST`/`CLOSED` ไม่วาดเส้น; backend ล้างราคา extended-hours ที่ timestamp เก่า |
 | `chart/useWindowDrag.ts` | `useWindowDrag()` → `{ x, y, w, h, isGesturing, isResizing, beginDrag, beginResize }` |
 | `views/iv-smile-panel.tsx` | `IvSmilePanel`, `IvSmilePanelProps` — compact/expanded K vs IV%, Raw SVI/points/RMSE, multiple tenors; optional stacked Call/Put OI with separate contracts axis and selected-expiry control |
 | `hooks/useIvSmile.ts` | `useIvSmile(symbol, enabled)` — discovery + single/multiple expiry + optional fit queries; shared OI on/off and symbol-scoped expiry selection without new requests; guarded identity and refresh |
@@ -317,18 +318,22 @@ components/bloomberg/
 
 ## MKT — TICK DATA board (`views/market-view.tsx`)
 
-The right-hand `tickdata` panel is a cross-asset board, not just world indices. Six sections, each
+The right-hand `tickdata` panel is a cross-asset board with seven sections. Each is
 collapsible; collapse state persists in `localStorage["bloomberg_tickdata_sections"]`
-(default collapsed: `ratesJP`, `fx` — 35 extra rows on first open is a wall).
+(default collapsed: `ratesJP`, `fx`). Drag a section's grip onto another header or use
+its up/down buttons to reorder whole sections. The order persists in
+`localStorage["bloomberg_tickdata_order"]`, independently from collapse state.
+Invalid/duplicate stored IDs are ignored and newly added sections append to the saved order.
 
-Render order top-to-bottom: **RATES · US → RATES · JP → AMERICAS → EMEA → ASIA PACIFIC → FX**
-(rates pinned to the top since they're the reason the board grew from 3 sections to 6).
+Default order: **RATES · US → RATES · JP → AMERICAS → EMEA → ASIA PACIFIC → VOLATILITY → FX**.
+The US market clock and column headings stay fixed above the reordered sections.
 
 | Section | Source | Row component |
 |---------|--------|---------------|
 | RATES · US (11 tenors) | `useRatesCurve` → `/api/rates` | `RateRow` |
 | RATES · JP (15 tenors) | `useRatesCurve` → `/api/rates` | `RateRow` |
 | AMERICAS / EMEA / ASIA PACIFIC | `useMarketDataQuery` → `/api/market-data` | `TickRow` |
+| VOLATILITY (VIX family) | `/api/volatility` | `TickRow` + subgroup headers |
 | FX (20 pairs) | `useFxTicks` → `/api/fx` | `FxRow` |
 
 Things that will bite:
@@ -372,3 +377,19 @@ Things that will bite:
 - Expiry/range/quality/fit/points/side/multi/month state is shared across compact and expanded views, without new localStorage keys. Symbol changes reset single expiry to the preferred maturity; other display preferences remain. Range defaults to K±25% (±50% and ALL K available). QUOTED requires positive bid and finite ask>=bid; ALL IV includes unquoted rows. IV<=0.0001/nonfinite stays missing. Chart requires >=3 distinct strikes; SVI requires >=8 per series and log-strike span>=0.05. 0DTE or missing S keeps observed quotes only.
 - No options (HTTP404), loading, errors, unexpired-data absence and too few valid points have explicit UI states. Footer displays provider delay (metadata says ~15min) and fetched-at tooltip; this timestamp is not a quote/trade timestamp. Current chain only, no historical strike-level smile.
 - CORR/GEOM queries and trend strip are disabled/hidden for IV and ROT. The matrix ResizeObserver reattaches when returning to a matrix view after its DOM was unmounted. Existing hydration-safe mode persistence also accepts `iv`.
+
+
+## Watchlist shared data and rendering (2026-09-23)
+
+| File | Exports / behavior |
+|---|---|
+| `lib/market-data-client.ts` | `MarketDataError`, `RequestQueue`, `SymbolBatcher`, `marketJson`, `marketRetry`, `marketRetryDelay`, `retryAfterSeconds`, `StockQuote`, `quoteBatcher`, `sparklineBatcher`, `quoteQueryOptions` |
+| `lib/market-data-proxy.ts` | `marketDataProxy` — backend status/body/Retry-After, abort/deadline, no retry |
+| `components/bloomberg/hooks/useMarketQueryResults.ts` | `useMarketQueryResults` — public TanStack QueriesObserver, 50ms React notification coalescing, one polling pass per resource, no overlapping passes, pause in hidden tab |
+| `components/bloomberg/hooks/useWatchlistData.ts` | `useWatchlistQuotes`, `useWatchlistSparklines` — stable per-symbol query keys, retained cache, complete quote coverage, optional sparkline observers |
+| `components/bloomberg/hooks/useStockData.ts` | `useStockQuote` shares quote key/transport with Watchlist; `useStockHistory(symbol, period, interval, enabled)` lets MKT load only the active chart mode |
+| `components/bloomberg/hooks/useWatchlistSignals.ts` | per-symbol cache15min + batched network, no list truncation; existing `WatchlistSignal` shape unchanged |
+| `components/bloomberg/hooks/useStockPredictions.ts` | all eligible symbols batched10, ready/no-market distinct from error |
+| `components/bloomberg/views/pinned-assets.tsx` | full-list price/signal/PM data, sort before paging100 rows, overlapping groups share queries; cards request only displayed sparklines; coverage/errors shown; ADD saves before waiting for price |
+
+The browser transport permits three batch requests concurrently. Quote jobs have priority, with an older non-quote job admitted after three quote jobs. Each reader owns its cancellation; cancelling one reader never aborts a surviving reader's shared request. Query retention30min survives panel remounts. Realtime quotes poll60s (off300s), technical scans900s and PM180s after a pass finishes. Metadata edits do not change quote keys. Data refresh remains full-list even though rendering is paged; groups are optional.

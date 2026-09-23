@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 from cache import TTLCache
 from config import STOCK_CACHE_TTL, MAX_HISTORY_CACHE_TTL, PERIOD_TO_YF, HISTORY_PERIOD_MAP, VALID_INTERVALS
 from market_session import is_today_at, local_date_of
+from market_snapshots import get_quote, get_history
 from sector_map import classify
 from sources import market_data
 
@@ -554,128 +555,8 @@ def stock_sector(symbol: str):
 
 @router.get("/api/stock/quote/{symbol}")
 def stock_quote(symbol: str):
-    """Real-time quote for a single symbol."""
-    cache_key = f"quote:{symbol.upper()}"
-    cached = _stock_cache.get(cache_key, ttl=60)
-    if cached is not None:
-        return cached
-
-    try:
-        ticker = market_data.get_ticker(symbol)
-
-        # ── Prefer ticker.info for accurate price & change data ──────────
-        # fast_info.previous_close is often stale/wrong, causing CHG% to
-        # diverge from Yahoo Finance and other sources. ticker.info returns
-        # Yahoo's own computed change values which match external sources.
-        info: dict = {}
-        try:
-            info = ticker.info or {}
-        except Exception:
-            pass
-
-        fi = ticker.fast_info
-
-        # Price: prefer info (Yahoo's regularMarketPrice), fall back to fast_info
-        price = info.get("regularMarketPrice") or info.get("currentPrice") or fi.last_price
-        if price is None:
-            raise HTTPException(status_code=404, detail=f"Symbol '{symbol}' not found")
-
-        # Change: prefer Yahoo's pre-computed change value, always derive % from change/prev
-        # (regularMarketChangePercent is unreliable across yfinance versions — decimal vs %-form)
-        prev = info.get("previousClose") or info.get("regularMarketPreviousClose") or fi.previous_close or price
-        if info.get("regularMarketChange") is not None:
-            change = round(info["regularMarketChange"], 4)
-        else:
-            change = round(price - prev, 4)
-        pct = round((change / prev) * 100, 4) if prev else 0.0
-
-        # ── Session freshness ────────────────────────────────────────────
-        # Yahoo keeps serving the last completed session after a market shuts,
-        # so `change`/`pct` above can be a previous day's move. Publish the real
-        # trade timestamp and a verdict so callers can label or suppress it.
-        tz_name = info.get("exchangeTimezoneName")
-        market_time = info.get("regularMarketTime")
-        quote_date = local_date_of(market_time, tz_name)
-        is_current = is_today_at(market_time, tz_name)
-
-        # Extended-hours prices carry their own timestamps; drop whichever is
-        # not from today. `marketState` alone is not enough — it reads CLOSED
-        # all weekend while last Friday's postMarketPrice sits in the payload.
-        pre_fresh = is_today_at(info.get("preMarketTime"), tz_name)
-        post_fresh = is_today_at(info.get("postMarketTime"), tz_name)
-
-        data = {
-            "symbol":                     symbol.upper(),
-            "longName":                   info.get("longName"),
-            "shortName":                  info.get("shortName"),
-            "fullExchangeName":           info.get("fullExchangeName"),
-            "exchange":                   info.get("exchange") or getattr(fi, "exchange", None),
-            "currency":                   info.get("currency"),
-            "regularMarketPrice":         round(price, 4),
-            "regularMarketChange":        change,
-            "regularMarketChangePercent": pct,
-            # Yahoo's own trade timestamp — NOT datetime.now(). Stamping "now"
-            # here made every quote look live and hid exactly the staleness the
-            # consumers below need to detect.
-            "regularMarketTime":          market_time,
-            "quoteDate":                  quote_date,
-            "isCurrentSession":           is_current,
-            "exchangeTimezone":           tz_name,
-            "marketCap":                  info.get("marketCap") or getattr(fi, "market_cap", None),
-            "trailingPE":                 info.get("trailingPE"),
-            "forwardPE":                  info.get("forwardPE"),
-            "beta":                       info.get("beta"),
-            "regularMarketVolume":        info.get("regularMarketVolume") or getattr(fi, "regular_market_volume", None),
-            "averageDailyVolume3Month":   info.get("averageVolume3Month") or getattr(fi, "three_month_average_volume", None),
-            "fiftyTwoWeekHigh":           info.get("fiftyTwoWeekHigh") or getattr(fi, "year_high", None),
-            "fiftyTwoWeekLow":            info.get("fiftyTwoWeekLow") or getattr(fi, "year_low", None),
-            "dividendYield":              info.get("dividendYield"),
-            "epsTrailingTwelveMonths":    info.get("trailingEps"),
-            "regularMarketOpen":          info.get("regularMarketOpen") or getattr(fi, "open", None),
-            "regularMarketPreviousClose": round(prev, 4),
-            # ── Profitability ratios ───────────────────────────────────
-            "returnOnEquity":             info.get("returnOnEquity"),
-            "returnOnAssets":             info.get("returnOnAssets"),
-            "grossMargins":               info.get("grossMargins"),
-            "operatingMargins":           info.get("operatingMargins"),
-            "profitMargins":              info.get("profitMargins"),
-            # ── Valuation multiples ────────────────────────────────────
-            "enterpriseValue":            info.get("enterpriseValue"),
-            "enterpriseToEbitda":         info.get("enterpriseToEbitda"),
-            "ebitda":                     info.get("ebitda"),
-            "priceToBook":                info.get("priceToBook"),
-            "priceToSalesTrailing12Months": info.get("priceToSalesTrailing12Months"),
-            "bookValue":                  info.get("bookValue"),
-            # ── Leverage & liquidity ───────────────────────────────────
-            "debtToEquity":               info.get("debtToEquity"),
-            "totalDebt":                  info.get("totalDebt"),
-            "totalCash":                  info.get("totalCash"),
-            "totalStockholdersEquity":    info.get("totalStockholdersEquity"),
-            # ── Cash flow ──────────────────────────────────────────────
-            "operatingCashflow":          info.get("operatingCashflow"),
-            "capitalExpenditures":        info.get("capitalExpenditures"),
-            "totalRevenue":               info.get("totalRevenue"),
-            "sharesOutstanding":          info.get("sharesOutstanding") or getattr(fi, "shares", None),
-            # ── Market session ─────────────────────────────────────────
-            "marketState":               info.get("marketState"),
-            "preMarketPrice":            info.get("preMarketPrice") if pre_fresh else None,
-            "preMarketChange":           _safe_float(info.get("preMarketChange")) if pre_fresh else None,
-            "preMarketChangePercent":    _safe_float(info.get("preMarketChangePercent")) if pre_fresh else None,
-            "postMarketPrice":           info.get("postMarketPrice") if post_fresh else None,
-            "postMarketChange":          _safe_float(info.get("postMarketChange")) if post_fresh else None,
-            "postMarketChangePercent":   _safe_float(info.get("postMarketChangePercent")) if post_fresh else None,
-            "sector":                    info.get("sector"),
-            "industry":                  info.get("industry"),
-        }
-
-        _stock_cache.set(cache_key, data)
-        return data
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        print(f"[quote] {symbol}: {exc}")
-        raise HTTPException(status_code=500, detail=str(exc))
+    """Shared quote snapshot; batch/watchlist/chart callers join the same work."""
+    return get_quote(symbol)
 
 
 # ── OHLCV History ────────────────────────────────────────────────────────────
@@ -689,6 +570,7 @@ def stock_history(symbol: str, period: str = "1y", interval: str = ""):
               (omit to use the legacy per-period default)
     """
     period   = period.lower().strip()
+    period = {"1mo": "1m", "3mo": "3m"}.get(period, period)
     interval = interval.lower().strip()
 
     # If no explicit interval -> fall back to legacy period map
@@ -717,7 +599,12 @@ def stock_history(symbol: str, period: str = "1y", interval: str = ""):
 
     import re as _re
     def _fetch_hist(sym: str):
-        return market_data.get_ticker(sym).history(period=yf_period, interval=yf_interval)
+        try:
+            return get_history(sym, yf_period, yf_interval, ttl=ttl)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                return pd.DataFrame()
+            raise
 
     try:
         hist = _fetch_hist(symbol)

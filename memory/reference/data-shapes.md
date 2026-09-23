@@ -1264,3 +1264,28 @@ Source: `backend/sector_map.py` (`classify()`), tests in `tests/test_sector_map.
 `avg_cost` is the pooled average the sale was priced at **and** the value written into
 `price_entry` on the closed row and on every lot still open for that account+symbol. Read it when
 you need to show the user what the position's ENTRY became.
+
+
+## Watchlist batch coverage and quote metadata (2026-09-23)
+
+`GET /api/watchlist/{quotes,signals,sparklines}?symbols=A,B` keeps the legacy quote/signal fields and adds coverage. The batch limit60 is request size only; client batching covers any list size. PM summaries use the same statuses with limit30.
+
+```typescript
+interface MarketItemStatus {
+  status: "ready" | "pending" | "error";
+  httpStatus?: number; // pending503; errors retain404/429/502/etc.
+  error?: string;
+  retryAfter?: number; // seconds; client respects this delay
+}
+// Examples: quotes: {A: StockQuote}, signals: {A: WatchlistSignal},
+// sparklines: {A: number[]}; missing data never becomes a zero price.
+// Every unique requested symbol appears in statuses, including failures.
+interface MarketBatchCoverage {
+  statuses: Record<string, MarketItemStatus>;
+  requestedCount: number;
+}
+```
+
+`StockQuote` (`lib/market-data-client.ts`) retains all existing fields; backend adds `source: "yfinance"` and `fetchedAt` (ISO snapshot assembly time). The actual trade timestamp remains `regularMarketTime`, with `quoteDate`/`isCurrentSession` and independently checked pre/post timestamps. Never treat `fetchedAt` as a trade time. The full quote route remains Yahoo-specific to preserve its richer session contract; registry-selected lightweight snapshots retain their existing provider policy.
+
+`PinnedAssetPatch` now also accepts `price_at_pin: number`; ADD writes membership first, then patches the price from the same cached/in-flight quote used by the row. Failure to obtain a price leaves it unknown, not zero.

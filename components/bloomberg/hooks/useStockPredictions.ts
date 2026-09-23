@@ -1,5 +1,7 @@
 "use client";
 
+import { useMarketQueryResults } from "./useMarketQueryResults";
+
 /**
  * useStockPredictions — Polymarket single-name equity markets as a live implied
  * distribution (price ladders + "close above ___" CDFs).
@@ -10,8 +12,9 @@
  * hammering Gamma.
  */
 
-import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { SymbolBatcher, marketRetry, marketRetryDelay } from "@/lib/market-data-client";
+import { type QueryObserverResult, useQuery } from "@tanstack/react-query";
+import { useCallback, useMemo } from "react";
 
 export type StrikeBasis = "close" | "touch";
 
@@ -86,28 +89,44 @@ export function useStockPrediction(symbol: string | null, company = "", enabled 
   });
 }
 
-/** Summary per symbol — used by the MKT watchlist rows. */
+const summaryBatcher = new SymbolBatcher<PredictionSummary | null>(
+  "/api/polymarket/stocks",
+  "summaries",
+  10,
+  null
+);
+
+/** All symbols are accounted for; null means a successful search found no markets. */
 export function useStockPredictionSummaries(symbols: string[], enabled = true) {
-  const key = useMemo(() => [...new Set(symbols)].sort().join(","), [symbols]);
-
-  const query = useQuery<{ summaries: Record<string, PredictionSummary>; as_of?: string }>({
-    queryKey: ["pm-stocks", key],
-    enabled: enabled && key.length > 0,
-    staleTime: POLL_MS,
-    refetchInterval: POLL_MS * 2,
-    retry: 1,
-    queryFn: async () => {
-      const res = await fetch(`/api/polymarket/stocks?symbols=${encodeURIComponent(key)}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
-    },
-  });
-
-  return {
-    summaries: query.data?.summaries ?? {},
-    isLoading: query.isLoading,
-    asOf: query.data?.as_of ?? "",
-  };
+  const key = [...new Set(symbols)].sort().join(",");
+  const unique = useMemo(() => (key ? key.split(",") : []), [key]);
+  const options = useMemo(
+    () =>
+      unique.map((symbol) => ({
+        queryKey: ["pm-stocks", symbol],
+        enabled,
+        queryFn: ({ signal }: { signal: AbortSignal }) => summaryBatcher.request(symbol, signal),
+        staleTime: POLL_MS,
+        gcTime: 30 * 60_000,
+        refetchInterval: false as const,
+        retry: marketRetry,
+        retryDelay: marketRetryDelay,
+      })),
+    [unique, enabled]
+  );
+  const combine = useCallback(
+    (queries: QueryObserverResult<PredictionSummary | null>[]) => ({
+      summaries: Object.fromEntries(
+        queries.flatMap((q, i) => (q.data ? [[unique[i], q.data]] : []))
+      ),
+      errors: queries.flatMap((q, i) => (q.error ? [`${unique[i]}: ${q.error.message}`] : [])),
+      isLoading: queries.some((q) => q.isFetching),
+      asOf: "",
+    }),
+    [unique]
+  );
+  const results = useMarketQueryResults(options, enabled ? POLL_MS * 2 : false);
+  return useMemo(() => combine(results), [combine, results]);
 }
 
 /** Shared colour rule: above 55% reads long, below 45% reads short. */

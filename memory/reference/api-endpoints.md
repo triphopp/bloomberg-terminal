@@ -523,13 +523,17 @@ Controls the live-quote registry (manual switch + auto-failover, capability-scop
 
 ---
 
-## Watchlist Signals (`routers/watchlist_signals.py`)
+## Watchlist Market Data (`routers/watchlist_signals.py`)
 
 | Endpoint | Params | Returns |
 |----------|--------|---------|
-| `GET /api/watchlist/signals` | `symbols` (comma-separated, max 60) | `{signals: {SYM: {...}}, errors: [], count}` |
+| `GET /api/watchlist/quotes` | `symbols` (1–60 unique symbols per request) | `{quotes, statuses, requestedCount, count}` — same quote payload as single-symbol route |
+| `GET /api/watchlist/signals` | `symbols` (1–60 per request) | `{signals, statuses, errors, requestedCount, count}` |
+| `GET /api/watchlist/sparklines` | `symbols` (1–60 per request) | `{sparklines: {SYM: number[]}, statuses, requestedCount}` — adjusted daily closes, 3 months |
 
-One yfinance batch download (`period=2y, interval=1d`) for the whole list, cached 900s.
+Updated 2026-09-23: client chunks the entire unique symbol set (20 per request), never truncates the list. Oversized/empty batches return 422. Every accepted symbol has `ready`, `pending`, or `error` status; partial responses are 200 with per-item HTTP status and retry delay. Backend shares per-symbol adjusted `2y/1d` histories with alerts and compatible chart/provider reads; computed scans cache for 900s. Quotes cache 60s. Pending work continues in a bounded coordinator and repeated readers join it.
+
+`/api/polymarket/stocks` uses the same status envelope (limit30, client chunks10); a ready symbol missing from `summaries` means a successful search found no markets. An outage is an error, never a negative-cache hit. Quotes/stock/history/signals/sparklines/PM batch proxies forward HTTP status and Retry-After using `lib/market-data-proxy.ts` (30s deadline, no proxy retry). `PATCH /api/pins/assets/{id}` also accepts `price_at_pin` to finish capturing the entry price after membership has been saved. `GET /api/pins/assets` reads assets/tags in two SELECTs.
 Per symbol: `trend` (EMA20/50/200 stack), `rsi` (Wilder 14), `rvol` (vs 20d avg),
 `macd` (12/26/9 histogram sign + barsSinceCross), `breakout` (20d Donchian),
 `range52w` (position 0..1), `atrPct`, `score` (composite ≈ -6..+6), `flags` (string list).
@@ -543,7 +547,7 @@ Per symbol: `trend` (EMA20/50/200 stack), `rsi` (Wilder 14), `rvol` (vs 20d avg)
 | Market indices | 60s | Python in-memory |
 | Market indices | 55s | Next.js in-memory |
 | Heatmap | 60s | Python in-memory |
-| Stock quote | 5min | Python in-memory |
+| Stock quote / raw Yahoo info / fast-info | 60s, per-symbol single-flight | `market_requests.py` + `market_snapshots.py` |
 | Stock history | 5min (12hr for max/5y) | Python in-memory |
 | Stock financials | 1hr | Python in-memory |
 | FB posts | 5min | Python in-memory |
@@ -626,5 +630,5 @@ app/api/
 ├── country-rotation/route.ts
 ├── sector/route.ts
 ├── ai/route.ts
-└── watchlist/signals/route.ts
+└── watchlist/{quotes,signals,sparklines}/route.ts
 ```

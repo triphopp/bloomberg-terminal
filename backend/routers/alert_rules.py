@@ -253,9 +253,7 @@ def _drop_unclosed_last_bar(bars: Bars, bar_times: list[str]) -> tuple[Bars, lis
 def _fetch_bars(
     symbols: list[str], *, evaluate_on_closed_bars_only: bool = True
 ) -> dict[str, tuple[Bars, list[str]]]:
-    """One yfinance batch call for symbols not already cached — mirrors
-    watchlist_signals._download's batching so a scan of the whole watchlist
-    costs one request, not N (plan §6).
+    """Read shared per-symbol histories (also used by watchlist scans).
 
     `evaluate_on_closed_bars_only` trims today's still-forming bar before
     it ever reaches the evaluator (plan §7.2) — default on, since an

@@ -1,5 +1,7 @@
 "use client";
 
+import { type StockQuote as Quote, quoteQueryOptions } from "@/lib/market-data-client";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAtom, useSetAtom } from "jotai";
 import {
   AlertTriangle,
@@ -43,6 +45,7 @@ import {
   probColor,
   useStockPredictionSummaries,
 } from "../hooks/useStockPredictions";
+import { useWatchlistQuotes, useWatchlistSparklines } from "../hooks/useWatchlistData";
 import {
   type TrendState,
   type WatchlistSignal,
@@ -74,30 +77,6 @@ const PALETTE = [
 import { DEFAULT_WATCHLIST_GROUP as DEFAULT_GROUP } from "../core/global-search";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-/** Only the quote fields the watchlist still renders — fundamentals (MCAP, P/E,
- *  BETA, DIV%) were dropped in favour of the daily technical scan. */
-interface Quote {
-  regularMarketPrice: number;
-  regularMarketChangePercent: number;
-  regularMarketChange: number;
-  shortName?: string;
-  longName?: string;
-  regularMarketVolume?: number;
-  averageDailyVolume3Month?: number;
-  regularMarketOpen?: number;
-  regularMarketPreviousClose?: number;
-  // ── Market session (already returned by /api/stock?type=quote) ──
-  marketState?: string | null;
-  preMarketPrice?: number | null;
-  preMarketChange?: number | null;
-  preMarketChangePercent?: number | null;
-  postMarketPrice?: number | null;
-  postMarketChange?: number | null;
-  postMarketChangePercent?: number | null;
-  quoteDate?: string | null;
-  isCurrentSession?: boolean | null;
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1152,8 +1131,9 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
   const setStockSymbol = useSetAtom(stockSearchSymbolAtom);
   const openChartWindow = useSetAtom(openChartWindowAtom);
 
-  const [quotes, setQuotes] = useState<Record<string, Quote>>({});
-  const [loadingQuotes, setLoadingQuotes] = useState(false);
+  const queryClient = useQueryClient();
+  const [page, setPage] = useState(0);
+  const pageSize = 100;
   const [collapsed, setCollapsed] = useState(false);
   const [showGroupMgr, setShowGroupMgr] = useState(false);
   const [showTagMgr, setShowTagMgr] = useState(false);
@@ -1174,26 +1154,6 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
   // Drag-to-reorder state
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
-
-  const fetchedSparklines = useRef<Set<string>>(new Set());
-  const [sparklines, setSparklines] = useState<Record<string, number[]>>({});
-
-  useEffect(() => {
-    const symbols = [...new Set(pins.map((p) => p.symbol))];
-    for (const sym of symbols) {
-      if (fetchedSparklines.current.has(sym)) continue;
-      fetchedSparklines.current.add(sym);
-      fetch(`/api/stock?type=history&symbol=${encodeURIComponent(sym)}&period=3mo&interval=1d`)
-        .then((r) => r.json())
-        .then((d) => {
-          const prices = ((d?.quotes ?? []) as Array<{ close?: number | null }>)
-            .filter((q): q is { close: number } => q.close != null)
-            .map((q) => q.close);
-          if (prices.length > 0) setSparklines((prev) => ({ ...prev, [sym]: prices }));
-        })
-        .catch(() => {});
-    }
-  }, [pins]);
 
   // ── localStorage helpers ──────────────────────────────────────────────────
 
@@ -1361,53 +1321,30 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Fetch quotes (full data) ────────────────────────────────────────────
-
-  const fetchQuotes = useCallback(async () => {
-    if (!pins.length) return;
-    setLoadingQuotes(true);
-    const symbols = [...new Set(pins.map((p) => p.symbol))];
-    await Promise.all(
-      symbols.map(async (sym) => {
-        try {
-          const res = await fetch(`/api/stock?type=quote&symbol=${sym}`);
-          const data = await res.json();
-          if (data?.regularMarketPrice) {
-            setQuotes((q) => ({ ...q, [sym]: data as Quote }));
-          }
-        } catch {
-          /* ignore */
-        }
-      })
-    );
-    setLoadingQuotes(false);
-  }, [pins]);
-
-  useEffect(() => {
-    fetchQuotes();
-    // Quotes were fetched once and then left alone, which is survivable for a
-    // regular-session price but not for the pre/after-hours one — that number
-    // is the whole point of the session row and it would sit frozen at whatever
-    // it was when the panel mounted. The backend caches quotes for 60s, so
-    // polling at the same period costs nothing beyond the first caller.
-    const id = setInterval(fetchQuotes, 60_000);
-    return () => clearInterval(id);
-  }, [fetchQuotes]);
-
-  // ── Daily technical scan (one batch request for the whole watchlist) ──────
-
-  const signalSymbols = useMemo(() => [...new Set(pins.map((p) => p.symbol))], [pins]);
-  const { signals, isLoading: signalsLoading } = useWatchlistSignals(signalSymbols);
-
-  // ── Polymarket implied direction (PM column) ─────────────────────────────
-  // Only plain US listings are worth asking about — Polymarket runs single-name
-  // equity ladders for those alone, never for indices (^VIX), FX, crypto pairs or
-  // foreign lines (.BK / .KS), so those are filtered out instead of round-tripping.
+  // All groups share per-symbol queries. Metadata edits/reordering do not refetch.
+  const symbolKey = [...new Set(pins.map((p) => p.symbol))].sort().join(",");
+  const signalSymbols = useMemo(() => (symbolKey ? symbolKey.split(",") : []), [symbolKey]);
+  const {
+    quotes,
+    loading: loadingQuotes,
+    errors: quoteErrors,
+    loaded: quotesLoaded,
+    total: quoteTotal,
+    refresh: fetchQuotes,
+  } = useWatchlistQuotes(signalSymbols, !collapsed);
+  const {
+    signals,
+    isLoading: signalsLoading,
+    errors: signalErrors,
+  } = useWatchlistSignals(signalSymbols, !collapsed);
   const predictionSymbols = useMemo(
     () => signalSymbols.filter((s) => /^[A-Z][A-Z.\-]{0,5}$/.test(s) && !s.includes(".")),
     [signalSymbols]
   );
-  const { summaries: pmSummaries } = useStockPredictionSummaries(predictionSymbols);
+  const { summaries: pmSummaries, errors: pmErrors } = useStockPredictionSummaries(
+    predictionSymbols,
+    !collapsed
+  );
 
   // ── CRUD Handlers ─────────────────────────────────────────────────────────
 
@@ -1478,23 +1415,18 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
   };
 
   const handleAddPin = async (pin: PinnedAsset) => {
-    const newPins = [...pins, pin];
+    const cached = queryClient.getQueryData<Quote>(quoteQueryOptions(pin.symbol).queryKey);
+    const fetchedAt =
+      queryClient.getQueryState(quoteQueryOptions(pin.symbol).queryKey)?.dataUpdatedAt ?? 0;
+    const price = Date.now() - fetchedAt < 60_000 ? (cached?.regularMarketPrice ?? null) : null;
+    const added = { ...pin, priceAtPin: price ?? undefined };
+    const newPins = [...pins, added];
     setPins(newPins);
     saveToLS(groups, newPins, tags);
     setShowAddRow(false);
-    fetch(`/api/stock?type=quote&symbol=${pin.symbol}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d?.regularMarketPrice) setQuotes((q) => ({ ...q, [pin.symbol]: d as Quote }));
-      })
-      .catch(() => {});
+    setMutError("");
     try {
-      const currentPrice =
-        (
-          await fetch(`/api/stock?type=quote&symbol=${pin.symbol}`)
-            .then((r) => r.json())
-            .catch(() => ({}))
-        )?.regularMarketPrice ?? null;
+      // Membership is saved immediately; a slow quote cannot delay the write.
       await apiPost("/api/pins/assets", {
         id: pin.id,
         symbol: pin.symbol,
@@ -1502,16 +1434,37 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
         comment: pin.comment,
         buy_target: pin.buyTarget ?? null,
         sell_target: pin.sellTarget ?? null,
-        price_at_pin: currentPrice,
+        price_at_pin: price,
         priority: pin.priority ?? 1,
         added_at: pin.addedAt,
         tags: pin.tags ?? [],
       });
-      if (currentPrice != null) {
-        setPins((ps) => ps.map((p) => (p.id === pin.id ? { ...p, priceAtPin: currentPrice } : p)));
+    } catch {
+      setPins((current) => {
+        const rolledBack = current.filter((p) => p.id !== pin.id);
+        saveToLS(groups, rolledBack, tags);
+        return rolledBack;
+      });
+      setMutError(`Could not save ${pin.symbol}. Please try again.`);
+      return;
+    }
+    if (price == null) {
+      try {
+        // Joins the row/chart query; no second or third quote request on ADD.
+        const quote = await queryClient.fetchQuery(quoteQueryOptions(pin.symbol));
+        await apiPatch(`/api/pins/assets/${encodeURIComponent(pin.id)}`, {
+          price_at_pin: quote.regularMarketPrice,
+        });
+        setPins((current) => {
+          const updated = current.map((p) =>
+            p.id === pin.id ? { ...p, priceAtPin: quote.regularMarketPrice } : p
+          );
+          saveToLS(groups, updated, tags);
+          return updated;
+        });
+      } catch {
+        // The pin is already saved. Missing entry price must remain unknown.
       }
-    } catch (err) {
-      console.error("[handleAddPin]", err);
     }
   };
 
@@ -1681,7 +1634,10 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
 
   // ── Derived ─────────────────────────────────────────────────────────────
 
-  const filteredPins = filterGroup === "all" ? pins : pins.filter((p) => p.groupId === filterGroup);
+  const filteredPins = useMemo(
+    () => (filterGroup === "all" ? pins : pins.filter((p) => p.groupId === filterGroup)),
+    [pins, filterGroup]
+  );
 
   // ── Drag-to-reorder ─────────────────────────────────────────────────────
 
@@ -1720,18 +1676,30 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
     [pins, filteredPins, sortKey, sortDir, groups, tags, saveToLS, setPins, getSortValue]
   );
 
-  const sortedPins =
-    sortKey === "manual"
-      ? filteredPins
-      : [...filteredPins].sort((a, b) => {
-          const va = getSortValue(a, sortKey);
-          const vb = getSortValue(b, sortKey);
-          const cmp =
-            typeof va === "string"
-              ? va.localeCompare(vb as string)
-              : (va as number) - (vb as number);
-          return sortDir === "asc" ? cmp : -cmp;
-        });
+  const sortedPins = useMemo(
+    () =>
+      sortKey === "manual"
+        ? filteredPins
+        : [...filteredPins].sort((a, b) => {
+            const va = getSortValue(a, sortKey);
+            const vb = getSortValue(b, sortKey);
+            const cmp =
+              typeof va === "string"
+                ? va.localeCompare(vb as string)
+                : (va as number) - (vb as number);
+            return sortDir === "asc" ? cmp : -cmp;
+          }),
+    [filteredPins, sortKey, sortDir, getSortValue]
+  );
+
+  const pageCount = Math.max(1, Math.ceil(sortedPins.length / pageSize));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pageOffset = currentPage * pageSize;
+  const displayedPins = sortedPins.slice(pageOffset, pageOffset + pageSize);
+  const sparklines = useWatchlistSparklines(
+    viewMode === "cards" ? displayedPins.map((p) => p.symbol) : [],
+    !collapsed && viewMode === "cards"
+  );
 
   const totalAlerts = pins.filter((p) => {
     const q = quotes[p.symbol];
@@ -1883,7 +1851,10 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
                 borderColor: colors.border,
               }}
               value={filterGroup}
-              onChange={(e) => setFilterGroup(e.target.value)}
+              onChange={(e) => {
+                setFilterGroup(e.target.value);
+                setPage(0);
+              }}
             >
               <option value="all">ALL</option>
               {groups.map((g) => (
@@ -2032,6 +2003,60 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
             </div>
           )}
 
+          {quoteTotal > 0 && (
+            <output
+              className="px-2 py-1 text-[9px] flex flex-wrap gap-x-3"
+              style={{ color: colors.textSecondary }}
+            >
+              <span>
+                PRICES {quotesLoaded}/{quoteTotal}
+                {loadingQuotes ? " · updating" : ""}
+              </span>
+              <span>
+                SIGNALS {Object.keys(signals).length}/{quoteTotal}
+                {signalsLoading ? " · updating" : ""}
+              </span>
+              {(Object.keys(quoteErrors).length > 0 ||
+                signalErrors.length > 0 ||
+                pmErrors.length > 0) && (
+                <span
+                  style={{ color: "#f59e0b" }}
+                  title={[...Object.values(quoteErrors), ...signalErrors, ...pmErrors].join("\n")}
+                >
+                  UPDATE DELAYED · {Object.keys(quoteErrors).length} prices / {signalErrors.length}{" "}
+                  signals / {pmErrors.length} PM — previous values retained
+                </span>
+              )}
+            </output>
+          )}
+          {pageCount > 1 && (
+            <div
+              className="px-2 py-1 flex items-center justify-between text-[10px]"
+              style={{ color: colors.textSecondary }}
+            >
+              <button
+                type="button"
+                disabled={currentPage === 0}
+                onClick={() => setPage(currentPage - 1)}
+                className="disabled:opacity-30"
+              >
+                ← PREV
+              </button>
+              <span>
+                {pageOffset + 1}–{Math.min(pageOffset + pageSize, sortedPins.length)} /{" "}
+                {sortedPins.length} · sorted across the full list
+              </span>
+              <button
+                type="button"
+                disabled={currentPage + 1 === pageCount}
+                onClick={() => setPage(currentPage + 1)}
+                className="disabled:opacity-30"
+              >
+                NEXT →
+              </button>
+            </div>
+          )}
+
           {/* ── CARD VIEW ─────────────────────────────────────────────────── */}
           {(pins.length > 0 || showAddRow) && viewMode === "cards" && (
             <div
@@ -2042,7 +2067,8 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
                 maxHeight: "calc(100vh - 200px)",
               }}
             >
-              {sortedPins.map((pin, visualIdx) => {
+              {displayedPins.map((pin, pageIdx) => {
+                const visualIdx = pageOffset + pageIdx;
                 const q = quotes[pin.symbol];
                 const group = groups.find((g) => g.id === pin.groupId);
                 const dotColor = group?.color ?? "#94a3b8";
@@ -2116,6 +2142,14 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
                             >
                               {pin.symbol}
                             </span>
+                            {quoteErrors[pin.symbol] && (
+                              <span
+                                className="text-[8px] text-amber-400"
+                                title={quoteErrors[pin.symbol]}
+                              >
+                                PRICE DELAYED
+                              </span>
+                            )}
                             {hasAlert && (
                               <span
                                 className="text-[7px] px-0.5 font-bold animate-pulse"
@@ -2443,7 +2477,8 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
                       </tr>
                     </thead>
                     <tbody>
-                      {sortedPins.map((pin, visualIdx) => {
+                      {displayedPins.map((pin, pageIdx) => {
+                        const visualIdx = pageOffset + pageIdx;
                         const q = quotes[pin.symbol];
                         const sig = signals[pin.symbol];
                         const group = groups.find((g) => g.id === pin.groupId);
@@ -2534,6 +2569,14 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
                                     onClick={(e) => handleSymbolClick(pin.symbol, e)}
                                   >
                                     {pin.symbol}
+                                    {quoteErrors[pin.symbol] && (
+                                      <span
+                                        className="text-[8px] text-amber-400"
+                                        title={quoteErrors[pin.symbol]}
+                                      >
+                                        !
+                                      </span>
+                                    )}
                                     <ExternalLink className="h-2 w-2 opacity-0 group-hover/row:opacity-50" />
                                   </button>
                                   {/* Company name inline, not on its own row — at this

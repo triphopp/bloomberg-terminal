@@ -3,7 +3,7 @@
 > **BBW study audit 2026-09-09:** ข้อสรุป study เดิมต้องอ่านคู่กับ [audit](reports/bbw-squeeze-2026-09-09-risk-report.md): พบ unknown labels, benchmark drift, final purge gap และการตีความ coefficient/survival median ผิด ผล E2 ranking ยังอยู่ในการคำนวณตรวจซ้ำ แต่ยังไม่มี trading validation
 
 **Repo:** `bloomberg-terminal` — macOS `~/bloomberg-terminal`, Windows `D:\Agents\Claude\bloomberg-terminal-main`
-**Last updated:** 2026-09-13 (Adaptive DCF Valuation Lab)
+**Last updated:** 2026-09-23 (TICK DATA section order)
 
 > Slim core reference. Navigate via [memory/INDEX.md](INDEX.md).
 > - [reference/api-endpoints.md](reference/api-endpoints.md) — all endpoints, caching table, Next.js proxy routes
@@ -173,7 +173,7 @@ OPENAI_API_KEY      — optional
 | `series.py` | `/api/v2/series/*` (generic indicator series: any published number over time that is not an instrument; collectors in `series_sources/`, first one = dramexchange DRAM/NAND) | SQLite |
 | `theses.py` | `/api/v2/theses/*` (CRUD + append-only event log + trade links + md import/export; `X-Thesis-Actor` → `payload.actor`) | SQLite + `THESES_DIR` |
 | `sync_router.py` | `/api/sync/status`, `/api/sync/pull`, `/api/sync/push` | cloud-sync (`backend/sync/`) |
-| `watchlist_signals.py` | `/api/watchlist/signals` (batch daily technical scan) | yfinance batch (TTLCache 900s) |
+| `watchlist_signals.py` | `/api/watchlist/{quotes,signals,sparklines}` (bounded batches with per-symbol status) | shared `market_snapshots.py`/`market_requests.py`; quotes60s, scans900s |
 
 ### Quote Provider Registry (live-quote path)
 `market_data` singleton = `FailoverSource` facade. Quote path (`download_quotes`/`get_fast_info`/`download`/`get_history`) → `ProviderRegistry` (manual switch + auto-failover, capability-scoped). Batch quote/download use **gap-fill merge** — per-symbol routing across providers so mixed portfolios (TH `.BK` + US) get priced by whichever provider supports each symbol. Heavy methods (options/financials/etf/news) → primary yfinance. Providers: `YFQuoteProvider` (default) → `StooqQuoteProvider` (keyless fallback). Add provider: implement `QuoteProvider` + `registry.register()` in `sources/__init__.py`. Env: `QUOTE_PROVIDER_DEFAULT`, `QUOTE_AUTO_FAILOVER`. FE seam: `useLiveQuery` (cadence) + header `ProviderSwitch`. Scaling roadmap: `plans/scaling/`.
@@ -318,7 +318,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 
 | Key | Button | View | Component |
 |-----|--------|------|-----------|
-| `1` | MKT | Market View (default) | `market-view.tsx` — watchlist + chart + Regime Detection + TICK DATA board (7 collapsible sections: AMERICAS/EMEA/ASIA PACIFIC + RATES·US + RATES·JP + VOLATILITY + FX) |
+| `1` | MKT | Market View (default) | `market-view.tsx` — watchlist + chart + Regime Detection + TICK DATA board (7 collapsible, user-reorderable sections with local persistence: AMERICAS/EMEA/ASIA PACIFIC + RATES·US + RATES·JP + VOLATILITY + FX) |
 | `2` | NEWS | News | `news-view.tsx` → barrel for `views/news/` — WATCHLIST (default, sector rail + per-ticker stream; HEADLINES/RATE STRESS/DCF/REGIME panels) / NEWSFEED / SOCIAL tabs + Polymarket right column |
 | `3` | GMOV | Market Movers | `market-movers-view.tsx` — indices table + heatmap treemap |
 | `4` | CLIP | Clippings + AI | `clippings-view.tsx` |
@@ -353,6 +353,16 @@ Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as 
 ---
 
 ## What Could Be Built Next
+
+- [x] **Extended-Hours Candle Price Line** — done 2026-09-23; PRE/AH quote เป็นเส้นแนวนอนบนกราฟแท่งเทียนใน MKT, stock-view และ floating chart (`plans/completed/extended-hours-candle-price-line.md`)
+
+- [x] **TICK DATA Section Order** — done 2026-09-23: drag/ปุ่มขึ้นลงจัดลำดับหมวดทั้งเจ็ดและจำไว้หลัง reload (`plans/completed/tickdata-section-order.md`, `sessions/2026-09-23-tickdata-section-order.md`)
+
+- [x] **WATCHLIST Shared Data Optimization** — done 2026-09-23: shared Yahoo/Gamma API coordination, full-list batching/statuses, retained query cache and paged rendering;1000-symbol browserfixture verified (`plans/completed/watchlist-shared-data-optimization.md`, `sessions/2026-09-23-watchlist-shared-data-optimization.md`)
+
+- [x] **WATCHLIST API Management Study** — done 2026-09-23: study only; list เดียวขนาดใหญ่, signals, shared market-data service/queues/retry; mockยืนยัน Retry-Afterหายที่proxy, registryไม่มีcooldownในquote path, PM503กลายเป็นnegativecache และ historyซ้ำระหว่างscan/alerts (`plans/completed/watchlist-api-management-study.md`, `reports/watchlist-api-management-study-2026-09-23.md`)
+
+- [x] **WATCHLIST Optimization Study** — done 2026-09-23: ศึกษาเสร็จ (ยังไม่ implement); eager history + `3mo`→1y, per-symbol fan-out/remount cache, silent 60/30 caps; roadmap รองรับหุ้นจำนวนมากและหลาย lists พร้อม API/mock evidence (`plans/completed/watchlist-optimization-study.md`, `reports/watchlist-optimization-study-2026-09-23.md`)
 
 - [x] **Neocloud three-year accounting review** — done 2026-09-19; รายงานไทย 34 โปรไฟล์พร้อมช่องว่างหลักฐานและ MCP readback (`plans/completed/neocloud-three-year-accounting-review.md`)
 

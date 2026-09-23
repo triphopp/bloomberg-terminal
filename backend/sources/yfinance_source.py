@@ -7,7 +7,6 @@ Each method maps yfinance raw responses → canonical models from ``sources.mode
 To swap providers: create a new adapter (e.g. polygon_source.py) implementing
 the same interface, then change ``sources/__init__.py`` one line.
 """
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional
 
@@ -136,7 +135,8 @@ class YFinanceSource(MarketDataSource):
         Attribute names (``last_price``, ``previous_close``, etc.) are
         preserved so existing router code continues to work.
         """
-        fi = _ticker(symbol).fast_info
+        from market_snapshots import get_raw_fast_info
+        fi = get_raw_fast_info(symbol)
         return QuoteSnapshot(
             symbol=symbol,
             last_price=_safe_float(getattr(fi, "last_price", None)),
@@ -156,7 +156,8 @@ class YFinanceSource(MarketDataSource):
         Supports both attribute access (``detail.pe_ratio``) and backward-
         compatible dict-style access (``detail.get("trailingPE")``).
         """
-        raw = _ticker(symbol).info or {}
+        from market_snapshots import get_raw_info
+        raw = get_raw_info(symbol)
         return TickerDetail(
             symbol=symbol,
             short_name=raw.get("shortName"),
@@ -196,7 +197,8 @@ class YFinanceSource(MarketDataSource):
     def get_history(self, symbol: str, period: str = "1mo",
                     interval: str = "1d") -> OHLCVFrame:
         """Return historical OHLCV with canonical column names."""
-        df = _ticker(symbol).history(period=period, interval=interval)
+        from market_snapshots import get_history
+        df = get_history(symbol, period, interval)
         # Normalize column names — ensure consistent casing
         col_map = {}
         for col in df.columns:
@@ -249,48 +251,27 @@ class YFinanceSource(MarketDataSource):
         return BatchPriceResult(prices=prices)
 
     def download_quotes(self, symbols: list[str]) -> BatchQuoteResult:
-        """Batch-fetch QuoteSnapshots via yfinance Tickers object.
-
-        Replaces ``get_batch_tickers()`` calls in crypto.py and fx.py.
-        """
-        if not symbols:
-            return BatchQuoteResult(quotes={})
-        try:
-            tickers = yf.Tickers(" ".join(symbols))
-
-            def one(sym: str) -> QuoteSnapshot:
-                try:
-                    t = tickers.tickers.get(sym)
-                    if t is None:
-                        return QuoteSnapshot(symbol=sym)
-                    fi = t.fast_info
-                    return QuoteSnapshot(
-                        symbol=sym,
-                        last_price=_safe_float(getattr(fi, "last_price", None)),
-                        previous_close=_safe_float(getattr(fi, "previous_close", None)),
-                        regular_market_previous_close=_safe_float(
-                            getattr(fi, "regular_market_previous_close", None)),
-                        timezone=getattr(fi, "timezone", None),
-                        exchange=getattr(fi, "exchange", None),
-                        regular_market_volume=_safe_int(getattr(fi, "regular_market_volume", None)),
-                        three_month_average_volume=_safe_float(
-                            getattr(fi, "three_month_average_volume", None)),
-                        market_cap=_safe_float(getattr(fi, "market_cap", None)),
-                    )
-                except Exception:
-                    return QuoteSnapshot(symbol=sym)
-
-            # `yf.Tickers` only looks like a batch: `fast_info` is lazy, so every
-            # symbol is its own HTTP round-trip and the old serial loop cost
-            # ~0.9s each — 18.7s for the 20 FX pairs, which was almost the whole
-            # cold cost of /api/ticker. Same worker count as build_market_data.
-            with ThreadPoolExecutor(
-                max_workers=min(8, len(symbols)), thread_name_prefix="quotes"
-            ) as pool:
-                snaps = list(pool.map(one, symbols))
-            return BatchQuoteResult(quotes={s.symbol: s for s in snaps})
-        except Exception:
-            return BatchQuoteResult(quotes={s: QuoteSnapshot(symbol=s) for s in symbols})
+        """Share fast-info leaf work with rich quotes, portfolio and other lists."""
+        from market_snapshots import fast_info_future
+        from market_requests import collect
+        out: dict[str, QuoteSnapshot] = {}
+        unique = list(dict.fromkeys(symbols))
+        for start in range(0, len(unique), 60):
+            batch = unique[start:start + 60]
+            values, _ = collect({s: fast_info_future(s) for s in batch})
+            for sym in batch:
+                fi = values.get(sym)
+                out[sym] = QuoteSnapshot(
+                    symbol=sym,
+                    last_price=_safe_float(getattr(fi, "last_price", None)),
+                    previous_close=_safe_float(getattr(fi, "previous_close", None)),
+                    regular_market_previous_close=_safe_float(getattr(fi, "regular_market_previous_close", None)),
+                    timezone=getattr(fi, "timezone", None), exchange=getattr(fi, "exchange", None),
+                    regular_market_volume=_safe_int(getattr(fi, "regular_market_volume", None)),
+                    three_month_average_volume=_safe_float(getattr(fi, "three_month_average_volume", None)),
+                    market_cap=_safe_float(getattr(fi, "market_cap", None)),
+                )
+        return BatchQuoteResult(quotes=out)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Search

@@ -54,7 +54,11 @@ import { VolumeEventPanel } from "../chart/VolumeEventPanel";
 import { useSdBands } from "../chart/useSdBands";
 import { BloombergButton } from "../core/bloomberg-button";
 import { CompanyOutlookPanel } from "../core/company-outlook-panel";
-import { ExtendedHoursPrice, MarketSessionBadge } from "../core/market-session";
+import {
+  ExtendedHoursPrice,
+  MarketSessionBadge,
+  extendedHoursPriceLine,
+} from "../core/market-session";
 import { useStockQuality } from "../hooks/useMarketQuality";
 import {
   useStockFinancials,
@@ -5158,6 +5162,7 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                   indicators={chartIndicators.filter((i) => i.id !== "fear-greed")}
                   overlays={chartOverlays}
                   eventMarkers={eventMarkers}
+                  referencePriceLine={extendedHoursPriceLine(quote)}
                   onBarClick={handleChartClick}
                   crosshairCursor={regressionArmed}
                 />

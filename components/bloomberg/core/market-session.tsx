@@ -138,6 +138,17 @@ export function extendedSessionMove(quote: SessionQuote | null | undefined): {
   return null;
 }
 
+/** A price reference for the active, timestamp-checked extended session only. */
+export function extendedHoursPriceLine(
+  quote: SessionQuote | null | undefined
+): { price: number; color: string; title: "PRE" | "POST" } | null {
+  const move = extendedSessionMove(quote);
+  if (!move || !Number.isFinite(move.price) || move.price <= 0) return null;
+  const state = quote?.marketState;
+  if (state !== "PRE" && state !== "POST") return null;
+  return { price: move.price, color: SESSION_CONFIG[state].color, title: state };
+}
+
 /**
  * @param compact drop the letter-spacing and use the short label. Worth ~55px,
  *   which is the difference between a toolbar row that fits and one that

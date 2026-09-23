@@ -16,6 +16,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { extendedHoursPriceLine } from "../core/market-session";
 import { usePrefetchStockHistory, useStockHistory, useStockQuote } from "../hooks/useStockData";
 import { bloombergColors } from "../lib/theme-config";
 import { EventDetailPopover } from "./EventDetailPopover";
@@ -55,6 +56,9 @@ interface QuoteRow {
   dayLow?: number | null;
   volume?: number | null;
   marketCap?: number | null;
+  marketState?: string | null;
+  preMarketPrice?: number | null;
+  postMarketPrice?: number | null;
 }
 
 export interface ChartPanelProps {
@@ -442,6 +446,7 @@ export function ChartPanel({
                       indicators={chartIndicators}
                       overlays={overlays}
                       eventMarkers={eventMarkers}
+                      referencePriceLine={extendedHoursPriceLine(quote)}
                       onBarClick={handleChartClick}
                       crosshairCursor={regressionArmed}
                       onLogicalRange={onLogicalRange}

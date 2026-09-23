@@ -18,15 +18,16 @@ from __future__ import annotations
 import datetime
 import json
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 
 from cache import TTLCache
 from config import DEFAULT_HTTP_TIMEOUT, POLYMARKET_GAMMA_BASE
 from routers.polymarket import _extract_probability
-from sources import market_data
+from sources import market_data, registry
+from market_snapshots import get_quote
+from market_requests import market_requests, collect, parse_symbols
 
 router = APIRouter()
 
@@ -37,11 +38,10 @@ _GAMMA = POLYMARKET_GAMMA_BASE
 
 # Prices move with the order book, so these stay short — the point of the panel is
 # that it tracks the live market, not a 10-minute-old snapshot.
-_events_cache = TTLCache(ttl=90, maxsize=300)    # symbol → parsed events
-_spot_cache = TTLCache(ttl=60, maxsize=300)      # symbol → last price
+_events_cache = TTLCache(ttl=90, maxsize=8192)    # symbol → parsed events
 # Most tickers simply have no single-name markets. Remembering that for 15 min keeps
 # a 30-symbol watchlist from re-searching Gamma for all of them every 90 seconds.
-_miss_cache = TTLCache(ttl=900, maxsize=500)
+_miss_cache = TTLCache(ttl=900, maxsize=8192)
 
 # Strike labels look like "↑ $1,320" / "↓ $720" / "$1,020 or above"
 _STRIKE_RE = re.compile(r"(-?[\d,]+(?:\.\d+)?)")
@@ -107,45 +107,35 @@ def _days_left(end: str, now: datetime.datetime) -> float | None:
 
 # ── Fetch ─────────────────────────────────────────────────────────────────────
 
+def _gamma_json(path: str, params: dict):
+    def load():
+        response = _SESSION.get(f"{_GAMMA}{path}", params=params, timeout=_TIMEOUT)
+        if not response.ok:
+            raise HTTPException(429 if response.status_code == 429 else 502,
+                "Polymarket temporarily unavailable",
+                headers={"Retry-After": response.headers.get("Retry-After", "60" if response.status_code == 429 else "5")})
+        return response.json()
+    return market_requests.get("gamma", (path, *sorted(params.items())), load, ttl=90)
+
+
 def _search_events(query: str, limit: int = 10) -> list[dict]:
-    try:
-        r = _SESSION.get(
-            f"{_GAMMA}/public-search",
-            params={"q": query, "limit_per_type": limit},
-            timeout=_TIMEOUT,
-        )
-        if not r.ok:
-            return []
-        return r.json().get("events") or []
-    except Exception as exc:
-        print(f"[pm/stock] search '{query}': {exc}")
-        return []
+    # An outage is not a successful search with no markets; never negative-cache it.
+    return _gamma_json("/public-search", {"q": query, "limit_per_type": limit}).get("events") or []
 
 
 def _event_detail(slug: str) -> dict | None:
-    try:
-        r = _SESSION.get(f"{_GAMMA}/events", params={"slug": slug}, timeout=_TIMEOUT)
-        if not r.ok:
-            return None
-        data = r.json()
-        return data[0] if isinstance(data, list) and data else None
-    except Exception as exc:
-        print(f"[pm/stock] event '{slug}': {exc}")
-        return None
+    data = _gamma_json("/events", {"slug": slug})
+    return data[0] if isinstance(data, list) and data else None
 
 
 def _spot(symbol: str) -> float | None:
-    cached = _spot_cache.get(symbol)
-    if cached is not None:
-        return cached
     try:
-        fi = market_data.get_fast_info(symbol)
-        price = getattr(fi, "last_price", None)
+        # Preserve the selected provider policy; Yahoo shares the exact chart quote.
+        if registry.active == "yfinance":
+            return get_quote(symbol)["regularMarketPrice"]
+        return getattr(market_data.get_fast_info(symbol), "last_price", None)
     except Exception:
-        price = None
-    if price is not None:
-        _spot_cache.set(symbol, float(price))
-    return price
+        return None
 
 
 def _title_matches(title: str, symbol: str) -> bool:
@@ -351,7 +341,7 @@ def _stock_markets(symbol: str, company: str = "") -> dict:
     if miss is not None:
         return {
             "symbol": sym,
-            "spot": _spot(sym),
+            "spot": None,
             "as_of": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "events": [],
             "summary": _summarize([], None),
@@ -370,18 +360,15 @@ def _stock_markets(symbol: str, company: str = "") -> dict:
                 continue
             candidates[slug] = ev
 
-    spot = _spot(sym)
+    spot = _spot(sym) if candidates else None
     events: list[dict] = []
-    if candidates:
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            futures = {pool.submit(_event_detail, slug): slug for slug in candidates}
-            for fut in as_completed(futures):
-                detail = fut.result()
-                if not detail or not _is_live(detail, now):
-                    continue
-                built = _build_event(detail, spot, now)
-                if built and (built["strikes"] or built["prob_up"] is not None):
-                    events.append(built)
+    for slug in candidates:
+        detail = _event_detail(slug)
+        if not detail or not _is_live(detail, now):
+            continue
+        built = _build_event(detail, spot, now)
+        if built and (built["strikes"] or built["prob_up"] is not None):
+            events.append(built)
 
     # Soonest expiry first — that's the one a trader acts on.
     events.sort(key=lambda e: (e["days_left"] if e["days_left"] is not None else 9_999))
@@ -407,7 +394,8 @@ def stock_prediction_markets(
     company: str = Query(default="", description="Company name — widens the search"),
 ):
     """Live prediction markets for one ticker: price ladders + implied summary."""
-    return _stock_markets(symbol, company)
+    return market_requests.get("pm-build", (symbol.upper(), company),
+        lambda: _stock_markets(symbol, company), ttl=90)
 
 
 @router.get("/api/polymarket/stocks")
@@ -415,27 +403,10 @@ def stock_prediction_summaries(
     symbols: str = Query(..., description="Comma-separated tickers (max 30)"),
 ):
     """Summary-only, batched — one row per watchlist symbol."""
-    syms = [s.strip().upper() for s in symbols.split(",") if s.strip()][:30]
-    out: dict[str, dict] = {}
-    if not syms:
-        return {"summaries": out}
-
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        futures = {pool.submit(_stock_markets, s): s for s in syms}
-        for fut in as_completed(futures):
-            sym = futures[fut]
-            try:
-                data = fut.result()
-            except Exception as exc:
-                print(f"[pm/stock] {sym}: {exc}")
-                continue
-            if data["events"]:
-                out[sym] = {
-                    **data["summary"],
-                    "event_count": len(data["events"]),
-                }
-
-    return {
-        "summaries": out,
-        "as_of": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }
+    syms = parse_symbols(symbols, limit=30)
+    values, statuses = collect({s: market_requests.submit("pm-build", (s, ""),
+        lambda sym=s: _stock_markets(sym), ttl=90) for s in syms})
+    out = {sym: {**data["summary"], "event_count": len(data["events"])}
+           for sym, data in values.items() if data["events"]}
+    return {"summaries": out, "statuses": statuses, "requestedCount": len(syms),
+            "as_of": datetime.datetime.now(datetime.timezone.utc).isoformat()}

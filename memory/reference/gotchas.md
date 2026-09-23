@@ -7,6 +7,34 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### WATCHLIST implementation update — 2026-09-23
+
+The two study sections below are historical findings. Implemented: per-symbol cache/single-flight, bounded Yahoo/Gamma work, Retry-After-aware stock/watchlist/PM batch proxies, explicit batch coverage (no silent signal/PM truncation), lazy card sparklines, `3mo` alias, full-list sorting with100-row rendering, and shared Yahoo adapter leaf calls. NEWS caps/render-loop and pins proxy headers remain separate pre-existing findings.
+
+Large `useQueries` collections can overwhelm React with per-symbol fetch-status notifications. `useMarketQueryResults` retains TanStack per-symbol observers but coalesces React updates at50ms and schedules one polling pass per resource. Do not reintroduce thousands of independent render notifications or overlapping per-row polling timers. Never run a coordinator loader that waits on its own saturated pool: quote/PM assembly and provider leaves use separate pools.
+
+IV scheduler test `test_run_once_skips_without_touching_the_network` depends on actual US-close time; its fixture noonUTC row becomes eligible for closing-side refresh after16:00ET. Pin the clock in such tests. See [risk report](../reports/watchlist-optimization-implementation-risk-report.md).
+
+### API cooldown/negative cache: error ต้องไม่กลายเป็น empty success (study 2026-09-23 — ยังไม่แก้)
+
+| Symptom | Root Cause | Proposed fix |
+|---|---|---|
+| Python ส่ง429/503พร้อมเวลารอ แต่ clientไม่รู้Retry-After | stock/signals/pins proxyสร้างresponseใหม่โดยไม่forwardheader; stockFetchทิ้งstatus metadata | sharedproxy/fetchhelper + typederror + retryตามเวลาที่serverกำหนด |
+| providerhealthเป็นfalseแต่ยังถูกเรียกทุกrequest | registryใช้healthสำหรับstatus; quote methodsไม่gateและcatch429เป็นmissingprice | cooldownต่อprovider/capability + preserveerror/provenance |
+| PMไม่มีตลาดต่ออีก15นาทีหลังupstream503 | searcherror→[] แล้วตั้งmisscache900sเหมือนabsenceจริง | negativecacheเฉพาะconfirmedabsence; outageคืนunavailable/stale |
+
+ตรวจด้วยmockแล้ว ไม่มีapplicationfix: [API management study](../reports/watchlist-api-management-study-2026-09-23.md), [risk report](../reports/watchlist-api-management-risk-report.md)
+
+### WATCHLIST: eager history, period fallback และ silent symbol caps (study 2026-09-23 — ยังไม่แก้)
+
+| Symptom | Root Cause | Fix / proposed action |
+|---|---|---|
+| เปิด WATCHLIST ยิง history ทุกหุ้นแม้อยู่ TABLE; sparkline ตั้งใจ 3 เดือนแต่ได้ ~250 bars | `pinned-assets.tsx:1186` ส่ง `3mo`; `PERIOD_TO_YF` รับ `3m` แล้ว unknown fallback `1y`; effect ไม่ gate ตาม CARD/visibility | ใช้ period contract + validate; lazy history เฉพาะ CARD. ตัวอย่าง SNDK 24,248→6,304 bytes เมื่อใช้ `3m` (payload ไม่ใช่ timing speedup) |
+| หุ้นท้ายรายการไม่มี signals/PM/news แต่ไม่เห็น error | signals slice60; PM/NEWS slice30; signal hook ไม่ตรวจ HTTP status | chunk + explicit coverage/status/error; ห้ามเพิ่ม cap อย่างเดียวแล้ว fan-out ไม่จำกัด |
+| เปิด panel ใหม่/แก้ note แล้วยิงราคาใหม่; cold readers ทำ provider ซ้ำ | component-local quotes + `[pins]` dependency; backend get→compute→set ไม่ single-flight | shared cache ราย symbol, stable symbol key, request coalescing ที่มี deadline; probe 8 cold readers→8 provider calls |
+
+หลักฐานและขอบเขตที่ยังไม่ verify: [WATCHLIST study](../reports/watchlist-optimization-study-2026-09-23.md), [risk report](../reports/watchlist-optimization-risk-report.md). เป็นงานศึกษา ไม่มี application-code fix ใน session นี้
+
 ### Financial provider fields can mix definitions and periods (SNDK, 2026-09-18)
 
 | Symptom | Root Cause | Fix / current workaround |
@@ -1499,7 +1527,6 @@ LPDDR/GDDR/Wafer redirect ไป login
 list ว่างแปลว่า "วันนี้เขาไม่ประกาศ" ซึ่งเป็นสถานะจริงคนละเรื่องกัน
 (`backend/series_sources/dramexchange.py:ParseError`)
 
-
 ## recharts 2.x: `<Line>` ข้างใน `<AreaChart>` หายเงียบ (2026-09-20)
 
 `AreaChart` เรนเดอร์เฉพาะลูกที่เป็น `Area` — `<Line dataKey="cash" .../>` ที่ใส่ไว้ข้างในไม่ขึ้น
@@ -1617,3 +1644,24 @@ SECTOR ROTATION ใน TAIL: ส่วนแบ่ง turnover ของ XLK อ
 z ของ **ระดับ** จึงตอบว่า "sector นี้ใหญ่ไหม" (ไม่มีใครถาม) และค้างเป็นค่าสูงไปเรื่อยๆ
 หลังจากมันขยับครั้งเดียวเมื่อหลายเดือนก่อน. สิ่งที่แผงถามคือ "การขยับรอบนี้ผิดปกติไหม"
 = distribution ของ `series.diff(window)` ย้อน 1 ปี → `_delta_z()`
+
+## Yahoo/yfinance ไม่มีข้อมูล overnight session (20:00–04:00 ET) — ตรวจแล้ว 2026-09-14
+
+ถามซ้ำได้บ่อย ("เพิ่มราคา overnight ใน WATCHLIST/PORT ได้ไหม") คำตอบคือ **แหล่งข้อมูลไม่มีให้**
+ไม่ใช่เรื่อง UI:
+
+- `Ticker.info` มีแค่ `preMarketPrice/Change/Time` และ `postMarketPrice/Change/Time`
+  ไม่มี field ใดที่มีคำว่า overnight/night (ตรวจด้วยการ dump keys ทั้ง dict)
+- `Ticker.history(interval="1m", prepost=True)` คืนแท่งช่วง **04:00–19:59 ET เท่านั้น**
+  (วัดจริง: min 04:00:00-04:00, max 19:59:00-04:00)
+- Yahoo chart API `meta.currentTradingPeriod` มีแค่ 3 ช่วง — `pre` (04:00–09:30),
+  `regular` (09:30–16:00), `post` (16:00–20:00) ไม่มี period ที่สี่
+- `marketState` ช่วง 20:00–04:00 = `PREPRE`/`POSTPOST`/`CLOSED` ซึ่งโค้ดตีเป็น "CLOSED"
+  อยู่แล้วใน `components/bloomberg/core/market-session.tsx` — ถูกต้องตามข้อมูลที่มี
+
+การซื้อขาย overnight จริง (Blue Ocean ATS, 24X) เดินผ่าน venue ที่ Yahoo ไม่ได้ feed
+ถ้าอยากได้ต้องต่อ provider อื่น (Polygon/Databento/broker API) = แหล่งข้อมูลใหม่ ไม่ใช่การแก้ view
+
+**ที่มีอยู่แล้ว (pre/post ครบทุกจุด):** WATCHLIST rows (`views/pinned-assets.tsx` → `SessionRow`),
+MKT header (`views/market-view.tsx` → `ExtendedHoursPrice`), STOCK view, PORT → POSITIONS
+(`/api/v2/portfolio/premarket` → `OpenPositionsTab.tsx`)
