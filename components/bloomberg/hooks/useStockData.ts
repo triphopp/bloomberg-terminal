@@ -1,18 +1,15 @@
 "use client";
 
 import { QUERY_RETRY_ONCE } from "@/lib/constants";
+import { marketJson, quoteQueryOptions } from "@/lib/market-data-client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { useCallback } from "react";
 import { isRealTimeEnabledAtom } from "../atoms";
 
-async function stockFetch(params: Record<string, string>) {
-  const res = await fetch(`/api/stock?${new URLSearchParams(params)}`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return res.json();
+async function stockFetch(params: Record<string, string>, signal?: AbortSignal) {
+  // biome-ignore lint/suspicious/noExplicitAny: stock proxy serves search, history and financial response shapes
+  return marketJson<any>(`/api/stock?${new URLSearchParams(params)}`, signal);
 }
 
 export function useStockSearch(query: string) {
@@ -37,26 +34,43 @@ export function useStockSearch(query: string) {
 export function useStockQuote(symbol: string | null) {
   const isRealTimeEnabled = useAtomValue(isRealTimeEnabledAtom);
   return useQuery({
-    queryKey: ["stock", "quote", symbol],
-    queryFn: () => stockFetch({ symbol: symbol as string, type: "quote" }),
+    ...quoteQueryOptions(symbol ?? ""),
     enabled: !!symbol,
-    staleTime: 30_000,
     refetchInterval: isRealTimeEnabled ? 60_000 : 300_000,
     refetchOnWindowFocus: true,
   });
 }
 
-export function useStockHistory(symbol: string | null, period: string, interval = "") {
-  return useQuery({
+interface StockHistory {
+  quotes: Array<{
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  }>;
+}
+
+export function useStockHistory(
+  symbol: string | null,
+  period: string,
+  interval = "",
+  enabled = true
+) {
+  return useQuery<StockHistory>({
     queryKey: ["stock", "history", symbol, period, interval],
-    queryFn: () =>
-      stockFetch({
-        symbol: symbol as string,
-        type: "history",
-        period,
-        ...(interval ? { interval } : {}),
-      }),
-    enabled: !!symbol,
+    queryFn: ({ signal }) =>
+      stockFetch(
+        {
+          symbol: symbol as string,
+          type: "history",
+          period,
+          ...(interval ? { interval } : {}),
+        },
+        signal
+      ),
+    enabled: !!symbol && enabled,
     staleTime: interval && !["1d", "1wk", ""].includes(interval) ? 120_000 : 300_000,
     // Widening the window is a new query key, and without this the hook would
     // report "no data" for a beat — long enough for the chart's caller to swap
@@ -66,8 +80,10 @@ export function useStockHistory(symbol: string | null, period: string, interval 
     //
     // Same SYMBOL only: showing one company's bars under another's name is a
     // different, and much worse, bug than a spinner.
-    placeholderData: (prev: unknown, prevQuery?: { queryKey: readonly unknown[] }) =>
-      prevQuery?.queryKey[2] === symbol ? prev : undefined,
+    placeholderData: (
+      prev: StockHistory | undefined,
+      prevQuery?: { queryKey: readonly unknown[] }
+    ) => (prevQuery?.queryKey[2] === symbol ? prev : undefined),
   });
 }
 

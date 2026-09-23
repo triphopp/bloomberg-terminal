@@ -1,5 +1,19 @@
 # Bloomberg Terminal — Memory Index
 
+- [Extended-Hours Candle Price Line](plans/completed/extended-hours-candle-price-line.md) — ✅ done 2026-09-23; [verification/session](sessions/2026-09-23-extended-hours-candle-price-line.md)
+
+- [TICK DATA Section Order](plans/completed/tickdata-section-order.md) — ✅ done 2026-09-23; [verification/session](sessions/2026-09-23-tickdata-section-order.md)
+
+- [WATCHLIST Shared Data Optimization](plans/completed/watchlist-shared-data-optimization.md) — ✅ done 2026-09-23; [verification/session](sessions/2026-09-23-watchlist-shared-data-optimization.md)
+
+- [WATCHLIST API Management Study](plans/completed/watchlist-api-management-study.md) — ✅ study done 2026-09-23; implementation ดู WATCHLIST Shared Data Optimization
+- [WATCHLIST API report](reports/watchlist-api-management-study-2026-09-23.md) — list เดียวขนาดใหญ่, signals, shared service/queues/retry พร้อม mock evidence
+- [WATCHLIST API risks](reports/watchlist-api-management-risk-report.md) — Retry-After, cooldown, negative cache และ consumers ที่โหลดซ้ำ
+
+- [WATCHLIST Optimization Study](plans/completed/watchlist-optimization-study.md) — ✅ study done 2026-09-23; implementation ดู WATCHLIST Shared Data Optimization
+- [WATCHLIST study report](reports/watchlist-optimization-study-2026-09-23.md) — คอขวด, measured evidence, multiple lists และ phased roadmap
+- [WATCHLIST risk report](reports/watchlist-optimization-risk-report.md) — period fallback, silent caps, stampede, mutation/scope และ frontend500
+
 - [Neocloud three-year accounting review](plans/completed/neocloud-three-year-accounting-review.md) — ✅ done 2026-09-19; รายชื่อเดิมและค้นเพิ่มทั่วโลก พร้อมช่องว่างหลักฐาน
 - [Neocloud accounting review — session](sessions/2026-09-19-neocloud-accounting-review.md) — audit trail และ MCP receipts
 - [Neocloud accounting report ภาษาไทย](../research/neocloud-audit-2026-09-19/neocloud-accounting-review-th.html) — รายงานฉบับเต็ม 34 โปรไฟล์
@@ -138,7 +152,7 @@ memory/
 | **VP Indicator Upgrade** (session timezone fix B1 🔴, visible-range VP, delta profile, naked POC, HVN/LVN, config UI) | 🔄 code-complete, browser verify pending — `plans/vp-indicator-upgrade.md`; audit: `reports/vp-indicator-risk-report.md` |
 | **P/E History Pane + EPS Surprise Labels** (`/api/stock/pe-history`, PEPane recharts sub-pane + valuation bands, earnings beat/miss color) | 🔄 code-complete, backend HTTP verified, frontend visual pending — `plans/pe-earnings-visualization.md` |
 | **US/JP bond curves** (`/api/rates/curve`, UST 11 tenor FRED + JGB 15 tenor MOF, ทำไม yfinance ใช้ไม่ได้) | `reference/api-endpoints.md` → Rates; shape ใน `reference/data-shapes.md` |
-| **TICK DATA board** (6 sections, ยุบได้, bp vs %chg, `selectedTickId` vs `selectedLabel`) | `reference/frontend-structure.md` → "MKT — TICK DATA board" |
+| **TICK DATA board** (7 sections, ยุบและจัดลำดับเองได้, จำลำดับ, bp vs %chg) | `reference/frontend-structure.md` → "MKT — TICK DATA board" |
 | **Ctrl+C แล้ว dev:all ขึ้น traceback** | `reference/gotchas.md` → "npm run dev:all dumps a scary traceback" |
 | Data catalog — ข้อมูลทั้งหมดที่ดึงได้ 17 หมวด | `reference/data-catalog.md` |
 | **SEC Thailand API** — endpoints, key config, migration status, One Report structure | `project_summary.md` → "SEC Thailand Open API" |

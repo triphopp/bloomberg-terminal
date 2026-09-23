@@ -41,6 +41,7 @@ class PinnedAssetIn(BaseModel):
 
 
 class PinnedAssetPatch(BaseModel):
+    price_at_pin: float | None = None
     group_id: str | None = None
     comment: str | None = None
     buy_target: float | None = None
@@ -175,7 +176,10 @@ def list_assets():
         rows = conn.execute(
             "SELECT * FROM pinned_assets ORDER BY sort_order ASC, added_at ASC"
         ).fetchall()
-        return [_asset_with_tags(conn, r) for r in rows]
+        tags: dict[str, list[str]] = {}
+        for tag in conn.execute("SELECT asset_id, tag_id FROM pinned_asset_tags"):
+            tags.setdefault(tag["asset_id"], []).append(tag["tag_id"])
+        return [{**dict(row), "tags": tags.get(row["id"], [])} for row in rows]
 
 
 @router.post("/api/pins/assets", status_code=201)

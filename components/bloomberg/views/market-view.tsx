@@ -5,6 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   Activity,
+  ArrowDown,
+  ArrowUp,
   BarChart2,
   Check,
   ChevronDown,
@@ -21,7 +23,7 @@ import {
   Search,
   Settings,
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type DragEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Area,
   Bar,
@@ -68,7 +70,12 @@ import { PEPane } from "../chart/PEPane";
 import { VolumeEventPanel } from "../chart/VolumeEventPanel";
 import { useAutoExtendRange } from "../chart/useAutoExtendRange";
 import { useSdBands } from "../chart/useSdBands";
-import { ExtendedHoursPrice, MarketSessionBadge, staleMoveStyle } from "../core/market-session";
+import {
+  ExtendedHoursPrice,
+  MarketSessionBadge,
+  extendedHoursPriceLine,
+  staleMoveStyle,
+} from "../core/market-session";
 import { UsMarketClock } from "../core/us-market-clock";
 import { type FxPair, useFxTicks } from "../hooks/useFxTicks";
 import { useMarketDataQuery } from "../hooks/useMarketDataQuery";
@@ -82,7 +89,7 @@ import {
 import { calcHurst } from "../lib/market-utils";
 import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import { displayName, displaySymbol } from "../lib/symbol-display";
-import { bloombergColors, cn } from "../lib/theme-config";
+import { bloombergColors } from "../lib/theme-config";
 import type { MarketItem } from "../types";
 import { PinnedAssets } from "./pinned-assets";
 import { SectorRegimeHeatmap } from "./sector-regime-heatmap";
@@ -137,6 +144,7 @@ function loadLayout(): LayoutSettings {
 // FX moved in, so each section collapses independently.
 
 const LS_TICK_SECTIONS = "bloomberg_tickdata_sections";
+const LS_TICK_ORDER = "bloomberg_tickdata_order";
 
 type TickSection =
   | "americas"
@@ -148,11 +156,11 @@ type TickSection =
   | "fx";
 
 const TICK_SECTIONS: TickSection[] = [
+  "ratesUS",
+  "ratesJP",
   "americas",
   "emea",
   "asiaPacific",
-  "ratesUS",
-  "ratesJP",
   "volatility",
   "fx",
 ];
@@ -171,6 +179,34 @@ function loadTickSections(): TickSection[] {
   } catch {
     return DEFAULT_COLLAPSED_SECTIONS;
   }
+}
+
+/** Keep valid saved positions, then append newly introduced sections. */
+function normalizeTickOrder(value: unknown): TickSection[] {
+  if (!Array.isArray(value)) return [...TICK_SECTIONS];
+  const order: TickSection[] = [];
+  for (const id of value) {
+    if (TICK_SECTIONS.includes(id) && !order.includes(id)) order.push(id);
+  }
+  return [...order, ...TICK_SECTIONS.filter((id) => !order.includes(id))];
+}
+
+function loadTickOrder(): TickSection[] {
+  if (typeof window === "undefined") return [...TICK_SECTIONS];
+  try {
+    const stored = localStorage.getItem(LS_TICK_ORDER);
+    return stored ? normalizeTickOrder(JSON.parse(stored)) : [...TICK_SECTIONS];
+  } catch {
+    return [...TICK_SECTIONS];
+  }
+}
+
+function moveTickOrder(order: TickSection[], from: number, to: number): TickSection[] {
+  if (from < 0 || to < 0 || to >= order.length || from === to) return order;
+  const next = [...order];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
 }
 
 function saveLayout(layout: LayoutSettings) {
@@ -436,54 +472,105 @@ function SubGroupHeader({
 }
 
 function RegionHeader({
+  id,
   label,
   count,
   colors,
   collapsed,
   onToggle,
   note,
+  orderIndex,
+  isDropTarget,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  onMove,
 }: {
+  id: TickSection;
   label: string;
   count: number;
   colors: typeof bloombergColors.dark;
-  /** omit both to render a plain, non-interactive header */
-  collapsed?: boolean;
-  onToggle?: () => void;
+  collapsed: boolean;
+  onToggle: () => void;
   /** small right-aligned annotation, e.g. a stale-data warning */
   note?: string;
+  orderIndex: number;
+  isDropTarget: boolean;
+  onDragStart: (id: TickSection, event: DragEvent<HTMLButtonElement>) => void;
+  onDragOver: (id: TickSection, event: DragEvent<HTMLTableRowElement>) => void;
+  onDrop: (id: TickSection, event: DragEvent<HTMLTableRowElement>) => void;
+  onDragEnd: () => void;
+  onMove: (id: TickSection, direction: -1 | 1) => void;
 }) {
-  const interactive = onToggle != null;
   return (
-    <tr>
+    <tr onDragOver={(event) => onDragOver(id, event)} onDrop={(event) => onDrop(id, event)}>
       <td
         colSpan={6}
-        className={cn(
-          "px-1 py-0.5 text-[9px] font-bold tracking-widest",
-          interactive && "cursor-pointer hover:bg-[#141414]"
-        )}
+        className="px-1 py-0.5 text-[9px] font-bold tracking-widest cursor-pointer hover:bg-[#141414]"
         style={{
           background: "#0a0a0a",
           color: colors.accent,
           borderBottom: `1px solid ${colors.border}`,
+          boxShadow: isDropTarget ? `inset 0 2px ${colors.accent}` : undefined,
         }}
         onClick={onToggle}
       >
         <span className="inline-flex items-center gap-1 w-full">
-          {interactive &&
-            (collapsed ? (
-              <ChevronRight className="h-2.5 w-2.5 shrink-0" />
-            ) : (
-              <ChevronDown className="h-2.5 w-2.5 shrink-0" />
-            ))}
+          <button
+            type="button"
+            draggable
+            aria-label={`Drag ${label} to reorder`}
+            title={`Drag ${label} to reorder`}
+            className="inline-flex h-5 w-5 items-center justify-center cursor-grab active:cursor-grabbing"
+            onClick={(event) => event.stopPropagation()}
+            onDragStart={(event) => onDragStart(id, event)}
+            onDragEnd={onDragEnd}
+          >
+            <GripVertical className="h-3 w-3 shrink-0" />
+          </button>
+          {collapsed ? (
+            <ChevronRight className="h-2.5 w-2.5 shrink-0" />
+          ) : (
+            <ChevronDown className="h-2.5 w-2.5 shrink-0" />
+          )}
           {label}{" "}
           <span className="font-mono" style={{ color: colors.textSecondary }}>
             ({count})
           </span>
-          {note && (
-            <span className="ml-auto font-mono text-[8px] normal-case" style={{ color: "#facc15" }}>
-              {note}
-            </span>
-          )}
+          <span className="ml-auto inline-flex items-center gap-1">
+            {note && (
+              <span className="font-mono text-[8px] normal-case" style={{ color: "#facc15" }}>
+                {note}
+              </span>
+            )}
+            <button
+              type="button"
+              aria-label={`Move ${label} up`}
+              title={`Move ${label} up`}
+              disabled={orderIndex === 0}
+              className="inline-flex h-5 w-5 items-center justify-center disabled:opacity-25 hover:opacity-70"
+              onClick={(event) => {
+                event.stopPropagation();
+                onMove(id, -1);
+              }}
+            >
+              <ArrowUp className="h-2.5 w-2.5" />
+            </button>
+            <button
+              type="button"
+              aria-label={`Move ${label} down`}
+              title={`Move ${label} down`}
+              disabled={orderIndex === TICK_SECTIONS.length - 1}
+              className="inline-flex h-5 w-5 items-center justify-center disabled:opacity-25 hover:opacity-70"
+              onClick={(event) => {
+                event.stopPropagation();
+                onMove(id, 1);
+              }}
+            >
+              <ArrowDown className="h-2.5 w-2.5" />
+            </button>
+          </span>
         </span>
       </td>
     </tr>
@@ -1018,9 +1105,11 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   const [collapsedSections, setCollapsedSections] = useState<TickSection[]>(
     DEFAULT_COLLAPSED_SECTIONS
   );
+  const [tickOrder, setTickOrder] = useState<TickSection[]>(TICK_SECTIONS);
   const [sectionsRestored, setSectionsRestored] = useState(false);
   useEffect(() => {
     setCollapsedSections(loadTickSections());
+    setTickOrder(loadTickOrder());
     setSectionsRestored(true);
   }, []);
   useEffect(() => {
@@ -1031,10 +1120,58 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
       /* ignore */
     }
   }, [sectionsRestored, collapsedSections]);
+  useEffect(() => {
+    if (!sectionsRestored) return;
+    try {
+      localStorage.setItem(LS_TICK_ORDER, JSON.stringify(tickOrder));
+    } catch {
+      /* ignore */
+    }
+  }, [sectionsRestored, tickOrder]);
   const toggleSection = useCallback((id: TickSection) => {
     setCollapsedSections((prev) =>
       prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]
     );
+  }, []);
+  const draggedTickSection = useRef<TickSection | null>(null);
+  const [tickDropTarget, setTickDropTarget] = useState<TickSection | null>(null);
+  const handleTickDragStart = useCallback(
+    (id: TickSection, event: DragEvent<HTMLButtonElement>) => {
+      draggedTickSection.current = id;
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", id);
+    },
+    []
+  );
+  const handleTickDragOver = useCallback(
+    (id: TickSection, event: DragEvent<HTMLTableRowElement>) => {
+      if (!draggedTickSection.current || draggedTickSection.current === id) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      setTickDropTarget(id);
+    },
+    []
+  );
+  const handleTickDrop = useCallback((id: TickSection, event: DragEvent<HTMLTableRowElement>) => {
+    event.preventDefault();
+    const source = draggedTickSection.current;
+    if (source && source !== id) {
+      setTickOrder((previous) =>
+        moveTickOrder(previous, previous.indexOf(source), previous.indexOf(id))
+      );
+    }
+    draggedTickSection.current = null;
+    setTickDropTarget(null);
+  }, []);
+  const handleTickDragEnd = useCallback(() => {
+    draggedTickSection.current = null;
+    setTickDropTarget(null);
+  }, []);
+  const handleTickMove = useCallback((id: TickSection, direction: -1 | 1) => {
+    setTickOrder((previous) => {
+      const index = previous.indexOf(id);
+      return moveTickOrder(previous, index, index + direction);
+    });
   }, []);
 
   // Layout settings
@@ -1321,8 +1458,18 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     onPrefetch: (p) => prefetchHistory(selectedSymbol, p, barInterval),
   });
 
-  const areaHistQuery = useStockHistory(selectedSymbol, timePeriod);
-  const candleHistQuery = useStockHistory(selectedSymbol, effectivePeriod, barInterval);
+  const areaHistQuery = useStockHistory(
+    selectedSymbol,
+    timePeriod,
+    "",
+    heatmapChartType !== "candle"
+  );
+  const candleHistQuery = useStockHistory(
+    selectedSymbol,
+    effectivePeriod,
+    barInterval,
+    heatmapChartType === "candle"
+  );
   const historyQuery = heatmapChartType === "candle" ? candleHistQuery : areaHistQuery;
 
   const quote = quoteQuery.data;
@@ -1744,137 +1891,157 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 </tr>
               </thead>
               <tbody>
-                {/* ── RATES · US — full UST curve, FRED daily ── */}
-                <RegionHeader
-                  label="RATES · US"
-                  count={usRates.length}
-                  colors={colors}
-                  collapsed={collapsedSections.includes("ratesUS")}
-                  onToggle={() => toggleSection("ratesUS")}
-                  note={ratesData?.usError ? "FRED key missing" : undefined}
-                />
-                {!collapsedSections.includes("ratesUS") && (
-                  <TickNotice
-                    colors={colors}
-                    loading={ratesLoading}
-                    error={ratesData?.usError}
-                    empty={usRates.length === 0}
-                  />
-                )}
-                {!collapsedSections.includes("ratesUS") &&
-                  usRates.map((row) => (
-                    <RateRow
-                      key={row.id}
-                      row={row}
-                      colors={colors}
-                      isSelected={selectedTickId === row.id}
-                      onClick={() => handleRateSelect(row)}
-                    />
-                  ))}
-
-                {/* ── RATES · JP — full JGB curve, MOF daily ── */}
-                <RegionHeader
-                  label="RATES · JP"
-                  count={jpRates.length}
-                  colors={colors}
-                  collapsed={collapsedSections.includes("ratesJP")}
-                  onToggle={() => toggleSection("ratesJP")}
-                  note={ratesData?.jpStale ? "MOF down — OECD monthly" : undefined}
-                />
-                {!collapsedSections.includes("ratesJP") && (
-                  <TickNotice colors={colors} loading={ratesLoading} empty={jpRates.length === 0} />
-                )}
-                {!collapsedSections.includes("ratesJP") &&
-                  jpRates.map((row) => (
-                    <RateRow
-                      key={row.id}
-                      row={row}
-                      colors={colors}
-                      isSelected={selectedTickId === row.id}
-                      onClick={() => handleRateSelect(row)}
-                    />
-                  ))}
-
-                {(
-                  [
-                    ["americas", "AMERICAS", marketData?.americas],
-                    ["emea", "EMEA", marketData?.emea],
-                    ["asiaPacific", "ASIA PACIFIC", marketData?.asiaPacific],
-                  ] as [TickSection, string, MarketItem[] | undefined][]
-                ).map(([id, label, items]) => (
-                  <Fragment key={id}>
+                {tickOrder.map((id, index) => {
+                  const collapsed = collapsedSections.includes(id);
+                  const header = (label: string, count: number, note?: string) => (
                     <RegionHeader
+                      id={id}
                       label={label}
-                      count={items?.length ?? 0}
+                      count={count}
                       colors={colors}
-                      collapsed={collapsedSections.includes(id)}
+                      collapsed={collapsed}
                       onToggle={() => toggleSection(id)}
+                      note={note}
+                      orderIndex={index}
+                      isDropTarget={tickDropTarget === id}
+                      onDragStart={handleTickDragStart}
+                      onDragOver={handleTickDragOver}
+                      onDrop={handleTickDrop}
+                      onDragEnd={handleTickDragEnd}
+                      onMove={handleTickMove}
                     />
-                    {!collapsedSections.includes(id) &&
-                      (items ?? []).map((item: MarketItem) => (
-                        <TickRow
-                          key={item.id}
-                          item={item}
-                          colors={colors}
-                          isSelected={selectedTickId === item.id}
-                          onClick={() => handleTickSelect(item)}
-                        />
-                      ))}
-                  </Fragment>
-                ))}
+                  );
 
-                {/* ── VOLATILITY — the VIX family, grouped by what each one
-                    is priced off. Sub-headers rather than one flat list: the
-                    S&P term structure only means something read in order. ── */}
-                <RegionHeader
-                  label="VOLATILITY"
-                  count={volItems.length}
-                  colors={colors}
-                  collapsed={collapsedSections.includes("volatility")}
-                  onToggle={() => toggleSection("volatility")}
-                  note={volData?.error ? "feed unavailable" : undefined}
-                />
-                {!collapsedSections.includes("volatility") && (
-                  <TickNotice
-                    colors={colors}
-                    loading={volLoading}
-                    error={volData?.error}
-                    empty={volItems.length === 0}
-                  />
-                )}
-                {!collapsedSections.includes("volatility") &&
-                  volItems.map((item, idx) => (
-                    <Fragment key={item.id}>
-                      {item.group && item.group !== volItems[idx - 1]?.group && (
-                        <SubGroupHeader label={item.group} colors={colors} />
-                      )}
-                      <TickRow
-                        item={item}
-                        colors={colors}
-                        isSelected={selectedTickId === item.id}
-                        onClick={() => handleTickSelect(item)}
-                      />
+                  if (id === "ratesUS")
+                    return (
+                      <Fragment key={id}>
+                        {header(
+                          "RATES · US",
+                          usRates.length,
+                          ratesData?.usError ? "FRED key missing" : undefined
+                        )}
+                        {!collapsed && (
+                          <TickNotice
+                            colors={colors}
+                            loading={ratesLoading}
+                            error={ratesData?.usError}
+                            empty={usRates.length === 0}
+                          />
+                        )}
+                        {!collapsed &&
+                          usRates.map((row) => (
+                            <RateRow
+                              key={row.id}
+                              row={row}
+                              colors={colors}
+                              isSelected={selectedTickId === row.id}
+                              onClick={() => handleRateSelect(row)}
+                            />
+                          ))}
+                      </Fragment>
+                    );
+
+                  if (id === "ratesJP")
+                    return (
+                      <Fragment key={id}>
+                        {header(
+                          "RATES · JP",
+                          jpRates.length,
+                          ratesData?.jpStale ? "MOF down — OECD monthly" : undefined
+                        )}
+                        {!collapsed && (
+                          <TickNotice
+                            colors={colors}
+                            loading={ratesLoading}
+                            empty={jpRates.length === 0}
+                          />
+                        )}
+                        {!collapsed &&
+                          jpRates.map((row) => (
+                            <RateRow
+                              key={row.id}
+                              row={row}
+                              colors={colors}
+                              isSelected={selectedTickId === row.id}
+                              onClick={() => handleRateSelect(row)}
+                            />
+                          ))}
+                      </Fragment>
+                    );
+
+                  if (id === "americas" || id === "emea" || id === "asiaPacific") {
+                    const label = {
+                      americas: "AMERICAS",
+                      emea: "EMEA",
+                      asiaPacific: "ASIA PACIFIC",
+                    }[id];
+                    const items = marketData?.[id] ?? [];
+                    return (
+                      <Fragment key={id}>
+                        {header(label, items.length)}
+                        {!collapsed &&
+                          items.map((item: MarketItem) => (
+                            <TickRow
+                              key={item.id}
+                              item={item}
+                              colors={colors}
+                              isSelected={selectedTickId === item.id}
+                              onClick={() => handleTickSelect(item)}
+                            />
+                          ))}
+                      </Fragment>
+                    );
+                  }
+
+                  if (id === "volatility")
+                    return (
+                      <Fragment key={id}>
+                        {header(
+                          "VOLATILITY",
+                          volItems.length,
+                          volData?.error ? "feed unavailable" : undefined
+                        )}
+                        {!collapsed && (
+                          <TickNotice
+                            colors={colors}
+                            loading={volLoading}
+                            error={volData?.error}
+                            empty={volItems.length === 0}
+                          />
+                        )}
+                        {!collapsed &&
+                          volItems.map((item, itemIndex) => (
+                            <Fragment key={item.id}>
+                              {item.group && item.group !== volItems[itemIndex - 1]?.group && (
+                                <SubGroupHeader label={item.group} colors={colors} />
+                              )}
+                              <TickRow
+                                item={item}
+                                colors={colors}
+                                isSelected={selectedTickId === item.id}
+                                onClick={() => handleTickSelect(item)}
+                              />
+                            </Fragment>
+                          ))}
+                      </Fragment>
+                    );
+
+                  return (
+                    <Fragment key={id}>
+                      {header("FX", fxPairs.length)}
+                      {!collapsed &&
+                        fxPairs.map((pair) => (
+                          <FxRow
+                            key={pair.symbol}
+                            pair={pair}
+                            colors={colors}
+                            isSelected={selectedTickId === pair.id}
+                            onClick={() => handleFxSelect(pair)}
+                          />
+                        ))}
                     </Fragment>
-                  ))}
-
-                {/* ── FX — moved here from the removed FX [E] view ── */}
-                <RegionHeader
-                  label="FX"
-                  count={fxPairs.length}
-                  colors={colors}
-                  collapsed={collapsedSections.includes("fx")}
-                  onToggle={() => toggleSection("fx")}
-                />
-                {!collapsedSections.includes("fx") &&
-                  fxPairs.map((pair) => (
-                    <FxRow
-                      key={pair.symbol}
-                      pair={pair}
-                      colors={colors}
-                      isSelected={selectedTickId === pair.id}
-                      onClick={() => handleFxSelect(pair)}
-                    />
-                  ))}
+                  );
+                })}
               </tbody>
             </table>
           }
@@ -2490,6 +2657,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 indicators={chartIndicators}
                 overlays={heatmapOverlays}
                 eventMarkers={heatmapEventMarkers}
+                referencePriceLine={extendedHoursPriceLine(quote)}
                 onBarClick={handleMktChartClick}
                 crosshairCursor={mktRegressionArmed}
                 onLogicalRange={onChartLogicalRange}

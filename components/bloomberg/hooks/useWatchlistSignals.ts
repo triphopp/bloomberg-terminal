@@ -1,16 +1,10 @@
 "use client";
 
-/**
- * useWatchlistSignals — batch daily technical scan for every watchlist symbol.
- *
- * One request covers the whole list (the backend does a single yfinance batch
- * download and caches it for 15 min), so adding symbols costs nothing extra.
- *
- *   const { signals, isLoading } = useWatchlistSignals(["AAPL", "NVDA"]);
- *   signals["AAPL"]?.trend.state // "UP"
- */
+import { useMarketQueryResults } from "./useMarketQueryResults";
 
-import { useQuery } from "@tanstack/react-query";
+import { SymbolBatcher, marketRetry, marketRetryDelay } from "@/lib/market-data-client";
+import { type QueryObserverResult, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useMemo } from "react";
 
 export type TrendState = "UP" | "DOWN" | "FLAT";
 export type RsiState = "OB" | "OS" | "NEUTRAL";
@@ -45,27 +39,46 @@ export interface WatchlistSignalsResponse {
   count: number;
 }
 
-const EMPTY: Record<string, WatchlistSignal> = {};
+const batcher = new SymbolBatcher<WatchlistSignal>("/api/watchlist/signals", "signals");
 
 export function useWatchlistSignals(symbols: string[], enabled = true) {
-  // Sorted + deduped so reordering the watchlist doesn't refetch.
+  const client = useQueryClient();
   const key = [...new Set(symbols)].sort().join(",");
-
-  const query = useQuery<WatchlistSignalsResponse>({
-    queryKey: ["watchlist-signals", key],
-    queryFn: () =>
-      fetch(`/api/watchlist/signals?symbols=${encodeURIComponent(key)}`).then((r) => r.json()),
-    enabled: enabled && key.length > 0,
-    // Matches the backend's 15 min cache — polling faster only burns requests.
-    staleTime: 15 * 60 * 1000,
-    refetchInterval: 15 * 60 * 1000,
-  });
-
+  const unique = useMemo(() => (key ? key.split(",") : []), [key]);
+  const options = useMemo(
+    () =>
+      unique.map((symbol) => ({
+        queryKey: ["watchlist-signals", symbol],
+        queryFn: ({ signal }: { signal: AbortSignal }) => batcher.request(symbol, signal),
+        enabled,
+        staleTime: 15 * 60_000,
+        gcTime: 30 * 60_000,
+        refetchInterval: false as const,
+        retry: marketRetry,
+        retryDelay: marketRetryDelay,
+      })),
+    [unique, enabled]
+  );
+  const combine = useCallback(
+    (queries: QueryObserverResult<WatchlistSignal>[]) => ({
+      signals: Object.fromEntries(queries.flatMap((q, i) => (q.data ? [[unique[i], q.data]] : []))),
+      errors: queries.flatMap((q, i) => (q.error ? [`${unique[i]}: ${q.error.message}`] : [])),
+      isLoading: queries.some((q) => q.isFetching),
+      error: queries.find((q) => q.error)?.error ?? null,
+    }),
+    [unique]
+  );
+  const results = useMarketQueryResults(options, enabled ? 15 * 60_000 : false);
+  const combined = useMemo(() => combine(results), [combine, results]);
   return {
-    signals: query.data?.signals ?? EMPTY,
-    errors: query.data?.errors ?? [],
-    isLoading: query.isLoading,
-    error: query.error,
-    refetch: query.refetch,
+    ...combined,
+    refetch: () =>
+      client.refetchQueries(
+        {
+          predicate: (q) =>
+            q.queryKey[0] === "watchlist-signals" && unique.includes(String(q.queryKey[1])),
+        },
+        { cancelRefetch: false }
+      ),
   };
 }

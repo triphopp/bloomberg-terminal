@@ -1,3 +1,4 @@
+import { marketDataProxy } from "@/lib/market-data-proxy";
 import { NextResponse } from "next/server";
 
 import { PYTHON_API } from "@/lib/constants";
@@ -71,22 +72,5 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Invalid type" }, { status: 400 });
   }
 
-  try {
-    const res = await fetch(pythonUrl, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      return NextResponse.json(
-        { error: (err as { detail?: string }).detail ?? `Backend error ${res.status}` },
-        { status: res.status }
-      );
-    }
-    const data = await res.json();
-    return NextResponse.json(data);
-  } catch (err) {
-    console.error(`[stock/${type}] ${symbol}:`, err);
-    return NextResponse.json({ error: "Backend unavailable" }, { status: 503 });
-  }
+  return marketDataProxy(pythonUrl.slice(PYTHON_API.length), request.signal);
 }

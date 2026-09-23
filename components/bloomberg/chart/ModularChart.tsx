@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/context-menu";
 import { useAtom } from "jotai";
 import {
+  type AutoscaleInfoProvider,
   CandlestickSeries,
   HistogramSeries,
   type IChartApi,
@@ -34,7 +35,7 @@ import {
   type Time,
   createChart,
 } from "lightweight-charts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chartPaneHeightsAtom, chartRsiScaleAtom } from "../atoms";
 import type { LogicalRange, TimeRange } from "../chartkit";
 import {
@@ -101,6 +102,8 @@ export interface ModularChartProps {
   overlays?: CanvasOverlay[];
   /** Event markers (dividends, earnings, splits) displayed on the chart */
   eventMarkers?: ChartEventMarker[];
+  /** Current PRE/POST price shown as a dashed line on the candle pane. */
+  referencePriceLine?: { price: number; color: string; title: string } | null;
   /**
    * Fired with the bar time when the user clicks inside the data area. Used by
    * the Regression Channel to pick its two endpoints, and by the event detail
@@ -208,6 +211,7 @@ export function ModularChart({
   indicators,
   overlays = [],
   eventMarkers = [],
+  referencePriceLine = null,
   onBarClick,
   crosshairCursor = false,
   onLogicalRange,
@@ -217,6 +221,23 @@ export function ModularChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const mainSeriesRef = useRef<ISeriesApi<SeriesType> | null>(null);
+  const activeReferenceLineRef = useRef<IPriceLine | null>(null);
+  // Live quotes should update the line and its autoscale range in place: a
+  // full chart rebuild would discard the user's zoom and pane sizes.
+  const referencePriceLineRef = useRef(referencePriceLine);
+  referencePriceLineRef.current = referencePriceLine;
+  const referenceAutoscale = useCallback<AutoscaleInfoProvider>((base) => {
+    const info = base();
+    const price = referencePriceLineRef.current?.price;
+    if (!info?.priceRange || price == null || !Number.isFinite(price) || price <= 0) return info;
+    return {
+      ...info,
+      priceRange: {
+        minValue: Math.min(info.priceRange.minValue, price),
+        maxValue: Math.max(info.priceRange.maxValue, price),
+      },
+    };
+  }, []);
   // Held in a ref so changing the handler never tears the chart down and
   // rebuilds it — the effect below depends on data/indicators, not on this.
   const barClickRef = useRef(onBarClick);
@@ -427,10 +448,21 @@ export function ModularChart({
       borderDownColor: colors.negative,
       wickUpColor: colors.positive,
       wickDownColor: colors.negative,
+      autoscaleInfoProvider: referenceAutoscale,
     });
     // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
     candleSeries.setData(data as any[]);
     mainSeriesRef.current = candleSeries;
+    const initialReference = referencePriceLineRef.current;
+    if (initialReference && Number.isFinite(initialReference.price) && initialReference.price > 0) {
+      activeReferenceLineRef.current = candleSeries.createPriceLine({
+        ...initialReference,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        axisLabelTextColor: "#000",
+      });
+    }
     refills.push((bars) => {
       // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
       candleSeries.setData(bars as any[]);
@@ -833,6 +865,7 @@ export function ModularChart({
       chart.remove();
       chartRef.current = null;
       mainSeriesRef.current = null;
+      activeReferenceLineRef.current = null;
       subPaneKeysRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -850,6 +883,43 @@ export function ModularChart({
     viewportKey,
     rebuildTick,
   ]);
+
+  const linePrice = referencePriceLine?.price ?? null;
+  const lineColor = referencePriceLine?.color ?? null;
+  const lineTitle = referencePriceLine?.title ?? null;
+
+  // Quote ticks change this line without touching candle data, indicator panes,
+  // the time scale or the chart instance. A session ending removes it at once.
+  useEffect(() => {
+    const series = mainSeriesRef.current;
+    if (!series) return;
+    const valid =
+      linePrice != null &&
+      Number.isFinite(linePrice) &&
+      linePrice > 0 &&
+      lineColor != null &&
+      lineTitle != null;
+    if (!valid) {
+      if (activeReferenceLineRef.current) {
+        series.removePriceLine(activeReferenceLineRef.current);
+        activeReferenceLineRef.current = null;
+      }
+    } else {
+      const options = {
+        price: linePrice,
+        color: lineColor,
+        title: lineTitle,
+        lineWidth: 1 as const,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        axisLabelTextColor: "#000",
+      };
+      if (activeReferenceLineRef.current) activeReferenceLineRef.current.applyOptions(options);
+      else activeReferenceLineRef.current = series.createPriceLine(options);
+    }
+    // Recalculate the price range when a PRE/POST price gaps beyond the candles.
+    series.applyOptions({ autoscaleInfoProvider: referenceAutoscale });
+  }, [linePrice, lineColor, lineTitle, referenceAutoscale]);
 
   /**
    * New bars → push them into the live chart; rebuild only if that is not

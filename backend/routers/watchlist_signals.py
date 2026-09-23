@@ -24,10 +24,11 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 from fastapi import APIRouter, HTTPException, Query
 
 from cache import TTLCache
+from market_requests import collect, error_item, parse_symbols
+from market_snapshots import daily_frames, history_future, quote_future
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +36,9 @@ router = APIRouter(prefix="/api/watchlist", tags=["Watchlist"])
 
 # Daily signals only shift once per session; 15 min keeps a busy watchlist off
 # yfinance without ever showing yesterday's state.
-_cache = TTLCache(ttl=900, maxsize=200)
+_cache = TTLCache(ttl=900, maxsize=8192)
 
-MAX_SYMBOLS = 60
-_LOOKBACK = "2y"  # enough for EMA200 to be defined with room to spare
+MAX_SYMBOLS = 60  # request size, never a total-watchlist limit
 
 RSI_PERIOD = 14
 ATR_PERIOD = 14
@@ -275,79 +275,51 @@ def _scan(df: pd.DataFrame) -> Optional[dict[str, Any]]:
 
 
 def _download(symbols: list[str]) -> dict[str, pd.DataFrame]:
-    """One yfinance call for the whole list → {symbol: OHLCV frame}."""
-    raw = yf.download(
-        symbols,
-        period=_LOOKBACK,
-        interval="1d",
-        auto_adjust=True,
-        progress=False,
-        threads=True,
-        group_by="ticker",
-    )
-    if raw is None or raw.empty:
-        return {}
+    """Shared adjusted daily histories; alerts and scans reuse per-symbol work."""
+    return daily_frames(symbols)
 
-    # Older yfinance versions returned a flat frame for a single symbol and
-    # only used a 2-level column MultiIndex for several. The installed
-    # version now returns a MultiIndex even for one symbol, so check the
-    # actual shape instead of trusting len(symbols) == 1.
-    if not isinstance(raw.columns, pd.MultiIndex):
-        return {symbols[0]: raw}
-    if len(symbols) == 1:
-        return {symbols[0]: raw.droplevel(0, axis=1)}
-    out: dict[str, pd.DataFrame] = {}
-    for sym in symbols:
-        if sym in raw.columns.get_level_values(0):
-            out[sym] = raw[sym]
-    return out
+
+@router.get("/quotes")
+def get_watchlist_quotes(symbols: str = Query(...)):
+    syms = parse_symbols(symbols, limit=MAX_SYMBOLS)
+    quotes, statuses = collect({s: quote_future(s) for s in syms})
+    return {"quotes": quotes, "statuses": statuses, "requestedCount": len(syms), "count": len(quotes)}
+
+
+@router.get("/sparklines")
+def get_watchlist_sparklines(symbols: str = Query(...)):
+    syms = parse_symbols(symbols, limit=MAX_SYMBOLS)
+    frames, statuses = collect({s: history_future(s, "3mo", "1d") for s in syms})
+    prices = {s: [round(float(v), 4) for v in df["Close"].dropna()] for s, df in frames.items()}
+    return {"sparklines": prices, "statuses": statuses, "requestedCount": len(syms)}
 
 
 @router.get("/signals")
 def get_watchlist_signals(
     symbols: str = Query(..., description="Comma-separated symbols"),
 ):
-    """Batch daily-timeframe indicator scan for a watchlist."""
-    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
-    # Preserve caller order but drop duplicates.
-    sym_list = list(dict.fromkeys(sym_list))[:MAX_SYMBOLS]
-    if not sym_list:
-        raise HTTPException(status_code=422, detail="At least 1 symbol required")
-
-    key = f"signals:{','.join(sorted(sym_list))}"
-    cached = _cache.get(key)
-    if cached is not None:
-        return cached
-
-    try:
-        frames = _download(sym_list)
-    except HTTPException:
-        # Already a deliberate response — a 429 from the source layer means the
-        # vendor is throttling us, and relabelling it below would report a
-        # transient upstream limit as our own failure.
-        raise
-    except Exception as exc:
-        logger.exception("watchlist signal download failed")
-        raise HTTPException(status_code=502, detail=f"Price download failed: {exc}")
-
-    results: dict[str, Any] = {}
-    errors: list[str] = []
-    for sym in sym_list:
-        df = frames.get(sym)
-        if df is None or df.empty:
-            errors.append(f"{sym}: no data")
-            continue
+    """Per-symbol cached scan; callers chunk large lists without dropping their tail."""
+    syms = parse_symbols(symbols, limit=MAX_SYMBOLS)
+    results, statuses = {}, {}
+    missing = []
+    for sym in syms:
+        cached = _cache.get(sym)
+        if cached is not None:
+            results[sym] = cached
+            statuses[sym] = {"status": "ready"}
+        else:
+            missing.append(sym)
+    frames, pending = collect({s: history_future(s, "2y", "1d", ttl=900) for s in missing})
+    statuses.update(pending)
+    for sym, df in frames.items():
         try:
             scan = _scan(df)
+            if scan is None:
+                raise HTTPException(404, f"Insufficient history for {sym}")
+            _cache.set(sym, scan)
+            results[sym] = scan
         except Exception as exc:
-            logger.warning("scan failed for %s: %s", sym, exc)
-            errors.append(f"{sym}: {exc}")
-            continue
-        if scan is None:
-            errors.append(f"{sym}: insufficient history")
-            continue
-        results[sym] = scan
-
-    payload = {"signals": results, "errors": errors, "count": len(results)}
-    _cache.set(key, payload)
-    return payload
+            statuses[sym] = error_item(exc)
+    errors = [f"{s}: {v['error']}" for s, v in statuses.items() if v["status"] != "ready"]
+    return {"signals": results, "statuses": statuses, "errors": errors,
+            "count": len(results), "requestedCount": len(syms)}

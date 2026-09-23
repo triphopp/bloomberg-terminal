@@ -174,3 +174,14 @@ BOT data path:
 → [data-catalog.md](data-catalog.md) — 17 data categories available for analysis  
 → `memory/plans/` — feature plans + completed work  
 → `memory/reports/` — math derivations, risk assessments
+
+
+## Shared Watchlist market data (2026-09-23)
+
+`browser per-symbol TanStack cache → SymbolBatcher/RequestQueue → Next marketDataProxy → watchlist/stock routers → market_snapshots → market_requests → Yahoo/Gamma`.
+
+`backend/market_requests.py` is a process-local bounded coordinator, with lazy executors (no scheduler). Defaults: Yahoo leaf operations6 concurrent, Gamma2; separate quote assembly4 and PM assembly3 join the leaf work without occupying leaf slots. At most256 total in-flight/queued keys, max8192 cached keys and8192 short-lived failure entries. Identity includes provider, resource, normalized symbol and history period/interval/adjustment policy. Fresh hits and in-flight joins avoid duplicate provider work. A429 stops new/queued work for that provider until Retry-After; other failures briefly cache for5s. Timed-out consumers do not cancel running vendor calls or release their slots early. Single-read deadline22s; batch collect18s returns explicit pending/error statuses; Next deadline30s.
+
+`market_snapshots.py` owns the existing rich quote contract (regular/pre/post fields preserved), shared raw info/fast-info (60s), adjusted history (TTL based on caller), and daily frames for alerts. Yahoo adapter `get_info`, `get_fast_info`, `download_quotes`, `get_history` use these shared leaves, so Portfolio/FX and Watchlist can reuse compatible requests. Raw Ticker methods elsewhere, bulk historical `download`, option chains, other providers and NEWS source fetches are not all migrated; this is not a universal limiter for every external API. Registry provider selection remains intact; rich quotes retain their pre-existing Yahoo source.
+
+Signals cache per symbol900s; alert closed-bar trimming remains after the shared raw-history layer. Known absent history404 is skipped by alert frame conversion; transient failures do not become a cached successful scan. PM search/event-detail leaf requests share the coordinator, and confirmed no-market results alone get a900s negative cache. Instances are per Python process; multiple workers do not share memory/limits. No Redis dependency, DB migration or new background scheduler.

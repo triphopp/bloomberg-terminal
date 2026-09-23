@@ -18,6 +18,7 @@
     "lint": "biome lint .",
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit",
+    "test:watchlist": "node --test lib/__tests__/market-data-client.test.ts lib/__tests__/market-data-proxy.test.cjs",
     "test:alerts": "node --test lib/alerts/__tests__/*.test.ts",
     "test:chart": "node --test components/bloomberg/chart/__tests__/*.test.ts",
     "test:session": "node --test components/bloomberg/lib/__tests__/*.test.ts",
