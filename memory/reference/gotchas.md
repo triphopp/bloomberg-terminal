@@ -7,6 +7,14 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### SNDK daily candle one day behind quote (fixed 2026-09-23)
+
+| Symptom | Root Cause | Fix |
+|---|---|---|
+| SNDK quote ปิด 2026-09-22 ที่ 1,887.04 แต่กราฟแท่งเทียนจบ 2026-09-21 ที่ 1,766.64 | Yahoo chart `1d` ส่งแท่ง 22 ก.ย. ที่ Open/High/Low/Volume มีค่า แต่ `Close` และ `Adj Close` เป็น null. yfinance `auto_adjust=True` ทำให้ O/H/L เป็น NaN ด้วย; `stock_history` จึงข้ามแถวนั้น | ขอ raw history เฉพาะเมื่อแท่งท้าย Close ว่าง แล้วใช้ regular quote ที่ `quoteDate` ตรงวันและราคาอยู่ใน high/low กู้ O/H/L/Volume/Close. ไม่ cache response ที่แท่งท้ายยังไม่ครบ; ถ้า quote/raw ไม่ผ่าน validation ให้คืน history เดิม |
+
+**Rule:** อย่าใช้ `marketState` หรือราคา pre/post เป็น daily close. ตรวจ exchange-local date ของ regular quote กับวันที่แท่งและตรวจ high/low ก่อนเติม; raw/adjusted history ต้องอยู่คนละ cache key. Tests: `backend/tests/test_latest_daily_candle.py`. Chart ที่เปิดค้างยังไม่มี invalidation เมื่อ quote ใหม่กว่าวันแท่ง — ดู [risk report](../reports/chart-history-refresh-risk-report.md).
+
 ### WATCHLIST implementation update — 2026-09-23
 
 The two study sections below are historical findings. Implemented: per-symbol cache/single-flight, bounded Yahoo/Gamma work, Retry-After-aware stock/watchlist/PM batch proxies, explicit batch coverage (no silent signal/PM truncation), lazy card sparklines, `3mo` alias, full-list sorting with100-row rendering, and shared Yahoo adapter leaf calls. NEWS caps/render-loop and pins proxy headers remain separate pre-existing findings.

@@ -1,5 +1,8 @@
 # Bloomberg Terminal — Memory Index
 
+- [Latest Daily Candle Recovery](plans/completed/latest-daily-candle-recovery.md) — ✅ done 2026-09-23; [verification/session](sessions/2026-09-23-latest-daily-candle-recovery.md)
+- [Chart history refresh risk](reports/chart-history-refresh-risk-report.md) — กราฟที่เปิดค้างอาจไม่ refetch เมื่อ quoteDate เปลี่ยน
+
 - [Extended-Hours Candle Price Line](plans/completed/extended-hours-candle-price-line.md) — ✅ done 2026-09-23; [verification/session](sessions/2026-09-23-extended-hours-candle-price-line.md)
 
 - [TICK DATA Section Order](plans/completed/tickdata-section-order.md) — ✅ done 2026-09-23; [verification/session](sessions/2026-09-23-tickdata-section-order.md)

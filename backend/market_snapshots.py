@@ -203,23 +203,29 @@ def get_quote(symbol: str):
     return market_requests.get("quote-build", ("quote", symbol), lambda: _load_quote(symbol), ttl=60)
 
 
-def history_future(symbol: str, period: str, interval: str, *, ttl: int = 300):
+def history_future(symbol: str, period: str, interval: str, *, ttl: int = 300,
+                   auto_adjust: bool = True):
     symbol = symbol.strip().upper()
     def load():
         frame = market_data.get_ticker(symbol).history(
-            period=period, interval=interval, auto_adjust=True, timeout=12,
+            period=period, interval=interval, auto_adjust=auto_adjust, timeout=12,
             raise_errors=True,
         )
         if frame is None or frame.empty:
             raise HTTPException(404, f"No history for {symbol}")
         return frame
-    return market_requests.submit("yfinance", ("history", symbol, period, interval, "adjusted"), load, ttl=ttl)
+    return market_requests.submit(
+        "yfinance", ("history", symbol, period, interval, "adjusted" if auto_adjust else "raw"),
+        load, ttl=ttl,
+    )
 
 
-def get_history(symbol: str, period: str, interval: str, *, ttl: int = 300):
+def get_history(symbol: str, period: str, interval: str, *, ttl: int = 300,
+                auto_adjust: bool = True):
     from concurrent.futures import TimeoutError
     try:
-        return history_future(symbol, period, interval, ttl=ttl).result(timeout=22)
+        return history_future(symbol, period, interval, ttl=ttl,
+                              auto_adjust=auto_adjust).result(timeout=22)
     except TimeoutError as exc:
         raise HTTPException(504, "History still loading", headers={"Retry-After": "2"}) from exc
 
