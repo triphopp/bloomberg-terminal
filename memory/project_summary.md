@@ -3,7 +3,7 @@
 > **BBW study audit 2026-09-09:** ข้อสรุป study เดิมต้องอ่านคู่กับ [audit](reports/bbw-squeeze-2026-09-09-risk-report.md): พบ unknown labels, benchmark drift, final purge gap และการตีความ coefficient/survival median ผิด ผล E2 ranking ยังอยู่ในการคำนวณตรวจซ้ำ แต่ยังไม่มี trading validation
 
 **Repo:** `bloomberg-terminal` — macOS `~/bloomberg-terminal`, Windows `D:\Agents\Claude\bloomberg-terminal-main`
-**Last updated:** 2026-09-23 (TICK DATA section order)
+**Last updated:** 2026-09-23 (latest daily candle recovery)
 
 > Slim core reference. Navigate via [memory/INDEX.md](INDEX.md).
 > - [reference/api-endpoints.md](reference/api-endpoints.md) — all endpoints, caching table, Next.js proxy routes
@@ -354,6 +354,7 @@ Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as 
 
 ## What Could Be Built Next
 
+- [x] **Latest Daily Candle Recovery** — done 2026-09-23; กู้แท่งวันล่าสุดเมื่อ Yahoo daily close ว่างแต่ quote ปิดวันเดียวกันพร้อม raw OHLC ใช้ได้ (`plans/completed/latest-daily-candle-recovery.md`)
 - [x] **Extended-Hours Candle Price Line** — done 2026-09-23; PRE/AH quote เป็นเส้นแนวนอนบนกราฟแท่งเทียนใน MKT, stock-view และ floating chart (`plans/completed/extended-hours-candle-price-line.md`)
 
 - [x] **TICK DATA Section Order** — done 2026-09-23: drag/ปุ่มขึ้นลงจัดลำดับหมวดทั้งเจ็ดและจำไว้หลัง reload (`plans/completed/tickdata-section-order.md`, `sessions/2026-09-23-tickdata-section-order.md`)

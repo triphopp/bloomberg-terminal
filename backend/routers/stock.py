@@ -2,6 +2,7 @@
 Stock-related endpoints — search, quote, history, financials, analyst, etc.
 Extracted from main.py as part of the FastAPI router refactoring.
 """
+import math
 import re
 from datetime import datetime
 from typing import Any
@@ -561,6 +562,34 @@ def stock_quote(symbol: str):
 
 # ── OHLCV History ────────────────────────────────────────────────────────────
 
+def _recover_latest_daily_bar(hist: pd.DataFrame, raw: pd.DataFrame,
+                              quote: dict[str, Any]) -> pd.DataFrame:
+    """Fill a partial final Yahoo daily bar only with a same-day regular close.
+
+    Yahoo sometimes publishes the final day's O/H/L/volume but leaves Close and
+    Adj Close null. yfinance then also nulls adjusted O/H/L; the normal response
+    loop skips that row. The raw frame retains its unadjusted O/H/L/volume.
+    """
+    if hist.empty or raw.empty or not pd.isna(hist.iloc[-1].get("Close")):
+        return hist
+    day = hist.index[-1]
+    if day != raw.index[-1] or quote.get("quoteDate") != day.date().isoformat():
+        return hist
+    source = raw.iloc[-1]
+    values = [_safe_float(source.get(field)) for field in ("Open", "High", "Low", "Volume")]
+    price = _safe_float(quote.get("regularMarketPrice"))
+    if price is None or any(value is None or not math.isfinite(value) for value in values):
+        return hist
+    open_price, high, low, volume = values
+    if (price <= 0 or open_price <= 0 or low <= 0 or volume < 0
+            or not low <= open_price <= high or not low <= price <= high):
+        return hist
+    recovered = hist.copy()
+    for field, value in zip(("Open", "High", "Low", "Volume"), values):
+        recovered.at[day, field] = value
+    recovered.at[day, "Close"] = price
+    return recovered
+
 @router.get("/api/stock/history/{symbol}")
 def stock_history(symbol: str, period: str = "1y", interval: str = ""):
     """OHLCV history for a single symbol.
@@ -616,6 +645,19 @@ def stock_history(symbol: str, period: str = "1y", interval: str = ""):
         if hist.empty:
             return {"quotes": []}
 
+        # A current Yahoo daily bar may have valid O/H/L/volume but null Close.
+        # Recover only that final row from the raw frame plus a regular-market
+        # quote stamped with the same exchange-local date. Optional fallback
+        # failures must not turn otherwise usable history into an API error.
+        if yf_interval == "1d" and pd.isna(hist.iloc[-1].get("Close")):
+            try:
+                quote = get_quote(symbol)
+                if quote.get("quoteDate") == hist.index[-1].date().isoformat():
+                    raw = get_history(symbol, yf_period, yf_interval, ttl=ttl, auto_adjust=False)
+                    hist = _recover_latest_daily_bar(hist, raw, quote)
+            except Exception:
+                pass
+
         # ── Resample 1h -> 2h or 4h ──────────────────────────────────────────
         if resample_rule:
             hist = (
@@ -640,7 +682,10 @@ def stock_history(symbol: str, period: str = "1y", interval: str = ""):
         ]
 
         data = {"quotes": quotes}
-        _stock_cache.set(cache_key, data)
+        # A partial last row may become recoverable as soon as the quote or raw
+        # chart catches up. Do not pin the truncated response in this cache.
+        if not hist.empty and not pd.isna(hist.iloc[-1].get("Close")):
+            _stock_cache.set(cache_key, data)
         return data
 
     except HTTPException:
