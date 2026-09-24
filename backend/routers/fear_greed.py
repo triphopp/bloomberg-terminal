@@ -132,7 +132,7 @@ def _synthetic_current() -> dict:
         import yfinance as yf
         import pandas as pd
         SYMS = ["^VIX", "SPY", "TLT", "HYG", "LQD", "RSP"]
-        raw  = yf.download(SYMS, period="2y", auto_adjust=True, progress=False, threads=True)
+        raw  = yf.download(SYMS, period="2y", auto_adjust=True, progress=False, threads=4)
         if raw.empty:
             raise RuntimeError("empty download")
         close = (raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw).ffill().dropna(how="all")
@@ -190,7 +190,7 @@ def _synthetic_history(period: str = "1y") -> list[dict]:
         import yfinance as yf
         import pandas as pd
         SYMS = ["^VIX", "SPY", "TLT", "HYG", "LQD", "RSP"]
-        raw  = yf.download(SYMS, period="3y", auto_adjust=True, progress=False, threads=True)
+        raw  = yf.download(SYMS, period="3y", auto_adjust=True, progress=False, threads=4)
         if raw.empty:
             return []
         close = (raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw).ffill().dropna(how="all")
