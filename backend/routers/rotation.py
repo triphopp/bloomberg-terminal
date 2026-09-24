@@ -73,6 +73,10 @@ _DEFAULT_BENCH = "SPY"
 # ── Thai market — no liquid theme ETFs on Yahoo, so sector groups are
 # equal-weight baskets of liquid representatives, benchmarked vs ^SET.BK.
 TH_BENCH = "^SET.BK"
+# Yahoo intermittently serves ^SET.BK with a single bar (2026-09-24: 1 row for
+# period=9mo), which leaves every TH quadrant blank. TDEX.BK is the SET50 ETF
+# in THB — the closest tradable stand-in, and it has full history.
+TH_BENCH_FALLBACK = "TDEX.BK"
 TH_GROUPS: list[tuple[str, list[str]]] = [
     ("Banking",        ["KBANK.BK", "BBL.BK", "SCB.BK", "KTB.BK", "TTB.BK"]),
     ("Energy & Util",  ["PTT.BK", "PTTEP.BK", "GULF.BK", "TOP.BK", "BGRIM.BK"]),
@@ -103,32 +107,70 @@ _HOLDINGS_TTL = 86400  # ETF top-holdings change slowly — 1 day
 # Quadrant: ratio≥100 & mom≥100 Leading · ratio<100 & mom≥100 Improving
 #           ratio≥100 & mom<100 Weakening · both<100 Lagging
 
-def _rrg_state(close: pd.Series, bench: pd.Series) -> tuple[Optional[str], Optional[str]]:
-    """Returns (quadrant_label, momentum_direction up|down) or (None, None)."""
+def _rrg_frame(close: pd.Series, bench: pd.Series) -> Optional[pd.DataFrame]:
+    """Weekly RS-Ratio / RS-Mom, oldest first. None when history is too short.
+
+    The table's quadrant and the map's trail both read this, so a sector can
+    never sit in one quadrant on the table and another on the map.
+    """
     try:
         df = pd.concat([close, bench], axis=1, keys=["c", "b"]).dropna()
         if len(df) < 70:  # need ~14 weeks of dailies
-            return None, None
-        weekly = df.resample("W-FRI").last().dropna()
+            return None
+        weekly = df.resample("W-FRI").last()
+        # Label each week by its last real session, not the bin's Friday — a
+        # Thursday print would otherwise be dated tomorrow.
+        weekly.index = df.index.to_series().resample("W-FRI").last()
+        weekly = weekly.dropna()
         rs = weekly["c"] / weekly["b"]
         ratio = 100 * rs / rs.rolling(8).mean()
         mom = 100 * ratio / ratio.rolling(4).mean()
-        ratio_now = float(ratio.iloc[-1])
-        mom_now = float(mom.iloc[-1])
-        if pd.isna(ratio_now) or pd.isna(mom_now):
-            return None, None
-        if ratio_now >= 100 and mom_now >= 100:
-            quad = "Leading"
-        elif ratio_now < 100 and mom_now >= 100:
-            quad = "Improving"
-        elif ratio_now >= 100:
-            quad = "Weakening"
-        else:
-            quad = "Lagging"
-        prev = mom.iloc[-2] if len(mom) >= 2 and not pd.isna(mom.iloc[-2]) else mom_now
-        return quad, ("up" if mom_now >= float(prev) else "down")
+        out = pd.DataFrame({"ratio": ratio, "mom": mom}).dropna()
+        return out if not out.empty else None
     except Exception:
+        return None
+
+
+def _quadrant(ratio: float, mom: float) -> str:
+    if ratio >= 100 and mom >= 100:
+        return "Leading"
+    if ratio < 100 and mom >= 100:
+        return "Improving"
+    if ratio >= 100:
+        return "Weakening"
+    return "Lagging"
+
+
+def _rrg_state(close: pd.Series, bench: pd.Series) -> tuple[Optional[str], Optional[str]]:
+    """Returns (quadrant_label, momentum_direction up|down) or (None, None)."""
+    frame = _rrg_frame(close, bench)
+    if frame is None:
         return None, None
+    ratio_now = float(frame["ratio"].iloc[-1])
+    mom_now = float(frame["mom"].iloc[-1])
+    prev = float(frame["mom"].iloc[-2]) if len(frame) >= 2 else mom_now
+    return _quadrant(ratio_now, mom_now), ("up" if mom_now >= prev else "down")
+
+
+def _rrg_trail(close: pd.Series, bench: pd.Series, tail: int) -> list[dict]:
+    """Last `tail` weekly (RS-Ratio, RS-Mom) points, oldest first."""
+    frame = _rrg_frame(close, bench)
+    if frame is None:
+        return []
+    return [
+        {"date": str(ts.date()), "ratio": round(float(r), 3), "mom": round(float(m), 3)}
+        for ts, r, m in zip(frame.index[-tail:], frame["ratio"].iloc[-tail:], frame["mom"].iloc[-tail:])
+    ]
+
+
+def _th_bench(closes: pd.DataFrame) -> tuple[Optional[str], Optional[pd.Series]]:
+    """^SET.BK when its history is usable, else the SET50 ETF."""
+    for sym in (TH_BENCH, TH_BENCH_FALLBACK):
+        if sym in closes.columns:
+            s = closes[sym].dropna()
+            if len(s) >= 70:
+                return sym, s
+    return None, None
 
 
 def _pct(close: pd.Series, days: int) -> Optional[float]:
@@ -218,10 +260,10 @@ def _build_table_us(bench_sym: str) -> dict:
 
 def _build_table_th() -> dict:
     all_members = [m for _, members in TH_GROUPS for m in members]
-    closes = _download_closes(all_members + [TH_BENCH])
-    if TH_BENCH not in closes.columns:
+    closes = _download_closes(all_members + [TH_BENCH, TH_BENCH_FALLBACK])
+    bench_sym, bench = _th_bench(closes)
+    if bench is None:
         return {"rows": [], "bench": TH_BENCH, "error": "benchmark data unavailable"}
-    bench = closes[TH_BENCH].dropna()
     bench_m1 = _pct(bench, 21)
     rows = []
     for name, members in TH_GROUPS:
@@ -233,7 +275,7 @@ def _build_table_th() -> dict:
     rows.sort(key=lambda r: r["m1"] if r["m1"] is not None else -999, reverse=True)
     return {
         "rows": rows,
-        "bench": TH_BENCH,
+        "bench": bench_sym,
         "bench_m1": bench_m1,
         "as_of": str(closes.index[-1].date()) if len(closes.index) else None,
     }
@@ -257,6 +299,82 @@ def rotation_table(
     with _lock:
         if val.get("rows"):  # don't pin an empty result for 15 min
             _cache[key] = (now, val)
+    return val
+
+
+# ── Rotation map (RRG plot) ───────────────────────────────────────────────────
+# Sectors only: 11 SPDRs vs the US benchmark, or the TH equal-weight groups vs
+# SET. Themes stay on the table — 26 more trails make the plot unreadable.
+
+def _map_entry(name: str, row_id: str, symbol: str, close: Optional[pd.Series],
+               bench: pd.Series, tail: int) -> Optional[dict]:
+    if close is None or close.empty:
+        return None
+    points = _rrg_trail(close, bench, tail)
+    if not points:
+        return None
+    last = points[-1]
+    return {
+        "id": row_id,
+        "name": name,
+        "symbol": symbol,
+        "quadrant": _quadrant(last["ratio"], last["mom"]),
+        "points": points,
+    }
+
+
+def _build_map(market: str, bench_sym: str, tail: int) -> dict:
+    if market == "TH":
+        closes = _download_closes(
+            [m for _, ms in TH_GROUPS for m in ms] + [TH_BENCH, TH_BENCH_FALLBACK]
+        )
+        found, bench = _th_bench(closes)
+        bench_sym = found or TH_BENCH
+        universe = [(n, n, n, _ew_index(closes, ms)) for n, ms in TH_GROUPS]
+    else:
+        closes = _download_closes([s for _, s in SECTORS] + [bench_sym])
+        bench = closes[bench_sym].dropna() if bench_sym in closes.columns else None
+        universe = [
+            (n, s, s, closes[s].dropna() if s in closes.columns else None) for n, s in SECTORS
+        ]
+    if bench is None or bench.empty:
+        return {"rows": [], "bench": bench_sym, "market": market,
+                "error": "benchmark data unavailable"}
+    rows = [e for e in (_map_entry(n, i, s, c, bench, tail) for n, i, s, c in universe) if e]
+    return {
+        "rows": rows,
+        "expected": len(universe),
+        "bench": bench_sym,
+        "market": market,
+        "tail": tail,
+        "as_of": str(closes.index[-1].date()) if len(closes.index) else None,
+        "method": "RS = close / bench (weekly, W-FRI); RS-Ratio = 100·RS/SMA8(RS); "
+                  "RS-Mom = 100·RS-Ratio/SMA4(RS-Ratio). JdK-style approximation, not the licensed RRG.",
+    }
+
+
+@router.get("/map")
+def rotation_map(
+    bench: str = Query(_DEFAULT_BENCH, min_length=1, max_length=10),
+    market: str = Query("US", pattern="^(US|TH|us|th)$"),
+    tail: int = Query(8, ge=2, le=20),
+):
+    mkt = market.upper()
+    bench_sym = TH_BENCH if mkt == "TH" else bench.strip().upper()
+    key = f"map|{mkt}|{bench_sym}|{tail}"
+    now = time.time()
+    with _lock:
+        hit = _cache.get(key)
+        if hit and now - hit[0] < _TTL:
+            return hit[1]
+    val = _build_map(mkt, bench_sym, tail)
+    with _lock:
+        if val.get("rows"):  # don't pin an empty result for 15 min
+            # A sector missing from one Yahoo batch is usually transient: keep
+            # the partial map for 2 min instead of 15, but still cache it so a
+            # dead ticker can't re-fire the download on every request.
+            full = len(val["rows"]) >= val.get("expected", 0)
+            _cache[key] = (now if full else now - (_TTL - 120), val)
     return val
 
 
@@ -305,8 +423,14 @@ def rotation_constituents(
     if not members:
         return {"id": id, "market": mkt, "rows": [], "error": "no constituents found"}
 
-    closes = _download_closes(members + [bench_sym])
-    bench = closes[bench_sym].dropna() if bench_sym in closes.columns else pd.Series(dtype=float)
+    extra = [TH_BENCH_FALLBACK] if mkt == "TH" else []
+    closes = _download_closes(members + [bench_sym] + extra)
+    if mkt == "TH":
+        found, th = _th_bench(closes)
+        bench_sym = found or bench_sym
+        bench = th if th is not None else pd.Series(dtype=float)
+    else:
+        bench = closes[bench_sym].dropna() if bench_sym in closes.columns else pd.Series(dtype=float)
     bench_m1 = _pct(bench, 21) if not bench.empty else None
     rows = []
     for sym in members:

@@ -2,8 +2,9 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import type { bloombergColors } from "../lib/theme-config";
+import { RotationMapPanel } from "./rotation-map";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,10 @@ interface ConstituentsData {
 type Market = "US" | "TH";
 type KindFilter = "all" | "theme" | "sector";
 type SortKey = "d1" | "w1" | "m1" | "m3" | "m1_vs_bench";
+type View = "TABLE" | "MAP";
+
+const VIEW_KEY = "bloomberg_rotation_view";
+const TAILS = [4, 8, 12] as const;
 
 const QUAD_COLOR: Record<string, string> = {
   Leading: "#4ade80",
@@ -178,6 +183,23 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
   const [kind, setKind] = useState<KindFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("m1");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [view, setView] = useState<View>(() => {
+    if (typeof window === "undefined") return "TABLE";
+    try {
+      if (localStorage.getItem(VIEW_KEY) === "MAP") return "MAP";
+    } catch {
+      /* ignore */
+    }
+    return "TABLE";
+  });
+  const [tail, setTail] = useState<number>(8);
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_KEY, view);
+    } catch {
+      /* ignore */
+    }
+  }, [view]);
 
   const { data, isLoading, isError, refetch } = useQuery<RotationData>({
     queryKey: ["rotation-table", market],
@@ -186,6 +208,7 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
       if (!res.ok) throw new Error("fetch failed");
       return res.json();
     },
+    enabled: view === "TABLE",
     staleTime: 10 * 60 * 1000,
     retry: 1,
   });
@@ -199,6 +222,74 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
     setExpandedId(null);
     if (m === "TH") setKind("all"); // TH universe is sector baskets only
   };
+
+  const btnFs = compact ? "text-[6px]" : "text-[8px]";
+  const viewBar = (
+    <div className="flex items-center gap-1.5 shrink-0">
+      {(["TABLE", "MAP"] as View[]).map((v) => (
+        <button
+          type="button"
+          key={v}
+          className={`${btnFs} font-bold leading-4`}
+          style={{ color: view === v ? "#FF9800" : colors.textSecondary }}
+          onClick={() => setView(v)}
+          title={v === "MAP" ? "Relative Rotation Graph — sectors only" : "Momentum table"}
+        >
+          {v}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (view === "MAP")
+    return (
+      <div className="flex flex-col h-full overflow-hidden">
+        <div
+          className="flex items-center gap-2 px-1 py-0.5 shrink-0"
+          style={{ background: "#060606", borderBottom: `1px solid ${colors.border}` }}
+        >
+          {viewBar}
+          <span style={{ color: "#333" }}>│</span>
+          {(["US", "TH"] as Market[]).map((m) => (
+            <button
+              type="button"
+              key={m}
+              className={`${btnFs} font-bold leading-4`}
+              style={{ color: market === m ? "#57CC99" : colors.textSecondary }}
+              onClick={() => switchMarket(m)}
+            >
+              {m === "US" ? "🇺🇸 US" : "🇹🇭 TH"}
+            </button>
+          ))}
+          <span style={{ color: "#333" }}>│</span>
+          <span className={btnFs} style={{ color: colors.textSecondary }}>
+            TAIL
+          </span>
+          {TAILS.map((t) => (
+            <button
+              type="button"
+              key={t}
+              className={`${btnFs} font-bold leading-4`}
+              style={{ color: tail === t ? "#FF9800" : colors.textSecondary }}
+              onClick={() => setTail(t)}
+              title={`${t} weeks of history per sector`}
+            >
+              {t}W
+            </button>
+          ))}
+          <span
+            className={`${compact ? "text-[5.5px]" : "text-[7px]"} font-mono ml-auto`}
+            style={{ color: `${colors.textSecondary}88` }}
+            title="RS = close ÷ benchmark (weekly). RS-Ratio = 100·RS ÷ SMA8(RS); RS-Mom = 100·RS-Ratio ÷ SMA4(RS-Ratio). JdK-style approximation. TH groups are equal-weight baskets; benchmark falls back to TDEX.BK (SET50 ETF) when Yahoo has no ^SET.BK history."
+          >
+            {market === "US" ? "SPDR sectors vs SPY" : "TH groups vs SET"} · weekly · ⓘ
+          </span>
+        </div>
+        <div className="flex-1 min-h-0">
+          <RotationMapPanel market={market} tail={tail} colors={colors} compact={compact} />
+        </div>
+      </div>
+    );
 
   if (isLoading)
     return (
@@ -233,6 +324,7 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
         className="flex items-center gap-1 px-1 py-0.5 shrink-0"
         style={{ background: "#060606", borderBottom: `1px solid ${colors.border}` }}
       >
+        {viewBar}
         <div className="flex overflow-hidden border" style={{ borderColor: colors.border }}>
           {(["US", "TH"] as Market[]).map((m, i) => (
             <button
