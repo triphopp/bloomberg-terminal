@@ -3212,10 +3212,37 @@ def get_nav_history(account_id: Optional[str] = Query(None), days: int = Query(3
             a for a in _cash_adjustment_rows(conn)
             if a["account_id"] == aid or (aid == "all" and a["account_id"] in active)
         ]
+        dividend_rows = [
+            dict(d) for d in conn.execute(
+                """SELECT d.account_id, d.total_received, d.currency, d.pay_date, d.ex_date,
+                          a.currency acc_currency
+                   FROM dividends d JOIN portfolio_accounts a ON a.id = d.account_id"""
+            ).fetchall()
+            if d["account_id"] == aid or (aid == "all" and d["account_id"] in active)
+        ]
+    # Dividends are re-derived from TODAY's table by pay date instead of read from
+    # the snapshot. A snapshot stores whatever the table said on capture day, so a
+    # restatement (2026-07-28: USD dividends re-tagged, cumulative 40k → 147k THB)
+    # or a backfilled old dividend landed as one day's "return" on the next
+    # capture. Same THB conversion as _maybe_capture_nav.
+    dividend_events = sorted(
+        (
+            str(d.get("pay_date") or d.get("ex_date") or "")[:10],
+            convert_amount(
+                _to_float_or_zero(d.get("total_received")),
+                d.get("currency") or d.get("acc_currency"),
+                "THB",
+                date=d.get("pay_date") or d.get("ex_date"),
+            ),
+        )
+        for d in dividend_rows
+    )
     out = []
     for r in reversed(rows):
         row = dict(r)
         day = str(row["snapshot_date"])[:10]
+        row["dividends_stored"] = row.get("dividends")
+        row["dividends"] = round(sum(v for d, v in dividend_events if d and d <= day), 2)
         adj = sum(
             convert_amount(_to_float_or_zero(a.get("amount")), a.get("currency") or "THB", "THB", date=day)
             for a in adjustments if str(a.get("date") or "")[:10] <= day
