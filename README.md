@@ -43,10 +43,9 @@ percent-change on a yield is meaningless — and only the four tenors with a tra
 
 Market quotes are served through a **provider registry** with automatic gap-fill failover:
 
-1. **Yahoo Finance** (primary) — full coverage, real-time
-2. **Stooq** (fallback) — keyless, end-of-day, US equities + major indices
+1. **Yahoo Finance** — the only registered provider (full coverage, real-time)
 
-For a mixed batch (e.g. `PTT.BK` Thai stocks + `AAPL` US), each provider fills only the symbols it can price — gaps from the primary are routed to the fallback automatically.
+The registry still supports several vendors: for a mixed batch (e.g. `PTT.BK` Thai stocks + `AAPL` US), each registered provider fills only the symbols it can price, and gaps are routed to the next one automatically. Register a new vendor in `backend/sources/__init__.py`.
 
 The active provider can be switched from the terminal header chip. Status is visible at `GET /api/providers`.
 

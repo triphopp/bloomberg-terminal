@@ -35,7 +35,7 @@ type CreditTab = "overview" | "spreads" | "stress" | "consumer";
 
 // ── Signal keys by tab ────────────────────────────────────────────────────────
 
-const SPREAD_KEYS = ["hy_spread", "ig_spread", "em_hy_spread", "ted_spread"] as const;
+const SPREAD_KEYS = ["hy_spread", "ig_spread", "ted_spread"] as const;
 const STRESS_KEYS = ["vix", "stl_fsi", "nfci"] as const;
 const CONSUMER_KEYS = [
   "breakeven_5y",
@@ -49,7 +49,6 @@ const CONSUMER_KEYS = [
 const SIGNAL_KEYS = [
   "hy_spread",
   "ig_spread",
-  "em_hy_spread",
   "ted_spread",
   "vix",
   "stl_fsi",

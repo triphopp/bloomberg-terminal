@@ -31,7 +31,6 @@ _CREDIT_CFG: dict[str, dict] = {
     # Spread signals — FRED reports in % (e.g. 2.79 = 279 bps); thresholds are in same % scale
     "hy_spread":       {"fred_id": "BAMLH0A0HYM2",  "signal_when": "above", "threshold": 5.0,  "label": "US HY OAS",          "unit": "%",   "category": "spreads"},
     "ig_spread":       {"fred_id": "BAMLC0A0CM",    "signal_when": "above", "threshold": 2.0,  "label": "US IG OAS",          "unit": "%",   "category": "spreads"},
-    "em_hy_spread":    {"fred_id": "BAMLHE00EHY0D", "signal_when": "above", "threshold": 6.0,  "label": "EM HY OAS",          "unit": "%",   "category": "spreads"},
     "ted_spread":      {"fred_id": "TEDRATE",        "signal_when": "above", "threshold": 1.0,  "label": "TED Spread†",        "unit": "%",   "category": "spreads"},
     # Financial stress indices — trigger ABOVE 0
     "stl_fsi":         {"fred_id": "STLFSI4",        "signal_when": "above", "threshold": 0,    "label": "STL Stress Index",   "unit": "",    "category": "stress"},
@@ -126,9 +125,20 @@ def _save_credit_cache(cache: dict) -> None:
 
 # ── Refresh logic ─────────────────────────────────────────────────────────────
 
+#: Series that came back empty from every source are not asked for again
+#: until this passes. Found 2026-09-24: FRED had deleted BAMLHE00EHY0D (EM HY
+#: OAS, since removed from _CREDIT_CFG); the JSON API answered "series does not
+#: exist", the CSV fallback hung to its timeout, and because nothing was cached
+#: the whole chain re-ran on every crisis call (~every 70s).
+_MISS_BACKOFF_S = 6 * 3600
+_miss_until: dict[str, float] = {}
+
+
 def _refresh_credit(cache: dict) -> bool:
     """Fetch only expired credit/stress series. yfinance primary for real-time keys; FRED for daily series."""
-    expired = [k for k in _CREDIT_CFG if not _is_fresh(cache.get(k))]
+    now = time.time()
+    expired = [k for k in _CREDIT_CFG
+               if not _is_fresh(cache.get(k)) and _miss_until.get(k, 0) <= now]
     if not expired:
         return False
 
@@ -173,6 +183,12 @@ def _refresh_credit(cache: dict) -> bool:
             for k in yf_fallback:
                 if cache.get(k):
                     changed = True
+
+        for k in still_empty:
+            if not _is_fresh(cache.get(k)):
+                _miss_until[k] = time.time() + _MISS_BACKOFF_S
+                print(f"[crisis] {k} ({_CREDIT_CFG[k]['fred_id']}) empty from every source — "
+                      f"not retrying for {_MISS_BACKOFF_S // 3600}h", flush=True)
 
     # Phase 3: Shiller CAPE (fetches Yale Excel file, 7-day cache)
     if not _is_fresh(cache.get("cape")):
