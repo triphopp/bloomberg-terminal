@@ -20,6 +20,7 @@ import {
   buildIvSmileOi,
   expiryDays,
   smilePlotRows,
+  smileWingMetrics,
 } from "../lib/iv-smile";
 import type { bloombergColors } from "../lib/theme-config";
 
@@ -77,6 +78,13 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
     () => smilePlotRows(curves, fitted, oi?.points),
     [curves, fitted, oi?.points]
   );
+  const wingMetrics = model.slices.map((slice) => ({
+    expiry: slice.expiry,
+    months: slice.months,
+    values: smileWingMetrics(slice.prepared?.points ?? [], slice.data?.spot ?? 0, slice.timeYears),
+  }));
+  const formatPp = (value: number | null) =>
+    value == null ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}pp`;
   const distinctStrikes = new Set(curves.flatMap((c) => c.points.map((p) => p.strike))).size;
   const fontSize = compact ? 8 : 11;
   const muted = { color: colors.textSecondary };
@@ -556,6 +564,28 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
             </ComposedChart>
           </ResponsiveContainer>
         )}
+      </div>
+      <div
+        className="shrink-0 max-h-24 overflow-y-auto border-t px-2 py-1 leading-4"
+        style={{ ...muted, borderColor: colors.border }}
+        title="Observed, filtered quotes. 25Δ uses Black-Scholes spot delta with zero carry and linear interpolation between OTM strikes; no extrapolation. SKEW = C25Δ − P25Δ. CURV = (C25Δ + P25Δ)/2 − ATM IV. Values are IV percentage points; — means the required quotes are unavailable."
+      >
+        {wingMetrics.map((row, index) => (
+          <div key={row.expiry ?? row.months.join("-")} className="flex flex-wrap gap-x-2">
+            {compare && (
+              <span style={{ color: tenorColor(row.months, index) }}>{row.expiry ?? "—"}</span>
+            )}
+            <span>OBS</span>
+            <span>
+              SKEW 25Δ <strong style={{ color: colors.text }}>{formatPp(row.values.skew)}</strong>
+            </span>
+            <span>
+              CURV 25Δ{" "}
+              <strong style={{ color: colors.text }}>{formatPp(row.values.curvature)}</strong>
+            </span>
+          </div>
+        ))}
+        {!wingMetrics.length && <span>OBS · SKEW 25Δ — · CURV 25Δ —</span>}
       </div>
       {fitted && (
         <details

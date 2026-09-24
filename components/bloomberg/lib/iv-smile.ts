@@ -304,3 +304,80 @@ export function buildIvSmile(
   const strikeCount = points.filter((p) => p.callIV != null || p.putIV != null).length;
   return { points, callCount, putCount, strikeCount, excluded, sufficient: strikeCount >= 3 };
 }
+
+/** Spot-delta approximation with zero carry; the chain has no forward or dividend yield. */
+function normalCdf(value: number): number {
+  const x = Math.abs(value);
+  const t = 1 / (1 + 0.2316419 * x);
+  const tail =
+    (Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI)) *
+    t *
+    (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  return value >= 0 ? 1 - tail : tail;
+}
+
+function ivAt25Delta(
+  points: IvSmilePoint[],
+  side: "call" | "put",
+  spot: number,
+  timeYears: number
+): number | null {
+  const key = side === "call" ? "callIV" : "putIV";
+  const samples = points.flatMap((point) => {
+    const iv = point[key];
+    if (
+      iv == null ||
+      !Number.isFinite(iv) ||
+      iv <= 0 ||
+      (side === "call" ? point.strike <= spot : point.strike >= spot)
+    )
+      return [];
+    const sigma = iv / 100;
+    const d1 =
+      (Math.log(spot / point.strike) + 0.5 * sigma * sigma * timeYears) /
+      (sigma * Math.sqrt(timeYears));
+    const delta = side === "call" ? normalCdf(d1) : normalCdf(-d1);
+    return [{ strike: point.strike, iv, delta }];
+  });
+  const target = 0.25;
+  const exact = samples.find((sample) => Math.abs(sample.delta - target) < 1e-6);
+  if (exact) return exact.iv;
+  let nearest: { iv: number; distance: number } | null = null;
+  for (let i = 1; i < samples.length; i++) {
+    const left = samples[i - 1];
+    const right = samples[i];
+    if ((left.delta - target) * (right.delta - target) > 0 || left.delta === right.delta) continue;
+    const fraction = (target - left.delta) / (right.delta - left.delta);
+    const distance = Math.abs(left.delta - target) + Math.abs(right.delta - target);
+    if (!nearest || distance < nearest.distance)
+      nearest = { iv: left.iv + fraction * (right.iv - left.iv), distance };
+  }
+  return nearest?.iv ?? null;
+}
+
+/** Observed 25-delta risk reversal and butterfly, in IV percentage points. */
+export function smileWingMetrics(points: IvSmilePoint[], spot: number, timeYears: number) {
+  const unavailable = { call25: null, put25: null, atm: null, skew: null, curvature: null };
+  if (!Number.isFinite(spot) || spot <= 0 || !Number.isFinite(timeYears) || timeYears <= 0)
+    return unavailable;
+  const call25 = ivAt25Delta(points, "call", spot, timeYears);
+  const put25 = ivAt25Delta(points, "put", spot, timeYears);
+  const atStrike = points.find((point) => point.strike === spot);
+  let atm: number | null = null;
+  if (atStrike?.callIV != null && atStrike.putIV != null) {
+    atm = (atStrike.callIV + atStrike.putIV) / 2;
+  } else {
+    const put = points.filter((point) => point.strike < spot && point.putIV != null).at(-1);
+    const call = points.find((point) => point.strike > spot && point.callIV != null);
+    if (put?.putIV != null && call?.callIV != null)
+      atm =
+        put.putIV + ((spot - put.strike) / (call.strike - put.strike)) * (call.callIV - put.putIV);
+  }
+  return {
+    call25,
+    put25,
+    atm,
+    skew: call25 != null && put25 != null ? call25 - put25 : null,
+    curvature: call25 != null && put25 != null && atm != null ? (call25 + put25) / 2 - atm : null,
+  };
+}
