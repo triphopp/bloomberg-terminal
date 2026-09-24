@@ -460,11 +460,20 @@ import) is a different thing and still exists.
   - Downloads: `^VIX`, `SPY`, `TLT`, `HYG`, `LQD`, `RSP` from yfinance
 - **Next.js proxy:** `app/api/fear-greed/route.ts` + `app/api/fear-greed/history/route.ts`
 
+## Upstream health (`routers/health.py`) — prefix `/api/health` (2026-09-24)
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /upstream` | `upstream_health.snapshot()` + `yahoo_gate` — answered from memory, **no outbound call**. Backend only (no Next proxy, no UI — removed 2026-09-24); history is in `logs/upstream.jsonl` |
+
+Fed by `backend/upstream_health.py` (wraps `requests.Session.send`) and `backend/yahoo_gate.py` (wraps `YfData._make_request`). Both imported in `main.py` before any router. Stale serves come from `backend/last_good.py`.
+
 ## Tail Risk Monitor v2 (`routers/tail_risk.py`) — prefix `/api/tail-risk`
 
 | Endpoint | Returns |
 |----------|---------|
-| `GET /signals` | 6 risk dimensions + tri-state signals + vol board + 90d history + `data_health` |
+| `GET /signals` | 6 risk dimensions + tri-state signals + vol board + 90d history + `data_health`. **+2026-09-24:** `events` (named market events from `backend/tail_events.py`), `event_log` (last 20 sessions with ≥1 event), `event_asof`, `event_inputs` / `event_inputs_missing`, `events_ok`, `risk_level_dimensions` (the old dimension-gate level), `risk_basis` — `risk_level` is now `max(dimension gate, event floor)` |
+| _(proxy)_ | `app/api/tail-risk/[...path]/route.ts` timeout **180s** (cold `/signals` queues behind `yahoo_gate`) |
 | `GET /vix-term` | VIX9D / VIX / VIX3M / VIX6M + backwardation flags + freshness |
 | `GET /macro-context` | **Context only, `counted_in_composite: false`** (2026-09-17). `calendar` (from `backend/event_calendar.py`: FOMC decisions hardcoded 2026–2027 from federalreserve.gov + FRED `release/dates` for CPI 10 / NFP 50 / PCE 54 / GDP 53, 12h cache, parallel + 1 retry, fail-soft `releases_ok`) with `upcoming`, `past` (135d, chart markers), `event_window` (±1 business day), `next_fomc` (days_until 0 on decision day), `fomc_calendar_stale/expiring`; plus `fed {rate, stance}`, `yield_curve` (+`inverted_10y_2y/3m`), `regime` (growth/inflation/labor/policy `{state, tone}` — thresholds from the retired MACRO dashboard), `indicators` (latest value/prev/date, no series), `event_sensitive_signals` (`vix_level`, `vix_momentum`, `vix_term_inversion`). Cache 10 min when complete, 60 s when degraded |
 
@@ -477,6 +486,8 @@ import) is a different thing and still exists.
 - Every signal is `state: "on" | "off" | "unknown"`. `unknown` carries `reason` and must never be rendered as safe.
 - A vol series lagging VIX by > `MAX_STALE_DAYS` (4) is unusable — `VolFrame.value()` returns `None` rather than the last good print.
 - Risk level counts **dimensions in ALERT**, not signals: ≥3 → HIGH, ≥2 → ELEVATED, ≥1 alert or ≥2 watch → CAUTION.
+- **Event floor (2026-09-24)**, per *channel* (rates / equity_vol / equity / cross_asset / credit / fx / commodities): one SEVERE channel → CAUTION, SEVERE + ACTIVE in another → ELEVATED, SEVERE in 3 → HIGH, ACTIVE in 2 → CAUTION. Final `risk_level` = the higher of the two; `risk_basis.driver` says which.
+- Event inputs = one daily cross-asset panel: yfinance (SPY QQQ TLT GLD HYG DX-Y.NYB JPY=X CL=F ^IRX ^FVX ^TNX ^TYX ^VIX ^MOVE ^VVIX ^SKEW ^OVX ^GVZ ^VXN ^VIX3M, 2y, 280s cache) + CBOE series from `vol_indices` (Yahoo only fills ≤2 bars CBOE has not published) + FRED 420 obs HY/IG OAS + T5YIE/T10YIE + DFII5/DFII10 TIPS real yields (1h cache; real yield carried to same day as `real_L + Δnominal − Δbreakeven`, flagged `estimated`) + energy futures BZ=F/HO=F/RB=F → crack spreads (diesel HO×42−WTI, gasoline RB×42−WTI, 3-2-1, Brent−WTI). Changes spanning a futures roll session are blanked (WTI ~3 bdays before the 25th; HO/RB/Brent first bday of month) + STL FSI/NFCI from crisis. Evaluation calendar = SPY's bars.
 - Failure returns `{ok: false, error, detail, signals: [], ...}` — never a bare `{}` (that used to crash the view).
 
 ## Alert Ticker (`routers/alerts.py`)
@@ -519,7 +530,7 @@ Controls the live-quote registry (manual switch + auto-failover, capability-scop
 
 **Next.js proxy:** `app/api/providers/{route,active/route,auto-failover/route}.ts`
 **Frontend:** `layout/provider-switch.tsx` (header chip), `hooks/useProviders.ts`, `hooks/useLiveQuery.ts` (cadence seam)
-**Providers:** `YFQuoteProvider` (default) → `StooqQuoteProvider` (keyless fallback). Add via `registry.register()` in `sources/__init__.py`.
+**Providers:** `YFQuoteProvider` only (Stooq fallback removed 2026-09-24 — it timed out on every call and was never able to fill a gap). Add via `registry.register()` in `sources/__init__.py`.
 
 ---
 

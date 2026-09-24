@@ -69,6 +69,7 @@ OLLAMA_URL          — default http://localhost:11434
 RSSHUB_URL          — default https://rsshub.app
 FACEBOOK_ACCESS_TOKEN
 FRED_API_KEY        — macro + crisis indicators
+YAHOO_MAX_CONCURRENT — default 6; app-wide cap on in-flight Yahoo requests (backend/yahoo_gate.py)
 ALPHA_VANTAGE_API_KEY
 ANTHROPIC_API_KEY   — Claude API for portfolio AI
 BINANCE_API_KEY     — order footprint (crypto)
@@ -164,7 +165,7 @@ OPENAI_API_KEY      — optional
 | `alerts.py` | `/api/alerts` | regime + SQLite (60s cache) |
 | `alert_rules.py` | `/api/alerts/rules*` (CRUD, preview, scan, events) | SQLite + boolean-AST engine |
 | `ticker.py` | `/api/ticker` (crawl-strip items + alerts) | reuses existing caches, TTL 60s |
-| `tail_risk.py` | `/api/tail-risk/{signals,vix-term}` | **v2 (2026-08-16)**: `vol_indices.py` (CBOE CSV) + yfinance SPY/AGG/DCC + in-process calls to crisis/fear_greed/ticker. 6 risk dimensions, tri-state signals |
+| `tail_risk.py` | `/api/tail-risk/{signals,vix-term}` | **v2 (2026-08-16)**: `vol_indices.py` (CBOE CSV) + yfinance SPY/AGG/DCC + in-process calls to crisis/fear_greed/ticker. 6 risk dimensions, tri-state signals. **+ MARKET EVENTS (2026-09-24)**: `backend/tail_events.py` ตั้งชื่อเหตุการณ์ทางการ (Rates Volatility Shock, Treasury Selloff — Bear Flattening, Stock–Bond Joint Drawdown, Flight to Quality, Yen Carry-Trade Unwind …) จาก z ของ *การเปลี่ยนแปลง* 1d/5d บน cross-asset panel; SEVERE ยก `risk_level` ได้ (`risk_basis`) |
 | `analytics.py` | `/api/analytics/{corr,beta,vol,return,drawdown,sharpe,zscore,rsi,compare,rank}` | yfinance + TTLCache 300s |
 | `paper_trading.py` | `/api/paper/*` (accounts, orders, positions, fills, equity-curve) | yfinance + SQLite |
 | `providers.py` | `/api/providers` (list+health), `/api/providers/active` (switch), `/api/providers/auto-failover` | quote registry |
@@ -176,7 +177,7 @@ OPENAI_API_KEY      — optional
 | `watchlist_signals.py` | `/api/watchlist/{quotes,signals,sparklines}` (bounded batches with per-symbol status) | shared `market_snapshots.py`/`market_requests.py`; quotes60s, scans900s |
 
 ### Quote Provider Registry (live-quote path)
-`market_data` singleton = `FailoverSource` facade. Quote path (`download_quotes`/`get_fast_info`/`download`/`get_history`) → `ProviderRegistry` (manual switch + auto-failover, capability-scoped). Batch quote/download use **gap-fill merge** — per-symbol routing across providers so mixed portfolios (TH `.BK` + US) get priced by whichever provider supports each symbol. Heavy methods (options/financials/etf/news) → primary yfinance. Providers: `YFQuoteProvider` (default) → `StooqQuoteProvider` (keyless fallback). Add provider: implement `QuoteProvider` + `registry.register()` in `sources/__init__.py`. Env: `QUOTE_PROVIDER_DEFAULT`, `QUOTE_AUTO_FAILOVER`. FE seam: `useLiveQuery` (cadence) + header `ProviderSwitch`. Scaling roadmap: `plans/scaling/`.
+`market_data` singleton = `FailoverSource` facade. Quote path (`download_quotes`/`get_fast_info`/`download`/`get_history`) → `ProviderRegistry` (manual switch + auto-failover, capability-scoped). Batch quote/download use **gap-fill merge** — per-symbol routing across providers so mixed portfolios (TH `.BK` + US) get priced by whichever provider supports each symbol. Heavy methods (options/financials/etf/news) → primary yfinance. Providers: `YFQuoteProvider` only (Stooq fallback removed 2026-09-24 — it timed out on every call and was never able to fill a gap). Add provider: implement `QuoteProvider` + `registry.register()` in `sources/__init__.py`. Env: `QUOTE_PROVIDER_DEFAULT`, `QUOTE_AUTO_FAILOVER`. FE seam: `useLiveQuery` (cadence) + header `ProviderSwitch`. Scaling roadmap: `plans/scaling/`.
 
 ### SQLite Database Schema (`portfolio.db`)
 ```sql
@@ -322,7 +323,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 | `2` | NEWS | News | `news-view.tsx` → barrel for `views/news/` — WATCHLIST (default, sector rail + per-ticker stream; HEADLINES/RATE STRESS/DCF/REGIME panels) / NEWSFEED / SOCIAL tabs + Polymarket right column |
 | `3` | GMOV | Market Movers | `market-movers-view.tsx` — indices table + heatmap treemap |
 | `4` | CLIP | Clippings + AI | `clippings-view.tsx` |
-| `T` | TAIL | Tail Risk Monitor | `tail-risk-view.tsx` — 6 risk dimensions + **MACRO CONTEXT** (not in composite, 2026-09-17): event strip FOMC/SEP/CPI/NFP/PCE/GDP, EVENT tag on VIX signals inside ±1 bday window, Fed/curve/regime/latest prints panel (+ CPI CORE · PCE · PCE CORE · ISM PROXY), **MACRO READ** 3 แกนจาก core PCE / ISM proxy / MOVE, **SECTOR ROTATION** (2026-09-23 — turnover share tilt ของ 11 SPDR + AUM record ที่เก็บเอง), event markers on 90D chart |
+| `T` | TAIL | Tail Risk Monitor | `tail-risk-view.tsx` — **MARKET EVENTS** (2026-09-24, top: ชื่อเหตุการณ์ EN + คำอธิบายไทย + evidence trigger/confirm/checked + earlier sessions; ribbon โชว์ 2 ชื่อแรก) + 6 risk dimensions + **MACRO CONTEXT** (not in composite, 2026-09-17): event strip FOMC/SEP/CPI/NFP/PCE/GDP, EVENT tag on VIX signals inside ±1 bday window, Fed/curve/regime/latest prints panel (+ CPI CORE · PCE · PCE CORE · ISM PROXY), **MACRO READ** 3 แกนจาก core PCE / ISM proxy / MOVE, **SECTOR ROTATION** (2026-09-23 — turnover share tilt ของ 11 SPDR + AUM record ที่เก็บเอง), event markers on 90D chart |
 | `6` | CRDT | Credit / Stress | `credit-view.tsx` — 4 tabs: overview, spreads, stress, consumer |
 | `P` | PORT | Portfolio | `portfolio-view.tsx` (barrel → `portfolio/`) — 5 top-level tabs: PORTFOLIO (sub: POSITIONS\|OPTIONS\|TRADES\|CASH\|ENTRY=manual trade form; POSITIONS + OPTIONS show `% PORT` of NAV incl. cash, options also `Δ % NAV`) · ANALYTICS (sub: P&L incl. Total Return per port + CAPM β/α table\|BACKTEST) · RISK (standalone) · TOOLS (sub: THESES — sub-tabs THESIS\|NOTES\|KB (Zettelkasten: notes·conflicts·graph)\|HISTORY\|LINKED TRADES\|AI\|IMPORT) · PAPER (sub: DASHBOARD\|TRADE\|POSITIONS\|OPTIONS\|HISTORY) |
 
@@ -354,6 +355,12 @@ Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as 
 
 ## What Could Be Built Next
 
+- [x] **Upstream event log (no UI)** — done 2026-09-24; alert bar ลบ → `logs/upstream.jsonl` + `backend/scripts/upstream_report.py` + ขั้นตอนใน CLAUDE.md; ลบ EM HY OAS (FRED ลบ series) (`plans/completed/upstream-event-log.md`)
+- [x] **FRED timeout hardening** — done 2026-09-24; cap 3 + GET retry 2 ครั้ง + fail-fast + redact api_key; alert เหลืองต้อง ≥2 final failures (`plans/completed/fred-timeout-hardening.md`)
+- [x] **Upstream health alerts** — done 2026-09-24; bar แจ้งเตือนใต้ header เมื่อแหล่งข้อมูล/เน็ตมีปัญหา (429, DNS, timeout) + ข้อมูลไหนเก่า; `/api/health/upstream` (`plans/completed/upstream-health-alerts.md`)
+- [x] **TAIL readability + Yahoo request gate** — done 2026-09-24; UI TAIL ตัวใหญ่ขึ้น/คำสั้น/รายละเอียดเป็น click-tooltip; `backend/yahoo_gate.py` จำกัด Yahoo 6 requests พร้อมกันทั้ง backend (page load 228→86 connections ใน 10 วิแรก) (`plans/completed/tail-readability-yahoo-gate.md`)
+- [x] **TAIL Real Yields + Energy Crack Spreads** — done 2026-09-24; TIPS real yield (DFII5/10 + same-day EST) แยก nominal = real + breakeven, crack ดีเซล/เบนซิน/3-2-1 + Brent−WTI, events ใหม่ 4 ตัว, mask วัน roll สัญญาฟิวเจอร์ส (`plans/completed/tail-real-yield-energy-spreads.md`)
+- [x] **TAIL Market Event Classifier** — done 2026-09-24; ตั้งชื่อเหตุการณ์ทางการจากช็อกข้ามสินทรัพย์ + SEVERE ยก composite + fix MOVE ถูกทิ้งเพราะ align เข้าปฏิทิน VIX (`plans/completed/tail-event-classifier.md`)
 - [x] **Latest Daily Candle Recovery** — done 2026-09-23; กู้แท่งวันล่าสุดเมื่อ Yahoo daily close ว่างแต่ quote ปิดวันเดียวกันพร้อม raw OHLC ใช้ได้ (`plans/completed/latest-daily-candle-recovery.md`)
 - [x] **Extended-Hours Candle Price Line** — done 2026-09-23; PRE/AH quote เป็นเส้นแนวนอนบนกราฟแท่งเทียนใน MKT, stock-view และ floating chart (`plans/completed/extended-hours-candle-price-line.md`)
 
@@ -382,6 +389,8 @@ Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as 
 - [x] **MKT SVI Fit and Tenors** — done 2026-09-13 — optional Raw SVI, observed points/RMSE/parameters, actual expiries near1/3/5/7/9 months and Call/Put/OTM selection (`plans/completed/mkt-svi-fit-tenors.md`)
 
 - [x] **MKT IV Smile** — done 2026-09-13 — Yahoo chain smile in REGIME IV tab, numeric K vs IV%, follows main chart symbol with expiry and quote filters (`plans/completed/mkt-iv-smile.md`)
+
+- [x] **MKT IV 25Δ metrics** — done 2026-09-23 — observed skew and curvature/butterfly under the smile, per expiry, using filtered quotes and no wing extrapolation (`sessions/2026-09-23-iv-smile-wing-metrics.md`)
 
 - [x] **ATR Accumulation Pane** — done 2026-09-13 — optional Wilder ATR/ATR% pane with low-volatility + rising EMA green/red filter and persistent settings (`plans/completed/atr-accumulation-pane.md`)
 
