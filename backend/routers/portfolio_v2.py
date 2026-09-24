@@ -3184,6 +3184,51 @@ def get_option_pnl_attribution(
     return option_pnl_attribution(account_id, days)
 
 
+@router.get("/rotation")
+def get_portfolio_rotation(
+    account_id: Optional[str] = Query(None),
+    base_currency: Optional[str] = Query("USD"),
+    group: str = Query("theme", pattern="^(theme|sector|account)$"),
+):
+    """Weekly open-lot cost by theme / sector / account — the book's own rotation map.
+
+    Entry cost at entry FX (same conversion as /trades?base_currency=…), so a
+    band only moves when a lot is opened or closed. See portfolio_rotation.py.
+    """
+    import portfolio_rotation as pr
+
+    base = report_currency(base_currency)
+    where, params = [], []
+    if account_id and account_id != "all":
+        where.append("account_id = ?")
+        params.append(account_id)
+    sql = "SELECT * FROM trades" + (" WHERE " + " AND ".join(where) if where else "")
+    with get_db() as conn:
+        trades = [dict(r) for r in conn.execute(sql, params).fetchall()]
+        names = {
+            r["id"]: r["name"]
+            for r in conn.execute("SELECT id, name FROM portfolio_accounts").fetchall()
+        }
+
+        def cost_of(t: dict) -> float:
+            amount = abs(_to_float_or_zero(t.get("amount"))) or (
+                _to_float_or_zero(t.get("price_entry")) * _to_float_or_zero(t.get("volume"))
+            )
+            return trade_value_in_report(t, amount, base, when="entry", conn=conn)
+
+        if group == "theme":
+            key_of, order = pr.theme_of, pr.THEME_ORDER
+        elif group == "sector":
+            key_of, order = (lambda t: (t.get("sector") or "").strip() or "UNKNOWN"), None
+        else:
+            key_of, order = (lambda t: names.get(t.get("account_id"), t.get("account_id") or "?")), None
+        out = pr.build_rotation(trades, key_of, cost_of, order=order)
+    out.update({"base_currency": base, "group": group, "basis": "open_lot_entry_cost"})
+    if group == "theme":
+        out["taxonomy"] = {k: list(v) for k, v in pr.THEMES.items()}
+    return out
+
+
 @router.get("/nav-history")
 def get_nav_history(account_id: Optional[str] = Query(None), days: int = Query(365)):
     """Daily NAV time series (THB base) for charting total asset value.
