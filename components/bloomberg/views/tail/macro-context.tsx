@@ -162,7 +162,7 @@ export function EventStrip({ ctx }: { ctx: MacroContextData | undefined }) {
           style={{
             color: "#000",
             backgroundColor: "#FF8800",
-            fontSize: 7.5,
+            fontSize: 9.5,
             letterSpacing: "0.08em",
           }}
           title={`Within ±${win.bdays} business day of a scheduled release. Vol signals marked EVENT may be pricing the event rather than stress.`}
@@ -172,20 +172,20 @@ export function EventStrip({ ctx }: { ctx: MacroContextData | undefined }) {
       ) : (
         <span
           className="shrink-0"
-          style={{ color: "#555", fontSize: 7.5, letterSpacing: "0.08em" }}
+          style={{ color: "#555", fontSize: 9.5, letterSpacing: "0.08em" }}
         >
           NO EVENT WINDOW
         </span>
       )}
-      <span style={{ color: "#222", fontSize: 9 }}>|</span>
+      <span style={{ color: "#4a4a4a", fontSize: 11 }}>|</span>
       {soon.length === 0 && (
-        <span style={{ color: "#444", fontSize: 7.5 }}>nothing scheduled in 21 days</span>
+        <span style={{ color: "#666", fontSize: 9.5 }}>nothing scheduled in 21 days</span>
       )}
       {soon.map((e) => (
         <span
           key={`${e.date}-${e.kind}`}
           className="shrink-0 flex items-center gap-1 px-1"
-          style={{ border: `1px solid ${KIND_COLOR[e.kind]}33`, fontSize: 7.5 }}
+          style={{ border: `1px solid ${KIND_COLOR[e.kind]}33`, fontSize: 9.5 }}
           title={`${e.label} — ${e.date} (${e.source})`}
         >
           <span style={{ color: KIND_COLOR[e.kind], fontWeight: "bold" }}>
@@ -197,7 +197,7 @@ export function EventStrip({ ctx }: { ctx: MacroContextData | undefined }) {
         </span>
       ))}
       {(!cal.releases_ok || cal.fomc_calendar_stale || cal.fomc_calendar_expiring) && (
-        <span className="ml-auto shrink-0" style={{ color: "#B06000", fontSize: 7 }}>
+        <span className="ml-auto shrink-0" style={{ color: "#B06000", fontSize: 9 }}>
           {!cal.releases_ok && "FRED releases unavailable — FOMC only. "}
           {cal.fomc_calendar_stale &&
             `FOMC calendar ended ${cal.fomc_calendar_through} — update event_calendar.py.`}
@@ -263,8 +263,8 @@ function Row({
 }) {
   return (
     <div className="flex justify-between items-center gap-2" title={title}>
-      <span style={{ color: "#4a4a4a", fontSize: 7.5 }}>{label}</span>
-      <span className="truncate" style={{ color, fontSize: 8 }}>
+      <span style={{ color: "#6a6a6a", fontSize: 9.5 }}>{label}</span>
+      <span className="truncate" style={{ color, fontSize: 10 }}>
         {value}
       </span>
     </div>
@@ -286,8 +286,8 @@ export function MacroReadPanel({ ctx }: { ctx: MacroContextData | undefined }) {
   if (!read) {
     return (
       <div className={box} style={{ borderColor: "#1e1e1e" }}>
-        <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>MACRO READ</span>
-        <span style={{ color: "#333", fontSize: 7.5 }}>loading…</span>
+        <span style={{ color: "#888", fontSize: 10, letterSpacing: "0.12em" }}>MACRO READ</span>
+        <span style={{ color: "#555", fontSize: 9.5 }}>loading…</span>
       </div>
     );
   }
@@ -295,9 +295,9 @@ export function MacroReadPanel({ ctx }: { ctx: MacroContextData | undefined }) {
   return (
     <div className={box} style={{ borderColor: "#1e1e1e" }}>
       <div className="flex items-center justify-between">
-        <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>MACRO READ</span>
+        <span style={{ color: "#888", fontSize: 10, letterSpacing: "0.12em" }}>MACRO READ</span>
         <span
-          style={{ color: "#3a3a3a", fontSize: 6.5 }}
+          style={{ color: "#5a5a5a", fontSize: 9 }}
           title="No backtest behind these rules, and a macro print is not a market forecast. Not counted in the risk level."
         >
           NOT IN COMPOSITE · UNVALIDATED
@@ -310,7 +310,7 @@ export function MacroReadPanel({ ctx }: { ctx: MacroContextData | undefined }) {
         return (
           <div key={a.id} className="px-1 py-0.5" style={{ border: `1px solid ${c}33` }}>
             <div className="flex items-baseline justify-between gap-2">
-              <span style={{ color: "#4a4a4a", fontSize: 6.5 }}>
+              <span style={{ color: "#6a6a6a", fontSize: 9 }}>
                 {a.label}
                 {a.proxy && (
                   <span style={{ color: "#B06000" }} title="composed series, not the ISM itself">
@@ -319,12 +319,12 @@ export function MacroReadPanel({ ctx }: { ctx: MacroContextData | undefined }) {
                   </span>
                 )}
               </span>
-              <span style={{ color: c, fontSize: 8, fontWeight: "bold" }}>
+              <span style={{ color: c, fontSize: 10, fontWeight: "bold" }}>
                 {a.state ?? "NO DATA"}
                 {trend && <span style={{ color: "#666", fontWeight: "normal" }}> {trend}</span>}
               </span>
             </div>
-            <div className="truncate" style={{ color: "#666", fontSize: 6.5 }} title={a.rule}>
+            <div className="truncate" style={{ color: "#666", fontSize: 9 }} title={a.rule}>
               {a.detail}
             </div>
           </div>
@@ -337,7 +337,7 @@ export function MacroReadPanel({ ctx }: { ctx: MacroContextData | undefined }) {
         const x = read.axes.find((a) => a.id === "inflation")?.cross_check;
         if (!x) return null;
         const cell = (k: string, lbl: string, hint: string) => (
-          <span key={k} title={hint} style={{ color: "#555", fontSize: 6.5 }}>
+          <span key={k} title={hint} style={{ color: "#555", fontSize: 9 }}>
             {lbl}{" "}
             <span style={{ color: x[k] == null ? "#333" : "#888" }}>
               {x[k] == null ? "—" : `${x[k]?.toFixed(2)}%`}
@@ -354,7 +354,7 @@ export function MacroReadPanel({ ctx }: { ctx: MacroContextData | undefined }) {
         );
       })()}
 
-      <span style={{ color: "#333", fontSize: 6, lineHeight: 1.4 }}>
+      <span style={{ color: "#555", fontSize: 8.5, lineHeight: 1.4 }}>
         {read.note} — hover แต่ละแถวเพื่อดูกฎที่ใช้ตัดสิน
       </span>
     </div>
@@ -363,13 +363,13 @@ export function MacroReadPanel({ ctx }: { ctx: MacroContextData | undefined }) {
 
 export function MacroPanel({ ctx }: { ctx: MacroContextData | undefined }) {
   const box = "flex flex-col gap-1 p-2 border";
-  const head = { color: "#888", fontSize: 8, letterSpacing: "0.12em" } as const;
+  const head = { color: "#888", fontSize: 10, letterSpacing: "0.12em" } as const;
 
   if (!ctx) {
     return (
       <div className={box} style={{ borderColor: "#1e1e1e" }}>
         <span style={head}>MACRO CONTEXT</span>
-        <span style={{ color: "#333", fontSize: 7.5 }}>loading…</span>
+        <span style={{ color: "#555", fontSize: 9.5 }}>loading…</span>
       </div>
     );
   }
@@ -385,7 +385,7 @@ export function MacroPanel({ ctx }: { ctx: MacroContextData | undefined }) {
       <div className="flex items-center justify-between">
         <span style={head}>MACRO CONTEXT</span>
         <span
-          style={{ color: "#3a3a3a", fontSize: 6.5 }}
+          style={{ color: "#5a5a5a", fontSize: 9 }}
           title="Not counted in the risk level — no backtest behind it."
         >
           NOT IN COMPOSITE
@@ -393,7 +393,7 @@ export function MacroPanel({ ctx }: { ctx: MacroContextData | undefined }) {
       </div>
 
       {!ctx.macro_ok && (
-        <span style={{ color: "#B06000", fontSize: 7 }}>FRED macro series unavailable</span>
+        <span style={{ color: "#B06000", fontSize: 9 }}>FRED macro series unavailable</span>
       )}
 
       {/* Fed */}
@@ -444,8 +444,8 @@ export function MacroPanel({ ctx }: { ctx: MacroContextData | undefined }) {
               const c = TONE_COLOR[cell?.tone ?? "unknown"];
               return (
                 <div key={k} className="px-1 py-0.5" style={{ border: `1px solid ${c}44` }}>
-                  <div style={{ color: "#4a4a4a", fontSize: 6 }}>{k.toUpperCase()}</div>
-                  <div className="truncate" style={{ color: c, fontSize: 7, fontWeight: "bold" }}>
+                  <div style={{ color: "#6a6a6a", fontSize: 8.5 }}>{k.toUpperCase()}</div>
+                  <div className="truncate" style={{ color: c, fontSize: 9, fontWeight: "bold" }}>
                     {cell?.state ?? "NO DATA"}
                   </div>
                 </div>

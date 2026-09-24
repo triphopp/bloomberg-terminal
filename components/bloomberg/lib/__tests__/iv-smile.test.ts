@@ -10,6 +10,7 @@ import {
   smilePlotRows,
   smileSamples,
   smileTenorDate,
+  smileWingMetrics,
   sviIvAtStrike,
 } from "../iv-smile.ts";
 
@@ -170,6 +171,72 @@ test("OTM uses put wing below spot and call wing at/above spot without filling m
   const both = smileSamples(points, "both", 100);
   assert.equal(both[0].points.length, 4);
   assert.equal(both[1].points.length, 3);
+});
+
+test("observed 25-delta skew and butterfly use each wing's IV in spot delta", () => {
+  const z = 0.67448975;
+  const callIv = 30;
+  const putIv = 40;
+  const callStrike = 100 * Math.exp(z * 0.3 + 0.3 ** 2 / 2);
+  const putStrike = 100 * Math.exp(-z * 0.4 + 0.4 ** 2 / 2);
+  const metrics = smileWingMetrics(
+    [
+      { strike: putStrike, callIV: null, putIV: putIv },
+      { strike: 100, callIV: 25, putIV: 25 },
+      { strike: callStrike, callIV: callIv, putIV: null },
+    ],
+    100,
+    1
+  );
+  assert.equal(metrics.call25, callIv);
+  assert.equal(metrics.put25, putIv);
+  assert.equal(metrics.atm, 25);
+  assert.equal(metrics.skew, -10);
+  assert.equal(metrics.curvature, 10);
+});
+
+test("25-delta metrics interpolate within observed wings and never extrapolate", () => {
+  const metrics = smileWingMetrics(
+    [
+      { strike: 80, callIV: null, putIV: 45 },
+      { strike: 90, callIV: null, putIV: 35 },
+      { strike: 100, callIV: 25, putIV: 25 },
+      { strike: 120, callIV: 30, putIV: null },
+      { strike: 150, callIV: 40, putIV: null },
+    ],
+    100,
+    1
+  );
+  assert.ok(metrics.call25 != null && metrics.call25 > 30 && metrics.call25 < 40);
+  assert.ok(metrics.put25 != null && metrics.put25 > 35 && metrics.put25 < 45);
+  assert.ok(metrics.skew != null && Number.isFinite(metrics.skew));
+  assert.ok(metrics.curvature != null && Number.isFinite(metrics.curvature));
+
+  const sparse = smileWingMetrics(
+    [
+      { strike: 100, callIV: 25, putIV: 25 },
+      { strike: 105, callIV: 30, putIV: null },
+      { strike: 110, callIV: 30, putIV: null },
+    ],
+    100,
+    1
+  );
+  assert.equal(sparse.call25, null);
+  assert.equal(sparse.put25, null);
+  assert.equal(sparse.skew, null);
+  assert.equal(sparse.curvature, null);
+  assert.equal(smileWingMetrics([], 100, 0).skew, null);
+
+  const gapAtSpot = smileWingMetrics(
+    [
+      { strike: 90, callIV: null, putIV: 40 },
+      { strike: 100, callIV: null, putIV: null },
+      { strike: 110, callIV: 20, putIV: null },
+    ],
+    100,
+    1
+  );
+  assert.equal(gapAtSpot.atm, 30);
 });
 
 const fit: RawSviFit = {

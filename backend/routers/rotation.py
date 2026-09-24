@@ -147,7 +147,7 @@ def _pct(close: pd.Series, days: int) -> Optional[float]:
 def _download_closes(symbols: list[str]) -> pd.DataFrame:
     raw = yf.download(
         sorted(set(symbols)), period="9mo", interval="1d",
-        auto_adjust=True, progress=False, threads=True,
+        auto_adjust=True, progress=False, threads=4,  # was one thread per ticker; see tail_risk._yf_download
     )
     return raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
 
@@ -357,7 +357,7 @@ def _download_ohlcv(symbols: list[str], period: str = "2y") -> tuple[pd.DataFram
     """(closes, volumes) for the symbols, aligned on one index."""
     raw = yf.download(
         sorted(set(symbols)), period=period, interval="1d",
-        auto_adjust=True, progress=False, threads=True,
+        auto_adjust=True, progress=False, threads=4,  # was one thread per ticker; see tail_risk._yf_download
     )
     if isinstance(raw.columns, pd.MultiIndex):
         return raw["Close"], raw["Volume"]

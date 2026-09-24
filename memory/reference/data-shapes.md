@@ -771,6 +771,26 @@ Flags: `TREND_UP`/`TREND_DOWN`, `GOLDEN_CROSS`/`DEATH_CROSS`, `RSI_OVERBOUGHT`/`
 ```
 `kind` ∈ FOMC|CPI|NFP|PCE|GDP. Spreads are percentage points (UI ×100 → bp). `calendar`/`regime`/`fed`/`yield_curve`/`indicators` may be `null` on failure — render NO DATA, never calm.
 
+## Upstream Health (`GET /api/health/upstream`)
+
+```json
+{
+  "overall": "OK" | "DEGRADED" | "DOWN" | "NETWORK",
+  "dns_failed_sources": ["FRED", "Yahoo"],
+  "sources": [ { "source": "Yahoo", "status": "OK" | "DEGRADED" | "DOWN", "last_kind": "rate_limit",
+                "last_kind_label": "ถูกจำกัด (429)", "consecutive_failures": 3, "failures_window": 4,
+                "failure_kinds": {"rate_limit": 4}, "calls_per_min": 638, "retries_window": 2, "last_ok_ago_s": 13, "last_fail_ago_s": 2 } ],
+  "incidents": [ { "source": "FRED", "kind": "dns", "kind_label": "resolve ชื่อไม่ได้ (DNS)", "count": 10, "ago_s": 5 } ],
+  "stale": [ { "key": "tail_xa_panel", "label": "TAIL cross-asset panel", "age_s": 4300, "source": "Yahoo" } ],
+  "window_s": 600, "yahoo_gate": { "installed": true, "max_concurrent": 6 }
+}
+```
+
+- `kind`: `rate_limit` `dns` `timeout` `connection` `http_5xx` `http_4xx` (401/403 only — 404 is a data answer).
+- DEGRADED = 2+ final failures (after retries) within 10 min; one isolated failure stays OK. DOWN = 3+ consecutive failures within 10 min. NETWORK = DNS failures from 2+ sources within 3 min.
+- Never contains a URL (FRED api_key rides in the query string).
+- No frontend consumer (alert bar removed 2026-09-24). Event history: `logs/upstream.jsonl`, one object per line: `{ts, time, event: fail|retry|status|network|network_ok|stale|fresh|summary, …}` — fields per event in the `upstream_health.py` docstring.
+
 ## Tail Risk Signals (`GET /api/tail-risk/signals`)
 
 ```json
@@ -812,6 +832,49 @@ Flags: `TREND_UP`/`TREND_DOWN`, `GOLDEN_CROSS`/`DEATH_CROSS`, `RSI_OVERBOUGHT`/`
   }
 }
 ```
+
+### Market events on `/signals` (2026-09-24, additive)
+
+```json
+{
+  "risk_level": "ELEVATED",
+  "risk_level_dimensions": "NORMAL",
+  "risk_basis": { "dimensions": "NORMAL", "events": "ELEVATED",
+                  "events_rule": "SEVERE in RATES with ACTIVE+ in 2 channels",
+                  "final": "ELEVATED", "driver": "events" },
+  "event_asof": "2026-09-23", "events_ok": true, "events_stale_hours": null, "event_partial": true,
+  "events": [
+    { "id": "treasury_selloff", "name": "Treasury Selloff — Bear Flattening",
+      "definition": "Rise in Treasury yields ... beyond the normal daily range.",
+      "summary": "<Thai one-liner built from the data>",
+      "channel": "rates", "channel_label": "RATES", "direction": "up",
+      "severity": "SEVERE", "score": 3.73, "rule": "|Δ10Y| z ≥ 2 ...", "catalyst": null,
+      "evidence": [
+        { "key": "UST10Y", "label": "UST 10Y", "role": "trigger", "value": 5.114, "change": 15.1,
+          "unit": "bp", "horizon": 1, "z": 3.73, "note": "10Y +15.1bp ...", "date": "2026-09-23" }
+      ] }
+  ],
+  "event_log": [ { "date": "2026-09-23", "catalyst": null,
+                   "events": [ { "id": "treasury_selloff", "name": "...", "severity": "SEVERE", "channel": "rates" } ] } ],
+  "event_inputs": [ { "key": "MOVE", "label": "...", "value": 95.45, "change": 16.17, "unit": "%",
+                      "z1": 3.13, "z5": 1.38, "date": "2026-09-23" } ],
+  "event_inputs_missing": [],
+  "decomposition": {
+    "real_rates": [ { "key": "REAL10", "label": "10Y real yield (TIPS)", "unit": "bp", "level_unit": "%",
+                      "value": 2.761, "change": 13.1, "change5": 13.1, "z1": 3.8, "pctile_1y": 100,
+                      "date": "2026-09-23", "estimated": true, "roll_day": false } ],
+    "energy": [ { "key": "DIESEL_CRACK", "unit": "$", "level_unit": "$", "value": 108.45, "change": null,
+                  "roll_day": true, "pctile_1y": 97 } ]
+  }
+}
+```
+
+- `event_partial`: true while `event_asof` is today's US session and it has not closed (intraday bar). Each event also carries `headline` (short Thai, what the card shows); each evidence row `short` (chip label); decomposition rows `short`.
+- `events_stale_hours`: null = fresh; number = serving the last good cross-asset panel after a failed Yahoo pull (≤36h, persisted in `backend/cache/tail_xa_panel.pkl`).
+- `severity`: `WATCH` | `ACTIVE` | `SEVERE`. `role`: `trigger` | `confirm` | `context` (checked, did not confirm — shown on purpose).
+- `unit` `%` = log change ×100, `bp` = yield/spread diff, `""` = raw diff. `z` = z of that change vs the input's own trailing 252 changes (today excluded). `horizon` 0 = level reading, `change` null.
+- Event ids: `rates_vol_shock` `treasury_selloff` `treasury_rally` `policy_repricing` `equity_vol_shock` `tail_hedging` `equity_selloff` `tech_unwind` `forced_liquidation` `flight_to_quality` `joint_drawdown` `correlation_spike` `credit_widening` `financial_conditions` `usd_squeeze` `usd_rally` `yen_carry_unwind` `yen_appreciation` `yen_depreciation` `oil_supply_shock` `oil_demand_shock` `haven_demand` `haven_liquidation`, + (2026-09-24) `real_yield_surge` `real_yield_decline` `distillate_squeeze` `refining_margin_expansion` `refining_margin_compression` `brent_wti_dislocation`.
+- `decomposition.real_rates` keys: UST5Y REAL5 BE5 UST10Y REAL10 BE10. `decomposition.energy`: CRUDE BRENT BRENT_WTI HO DIESEL_CRACK RB GAS_CRACK CRACK_321. Row with no data = `{key, label, value: null}` only. `roll_day: true` ⇒ `change` null on purpose. `name` varies with direction/curve shape — key on `id`.
 
 ⚠️ `state` is **tri-state**. `"unknown"` means the input could not be verified — render it as NO DATA, not as
 "off". `value`/`z63`/`pctile_1y` are `null` for any index whose `ok` is false; the last good print is

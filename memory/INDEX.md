@@ -1,5 +1,13 @@
 # Bloomberg Terminal — Memory Index
 
+- [MKT IV 25Δ skew and curvature](sessions/2026-09-23-iv-smile-wing-metrics.md) — ✅ done 2026-09-23; observed quote metrics under IV smile
+
+- [Upstream event log (no UI)](plans/completed/upstream-event-log.md) — ✅ done 2026-09-24; log แทน alert bar + EM HY OAS removed
+- [FRED timeout hardening](plans/completed/fred-timeout-hardening.md) — ✅ done 2026-09-24; retry + cap + redact api_key
+- [Upstream health alerts](plans/completed/upstream-health-alerts.md) — ✅ done 2026-09-24; แจ้งเตือนเมื่อแหล่งข้อมูล/เน็ตมีปัญหา
+- [TAIL readability + Yahoo request gate](plans/completed/tail-readability-yahoo-gate.md) — ✅ done 2026-09-24; UI กระชับ + cap Yahoo concurrency app-wide
+- [TAIL Real Yields + Energy Crack Spreads](plans/completed/tail-real-yield-energy-spreads.md) — ✅ done 2026-09-24; TIPS decomposition + diesel/gasoline/3-2-1 crack + roll mask
+- [TAIL Market Event Classifier](plans/completed/tail-event-classifier.md) — ✅ done 2026-09-24; ชื่อเหตุการณ์ทางการจากช็อกข้ามสินทรัพย์ + MOVE alignment fix
 - [Latest Daily Candle Recovery](plans/completed/latest-daily-candle-recovery.md) — ✅ done 2026-09-23; [verification/session](sessions/2026-09-23-latest-daily-candle-recovery.md)
 - [Chart history refresh risk](reports/chart-history-refresh-risk-report.md) — กราฟที่เปิดค้างอาจไม่ refetch เมื่อ quoteDate เปลี่ยน
 

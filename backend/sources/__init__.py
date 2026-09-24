@@ -11,7 +11,6 @@ it below — no router changes needed.
 from config import QUOTE_AUTO_FAILOVER, QUOTE_PROVIDER_DEFAULT
 
 from .failover_source import FailoverSource
-from .providers.stooq_quote import StooqQuoteProvider
 from .providers.yf_quote import YFQuoteProvider
 from .registry import ProviderRegistry
 from .yfinance_source import YFinanceSource
@@ -22,7 +21,6 @@ _primary = YFinanceSource()
 # Quote-path registry — priority order = registration order
 registry = ProviderRegistry(auto_failover=QUOTE_AUTO_FAILOVER)
 registry.register(YFQuoteProvider(_primary))   # default active (first registered)
-registry.register(StooqQuoteProvider())        # keyless free fallback
 
 # Honor configured default active provider (falls back to first if unknown)
 registry.set_active(QUOTE_PROVIDER_DEFAULT)

@@ -28,6 +28,8 @@ are labelled UNVALIDATED rather than shown with blank statistics.
 
 from __future__ import annotations
 
+import threading
+import time
 import warnings
 from datetime import datetime, timedelta, timezone
 
@@ -36,6 +38,8 @@ import pandas as pd
 import yfinance as yf
 from fastapi import APIRouter
 
+import last_good
+import tail_events
 from cache import TTLCache
 from vol_indices import VolFrame, load_vol_indices
 
@@ -44,6 +48,8 @@ router = APIRouter(prefix="/api/tail-risk", tags=["tail-risk"])
 _cache = TTLCache(ttl=300)       # 5-min result cache
 _yf_cache = TTLCache(ttl=270)    # SPY/AGG OHLCV
 _dcc_cache = TTLCache(ttl=290)   # DCC asset returns
+_xa_cache = TTLCache(ttl=280)    # cross-asset panel for the event classifier
+_fred_cache = TTLCache(ttl=3600) # FRED credit/breakeven history
 
 # ─── Dimensions ───────────────────────────────────────────────────────────────
 
@@ -231,7 +237,41 @@ _HISTORICAL_SIGNALS = (
 )
 
 _DCC_ASSETS = ["SPY", "QQQ", "TLT", "GLD", "NVDA", "HYG", "XLF"]
+
+#: Rows a signal may carry its last state across a missing bar on the union
+#: calendar (see `_vol_signal_frame`).
+_CARRY_BARS = 2
 _DCC_RANK = {"NORMAL": 0, "CAUTION": 1, "SPIKE": 2, "EXTREME": 3}
+
+# ─── Yahoo access: one gate for every download in this module ────────────────
+# Opening TAIL cold fired SPY/AGG, the 7 DCC assets and the 22-ticker panel at
+# once, each yf.download running one thread per ticker by default — dozens of
+# simultaneous connections plus their DNS lookups, on top of the crisis, macro,
+# calendar and ticker fan-outs. That burst coincided with the home connection
+# dropping. Downloads now queue behind one lock, use at most 4 threads, and
+# stop for a while after Yahoo returns nothing (429) instead of retrying on
+# every request and extending the ban.
+
+_YF_THREADS = 4
+_YF_BACKOFF_S = 600
+_yf_gate = threading.Lock()
+_yf_backoff_until = 0.0
+
+
+def _yf_download(tickers, **kw):
+    global _yf_backoff_until
+    if time.time() < _yf_backoff_until:
+        return None
+    kw.setdefault("threads", _YF_THREADS)
+    with _yf_gate:
+        if time.time() < _yf_backoff_until:
+            return None
+        raw = yf.download(tickers, **kw)
+        if raw is None or raw.empty:
+            _yf_backoff_until = time.time() + _YF_BACKOFF_S
+            print(f"[tail_risk] Yahoo returned nothing — pausing downloads {_YF_BACKOFF_S}s")
+        return raw
+
 
 # ─── Small helpers ────────────────────────────────────────────────────────────
 
@@ -312,7 +352,7 @@ def _fetch_dcc_prices() -> pd.DataFrame | None:
     def compute() -> pd.DataFrame | None:
         start = (datetime.now() - timedelta(days=600)).strftime("%Y-%m-%d")
         try:
-            raw = yf.download(_DCC_ASSETS, start=start, auto_adjust=True, progress=False)
+            raw = _yf_download(_DCC_ASSETS, start=start, auto_adjust=True, progress=False)
             if raw.empty:
                 return None
             close = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) or "Close" in raw.columns else raw
@@ -327,7 +367,10 @@ def _fetch_dcc_prices() -> pd.DataFrame | None:
             print(f"[tail_risk] DCC fetch error: {exc}")
             return None
 
-    return _dcc_cache.get_or_set("prices", compute)
+    fresh = _dcc_cache.get_or_set("prices", compute)
+    if fresh is not None:
+        return _remember("dcc_prices", fresh)
+    return _recall("dcc_prices")[0]
 
 
 def _compute_dcc_v1_signal(ret: pd.DataFrame, lambda_: float = 0.94) -> str:
@@ -464,7 +507,7 @@ def _fetch_market() -> pd.DataFrame | None:
 
     def compute() -> pd.DataFrame | None:
         try:
-            raw = yf.download(["SPY", "AGG"], period="2y", auto_adjust=True, progress=False)
+            raw = _yf_download(["SPY", "AGG"], period="2y", auto_adjust=True, progress=False)
             if raw is None or raw.empty:
                 return None
             out = pd.DataFrame(
@@ -479,7 +522,10 @@ def _fetch_market() -> pd.DataFrame | None:
             print(f"[tail_risk] market fetch error: {exc}")
             return None
 
-    return _yf_cache.get_or_set("spy_agg", compute)
+    fresh = _yf_cache.get_or_set("spy_agg", compute)
+    if fresh is not None and not fresh.empty:
+        return _remember("spy_agg", fresh)
+    return _recall("spy_agg")[0]
 
 
 # ─── Signal frames — one code path for "now" and for "history" ────────────────
@@ -561,14 +607,19 @@ def _vol_signal_frame(vf: VolFrame) -> tuple[pd.DataFrame, dict[str, str]]:
     if not cols:
         return pd.DataFrame(), missing
 
-    # Align everything to the VIX calendar (or the longest series available).
-    base = vix.index if vix is not None else max(
-        (s.index for s in cols.values()), key=len
-    )
-    # reindex(fill_value=...) rather than reindex().fillna(): the latter goes
-    # through an object-dtype round trip that pandas now warns about.
+    # Union calendar, not the VIX calendar. CBOE publishes VIX a session after
+    # Yahoo publishes MOVE, so aligning to VIX threw away MOVE's newest bar —
+    # on 2026-09-23 that was a +17.5% MOVE session, and TAIL read NORMAL. A
+    # series with no bar on a date carries its last state for at most
+    # `_CARRY_BARS` rows (a one-day Yahoo gap is not an all-clear); beyond that
+    # it reads False, and `vf.usable` has already dropped anything truly stale.
+    base = pd.DatetimeIndex(sorted(set().union(*(v.index for v in cols.values()))))
     frame = pd.DataFrame(
-        {k: v.reindex(base, fill_value=False).astype(bool) for k, v in cols.items()}, index=base
+        {
+            k: v.astype(float).reindex(base).ffill(limit=_CARRY_BARS).fillna(0.0).astype(bool)
+            for k, v in cols.items()
+        },
+        index=base,
     )
     return frame, missing
 
@@ -605,6 +656,278 @@ def _flow_signal_frame(market: pd.DataFrame | None) -> tuple[pd.DataFrame, dict[
         index=spy.index,
     )
     return frame, missing
+
+
+# ─── Cross-asset panel for the event classifier ───────────────────────────────
+# The dimensions read vol levels. Naming an event needs the other side of each
+# move — did yields rise or fall, did gold and the dollar confirm, did stocks
+# follow — so the classifier reads one daily panel across asset classes.
+
+_XA_YF: dict[str, str] = {
+    "SPY": "SPY", "QQQ": "QQQ", "TLT": "TLT", "GLD": "GLD", "HYG": "HYG",
+    "DXY": "DX-Y.NYB", "USDJPY": "JPY=X", "CRUDE": "CL=F",
+    "UST3M": "^IRX", "UST5Y": "^FVX", "UST10Y": "^TNX", "UST30Y": "^TYX",
+    "VIX": "^VIX", "MOVE": "^MOVE", "VVIX": "^VVIX", "SKEW": "^SKEW",
+    "OVX": "^OVX", "GVZ": "^GVZ", "VXN": "^VXN", "VIX3M": "^VIX3M",
+    # Energy futures (front month). HO = NY Harbor ULSD — the diesel benchmark.
+    "BRENT": "BZ=F", "HO": "HO=F", "RB": "RB=F",
+}
+_XA_YIELDS = ("UST3M", "UST5Y", "UST10Y", "UST30Y")
+
+#: CBOE is the source of record for these; Yahoo only fills bars CBOE has not
+#: published yet (it lags a session). Capped so a frozen Yahoo feed — the
+#: VIX9D failure in vol_indices' docstring — cannot extend a series for weeks.
+_CBOE_BACKED = ("VIX", "VIX3M", "VVIX", "SKEW", "OVX", "GVZ", "VXN")
+_YAHOO_TAIL_BARS = 2
+
+_XA_FRED = {
+    "HY_OAS": "BAMLH0A0HYM2", "IG_OAS": "BAMLC0A0CM",
+    "BE5": "T5YIE", "BE10": "T10YIE",
+    # TIPS constant-maturity real yields — the official real rate, not nominal
+    # minus breakeven. Published a session late.
+    "REAL5": "DFII5", "REAL10": "DFII10",
+}
+
+#: HO and RB quote in $/gallon; crude in $/barrel.
+_GAL_PER_BBL = 42.0
+
+#: Same-day real-yield estimate may run at most this many bars past FRED.
+_REAL_EST_BARS = 3
+
+
+def _energy_spreads(cols: dict[str, pd.Series]) -> None:
+    """Crack spreads in $/bbl, only on dates where every leg printed.
+
+    Diesel crack  = HO×42 − WTI
+    Gasoline crack = RB×42 − WTI
+    3-2-1 crack   = (2·RB×42 + HO×42 − 3·WTI) / 3 — the standard US refinery margin
+    Brent − WTI   = seaborne vs inland crude
+    Front-month futures roll on different days per contract, and RBOB switches
+    between summer and winter grade in Apr/Sep, so single-day jumps on those
+    dates are contract mechanics, not market news.
+    """
+    legs = {k: cols.get(k) for k in ("CRUDE", "HO", "RB", "BRENT")}
+    if legs["CRUDE"] is None:
+        return
+    df = pd.DataFrame({k: v for k, v in legs.items() if v is not None})
+    if "HO" in df:
+        cols["DIESEL_CRACK"] = (df["HO"] * _GAL_PER_BBL - df["CRUDE"]).dropna()
+    if "RB" in df:
+        cols["GAS_CRACK"] = (df["RB"] * _GAL_PER_BBL - df["CRUDE"]).dropna()
+    if "HO" in df and "RB" in df:
+        cols["CRACK_321"] = (
+            (2 * df["RB"] * _GAL_PER_BBL + df["HO"] * _GAL_PER_BBL - 3 * df["CRUDE"]) / 3
+        ).dropna()
+    if "BRENT" in df:
+        cols["BRENT_WTI"] = (df["BRENT"] - df["CRUDE"]).dropna()
+
+
+def _extend_real_yield(cols: dict[str, pd.Series], real: str, nominal: str, be: str) -> str | None:
+    """Carry the TIPS real yield to sessions FRED has not published yet:
+    real_d ≈ real_L + (nominal_d − nominal_L) − (breakeven_d − breakeven_L),
+    anchored on the last official print L. Same identity, same-day inputs
+    (Yahoo nominal, FRED breakeven which prints a day earlier than DFII).
+    Returns the last official date so the payload can flag estimates."""
+    r, n, b = cols.get(real), cols.get(nominal), cols.get(be)
+    if r is None or r.empty or n is None or b is None:
+        return None
+    last = r.index[-1]
+    # Anchor on the latest date all three printed — Yahoo skips days (no ^TNX
+    # bar on 2026-09-22), so FRED's last date is not always usable.
+    common = r.index.intersection(n.index).intersection(b.index)
+    if common.empty:
+        return last.strftime("%Y-%m-%d")
+    a = common[-1]
+    newer = [d for d in n.index if d > last and d in b.index][:_REAL_EST_BARS]
+    if newer:
+        est = pd.Series([r[a] + (n[d] - n[a]) - (b[d] - b[a]) for d in newer], index=newer)
+        cols[real] = pd.concat([r, est])
+    return last.strftime("%Y-%m-%d")
+
+
+#: Full 2-year history is re-pulled this often; in between only the last few
+#: sessions are refreshed. The history of a daily panel does not change, and
+#: re-downloading 22 tickers × 2 years every five minutes was a meaningful
+#: share of the traffic that got the whole backend throttled on 2026-09-24.
+_XA_HISTORY_TTL = 6 * 3600
+_XA_TAIL_TTL = 280
+
+# Last-good datasets live in `last_good.py` (shared, reported to the health
+# board). Keys keep the `tail_` prefix so earlier `backend/cache/tail_*.pkl`
+# copies stay valid.
+_LG_LABEL = {
+    "xa_panel": ("TAIL cross-asset panel", "Yahoo"),
+    "spy_agg": ("TAIL SPY/AGG", "Yahoo"),
+    "dcc_prices": ("TAIL DCC correlation", "Yahoo"),
+    "fred_hist": ("TAIL OAS / TIPS / breakeven", "FRED"),
+}
+
+
+def _remember(key: str, value):
+    return last_good.remember(f"tail_{key}", value)
+
+
+def _recall(key: str):
+    label, source = _LG_LABEL.get(key, (key, None))
+    return last_good.recall(f"tail_{key}", label, source)
+
+
+def _download_panel(period: str) -> pd.DataFrame | None:
+    """One yf.download of the cross-asset tickers, as canonical columns.
+    Columns Yahoo returned empty are dropped rather than kept as all-NaN, so a
+    merge never overwrites good history with a failed ticker."""
+    try:
+        raw = _yf_download(list(_XA_YF.values()), period=period, auto_adjust=True, progress=False)
+        if raw is None or raw.empty:
+            return None
+        close = raw["Close"]
+        out = pd.DataFrame({k: close[t] for k, t in _XA_YF.items() if t in close.columns})
+        if "SPY" in raw["Volume"].columns:
+            out["SPY_VOL"] = raw["Volume"]["SPY"].where(lambda v: v > 0)
+        for k in _XA_YIELDS:
+            # Yahoo has quoted ^TNX both as 4.96 and as 49.6 over the years.
+            if k in out and out[k].dropna().median() > 20:
+                out[k] = out[k] / 10
+        out.index = pd.DatetimeIndex(out.index).tz_localize(None).normalize()
+        out = out.dropna(axis=1, how="all")
+        return out if "SPY" in out.columns else None
+    except Exception as exc:
+        print(f"[tail_risk] cross-asset fetch error ({period}): {exc}")
+        return None
+
+
+def _fetch_cross_asset() -> tuple[pd.DataFrame | None, float | None]:
+    """(panel, stale_age_seconds). `stale_age` is None when the panel is fresh.
+
+    History (2y) and tail (5d) are separate cache entries: the tail is
+    refreshed often and laid over the history column by column, so one ticker
+    Yahoo fails to return keeps its previous bars instead of vanishing.
+    """
+    hist = _xa_cache.get_or_set("history", lambda: _download_panel("2y"), ttl=_XA_HISTORY_TTL)
+    if hist is None:
+        prev, age = _recall("xa_panel")
+        if prev is not None:
+            print(f"[tail_risk] cross-asset history failed — using last good ({age / 3600:.1f}h old)")
+        return prev, age
+    tail = _xa_cache.get_or_set("tail", lambda: _download_panel("5d"), ttl=_XA_TAIL_TTL)
+    panel = hist if tail is None else tail.combine_first(hist).sort_index()
+    _remember("xa_panel", panel)
+    return panel, None
+
+
+def _fetch_fred_history() -> dict[str, pd.Series]:
+    """400 sessions of HY/IG OAS and the 10Y breakeven. The crisis router keeps
+    only ~60 prints — too short for a trailing-year distribution of changes."""
+
+    def compute() -> pd.DataFrame | None:
+        from routers.global_yields import _fred_fetch
+
+        out: dict[str, pd.Series] = {}
+        for key, sid in _XA_FRED.items():
+            try:
+                obs = _fred_fetch(sid, limit=420)
+                if obs:
+                    out[key] = pd.Series(
+                        [o["value"] for o in obs], index=pd.to_datetime([o["date"] for o in obs])
+                    )
+            except Exception as exc:
+                # Type only: the exception text embeds the request URL, API key included.
+                print(f"[tail_risk] FRED {sid} failed: {type(exc).__name__}")
+        # None, not {}: an empty dict is a cache HIT, and a one-minute DNS blip
+        # would then blank credit and real yields for the full hour.
+        return pd.DataFrame(out) if out else None
+
+    fresh = _fred_cache.get_or_set("hist", compute)
+    if fresh is None or fresh.empty:
+        fresh = _recall("fred_hist")[0]
+    else:
+        _remember("fred_hist", fresh)
+    if fresh is None:
+        return {}
+    return {k: fresh[k].dropna() for k in fresh.columns}
+
+
+def _series_from_crisis(crisis: dict, key: str) -> pd.Series | None:
+    rows = ((crisis.get("signals") or {}).get(key) or {}).get("series") or []
+    pts = [(r["date"], r["value"]) for r in rows if r.get("value") is not None]
+    if not pts:
+        return None
+    s = pd.Series([v for _, v in pts], index=pd.to_datetime([d for d, _ in pts]))
+    return s.sort_index()
+
+
+def _build_event_panel(vf: VolFrame, crisis: dict) -> tuple[pd.DataFrame | None, float | None]:
+    xa, stale_age = _fetch_cross_asset()
+    cols: dict[str, pd.Series] = {}
+    if xa is not None:
+        for k in xa.columns:
+            cols[k] = xa[k].dropna()
+    for k in _CBOE_BACKED:
+        cboe = vf.get(k)
+        if cboe is None or cboe.empty:
+            continue
+        cboe = cboe.copy()
+        cboe.index = pd.DatetimeIndex(cboe.index).normalize()
+        yahoo = cols.get(k)
+        if yahoo is not None:
+            newer = yahoo[yahoo.index > cboe.index[-1]].head(_YAHOO_TAIL_BARS)
+            cboe = pd.concat([cboe, newer])
+        cols[k] = cboe
+    for k, s in _fetch_fred_history().items():
+        cols[k] = s
+    for k, ck in (("STL_FSI", "stl_fsi"), ("NFCI", "nfci")):
+        s = _series_from_crisis(crisis, ck)
+        if s is not None:
+            cols[k] = s
+    if not cols:
+        return None, stale_age
+    _energy_spreads(cols)
+    estimated_from = {}
+    for real, nominal, be in (("REAL5", "UST5Y", "BE5"), ("REAL10", "UST10Y", "BE10")):
+        last = _extend_real_yield(cols, real, nominal, be)
+        if last:
+            estimated_from[real] = last
+    panel = pd.DataFrame(cols).sort_index()
+    panel.attrs["estimated_from"] = estimated_from
+    return panel, stale_age
+
+
+def _session_open(asof: str | None) -> bool:
+    """True while `asof` is today's US session and it has not closed: the
+    evaluation bar is intraday and every change on it is provisional."""
+    if not asof:
+        return False
+    from zoneinfo import ZoneInfo
+
+    now = datetime.now(ZoneInfo("America/New_York"))
+    return asof == now.strftime("%Y-%m-%d") and (now.hour, now.minute) < (16, 15)
+
+
+def _catalyst_dates() -> list[tuple[str, str]]:
+    try:
+        from event_calendar import calendar_payload
+
+        cal = calendar_payload(datetime.now(timezone.utc).date())
+    except Exception as exc:
+        print(f"[tail_risk] calendar for events failed: {exc}")
+        return []
+    evs = (cal.get("past") or []) + (cal.get("upcoming") or [])
+    return [(e["date"], e["kind"]) for e in evs if e.get("impact") == "high" and e.get("date")]
+
+
+def _market_events(vf: VolFrame, crisis: dict, ctx: dict) -> dict:
+    try:
+        panel, stale_age = _build_event_panel(vf, crisis)
+        out = tail_events.run(panel, snapshot_ctx=ctx, catalysts=_catalyst_dates())
+        # Serving yesterday's panel after a failed pull: say so, with its age.
+        out["stale_hours"] = (None if stale_age is None or stale_age < last_good.STALE_REPORT_AFTER_S
+                              else round(stale_age / 3600, 1))
+        out["ok"] = out.get("asof") is not None
+        return out
+    except Exception as exc:
+        print(f"[tail_risk] event classifier failed: {exc}")
+        return {"ok": False, "asof": None, "events": [], "log": [], "inputs": [],
+                "inputs_missing": [], "error": str(exc)}
 
 
 # ─── Assembly ─────────────────────────────────────────────────────────────────
@@ -863,6 +1186,39 @@ def _compute() -> dict:
     else:
         risk_level = "NORMAL"
 
+    # ── Named market events — may raise the composite, never lower it ─────────
+    # The dimension gate needs two signals in each of two dimensions, so one
+    # channel breaking hard (a 4σ MOVE day with VIX asleep) could never leave
+    # NORMAL. A SEVERE event sets a floor; the rule that set it is returned.
+    vxn_spread_z = None
+    vxn_s, vix_s = vf.get("VXN"), vf.get("VIX")
+    if vxn_s is not None and vix_s is not None:
+        zs = _rolling_z((vxn_s - vix_s).dropna(), 63).dropna()
+        vxn_spread_z = round(float(zs.iloc[-1]), 2) if not zs.empty else None
+    hy_thr = ((crisis.get("signals") or {}).get("hy_spread") or {}).get("threshold") if crisis_ok else None
+    market_events = _market_events(vf, crisis if crisis_ok else {}, {
+        "dcc_v1": dcc_v1 if dcc_ok else None,
+        "dcc_v3": dcc_v3 if dcc_ok else None,
+        "rsi": rsi_now,
+        "fear_greed": float(fg_value) if fg_value is not None else None,
+        "vxn_vix_spread_z": vxn_spread_z,
+        "hy_threshold": hy_thr,
+    })
+    ev_objs = market_events.get("events") or []
+    floor_level, floor_rule = tail_events.event_floor_from_dicts(ev_objs)
+    risk_level_dimensions = risk_level
+    risk_level = tail_events.max_level(risk_level, floor_level)
+    risk_basis = {
+        "dimensions": risk_level_dimensions,
+        "events": floor_level,
+        "events_rule": floor_rule,
+        "final": risk_level,
+        "driver": (
+            "events" if risk_level != risk_level_dimensions
+            else "dimensions" if risk_level != "NORMAL" else None
+        ),
+    }
+
     # ── History — same frames, 90 sessions ────────────────────────────────────
     history: list[dict] = []
     hist_cols = [c for c in _HISTORICAL_SIGNALS if c in vol_frame.columns or c in flow_frame.columns]
@@ -892,6 +1248,7 @@ def _compute() -> dict:
     health = vf.health_payload()
     health["sources"] = {
         "cboe_vol_indices": health["ok"],
+        "cross_asset_panel": bool(market_events.get("ok")),
         "crisis_router": crisis_ok,
         "fear_greed_router": fg_ok,
         "ticker_router": ticker_ok,
@@ -906,6 +1263,17 @@ def _compute() -> dict:
         "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "data_date": vf.reference_date or "N/A",
         "risk_level": risk_level,
+        "risk_level_dimensions": risk_level_dimensions,
+        "risk_basis": risk_basis,
+        "events": ev_objs,
+        "event_log": market_events.get("log") or [],
+        "event_asof": market_events.get("asof"),
+        "event_inputs": market_events.get("inputs") or [],
+        "event_inputs_missing": market_events.get("inputs_missing") or [],
+        "decomposition": market_events.get("decomposition") or {},
+        "events_ok": bool(market_events.get("ok")),
+        "events_stale_hours": market_events.get("stale_hours"),
+        "event_partial": _session_open(market_events.get("asof")),
         "alert_dimensions": alert_dims,
         "watch_dimensions": watch_dims,
         "dimensions": dimensions_out,
@@ -954,6 +1322,8 @@ def get_signals():  # sync: blocking requests/yfinance — FastAPI runs it in a 
                 "signals": [],
                 "vol_table": [],
                 "history": [],
+                "events": [],
+                "event_log": [],
                 "data_health": {"ok": False, "degraded": ["all"], "indices": []},
             }
 

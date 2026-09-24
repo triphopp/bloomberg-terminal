@@ -214,7 +214,7 @@ backend/
 | DELETE | `/api/crisis/cache` | Reset all credit series TTLs |
 
 **Signals monitored (15 indicators):**
-- **Spreads:** US HY OAS, US IG OAS, EM HY OAS, TED Spread
+- **Spreads:** US HY OAS, US IG OAS, TED Spread
 - **Stress indices:** STL Financial Stress, Chicago NFCI, VIX
 - **Yield curves:** 10Y−2Y, 10Y−3M (inversion detection)
 - **Consumer:** 5Y/10Y Breakeven Inflation, 30Y Mortgage Rate, CC Delinquency, Mortgage Delinquency

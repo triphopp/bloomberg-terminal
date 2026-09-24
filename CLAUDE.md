@@ -66,6 +66,34 @@ silently outrank every file. `.husky/post-merge` and `post-checkout` run it afte
 a pull or a branch switch. It prints key *names* only, never values, and `--fix`
 never deletes a key.
 
+## Data missing / stale / slow / "network dropped" → read the upstream log FIRST
+
+Every outbound call (Yahoo via yfinance, FRED/CBOE/CNN/SEC/Polymarket/… via
+`requests`) is observed by `backend/upstream_health.py` and written to
+**`logs/upstream.jsonl`** (JSON lines, rotated to `.1` at 5 MB). There is no
+in-app alert — this log is where problems are recorded, and agents check it.
+
+```bash
+python backend/scripts/upstream_report.py              # last 6h: failures, top targets, status changes, stale data, volume
+python backend/scripts/upstream_report.py --hours 24 --source FRED
+python backend/scripts/upstream_report.py --events fail retry --raw
+curl -s http://localhost:9317/api/health/upstream      # live state (answered from memory, no outbound call)
+```
+
+How to read it:
+- **One `target` dominating the failures** = a dead or slow series, not an outage
+  (2026-09-24: every "FRED timeout" was one deleted series, `BAMLHE00EHY0D`, retried every ~70s).
+  Fix the caller; add a negative cache.
+- **`network` event / `dns` failures on 2+ sources** = the machine's connection, not a vendor.
+- **`rate_limit` on Yahoo** = too many requests; check `summary` volume (`calls/min`).
+- **`stale` without a matching `fresh`** = a panel is still serving an old pull.
+- Retries are already automatic for FRED GETs (2×, backoff); `fail` means retries were exhausted.
+- The log never contains URLs or API keys — keep it that way (`upstream_health.target_of`).
+
+New fetch code: use `requests` or yfinance so it is observed automatically; any other
+client must call `upstream_health.record(source, kind, target=…)`. Failed fetches must
+be negative-cached, or "empty = expired" re-fires them on every request.
+
 ## Rules
 - Never fetch Yahoo Finance directly from Next.js — always go through the Python backend
 - Never reintroduce `@upstash/redis`, `yahoo-finance2`, or any top-level scheduler singleton
@@ -175,7 +203,7 @@ async def get_x():
 | `2` | NEWS  | news-view → `views/news/` | WATCHLIST tab (ข่าวรายหุ้นจาก watchlist, 7 แหล่ง, แบ่งตาม SECTOR) · NEWSFEED (topic) · SOCIAL · Polymarket column (right 256px: watchlist markets + macro signals) |
 | `3` | GMOV  | market-movers  | Global indices table · Heatmap treemap |
 | `4` | CLIP  | clippings-view | Obsidian markdown notes · Ollama AI |
-| `T` | TAIL  | tail-risk-view | 6 risk dimensions (composite) + MACRO CONTEXT (not in composite): event strip FOMC/SEP/CPI/NFP/PCE/GDP + EVENT WINDOW tag on VIX signals, Fed rate/stance, 10Y−2Y/10Y−3M, regime, latest prints, event markers on 90D chart · MACRO READ (inflation/growth/rates-vol) · SECTOR ROTATION (turnover tilt, ไม่ใช่ fund flow) |
+| `T` | TAIL  | tail-risk-view | MARKET EVENTS (named: Rates Volatility Shock, Treasury Selloff — Bear Flattening … from z of 1d/5d changes; SEVERE raises composite; ribbon shows top 2) + 6 risk dimensions (composite) + MACRO CONTEXT (not in composite): event strip FOMC/SEP/CPI/NFP/PCE/GDP + EVENT WINDOW tag on VIX signals, Fed rate/stance, 10Y−2Y/10Y−3M, regime, latest prints, event markers on 90D chart · MACRO READ (inflation/growth/rates-vol) · SECTOR ROTATION (turnover tilt, ไม่ใช่ fund flow) |
 | `6` | CRDT  | credit-view    | 4 tabs: overview, spreads, stress, consumer |
 | `P` | PORT  | portfolio-view | 5 top-level: PORTFOLIO (sub: POSITIONS·OPTIONS·TRADES·CASH·ENTRY) · ANALYTICS (sub: P&L·BACKTEST) · RISK · TOOLS (sub: THESES·IMPORT) · PAPER (sub: DASHBOARD·TRADE·POSITIONS·OPTIONS·HISTORY) |
 

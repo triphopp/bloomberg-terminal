@@ -112,16 +112,10 @@ def _fetch_release_dates(release_id: int, start: date, end: date) -> list[str]:
         "sort_order": "asc",
         "limit": 1000,
     }
-    # One retry: api.stlouisfed.org read-timeouts are sporadic, and a single
-    # miss would otherwise drop that release from the strip.
-    for attempt in (1, 2):
-        try:
-            r = requests.get(FRED_RELEASE_DATES_URL, params=params, timeout=10)
-            r.raise_for_status()
-            break
-        except requests.RequestException:
-            if attempt == 2:
-                raise
+    # No local retry: upstream_health's requests hook already retries FRED GETs
+    # (timeout / 5xx, with backoff) — a loop here multiplied it to 6 attempts.
+    r = requests.get(FRED_RELEASE_DATES_URL, params=params, timeout=10)
+    r.raise_for_status()
     return [x["date"] for x in r.json().get("release_dates", []) if start <= _d(x["date"]) <= end]
 
 

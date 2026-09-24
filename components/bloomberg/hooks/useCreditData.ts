@@ -1,8 +1,8 @@
 "use client";
 
+import { QUERY_RETRY_ONCE } from "@/lib/constants";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
-import { QUERY_RETRY_ONCE } from "@/lib/constants";
 import { currentViewAtom } from "../atoms";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -10,36 +10,35 @@ import { currentViewAtom } from "../atoms";
 export type CreditSeries = { date: string; value: number }[];
 
 export type CreditSignal = {
-  label:     string;
-  unit:      string;
-  category:  "spreads" | "stress" | "consumer";
-  value:     number;
-  prev:      number;
-  date:      string;
+  label: string;
+  unit: string;
+  category: "spreads" | "stress" | "consumer";
+  value: number;
+  prev: number;
+  date: string;
   threshold: number | null;
   triggered: boolean;
-  series:    CreditSeries;
+  series: CreditSeries;
 } | null;
 
 export type CrisisLevel = 0 | 1 | 2 | 3;
 
 export type CreditData = {
-  level:     CrisisLevel;
+  level: CrisisLevel;
   triggered: string[];
   signals: {
-    hy_spread:       CreditSignal;
-    ig_spread:       CreditSignal;
-    em_hy_spread:    CreditSignal;
-    ted_spread:      CreditSignal;
-    stl_fsi:         CreditSignal;
-    nfci:            CreditSignal;
-    vix:             CreditSignal;
-    yield_10y2y:     CreditSignal;
-    yield_10y3m:     CreditSignal;
-    breakeven_5y:    CreditSignal;
-    breakeven_10y:   CreditSignal;
-    mortgage_30y:    CreditSignal;
-    cc_delinquency:  CreditSignal;
+    hy_spread: CreditSignal;
+    ig_spread: CreditSignal;
+    ted_spread: CreditSignal;
+    stl_fsi: CreditSignal;
+    nfci: CreditSignal;
+    vix: CreditSignal;
+    yield_10y2y: CreditSignal;
+    yield_10y3m: CreditSignal;
+    breakeven_5y: CreditSignal;
+    breakeven_10y: CreditSignal;
+    mortgage_30y: CreditSignal;
+    cc_delinquency: CreditSignal;
     mtg_delinquency: CreditSignal;
   };
   as_of: string;
@@ -64,8 +63,8 @@ export function useCreditData() {
 
   return useQuery<CreditData>({
     queryKey: ["crisis"],
-    queryFn:  fetchCredit,
-    enabled:  isActive,
+    queryFn: fetchCredit,
+    enabled: isActive,
     staleTime: 5 * 60_000,
     refetchInterval: isActive ? 5 * 60_000 : false,
     retry: QUERY_RETRY_ONCE,

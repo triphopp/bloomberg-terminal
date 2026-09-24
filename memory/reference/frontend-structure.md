@@ -35,6 +35,8 @@ components/bloomberg/
 │   ├── clippings-view.tsx       ← CLIP: Obsidian reader + Ollama AI panel
 │   ├── tail-risk-view.tsx       ← TAIL: 6 dimensions + macro context (EventStrip under HealthStrip, MacroPanel in left column, EVENT tag on VIX signals, event ReferenceLines on 90D chart)
 │   ├── tail/macro-context.tsx   ← useMacroContext() + EventStrip + MacroPanel + KIND_COLOR (2026-09-17)
+│   ├── tail/decomposition.tsx   ← RealRatesPanel + EnergySpreadsPanel (EVIDENCE section, 2026-09-24)
+│   ├── tail/market-events.tsx   ← MarketEventsPanel — named events + evidence + earlier sessions (2026-09-24)
 │   ├── tail/sector-rotation.tsx ← SectorRotationPanel + useSectorRotation() — diverging bars + tilt (2026-09-23)
 │   ├── credit-view.tsx          ← CRDT: 4 tabs (overview/spreads/stress/consumer)
 │   ├── stock-view.tsx           ← Equity analysis tabs incl. DCF/RATE STRESS/REGIME — no nav button, via search/heatmap
@@ -198,9 +200,9 @@ components/bloomberg/
 | `chart/ModularChart.tsx` (perf contract) | props `indicators`/`overlays`/`eventMarkers` = **โครงสร้าง** (ต้อง memo ที่ call site); `data` ไม่ใช่ — บาร์ใหม่ถูก push เข้า series เดิมผ่าน refill path, rebuild เฉพาะเมื่อ refill ทำไม่ได้. Optional `referencePriceLine` วาดเส้นประพร้อมป้ายราคาบน candle pane; quote update/remove ใช้ price-line API และ autoscale ใน series เดิม จึงไม่ reset viewport |
 | `core/market-session.tsx` | `extendedHoursPriceLine(quote)` คืนราคาและสีสำหรับ `PRE`/`POST` ที่มีราคา valid เท่านั้น; MKT, stock-view และ `ChartPanel` (floating/detached) ส่งเข้า `ModularChart`. `PREPRE`/`POSTPOST`/`CLOSED` ไม่วาดเส้น; backend ล้างราคา extended-hours ที่ timestamp เก่า |
 | `chart/useWindowDrag.ts` | `useWindowDrag()` → `{ x, y, w, h, isGesturing, isResizing, beginDrag, beginResize }` |
-| `views/iv-smile-panel.tsx` | `IvSmilePanel`, `IvSmilePanelProps` — compact/expanded K vs IV%, Raw SVI/points/RMSE, multiple tenors; optional stacked Call/Put OI with separate contracts axis and selected-expiry control |
+| `views/iv-smile-panel.tsx` | `IvSmilePanel`, `IvSmilePanelProps` — compact/expanded K vs IV%, Raw SVI/points/RMSE, multiple tenors; observed 25Δ skew/curvature below chart; optional stacked Call/Put OI with separate contracts axis and selected-expiry control |
 | `hooks/useIvSmile.ts` | `useIvSmile(symbol, enabled)` — discovery + single/multiple expiry + optional fit queries; shared OI on/off and symbol-scoped expiry selection without new requests; guarded identity and refresh |
-| `lib/iv-smile.ts` | `buildIvSmile`, `buildIvSmileOi`, `chooseSmileExpiry`, `expiryDays`, `smileTenorDate`, `selectSmileTenors`, `smileSamples`, `sviIvAtStrike`, `smilePlotRows`, `SMILE_TENOR_MONTHS`; types `IvSmileOption`, `IvSmileChain`, `IvSmilePoint`, `IvSmileOiPoint`, `SmileSide`, `SmileFitMode`, `SviSample`, `RawSviParameters`, `RawSviFit`, `SviFitResponse`, `SmileTenor` |
+| `lib/iv-smile.ts` | `buildIvSmile`, `buildIvSmileOi`, `chooseSmileExpiry`, `expiryDays`, `smileTenorDate`, `selectSmileTenors`, `smileSamples`, `sviIvAtStrike`, `smilePlotRows`, `smileWingMetrics`, `SMILE_TENOR_MONTHS`; types `IvSmileOption`, `IvSmileChain`, `IvSmilePoint`, `IvSmileOiPoint`, `SmileSide`, `SmileFitMode`, `SviSample`, `RawSviParameters`, `RawSviFit`, `SviFitResponse`, `SmileTenor` |
 | `hooks/useTerminalUI.ts` | `useTerminalUI()` → `{ currentView, handleKeyPress, ... }` |
 | `layout/bloomberg-terminal.tsx` | `BloombergTerminal` (default) |
 | `layout/terminal-header.tsx` | `TerminalHeader` |
@@ -212,6 +214,8 @@ components/bloomberg/
 | `portfolio/ui/AccBadge.tsx` | `AccBadge`, `WLBadge` |
 | `portfolio/ui/SummaryBar.tsx` | `SummaryBar` |
 | `views/tail-risk-view.tsx` | `TailRiskView`, `SectionRule` (2026-09-23 — TAIL แบ่ง 4 หัวข้อ: RISK DIMENSIONS · EVIDENCE · MACRO & ROTATION CONTEXT · METHOD; คอลัมน์ซ้าย 208px เหลือแค่ VIX TERM + VOL BOARD, การ์ดที่เหลือย้ายลงกริดเต็มความกว้าง) |
+| `views/tail/decomposition.tsx` | `RealRatesPanel` (nominal = real + breakeven per tenor + split line), `EnergySpreadsPanel` (crude/products/cracks, ROLL + EST tags); types `Decomposition` `DecompRow` (2026-09-24) |
+| `views/tail/market-events.tsx` | `MarketEventsPanel` (2026-09-24 compact: name · severity · `headline` · ≤4 number chips; click = summary/checked/definition/rule; props `staleHours`, `partial`), `SEVERITY_COLOR`; types `MarketEvent` `EventEvidence` `EventLogEntry` `RiskBasis` `EventSeverity` (2026-09-24 — top section of TAIL; ribbon imports `SEVERITY_COLOR` and prints the top 2 event names after the dimension chips) |
 | `views/tail/sector-rotation.tsx` | `SectorRotationPanel` (TILT + 11 diverging bars + RRG tally + AUM record line), `useSectorRotation(window)` (2026-09-23) |
 | `views/tail/macro-context.tsx` | `EventStrip`, `MacroPanel`, `MacroReadPanel` (2026-09-20 — 3 axes + CPI/core CPI/PCE/core PCE cross-check row), `useMacroContext`, `MacroContextData`, `MacroRead`, `MacroAxis`, `KIND_COLOR` |
 | `portfolio/tabs/AnalyticsTab.tsx` | `AnalyticsTab` — NAV card has VALUE / INDEX modes (`localStorage["bloomberg_nav_chart_mode"]`): VALUE draws `NavValueChart` (4 labelled series: NAV area + HOLDINGS/CASH lines + dashed COST, legend chips double as show/hide so CASH can own the axis), INDEX draws `NavIndexChart` — the time-weighted curve vs the CAPM benchmark from `/api/v2/portfolio/nav-index`. Both internal to the file. CAPM card: β HEDGE / HEDGE notional / β REAL / vs IDX / α CAPM / t / R² / N; rf chip เปิดแผงตั้งค่า (override ต่อสกุลใน `localStorage["bloomberg_capm_rf"]`) |
@@ -367,6 +371,8 @@ Things that will bite:
 
 
 ## MKT REGIME IV Smile — 2026-09-13
+
+- **25Δ metrics (2026-09-23):** Below the chart, one row per actual expiry displays observed skew `C25Δ − P25Δ` and curvature/butterfly `(C25Δ + P25Δ)/2 − ATM`, both in IV percentage points. Reuse the same strike range and quote-quality filtered observations regardless of side/FIT display choice; `OBS` marks the source even when Raw SVI is visible. Delta is Black-Scholes spot delta with zero carry (the chain has no reliable forward/dividend yield); interpolate IV between adjacent OTM strikes in delta space, never extrapolate. ATM is the call/put IV mean at spot when quoted, or the OTM put/call interpolation across spot. Missing wings, ATM, spot or positive time show `—`; no synthetic zero.
 
 - **OI overlay (2026-09-13):** OI OFF/ON (defaultOFF), stacked Call cyan/Put amber contracts on right `oi` axis, every IV/SVI line on left `iv` axis. ComposedChart shares numeric K grid; custom centered3px compact/5px expanded rectangles keep OI visible despite dense SVI samples. Tooltip uses contracts for OI and% for IV. One labeled actual expiry is shown at a time, selected among active maturities in MULTI; removed expiry/new symbol safely falls back to first selected expiry. OI totals/P-C reflect selected K range and all contracts regardless of IV/quote filter; unknowns show PARTIAL/unavailable. No extra fetch or refit for OI toggles/expiry selection. Current reported OI only, no daily history. OI can draw when IV has too few points, with explicit insufficient-IV note. Shared compact/expanded hook state, no new persistence.
 
