@@ -20,7 +20,13 @@ import { type Colors, fmtK, pnlColor } from "../helpers";
 import type { Dividend, Summary, Trade } from "../types";
 import { AccBadge } from "../ui/AccBadge";
 import { AllocationBasisCard } from "../ui/AllocationBasisCard";
+import { NavGrowthChart } from "../ui/NavGrowthChart";
 import { OptionAttributionCard } from "../ui/OptionAttributionCard";
+import {
+  PortfolioRotationChart,
+  type RotationGroup,
+  type RotationMode,
+} from "../ui/PortfolioRotationChart";
 
 interface CapmRow {
   beta: number | null;
@@ -84,7 +90,8 @@ interface RfResponse {
 }
 
 const RF_KEY = "bloomberg_capm_rf";
-const NAV_MODE_KEY = "bloomberg_nav_chart_mode";
+// v2: GROWTH became the default view (2026-09-25); the old key held VALUE/INDEX.
+const NAV_MODE_KEY = "bloomberg_nav_chart_mode_v2";
 
 /** One day of the time-weighted equity curve (see /api/v2/portfolio/nav-index). */
 interface NavIndexPoint {
@@ -201,11 +208,13 @@ function NavValueChart({
   colors,
   sym,
   tooltipContentStyle,
+  height = 240,
 }: {
   data: NavRow[];
   colors: Colors;
   sym: string;
   tooltipContentStyle: Record<string, unknown>;
+  height?: number;
 }) {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const toggle = (k: string) =>
@@ -265,7 +274,7 @@ function NavValueChart({
           </span>
         )}
       </div>
-      <ResponsiveContainer width="100%" height={160}>
+      <ResponsiveContainer width="100%" height={height}>
         {/* Composed, not Area: recharts 2.x renders <Line> children only inside
             ComposedChart, so holdings/cash/cost were silently dropped. */}
         <ComposedChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
@@ -333,10 +342,6 @@ function NavValueChart({
           )}
         </ComposedChart>
       </ResponsiveContainer>
-      <div className="text-[7px] mt-1" style={{ color: "#666" }}>
-        NAV = HOLDINGS + CASH — ขายของแล้วเงินย้ายจากเส้นม่วงไปเส้นเหลือง NAV ไม่ขยับ. เส้นประคือต้นทุน
-        ช่องว่างระหว่าง HOLDINGS กับ COST = กำไร/ขาดทุนที่ยังไม่ขาย. คลิกชื่อเส้นเพื่อซ่อน
-      </div>
     </>
   );
 }
@@ -355,6 +360,7 @@ function NavIndexChart({
   tooltipContentStyle,
   tooltipLabelStyle,
   tooltipItemStyle,
+  height = 240,
 }: {
   data: NavIndexResponse | null;
   loading: boolean;
@@ -363,11 +369,12 @@ function NavIndexChart({
   tooltipContentStyle: Record<string, unknown>;
   tooltipLabelStyle: Record<string, unknown>;
   tooltipItemStyle: Record<string, unknown>;
+  height?: number;
 }) {
   const pts = data?.points ?? [];
   if (loading && pts.length === 0) {
     return (
-      <div className="h-[160px] flex items-center justify-center">
+      <div className="flex items-center justify-center" style={{ height }}>
         <Loader2 className="w-4 h-4 animate-spin" style={{ color: colors.accent }} />
       </div>
     );
@@ -375,8 +382,8 @@ function NavIndexChart({
   if (pts.length < 2) {
     return (
       <div
-        className="h-[160px] flex items-center justify-center text-[8px] text-center px-4"
-        style={{ color: colors.textSecondary }}
+        className="flex items-center justify-center text-[8px] text-center px-4"
+        style={{ color: colors.textSecondary, height }}
       >
         {data?.note ?? "ยังไม่มี snapshot พอจะสร้างเส้นผลตอบแทน — NAV ถูกเก็บวันละครั้งตอนเปิดหน้า"}
       </div>
@@ -429,7 +436,7 @@ function NavIndexChart({
         )}
         {data && !data.benchmark_available && <span style={{ color: "#f87171" }}>ไม่มีราคาดัชนี</span>}
       </div>
-      <ResponsiveContainer width="100%" height={160}>
+      <ResponsiveContainer width="100%" height={height}>
         <ComposedChart data={chart} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
           <defs>
             <linearGradient id="twrGrad" x1="0" y1="0" x2="0" y2="1">
@@ -475,12 +482,198 @@ function NavIndexChart({
           />
         </ComposedChart>
       </ResponsiveContainer>
-      <div className="text-[7px] mt-1" style={{ color: "#666" }}>
-        Time-weighted: r = (NAV − flow − NAV₋₁) / NAV₋₁ ต่อวัน แล้วคูณทบ — เงินฝาก/ถอนถูกหักออกก่อน
-        จึงเทียบกับดัชนีได้ตรงๆ (ต่างจาก XIRR ด้านบนซึ่งเป็น money-weighted). ดัชนีแปลงเป็น {data?.base_currency}{" "}
-        ก่อน rebase แล้ว
-      </div>
     </>
+  );
+}
+
+/** Signed percent with two decimals for KPI tiles; "—" when unknown. */
+const sgnPct = (n: number | null | undefined, digits = 1): string =>
+  n == null ? "—" : `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(digits)}%`;
+
+const NAV_RANGES = [
+  ["1M", 31],
+  ["3M", 92],
+  ["6M", 183],
+  ["ALL", 0],
+] as const;
+type NavRange = (typeof NAV_RANGES)[number][0];
+const NAV_RANGE_KEY = "bloomberg_nav_chart_range";
+const MONTHLY_VIEW_KEY = "bloomberg_analytics_monthly_view";
+
+/** One panel of the ANALYTICS dashboard. Every card shares the header row —
+ *  title, a short grey subtitle, controls on the right — and keeps its long
+ *  methodology text behind ⓘ so the numbers are what the eye lands on. */
+function Card({
+  title,
+  sub,
+  right,
+  note,
+  colors,
+  className = "",
+  children,
+}: {
+  title: React.ReactNode;
+  sub?: React.ReactNode;
+  right?: React.ReactNode;
+  note?: React.ReactNode;
+  colors: Colors;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const [showNote, setShowNote] = useState(false);
+  return (
+    <section
+      className={`border flex flex-col min-w-0 ${className}`}
+      style={{ borderColor: colors.border, background: "#050505" }}
+    >
+      <header
+        className="flex items-center gap-2 px-2 py-1.5 border-b flex-wrap"
+        style={{ borderColor: "#1a1a1a" }}
+      >
+        <h3 className="text-[9px] font-bold tracking-widest" style={{ color: colors.accent }}>
+          {title}
+        </h3>
+        {sub && (
+          <span className="text-[8px] font-mono" style={{ color: "#666" }}>
+            {sub}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-2">
+          {right}
+          {note && (
+            <button
+              type="button"
+              onClick={() => setShowNote((v) => !v)}
+              className="text-[9px] font-mono"
+              style={{ color: showNote ? colors.accent : "#666" }}
+              title="How this is calculated"
+              aria-expanded={showNote}
+            >
+              ⓘ
+            </button>
+          )}
+        </div>
+      </header>
+      <div className="p-2 flex-1 min-w-0">{children}</div>
+      {note && showNote && (
+        <div className="px-2 pb-2 text-[8px] leading-relaxed font-mono" style={{ color: "#777" }}>
+          {note}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Text-only segmented control — state is the colour, never a fill. */
+function Seg<T extends string | number>({
+  options,
+  value,
+  onChange,
+  colors,
+}: {
+  options: readonly (readonly [string, T])[];
+  value: T;
+  onChange: (v: T) => void;
+  colors: Colors;
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      {options.map(([label, v]) => (
+        <button
+          type="button"
+          key={label}
+          onClick={() => onChange(v)}
+          aria-pressed={value === v}
+          className="text-[8px] font-bold font-mono"
+          style={{ color: value === v ? colors.accent : "#666" }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Headline figure for the KPI strip. */
+function Kpi({
+  label,
+  value,
+  sub,
+  color,
+  title,
+  colors,
+}: {
+  label: string;
+  value: React.ReactNode;
+  sub?: React.ReactNode;
+  color?: string;
+  title?: string;
+  colors: Colors;
+}) {
+  return (
+    <div className="px-3 py-2 min-w-0" style={{ background: "#080808" }} title={title}>
+      <div className="text-[8px] font-mono tracking-wider" style={{ color: colors.textSecondary }}>
+        {label}
+      </div>
+      <div
+        className="text-[15px] font-mono font-bold leading-tight mt-0.5 truncate"
+        style={{ color: color ?? colors.text }}
+      >
+        {value}
+      </div>
+      {sub && (
+        <div className="text-[8px] font-mono mt-0.5 truncate" style={{ color: "#666" }}>
+          {sub}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One line of the CAPITAL ledger: label left, figure right. */
+function LedgerRow({
+  label,
+  hint,
+  value,
+  color,
+  strong,
+  rule,
+  title,
+  colors,
+}: {
+  label: string;
+  hint?: string;
+  value: React.ReactNode;
+  color?: string;
+  strong?: boolean;
+  rule?: boolean;
+  title?: string;
+  colors: Colors;
+}) {
+  return (
+    <div
+      className={`flex items-baseline justify-between gap-2 py-[3px] ${rule ? "border-t mt-1 pt-1.5" : ""}`}
+      style={{ borderColor: "#222" }}
+      title={title}
+    >
+      <span
+        className={`text-[9px] font-mono ${strong ? "font-bold" : ""}`}
+        style={{ color: strong ? colors.text : colors.textSecondary }}
+      >
+        {label}
+        {hint && (
+          <span className="ml-1 text-[7px] font-normal" style={{ color: "#555" }}>
+            {hint}
+          </span>
+        )}
+      </span>
+      <span
+        className={`font-mono text-right ${strong ? "text-[11px] font-bold" : "text-[10px]"}`}
+        style={{ color: color ?? colors.text }}
+      >
+        {value}
+      </span>
+    </div>
   );
 }
 
@@ -533,16 +726,45 @@ export function AnalyticsTab({
   const [vol, setVol] = useState<VolMetrics | null>(null);
   // VALUE = the money in the book; INDEX = the time-weighted curve, which is
   // the only one of the two that can be laid next to an index.
-  const [navMode, setNavMode] = useState<"VALUE" | "INDEX">(() => {
-    if (typeof window === "undefined") return "VALUE";
+  const [navMode, setNavMode] = useState<"GROWTH" | "VALUE" | "INDEX">(() => {
+    if (typeof window === "undefined") return "GROWTH";
     try {
       const s = localStorage.getItem(NAV_MODE_KEY);
-      if (s === "INDEX" || s === "VALUE") return s;
+      if (s === "GROWTH" || s === "INDEX" || s === "VALUE") return s;
     } catch {
       /* ignore */
     }
-    return "VALUE";
+    return "GROWTH";
   });
+  const [navRange, setNavRange] = useState<NavRange>(() => {
+    if (typeof window === "undefined") return "ALL";
+    try {
+      const s = localStorage.getItem(NAV_RANGE_KEY);
+      if (NAV_RANGES.some(([r]) => r === s)) return s as NavRange;
+    } catch {
+      /* ignore */
+    }
+    return "ALL";
+  });
+  const [monthlyView, setMonthlyView] = useState<"CHART" | "TABLE">(() => {
+    if (typeof window === "undefined") return "CHART";
+    try {
+      if (localStorage.getItem(MONTHLY_VIEW_KEY) === "TABLE") return "TABLE";
+    } catch {
+      /* ignore */
+    }
+    return "CHART";
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(NAV_RANGE_KEY, navRange);
+      localStorage.setItem(MONTHLY_VIEW_KEY, monthlyView);
+    } catch {
+      /* ignore */
+    }
+  }, [navRange, monthlyView]);
+  const [rotGroup, setRotGroup] = useState<RotationGroup>("theme");
+  const [rotMode, setRotMode] = useState<RotationMode>("COST");
   const [navIndex, setNavIndex] = useState<NavIndexResponse | null>(null);
   const [navIndexLoading, setNavIndexLoading] = useState(false);
 
@@ -557,9 +779,16 @@ export function AnalyticsTab({
   // Only fetched when the curve is on screen — it pulls the benchmark's price
   // history, which the value chart has no use for.
   useEffect(() => {
-    if (navMode !== "INDEX") return;
+    if (navMode === "VALUE") return;
     const ac = new AbortController();
-    const qs = new URLSearchParams({ base_currency: currency, benchmark, days: "365" });
+    // GROWTH wants the whole snapshot history (its table is year × month) —
+    // `days` counts snapshot rows, so a cap here would silently restart Growth
+    // at whatever row it cut. ~100 years of daily rows is "no cap".
+    const qs = new URLSearchParams({
+      base_currency: currency,
+      benchmark,
+      days: navMode === "GROWTH" ? "36500" : "365",
+    });
     if (accountId !== "all") qs.set("account_id", accountId);
     setNavIndexLoading(true);
     fetch(`/api/v2/portfolio/nav-index?${qs}`, { signal: ac.signal })
@@ -837,13 +1066,23 @@ export function AnalyticsTab({
 
   // NAV includes idle cash: a sale moves value from holdings into cash, so a
   // holdings-only line dipped on every sell and recovered on the next buy.
-  const navData = navHistory.map((r) => ({
+  const navAll = navHistory.map((r) => ({
+    iso: typeof r.snapshot_date === "string" ? r.snapshot_date : "",
     date: typeof r.snapshot_date === "string" ? r.snapshot_date.slice(5) : r.snapshot_date,
     value: toDisp(r.nav_with_cash ?? r.total_value ?? 0),
     holdings: toDisp(r.total_value ?? 0),
     cash: toDisp(r.cash_balance ?? 0),
     cost: toDisp(r.open_cost_basis ?? 0),
   }));
+  // Range cut is measured back from the last snapshot, not today — a book that
+  // was last opened a week ago still shows a full month.
+  const navData = (() => {
+    const days = NAV_RANGES.find(([r]) => r === navRange)?.[1] ?? 0;
+    const lastIso = navAll.at(-1)?.iso;
+    if (!days || !lastIso) return navAll;
+    const cutoff = new Date(Date.parse(lastIso) - days * 86_400_000).toISOString().slice(0, 10);
+    return navAll.filter((r) => r.iso >= cutoff);
+  })();
 
   // Backend trade_stats already arrives in the active display currency
   // (analytics is refetched with base_currency), so no toDisp() here.
@@ -924,481 +1163,837 @@ export function AnalyticsTab({
     },
   ];
 
+  const money = (v: number, signed = false) =>
+    `${signed ? (v >= 0 ? "+" : "−") : v < 0 ? "−" : ""}${sym}${fmtK(Math.abs(v))}`;
+  const capBase = capital.invested > 0 ? capital.invested : capital.openCost;
+  const capBaseLabel = capital.invested > 0 ? "invested" : "cost basis";
+  const totalReturnAmt = capital.totalPnl + capital.dividends;
+  const totalReturnPct = capBase > 0 ? (totalReturnAmt / capBase) * 100 : null;
+  const realizedPct = capBase > 0 ? (capital.realized / capBase) * 100 : null;
+  const regimeColor = (r: VolRegime | undefined) =>
+    r === "STRESSED" ? "#f87171" : r === "ELEVATED" ? "#fbbf24" : r === "CALM" ? "#4ade80" : "#555";
+  const th = (label: string, align: "left" | "right" = "right", title?: string) => (
+    <th
+      key={label}
+      className={`py-1 px-1.5 font-normal sticky top-0 text-${align}`}
+      style={{ color: colors.textSecondary, background: "#050505" }}
+      title={title}
+    >
+      {label}
+    </th>
+  );
+  const rowStyle = { borderBottom: "1px solid #151515" };
+  const hasCapital = openPos.length > 0 || filteredStats.length > 0;
+  const breakdowns = [
+    {
+      title: "BY SECTOR",
+      col: "SECTOR",
+      rows: analytics?.by_sector ?? [],
+      key: "sector",
+      mid: "win_rate",
+      limit: 8,
+    },
+    {
+      title: "TOP SYMBOLS",
+      col: "SYMBOL",
+      rows: analytics?.top_symbols ?? [],
+      key: "symbol",
+      mid: "cnt",
+      limit: 10,
+    },
+    {
+      title: "BY SUB-PORT",
+      col: "SUB-PORT",
+      rows: analytics?.by_subport ?? [],
+      key: "subport",
+      mid: "win_rate",
+      limit: 10,
+    },
+  ] as const;
+
   return (
-    <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 220px)" }}>
-      {/* Per-account summary */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-px p-2">
-        {filteredStats.map((s) => (
-          <div
-            key={s.account.id}
-            className="border p-2"
-            style={{ background: "#080808", borderColor: colors.border }}
+    <div
+      className="overflow-y-auto overflow-x-hidden p-2 flex flex-col gap-2"
+      style={{ maxHeight: "calc(100vh - 220px)" }}
+    >
+      {/* ── KPI strip — the eight numbers a book is judged on ─────────────── */}
+      {hasCapital && (
+        <div
+          className="grid gap-px grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 border"
+          style={{ borderColor: colors.border, background: colors.border }}
+        >
+          <Kpi
+            colors={colors}
+            label="NAV"
+            value={money(capital.marketValueWithCash)}
+            sub={`MV ${money(capital.marketValue)} + cash ${money(capital.cash)}`}
+            title="Market value of open positions (equities + options) plus estimated idle cash"
+          />
+          <Kpi
+            colors={colors}
+            label="TOTAL RETURN"
+            value={sgnPct(totalReturnPct, 2)}
+            color={pnlColor(totalReturnAmt)}
+            sub={`${money(totalReturnAmt, true)} / ${capBaseLabel}`}
+            title="(realized + unrealized + dividends) ÷ invested capital (cost basis when no deposits are recorded)"
+          />
+          <Kpi
+            colors={colors}
+            label="UNREALIZED"
+            value={money(capital.unrealized, true)}
+            color={pnlColor(capital.unrealized)}
+            sub={`on ${money(capital.openCost)} open cost`}
+          />
+          <Kpi
+            colors={colors}
+            label="REALIZED"
+            value={money(capital.realized, true)}
+            color={pnlColor(capital.realized)}
+            sub={`ECON ${money(capital.economicRealized, true)}`}
+            title={`Broker-style realized P&L (closed trades, exit-date FX). ECON: ${economicPnlTitle}`}
+          />
+          <Kpi
+            colors={colors}
+            label="DIVIDENDS"
+            value={money(capital.dividends)}
+            color="#4ade80"
+            sub="received"
+          />
+          <Kpi
+            colors={colors}
+            label="XIRR"
+            value={sgnPct(rets?.total?.xirr_pct)}
+            color={rets?.total?.xirr_pct == null ? "#555" : pnlColor(rets.total.xirr_pct)}
+            sub={`CAGR ${sgnPct(rets?.total?.cagr_pct)} · ${rets?.total?.holding_days ?? "—"}d`}
+            title="Money-weighted IRR from dated cashflows, annualized. CAGR = cost-based time growth of deployed capital."
+          />
+          <Kpi
+            colors={colors}
+            label="WIN RATE"
+            value={ts?.win_rate == null ? "—" : `${ts.win_rate.toFixed(1)}%`}
+            color={ts?.win_rate == null ? "#555" : ts.win_rate >= 50 ? "#4ade80" : "#f87171"}
+            sub={
+              ts
+                ? `${ts.wins}W / ${ts.losses}L · payoff ${ts.payoff == null ? "—" : `${ts.payoff.toFixed(2)}×`}`
+                : "no closed trades"
+            }
+            title="Winning closed trades ÷ closed trades; payoff = avg win ÷ |avg loss|"
+          />
+          <Kpi
+            colors={colors}
+            label="VOLATILITY"
+            value={vol ? `${vol.volatility_annual_pct.toFixed(1)}%` : "—"}
+            color={vol ? regimeColor(vol.vol_regime) : "#555"}
+            sub={
+              vol
+                ? `σ ann · ${vol.volatility_daily_pct.toFixed(2)}%/d${vol.vol_regime !== "UNKNOWN" ? ` · ${vol.vol_regime}` : ""}`
+                : "σ unavailable"
+            }
+            title="Standard deviation of the open book's daily log returns, 252d lookback"
+          />
+        </div>
+      )}
+
+      {/* ── NAV + CAPITAL ledger ──────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-2">
+        {navAll.length > 0 && (
+          <Card
+            colors={colors}
+            className="xl:col-span-2"
+            title={
+              navMode === "GROWTH"
+                ? "PORTFOLIO GROWTH"
+                : navMode === "VALUE"
+                  ? "PORTFOLIO VALUE (NAV)"
+                  : `EQUITY CURVE vs ${benchmark}`
+            }
+            sub={
+              navAll.length < 2
+                ? "เก็บข้อมูลรายวัน — กราฟจะสมบูรณ์ขึ้นเมื่อมีหลายวัน"
+                : navMode === "GROWTH"
+                  ? "time-weighted growth · ▲ deposit ▼ withdrawal · monthly table"
+                  : navMode === "VALUE"
+                    ? "daily snapshot · money in the book"
+                    : "time-weighted · flows removed · rebased 100"
+            }
+            right={
+              <>
+                {navMode === "VALUE" && (
+                  <>
+                    <Seg
+                      colors={colors}
+                      options={NAV_RANGES.map(([r]) => [r, r] as const)}
+                      value={navRange}
+                      onChange={setNavRange}
+                    />
+                    <span style={{ color: "#333" }}>│</span>
+                  </>
+                )}
+                <Seg
+                  colors={colors}
+                  options={[
+                    ["GROWTH", "GROWTH"],
+                    ["VALUE", "VALUE"],
+                    ["INDEX", "INDEX"],
+                  ]}
+                  value={navMode}
+                  onChange={setNavMode}
+                />
+              </>
+            }
+            note={
+              navMode === "GROWTH" ? (
+                <>
+                  Growth = ผลตอบแทนแบบ time-weighted: r = (NAV − flow − NAV₋₁) / NAV₋₁ ต่อวัน แล้วคูณทบ
+                  — ฝาก/ถอนเงินไม่ทำให้เส้นขยับ (▲ เขียว = ฝาก, ▼ แดง = ถอน). เส้นเทา = เส้นแนวโน้ม
+                  least-squares. ตาราง = ผลตอบแทนทบรายเดือน / รายปี. Average =
+                  ค่าเฉลี่ยของผลตอบแทนรายเดือน. ข้อมูลเริ่มจาก snapshot NAV รายวันวันแรก (เก็บตอนเปิดหน้า) —
+                  เดือนแรกไม่เต็มเดือน (*). วันที่ NAV ขยับเกิน 50% ถูกนับว่าน่าสงสัย (มักเป็นเงินฝาก/ถอนที่ยังไม่บันทึก)
+                </>
+              ) : navMode === "VALUE" ? (
+                <>
+                  NAV = HOLDINGS + CASH — ขายของแล้วเงินย้ายจากเส้นม่วงไปเส้นเหลือง NAV ไม่ขยับ. เส้นประคือต้นทุน
+                  ช่องว่างระหว่าง HOLDINGS กับ COST = กำไร/ขาดทุนที่ยังไม่ขาย. คลิกชื่อเส้นเพื่อซ่อน. VALUE
+                  ขยับตามเงินฝาก/ถอน จึงเทียบกับดัชนีตรงๆ ไม่ได้ — ใช้ INDEX.
+                </>
+              ) : (
+                <>
+                  Time-weighted: r = (NAV − flow − NAV₋₁) / NAV₋₁ ต่อวัน แล้วคูณทบ —
+                  เงินฝาก/ถอนถูกหักออกก่อน จึงเทียบกับดัชนีได้ตรงๆ (ต่างจาก XIRR ซึ่งเป็น money-weighted).
+                  ดัชนีแปลงเป็น {navIndex?.base_currency ?? currency} ก่อน rebase แล้ว
+                </>
+              )
+            }
           >
-            <div className="flex items-center gap-1 mb-1">
-              <AccBadge account={s.account} small />
-            </div>
-            <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[9px] font-mono mt-1">
-              <span style={{ color: colors.textSecondary }}>Total trades</span>
-              <span style={{ color: colors.text }}>{s.total_trades}</span>
-              <span style={{ color: colors.textSecondary }}>Win rate</span>
-              <span style={{ color: s.win_rate >= 50 ? "#4ade80" : "#f87171" }}>
-                {s.win_rate.toFixed(1)}%
-              </span>
-              <span style={{ color: colors.textSecondary }}>W/L</span>
-              <span style={{ color: colors.text }}>
-                {s.wins}/{s.losses}
-              </span>
-              <span style={{ color: colors.textSecondary }}>Open</span>
-              <span style={{ color: "#ff9900" }}>{s.open_count}</span>
-              <span style={{ color: colors.textSecondary }}>P&L</span>
-              <span className="font-bold" style={{ color: pnlColor(s.pnl_native) }}>
-                {s.account.currency === "USD" ? "$" : "฿"}
-                {fmtK(Math.abs(s.pnl_native))} {s.pnl_native >= 0 ? "▲" : "▼"}
-              </span>
-              <span style={{ color: colors.textSecondary }}>Dividends</span>
-              <span style={{ color: "#4ade80" }}>
-                {s.account.currency === "THB" ? "฿" : "$"}
-                {fmtK(s.total_dividends)}
-              </span>
-              {(() => {
-                const r = acctReturn(s);
-                const realized = s.pnl_base ?? 0;
-                const realizedPct = r.base > 0 ? (realized / r.base) * 100 : null;
-                return (
-                  <>
-                    <span style={{ color: colors.textSecondary }}>Total Return</span>
-                    <span className="font-bold" style={{ color: pnlColor(r.totalPnl) }}>
-                      {r.pct == null
-                        ? "—"
-                        : `${r.pct >= 0 ? "+" : ""}${r.pct.toFixed(1)}% ${r.pct >= 0 ? "▲" : "▼"}`}
-                    </span>
-                    <span
-                      style={{ color: colors.textSecondary }}
-                      title="Realized P&L ÷ invested — closed-trade skill only, excludes unrealized paper P&L"
-                    >
-                      Realized Ret
-                    </span>
-                    <span
-                      className="font-bold"
-                      style={{ color: realizedPct == null ? "#555" : pnlColor(realized) }}
-                    >
-                      {realizedPct == null
-                        ? "—"
-                        : `${realizedPct >= 0 ? "+" : ""}${realizedPct.toFixed(1)}%`}
-                    </span>
-                    {s.ytd_realized_native != null && (
-                      <>
-                        <span
-                          style={{ color: colors.textSecondary }}
-                          title={`Realized trading P&L closed in ${summary?.ytd_year ?? "this year"} (${s.ytd_closed ?? 0} trades)`}
-                        >
-                          YTD Realized
-                        </span>
-                        <span
-                          className="font-bold"
-                          style={{ color: pnlColor(s.ytd_realized_native) }}
-                        >
-                          {s.account.currency === "USD" ? "$" : "฿"}
-                          {fmtK(Math.abs(s.ytd_realized_native))}{" "}
-                          {s.ytd_realized_native >= 0 ? "▲" : "▼"}
-                        </span>
-                      </>
-                    )}
-                  </>
-                );
-              })()}
-              {(() => {
-                const rr = rets?.accounts?.[s.account.id];
-                if (!rr) return null;
-                return (
-                  <>
-                    <span
-                      style={{ color: colors.textSecondary }}
-                      title="Time-weighted growth of deployed cost, annualized"
-                    >
-                      CAGR ann
-                    </span>
-                    <span
-                      className="font-bold"
-                      style={{ color: rr.cagr_pct == null ? "#555" : pnlColor(rr.cagr_pct) }}
-                    >
-                      {rr.cagr_pct == null
-                        ? "—"
-                        : `${rr.cagr_pct >= 0 ? "+" : ""}${rr.cagr_pct.toFixed(1)}%`}
-                    </span>
-                    <span
-                      style={{ color: colors.textSecondary }}
-                      title="Money-weighted IRR from actual dated cashflows (buys/sells/dividends), annualized"
-                    >
-                      XIRR ann
-                    </span>
-                    <span
-                      className="font-bold"
-                      style={{ color: rr.xirr_pct == null ? "#555" : pnlColor(rr.xirr_pct) }}
-                    >
-                      {rr.xirr_pct == null
-                        ? "—"
-                        : `${rr.xirr_pct >= 0 ? "+" : ""}${rr.xirr_pct.toFixed(1)}%`}
-                    </span>
-                  </>
-                );
-              })()}
-              {(() => {
-                const av = acctVol(s.account.id);
-                if (!av) return null;
-                const regimeColor =
-                  av.vol_regime === "STRESSED"
-                    ? "#f87171"
-                    : av.vol_regime === "ELEVATED"
-                      ? "#fbbf24"
-                      : av.vol_regime === "CALM"
-                        ? "#4ade80"
-                        : "#555";
-                return (
-                  <>
-                    <span
-                      style={{ color: colors.textSecondary }}
-                      title="Standard deviation of daily log returns, 252d lookback"
-                    >
-                      σ daily / ann
-                    </span>
-                    <span className="font-bold" style={{ color: colors.text }}>
-                      {av.volatility_daily_pct.toFixed(2)}% / {av.volatility_annual_pct.toFixed(1)}%
-                      {av.vol_regime !== "UNKNOWN" && (
-                        <span style={{ color: regimeColor }}> {av.vol_regime}</span>
-                      )}
-                    </span>
-                  </>
-                );
-              })()}
-            </div>
-          </div>
-        ))}
+            {navMode === "GROWTH" ? (
+              <NavGrowthChart
+                data={navIndex}
+                loading={navIndexLoading}
+                colors={colors}
+                height={230}
+              />
+            ) : navMode === "INDEX" ? (
+              <NavIndexChart
+                data={navIndex}
+                loading={navIndexLoading}
+                colors={colors}
+                benchmark={benchmark}
+                tooltipContentStyle={tooltipContentStyle}
+                tooltipLabelStyle={tooltipLabelStyle}
+                tooltipItemStyle={tooltipItemStyle}
+                height={260}
+              />
+            ) : (
+              <NavValueChart
+                data={navData}
+                colors={colors}
+                sym={sym}
+                tooltipContentStyle={tooltipContentStyle}
+                height={260}
+              />
+            )}
+          </Card>
+        )}
+
+        {hasCapital && (
+          <Card
+            colors={colors}
+            className={navAll.length > 0 ? "" : "xl:col-span-3"}
+            title="CAPITAL"
+            sub={`${currency} · report currency`}
+            note="Approximate idle cash = invested capital + realized P&L (equities AND options) + dividends − open cost basis (equities AND options). Blind to commissions, taxes and margin interest that were never recorded, so treat as an estimate, not a broker balance. Realized P&L already includes closed options."
+          >
+            <LedgerRow
+              colors={colors}
+              label="INVESTED CAPITAL"
+              hint="deposits"
+              value={money(capital.invested)}
+            />
+            <LedgerRow
+              colors={colors}
+              label="OPEN COST BASIS"
+              hint="deployed"
+              value={money(capital.openCost)}
+            />
+            <LedgerRow
+              colors={colors}
+              label="+ UNREALIZED"
+              value={money(capital.unrealized, true)}
+              color={pnlColor(capital.unrealized)}
+            />
+            <LedgerRow
+              colors={colors}
+              label="= MARKET VALUE"
+              value={money(capital.marketValue)}
+              strong
+            />
+            <LedgerRow
+              colors={colors}
+              label="+ CASH"
+              hint="estimated"
+              value={money(capital.cash)}
+              color={pnlColor(capital.cash)}
+            />
+            <LedgerRow
+              colors={colors}
+              label="= NAV"
+              value={money(capital.marketValueWithCash)}
+              strong
+            />
+
+            <LedgerRow
+              colors={colors}
+              rule
+              label="REALIZED P&L"
+              hint={`ECON ${money(capital.economicRealized, true)}`}
+              value={money(capital.realized, true)}
+              color={pnlColor(capital.realized)}
+              title={economicPnlTitle}
+            />
+            <LedgerRow
+              colors={colors}
+              label="+ UNREALIZED"
+              value={money(capital.unrealized, true)}
+              color={pnlColor(capital.unrealized)}
+            />
+            <LedgerRow
+              colors={colors}
+              label="+ DIVIDENDS"
+              value={money(capital.dividends, true)}
+              color="#4ade80"
+            />
+            <LedgerRow
+              colors={colors}
+              label="= TOTAL RETURN"
+              hint={`÷ ${capBaseLabel}`}
+              value={
+                <>
+                  {sgnPct(totalReturnPct, 2)}{" "}
+                  <span className="text-[9px] font-normal" style={{ color: colors.textSecondary }}>
+                    {money(totalReturnAmt, true)}
+                  </span>
+                </>
+              }
+              color={pnlColor(totalReturnAmt)}
+              strong
+            />
+
+            <LedgerRow
+              colors={colors}
+              rule
+              label="REALIZED RETURN"
+              hint="trading skill"
+              value={sgnPct(realizedPct, 2)}
+              color={pnlColor(capital.realized)}
+              title="Realized P&L ÷ invested — closed-trade skill only, excludes unrealized"
+            />
+            {summary?.total_ytd_realized_base != null && accountId === "all" && (
+              <LedgerRow
+                colors={colors}
+                label="YTD REALIZED"
+                hint={`${summary.ytd_year ?? "this year"}${
+                  summary.total_ytd_economic_realized_base != null
+                    ? ` · ECON ${money(summary.total_ytd_economic_realized_base, true)}`
+                    : ""
+                }`}
+                value={money(summary.total_ytd_realized_base, true)}
+                color={pnlColor(summary.total_ytd_realized_base)}
+                title={economicPnlTitle}
+              />
+            )}
+            {rets?.total && (
+              <LedgerRow
+                colors={colors}
+                label="CAGR / XIRR"
+                hint={`${rets.total.holding_days}d since ${rets.total.first_date ?? "—"}`}
+                value={`${sgnPct(rets.total.cagr_pct, 2)} / ${sgnPct(rets.total.xirr_pct, 2)}`}
+                color={rets.total.xirr_pct == null ? "#555" : pnlColor(rets.total.xirr_pct)}
+                title="CAGR: time-weighted growth of deployed cost. XIRR: money-weighted IRR from dated cashflows. Both annualized."
+              />
+            )}
+          </Card>
+        )}
       </div>
 
-      {/* Trade stats — closed-trade skill: rate, ratio, average size, edge */}
-      {ts && ts.closed > 0 && (
-        <div className="mx-2 mb-2 border p-2" style={{ borderColor: colors.border }}>
-          <div
-            className="text-[9px] font-bold tracking-widest mb-2"
-            style={{ color: colors.accent }}
-          >
-            TRADE STATS
-            <span className="ml-1 text-[7px]" style={{ color: "#555" }}>
-              {ts.closed} closed trades{openPos.length > 0 ? ` · ${openPos.length} open` : ""}
-            </span>
+      {/* ── Accounts side by side ─────────────────────────────────────────── */}
+      {filteredStats.length > 0 && (
+        <Card
+          colors={colors}
+          title="ACCOUNTS"
+          sub={`${filteredStats.length} account${filteredStats.length > 1 ? "s" : ""} · P&L / DIV / YTD in account currency`}
+          note="TOT RET = (realized + unrealized + dividends) ÷ invested (cost basis when no deposits). REAL RET = realized ÷ same base. CAGR = time-weighted growth of deployed cost; XIRR = money-weighted IRR from dated cashflows. σ = daily log-return stdev, 252d."
+        >
+          <div className="overflow-x-auto">
+            <table className="w-full text-[9px] font-mono whitespace-nowrap">
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  {th("ACCOUNT", "left")}
+                  {th("TRADES")}
+                  {th("WIN%")}
+                  {th("W / L")}
+                  {th("OPEN")}
+                  {th("P&L")}
+                  {th("DIV")}
+                  {th("TOT RET", "right", "(realized + unrealized + div) ÷ invested")}
+                  {th("REAL RET", "right", "Realized P&L ÷ invested — excludes unrealized")}
+                  {th("YTD REAL", "right", "Realized trading P&L closed this year")}
+                  {th("CAGR", "right", "Time-weighted growth of deployed cost, annualized")}
+                  {th("XIRR", "right", "Money-weighted IRR from dated cashflows, annualized")}
+                  {th("σ D / ANN", "right", "Stdev of daily log returns, 252d lookback")}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredStats.map((s) => {
+                  const ccy = s.account.currency === "USD" ? "$" : "฿";
+                  const r = acctReturn(s);
+                  const realized = s.pnl_base ?? 0;
+                  const rp = r.base > 0 ? (realized / r.base) * 100 : null;
+                  const rr = rets?.accounts?.[s.account.id];
+                  const av = acctVol(s.account.id);
+                  const td = "py-1 px-1.5 text-right";
+                  return (
+                    <tr key={s.account.id} style={rowStyle}>
+                      <td className="py-1 px-1.5">
+                        <AccBadge account={s.account} small />
+                      </td>
+                      <td className={td} style={{ color: colors.text }}>
+                        {s.total_trades}
+                      </td>
+                      <td
+                        className={td}
+                        style={{ color: s.win_rate >= 50 ? "#4ade80" : "#f87171" }}
+                      >
+                        {s.win_rate.toFixed(1)}%
+                      </td>
+                      <td className={td} style={{ color: colors.textSecondary }}>
+                        {s.wins} / {s.losses}
+                      </td>
+                      <td className={td} style={{ color: "#ff9900" }}>
+                        {s.open_count}
+                      </td>
+                      <td className={`${td} font-bold`} style={{ color: pnlColor(s.pnl_native) }}>
+                        {s.pnl_native >= 0 ? "+" : "−"}
+                        {ccy}
+                        {fmtK(Math.abs(s.pnl_native))}
+                      </td>
+                      <td className={td} style={{ color: "#4ade80" }}>
+                        {ccy}
+                        {fmtK(s.total_dividends)}
+                      </td>
+                      <td className={`${td} font-bold`} style={{ color: pnlColor(r.totalPnl) }}>
+                        {sgnPct(r.pct)}
+                      </td>
+                      <td
+                        className={td}
+                        style={{ color: rp == null ? "#555" : pnlColor(realized) }}
+                      >
+                        {sgnPct(rp)}
+                      </td>
+                      <td
+                        className={td}
+                        style={{
+                          color:
+                            s.ytd_realized_native == null
+                              ? "#555"
+                              : pnlColor(s.ytd_realized_native),
+                        }}
+                        title={`${s.ytd_closed ?? 0} trades closed in ${summary?.ytd_year ?? "this year"}`}
+                      >
+                        {s.ytd_realized_native == null
+                          ? "—"
+                          : `${s.ytd_realized_native >= 0 ? "+" : "−"}${ccy}${fmtK(Math.abs(s.ytd_realized_native))}`}
+                      </td>
+                      <td
+                        className={td}
+                        style={{ color: rr?.cagr_pct == null ? "#555" : pnlColor(rr.cagr_pct) }}
+                      >
+                        {sgnPct(rr?.cagr_pct)}
+                      </td>
+                      <td
+                        className={td}
+                        style={{ color: rr?.xirr_pct == null ? "#555" : pnlColor(rr.xirr_pct) }}
+                      >
+                        {sgnPct(rr?.xirr_pct)}
+                      </td>
+                      <td className={td} style={{ color: colors.text }}>
+                        {av ? (
+                          <>
+                            {av.volatility_daily_pct.toFixed(2)}% /{" "}
+                            {av.volatility_annual_pct.toFixed(1)}%
+                            {av.vol_regime !== "UNKNOWN" && (
+                              <span className="ml-1" style={{ color: regimeColor(av.vol_regime) }}>
+                                {av.vol_regime}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-          <div className="grid grid-cols-3 md:grid-cols-6 gap-px">
-            {[
-              {
-                label: "WIN RATE",
-                pct: null as string | null,
-                value: ts.win_rate == null ? "—" : `${ts.win_rate.toFixed(1)}%`,
-                color: ts.win_rate == null ? "#555" : ts.win_rate >= 50 ? "#4ade80" : "#f87171",
-                hint: `${ts.wins}W / ${ts.losses}L · closed`,
-                title: "Winning closed trades ÷ closed trades. Excludes open positions.",
-              },
-              {
-                label: "HIT RATE",
-                pct: null as string | null,
-                value: hitRate == null ? "—" : `${hitRate.pct.toFixed(1)}%`,
-                color: hitRate == null ? "#555" : hitRate.pct >= 50 ? "#4ade80" : "#f87171",
-                hint: hitRate == null ? "—" : `${hitRate.hits} / ${hitRate.total} · incl. open`,
-                title:
-                  "Closed winners + open positions currently in profit, ÷ all positions taken. Moves with live prices.",
-              },
-              {
-                label: "W/L RATIO",
-                pct: null as string | null,
-                value: ts.wl_ratio == null ? "—" : `${ts.wl_ratio.toFixed(2)}×`,
-                color: ts.wl_ratio == null ? "#555" : ts.wl_ratio >= 1 ? "#4ade80" : "#f87171",
-                hint: "wins ÷ losses (count)",
-                title: "Number of winning trades ÷ number of losing trades. — when no losses yet.",
-              },
-              {
-                label: "AVG WIN",
-                value: ts.avg_win == null ? "—" : `${sym}${fmtK(Math.abs(ts.avg_win))}`,
-                pct: fmtPct(ts.avg_win_pct),
-                color: ts.avg_win == null ? "#555" : "#4ade80",
-                hint: "per winning trade",
-                title:
-                  "Mean realized P&L across winning closed trades, in the display currency. The % is the mean return on cost of those same trades, in each trade's own currency.",
-              },
-              {
-                label: "AVG LOSS",
-                value: ts.avg_loss == null ? "—" : `${sym}${fmtK(Math.abs(ts.avg_loss))}`,
-                pct: fmtPct(ts.avg_loss_pct),
-                color: ts.avg_loss == null ? "#555" : "#f87171",
-                hint: "per losing trade",
-                title:
-                  "Mean realized P&L across losing closed trades, in the display currency. The % is the mean return on cost of those same trades, in each trade's own currency.",
-              },
-              {
-                label: "PAYOFF",
-                pct: null as string | null,
-                value: ts.payoff == null ? "—" : `${ts.payoff.toFixed(2)}×`,
-                color: ts.payoff == null ? "#555" : ts.payoff >= 1 ? "#4ade80" : "#f87171",
-                hint: "avg win ÷ avg loss",
-                title:
-                  "Average win ÷ |average loss|. Above 1 means winners are bigger than losers; combine with WIN RATE to read the edge.",
-              },
-            ].map((t) => (
-              <div key={t.label} className="p-2" style={{ background: "#080808" }} title={t.title}>
-                <div className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
-                  {t.label}
-                </div>
-                <div
-                  className="flex items-baseline justify-between gap-1 mt-0.5"
-                  style={{ color: t.color }}
-                >
-                  <span className="text-[11px] font-mono font-bold">{t.value}</span>
-                  {t.pct && <span className="text-[8px] font-mono opacity-70">{t.pct}</span>}
-                </div>
-                <div className="text-[7px] font-mono mt-0.5" style={{ color: "#555" }}>
-                  {t.hint}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div
-            className="flex items-center justify-between mt-2 pt-2 border-t"
-            style={{ borderColor: colors.border }}
-          >
-            <span
-              className="text-[8px] font-bold tracking-widest"
-              style={{ color: colors.textSecondary }}
-              title="Expectancy = win rate × avg win + loss rate × avg loss. The average P&L a new trade is worth at this win rate and payoff."
-            >
-              EXPECTANCY / TRADE
-              <span className="ml-1 text-[7px]" style={{ color: "#555" }}>
-                (win% × avg win) + (loss% × avg loss)
-              </span>
-            </span>
-            <span
-              className="text-[13px] font-mono font-bold"
-              style={{ color: ts.expectancy == null ? "#555" : pnlColor(ts.expectancy) }}
-            >
-              {ts.expectancy == null
-                ? "—"
-                : `${ts.expectancy >= 0 ? "+" : "−"}${sym}${fmtK(Math.abs(ts.expectancy))} ${
-                    ts.expectancy >= 0 ? "▲" : "▼"
-                  }`}
-              {fmtPct(ts.expectancy_pct) && (
-                <span className="ml-1 text-[9px] opacity-70">{fmtPct(ts.expectancy_pct)}</span>
-              )}
-              <span className="ml-2 text-[9px]" style={{ color: colors.textSecondary }}>
-                {sym}
-                {fmtK(Math.abs(ts.total_win))} won / {sym}
-                {fmtK(Math.abs(ts.total_loss))} lost
-              </span>
-            </span>
-          </div>
-        </div>
+        </Card>
       )}
 
-      {/* Capital snapshot — realized vs unrealized split, cost basis, invested capital */}
-      {(openPos.length > 0 || filteredStats.length > 0) && (
-        <div className="mx-2 mb-2 border p-2" style={{ borderColor: colors.border }}>
-          <div
-            className="text-[9px] font-bold tracking-widest mb-2"
-            style={{ color: colors.accent }}
-          >
-            CAPITAL BREAKDOWN
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-px">
-            {capitalTiles.map((t) => {
-              const color =
-                t.tone === "pnl" ? pnlColor(t.value) : t.tone === "pos" ? "#4ade80" : "#e5e5e5";
-              return (
-                <div
-                  key={t.label}
-                  className="p-2"
-                  style={{ background: "#080808" }}
-                  title={t.title}
-                >
-                  <div className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
-                    {t.label}
-                  </div>
-                  <div className="text-[11px] font-mono font-bold mt-0.5" style={{ color }}>
-                    {sym}
-                    {fmtK(Math.abs(t.value))}
-                    {t.tone === "pnl" ? (t.value >= 0 ? " ▲" : " ▼") : ""}
-                  </div>
-                  <div className="text-[7px] font-mono mt-0.5" style={{ color: "#555" }}>
-                    {t.hint}
-                  </div>
-                  {t.secondaryValue != null && (
-                    <div
-                      className="text-[7px] font-mono mt-1"
-                      style={{ color: colors.textSecondary }}
-                      title={t.secondaryTitle}
-                    >
-                      {t.secondaryLabel}{" "}
-                      <span style={{ color: pnlColor(t.secondaryValue) }}>
-                        {sym}
-                        {fmtK(Math.abs(t.secondaryValue))}
-                        {t.secondaryValue >= 0 ? " ▲" : " ▼"}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          {(() => {
-            const base = capital.invested > 0 ? capital.invested : capital.openCost;
-            const totalPnl = capital.totalPnl + capital.dividends;
-            const pct = base > 0 ? (totalPnl / base) * 100 : null;
-            return (
-              <div
-                className="flex items-center justify-between mt-2 pt-2 border-t"
-                style={{ borderColor: colors.border }}
-              >
-                <span
-                  className="text-[8px] font-bold tracking-widest"
-                  style={{ color: colors.textSecondary }}
-                >
-                  TOTAL RETURN
-                  <span className="ml-1 text-[7px]" style={{ color: "#555" }}>
-                    (realized + unrealized + div) /{" "}
-                    {capital.invested > 0 ? "invested" : "cost basis"}
+      {/* ── The book's own rotation map ──────────────────────────────────── */}
+      <Card
+        colors={colors}
+        title="PORTFOLIO ROTATION"
+        sub={`open-lot cost at week end · ${currency} · by ${rotGroup}`}
+        right={
+          <>
+            <Seg
+              colors={colors}
+              options={[
+                ["THEME", "theme"],
+                ["SECTOR", "sector"],
+                ["ACCOUNT", "account"],
+              ]}
+              value={rotGroup}
+              onChange={setRotGroup}
+            />
+            <span style={{ color: "#333" }}>│</span>
+            <Seg
+              colors={colors}
+              options={[
+                [sym, "COST"],
+                ["%", "SHARE"],
+              ]}
+              value={rotMode}
+              onChange={setRotMode}
+            />
+          </>
+        }
+        note={
+          <>
+            ต้นทุนของล็อตที่ยังเปิดอยู่ ณ สิ้นแต่ละสัปดาห์ (FX วันเข้า) ไม่ใช่มูลค่าตลาด — แถบหนาขึ้น = เงินย้ายเข้า, บางลง =
+            เงินออก; ราคาหุ้นขยับไม่ทำให้แถบเปลี่ยน. % = สัดส่วนของต้นทุนที่เปิดอยู่ สัปดาห์นั้น. เส้นแดง = ต้นทุนรวมลด ≥20%
+            ในสัปดาห์เดียว. THEME: MEMORY (MU SNDK SKHU) · COMPUTE (AMD AVGO TSM INTC NBIS) · PLATFORM
+            (GOOGL GOOG MSFT ORCL NFLX) · POWER (GRID SMR DELTA RKLB) · DEFENSIVE (KO COST UNH ABBV
+            BH) · HEDGE (GC=F SGOV VT) · CRYPTO · หุ้นไทยอื่น = TH LEGACY · ที่เหลือ = OTHER (แก้ใน
+            backend/portfolio_rotation.py). ไม่รวม options.
+          </>
+        }
+      >
+        <PortfolioRotationChart
+          accountId={accountId}
+          currency={currency}
+          group={rotGroup}
+          mode={rotMode}
+          colors={colors}
+        />
+      </Card>
+
+      {/* ── Monthly P&L + trade stats ─────────────────────────────────────── */}
+      {(monthData.length > 0 || (ts && ts.closed > 0)) && (
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-2">
+          {monthData.length > 0 && (
+            <Card
+              colors={colors}
+              className={ts && ts.closed > 0 ? "xl:col-span-2" : "xl:col-span-3"}
+              title="MONTHLY P&L"
+              sub={
+                <>
+                  total <span style={{ color: pnlColor(totalPnl) }}>{money(totalPnl, true)}</span> ·
+                  ECON{" "}
+                  <span style={{ color: pnlColor(totalEconomicPnl) }}>
+                    {money(totalEconomicPnl, true)}
                   </span>
-                </span>
-                <span
-                  className="text-[13px] font-mono font-bold"
-                  style={{ color: pnlColor(totalPnl) }}
-                >
-                  {pct == null
-                    ? "—"
-                    : `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% ${pct >= 0 ? "▲" : "▼"}`}
-                  <span className="ml-2 text-[9px]" style={{ color: colors.textSecondary }}>
-                    {sym}
-                    {fmtK(Math.abs(totalPnl))}
-                  </span>
-                </span>
-              </div>
-            );
-          })()}
-          {(() => {
-            const base = capital.invested > 0 ? capital.invested : capital.openCost;
-            const realizedPct = base > 0 ? (capital.realized / base) * 100 : null;
-            return (
-              <div className="flex items-center justify-between mt-1.5">
-                <span
-                  className="text-[8px] font-bold tracking-widest"
-                  style={{ color: colors.textSecondary }}
-                  title="Realized P&L ÷ invested — closed-trade skill only, excludes unrealized"
-                >
-                  REALIZED RETURN
-                  <span className="ml-1 text-[7px]" style={{ color: "#555" }}>
-                    realized / {capital.invested > 0 ? "invested" : "cost basis"} · trading skill
-                  </span>
-                </span>
-                <span
-                  className="text-[11px] font-mono font-bold"
-                  style={{ color: pnlColor(capital.realized) }}
-                >
-                  {realizedPct == null
-                    ? "—"
-                    : `${realizedPct >= 0 ? "+" : ""}${realizedPct.toFixed(2)}%`}
-                  <span className="ml-2 text-[9px]" style={{ color: colors.textSecondary }}>
-                    {sym}
-                    {fmtK(Math.abs(capital.realized))}
-                  </span>
-                </span>
-              </div>
-            );
-          })()}
-          {summary?.total_ytd_realized_base != null && accountId === "all" && (
-            <div className="flex items-center justify-between mt-1.5">
-              <span
-                className="text-[8px] font-bold tracking-widest"
-                style={{ color: colors.textSecondary }}
-                title="Realized trading P&L booked this year (closed trades)"
-              >
-                YTD REALIZED P&L
-                <span className="ml-1 text-[7px]" style={{ color: "#555" }}>
-                  closed in {summary.ytd_year ?? "this year"}
-                </span>
-              </span>
-              <span
-                className="text-right font-mono"
-                style={{ color: pnlColor(summary.total_ytd_realized_base) }}
-              >
-                <span className="text-[11px] font-bold">
-                  {summary.total_ytd_realized_base >= 0 ? "+" : ""}
-                  {sym}
-                  {fmtK(Math.abs(summary.total_ytd_realized_base))}
-                  {summary.total_ytd_realized_base >= 0 ? " ▲" : " ▼"}
-                </span>
-                {summary.total_ytd_economic_realized_base != null && (
-                  <span
-                    className="block text-[7px] font-normal"
-                    style={{ color: colors.textSecondary }}
-                    title={economicPnlTitle}
+                </>
+              }
+              right={
+                <Seg
+                  colors={colors}
+                  options={[
+                    ["CHART", "CHART"],
+                    ["TABLE", "TABLE"],
+                  ]}
+                  value={monthlyView}
+                  onChange={setMonthlyView}
+                />
+              }
+              note={`Bars = realized P&L closed in the month (left axis); blue line = running total (right axis). ${economicPnlTitle}`}
+            >
+              {monthlyView === "CHART" ? (
+                <ResponsiveContainer width="100%" height={240}>
+                  <ComposedChart
+                    data={monthData.map((m, i) => ({
+                      ...m,
+                      cumPnl: cumulativeData[i]?.cumPnl ?? 0,
+                    }))}
+                    margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
                   >
-                    ECON {sym}
-                    {fmtK(Math.abs(summary.total_ytd_economic_realized_base))}
-                    {summary.total_ytd_economic_realized_base >= 0 ? " ▲" : " ▼"}
-                  </span>
-                )}
-              </span>
-            </div>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
+                    <XAxis dataKey="month" tick={{ fill: "#666", fontSize: 8 }} tickLine={false} />
+                    <YAxis
+                      yAxisId="m"
+                      tick={{ fill: "#666", fontSize: 8 }}
+                      tickLine={false}
+                      axisLine={false}
+                      // Always include the zero baseline so bar heights stay proportional
+                      domain={[
+                        (min: number) => Math.min(0, min),
+                        (max: number) => Math.max(0, max),
+                      ]}
+                      tickFormatter={(v) => fmtK(v)}
+                    />
+                    <YAxis
+                      yAxisId="c"
+                      orientation="right"
+                      tick={{ fill: "#60a5fa", fontSize: 8 }}
+                      tickLine={false}
+                      axisLine={false}
+                      domain={[
+                        (min: number) => Math.min(0, min),
+                        (max: number) => Math.max(0, max),
+                      ]}
+                      tickFormatter={(v) => fmtK(v)}
+                    />
+                    <Tooltip
+                      content={({ active, payload, label }) => {
+                        const row = payload?.[0]?.payload as
+                          | {
+                              pnl?: number;
+                              economic_pnl?: number;
+                              cumPnl?: number;
+                              win_rate?: number | null;
+                            }
+                          | undefined;
+                        if (!active || !row) return null;
+                        const pnl = row.pnl ?? 0;
+                        const economicPnl = row.economic_pnl ?? pnl;
+                        return (
+                          <div style={{ ...tooltipContentStyle, padding: 6 }}>
+                            <div style={tooltipLabelStyle}>{label}</div>
+                            <div style={{ color: pnlColor(pnl) }}>P&L {money(pnl, true)}</div>
+                            <div style={{ color: pnlColor(economicPnl) }}>
+                              ECON {money(economicPnl, true)}
+                            </div>
+                            <div style={{ color: pnlColor(row.cumPnl ?? 0) }}>
+                              Cumulative {money(row.cumPnl ?? 0, true)}
+                            </div>
+                            {row.win_rate != null && (
+                              <div style={{ color: "#aaa" }}>Win {row.win_rate.toFixed(0)}%</div>
+                            )}
+                          </div>
+                        );
+                      }}
+                    />
+                    <ReferenceLine yAxisId="m" y={0} stroke="#444" />
+                    <Bar
+                      yAxisId="m"
+                      dataKey="pnl"
+                      radius={[2, 2, 0, 0]}
+                      maxBarSize={36}
+                      isAnimationActive={false}
+                    >
+                      {monthData.map((m, i) => (
+                        <Cell
+                          // biome-ignore lint/suspicious/noArrayIndexKey: stable month order
+                          key={i}
+                          fill={m.pnl >= 0 ? "#22c55e" : "#ef4444"}
+                          fillOpacity={0.8}
+                        />
+                      ))}
+                    </Bar>
+                    <Line
+                      yAxisId="c"
+                      dataKey="cumPnl"
+                      stroke="#60a5fa"
+                      strokeWidth={1.6}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="overflow-y-auto" style={{ maxHeight: 240 }}>
+                  <table className="w-full text-[9px] font-mono">
+                    <thead>
+                      <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                        {th("MONTH", "left")}
+                        {th("P&L")}
+                        {th("ECON", "right", economicPnlTitle)}
+                        {th("WIN%")}
+                        {th("CUMULATIVE")}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {monthData.map((m, i) => (
+                        <tr key={m.month} style={rowStyle}>
+                          <td className="py-0.5 px-1.5" style={{ color: colors.text }}>
+                            {m.month}
+                          </td>
+                          <td
+                            className="text-right py-0.5 px-1.5 font-bold"
+                            style={{ color: pnlColor(m.pnl) }}
+                          >
+                            {money(m.pnl, true)}
+                          </td>
+                          <td
+                            className="text-right py-0.5 px-1.5"
+                            style={{ color: pnlColor(m.economic_pnl) }}
+                          >
+                            {money(m.economic_pnl, true)}
+                          </td>
+                          <td
+                            className="text-right py-0.5 px-1.5"
+                            style={{ color: m.win_rate >= 50 ? "#4ade80" : "#f87171" }}
+                          >
+                            {m.win_rate != null ? `${m.win_rate.toFixed(0)}%` : "—"}
+                          </td>
+                          <td
+                            className="text-right py-0.5 px-1.5"
+                            style={{ color: pnlColor(cumulativeData[i]?.cumPnl ?? 0) }}
+                          >
+                            {money(cumulativeData[i]?.cumPnl ?? 0, true)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ borderTop: `1px solid ${colors.border}` }}>
+                        <td
+                          className="py-1 px-1.5 font-bold"
+                          style={{ color: colors.textSecondary }}
+                        >
+                          TOTAL
+                        </td>
+                        <td
+                          className="text-right py-1 px-1.5 font-bold"
+                          style={{ color: pnlColor(totalPnl) }}
+                        >
+                          {money(totalPnl, true)}
+                        </td>
+                        <td
+                          className="text-right py-1 px-1.5 font-bold"
+                          style={{ color: pnlColor(totalEconomicPnl) }}
+                        >
+                          {money(totalEconomicPnl, true)}
+                        </td>
+                        <td />
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </Card>
           )}
-          {rets?.total && (
-            <div
-              className="flex items-center justify-between mt-1.5 pt-1.5 border-t"
-              style={{ borderColor: colors.border }}
+
+          {ts && ts.closed > 0 && (
+            <Card
+              colors={colors}
+              className={monthData.length > 0 ? "" : "xl:col-span-3"}
+              title="TRADE STATS"
+              sub={`${ts.closed} closed${openPos.length > 0 ? ` · ${openPos.length} open` : ""}`}
+              note="WIN RATE excludes open positions; HIT RATE adds open positions currently in profit and moves with live prices. AVG WIN/LOSS are in the display currency; the small % is the mean return on cost in each trade's own currency. Expectancy = win rate × avg win + loss rate × avg loss — the average P&L a new trade is worth at this win rate and payoff."
             >
-              <span
-                className="text-[8px] font-bold tracking-widest"
-                style={{ color: colors.textSecondary }}
-              >
-                ANNUALIZED (cost-based)
-                <span className="ml-1 text-[7px]" style={{ color: "#555" }}>
-                  {rets.total.holding_days}d since {rets.total.first_date ?? "—"}
-                </span>
-              </span>
-              <span className="font-mono flex items-center gap-3">
-                <span
-                  className="text-[11px] font-bold"
-                  style={{
-                    color: rets.total.cagr_pct == null ? "#555" : pnlColor(rets.total.cagr_pct),
-                  }}
-                  title="Time-weighted growth of deployed cost, annualized"
-                >
-                  CAGR{" "}
-                  {rets.total.cagr_pct == null
-                    ? "—"
-                    : `${rets.total.cagr_pct >= 0 ? "+" : ""}${rets.total.cagr_pct.toFixed(2)}%`}
-                </span>
-                <span
-                  className="text-[11px] font-bold"
-                  style={{
-                    color: rets.total.xirr_pct == null ? "#555" : pnlColor(rets.total.xirr_pct),
-                  }}
-                  title="Money-weighted IRR from actual dated cashflows, annualized"
-                >
-                  XIRR{" "}
-                  {rets.total.xirr_pct == null
-                    ? "—"
-                    : `${rets.total.xirr_pct >= 0 ? "+" : ""}${rets.total.xirr_pct.toFixed(2)}%`}
-                </span>
-              </span>
-            </div>
+              <div className="grid grid-cols-3 gap-px" style={{ background: "#151515" }}>
+                {[
+                  {
+                    label: "WIN RATE",
+                    value: ts.win_rate == null ? "—" : `${ts.win_rate.toFixed(1)}%`,
+                    pct: null as string | null,
+                    color: ts.win_rate == null ? "#555" : ts.win_rate >= 50 ? "#4ade80" : "#f87171",
+                    hint: `${ts.wins}W / ${ts.losses}L`,
+                  },
+                  {
+                    label: "HIT RATE",
+                    value: hitRate == null ? "—" : `${hitRate.pct.toFixed(1)}%`,
+                    pct: null,
+                    color: hitRate == null ? "#555" : hitRate.pct >= 50 ? "#4ade80" : "#f87171",
+                    hint: hitRate == null ? "—" : `${hitRate.hits} / ${hitRate.total} incl. open`,
+                  },
+                  {
+                    label: "W/L RATIO",
+                    value: ts.wl_ratio == null ? "—" : `${ts.wl_ratio.toFixed(2)}×`,
+                    pct: null,
+                    color: ts.wl_ratio == null ? "#555" : ts.wl_ratio >= 1 ? "#4ade80" : "#f87171",
+                    hint: "count",
+                  },
+                  {
+                    label: "AVG WIN",
+                    value: ts.avg_win == null ? "—" : money(Math.abs(ts.avg_win)),
+                    pct: fmtPct(ts.avg_win_pct),
+                    color: ts.avg_win == null ? "#555" : "#4ade80",
+                    hint: "per winner",
+                  },
+                  {
+                    label: "AVG LOSS",
+                    value: ts.avg_loss == null ? "—" : money(Math.abs(ts.avg_loss)),
+                    pct: fmtPct(ts.avg_loss_pct),
+                    color: ts.avg_loss == null ? "#555" : "#f87171",
+                    hint: "per loser",
+                  },
+                  {
+                    label: "PAYOFF",
+                    value: ts.payoff == null ? "—" : `${ts.payoff.toFixed(2)}×`,
+                    pct: null,
+                    color: ts.payoff == null ? "#555" : ts.payoff >= 1 ? "#4ade80" : "#f87171",
+                    hint: "avg win ÷ avg loss",
+                  },
+                ].map((t) => (
+                  <div key={t.label} className="p-2" style={{ background: "#080808" }}>
+                    <div className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
+                      {t.label}
+                    </div>
+                    <div className="flex items-baseline gap-1 mt-0.5" style={{ color: t.color }}>
+                      <span className="text-[12px] font-mono font-bold">{t.value}</span>
+                      {t.pct && <span className="text-[8px] font-mono opacity-70">{t.pct}</span>}
+                    </div>
+                    <div className="text-[7px] font-mono mt-0.5" style={{ color: "#555" }}>
+                      {t.hint}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 pt-1 border-t" style={{ borderColor: "#1a1a1a" }}>
+                <LedgerRow
+                  colors={colors}
+                  label="EXPECTANCY / TRADE"
+                  value={
+                    <>
+                      {ts.expectancy == null ? "—" : money(ts.expectancy, true)}
+                      {fmtPct(ts.expectancy_pct) && (
+                        <span className="ml-1 text-[9px] opacity-70">
+                          {fmtPct(ts.expectancy_pct)}
+                        </span>
+                      )}
+                    </>
+                  }
+                  color={ts.expectancy == null ? "#555" : pnlColor(ts.expectancy)}
+                  strong
+                />
+                <LedgerRow
+                  colors={colors}
+                  label="WON / LOST"
+                  value={
+                    <>
+                      <span style={{ color: "#4ade80" }}>{money(Math.abs(ts.total_win))}</span>
+                      {" / "}
+                      <span style={{ color: "#f87171" }}>{money(Math.abs(ts.total_loss))}</span>
+                    </>
+                  }
+                />
+              </div>
+            </Card>
           )}
         </div>
       )}
 
-      {/* Risk-adjusted performance — CAPM beta + Jensen's alpha vs benchmark */}
+      {/* ── CAPM ──────────────────────────────────────────────────────────── */}
       {capm && (
-        <div className="mx-2 mb-2 border p-2" style={{ borderColor: colors.border }}>
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-[9px] font-bold tracking-widest" style={{ color: colors.accent }}>
-              RISK-ADJUSTED (CAPM)
-              <span className="ml-1 text-[7px]" style={{ color: "#555" }}>
-                β for hedging · α = return − CAPM expectation · vs {capm.benchmark}
-              </span>
+        <Card
+          colors={colors}
+          title="RISK-ADJUSTED (CAPM)"
+          sub={
+            <>
+              vs {capm.benchmark} · β for hedging · α = RET − EXPECT
               {capm.rf_annual != null && (
                 <button
                   type="button"
@@ -1410,7 +2005,7 @@ export function AnalyticsTab({
                     );
                     setRfPanel((v) => !v);
                   }}
-                  className="ml-1 text-[7px] underline decoration-dotted"
+                  className="ml-1 underline decoration-dotted"
                   style={{
                     color: rfOverride[currency] != null ? colors.accent : colors.textSecondary,
                   }}
@@ -1420,57 +2015,56 @@ export function AnalyticsTab({
                     capm.rf_source ?? "—"
                   }${capm.rf_as_of ? ` · as of ${capm.rf_as_of}` : ""}. Click to override.`}
                 >
-                  {" "}
                   · rf {(capm.rf_annual * 100).toFixed(2)}% {capm.rf_currency ?? ""} (
                   {capm.rf_series ?? capm.rf_source ?? "—"}
                   {capm.rf_as_of ? `, ${String(capm.rf_as_of).slice(0, 10)}` : ""}) ✎
                 </button>
               )}
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex gap-1">
-                {(
-                  [
-                    ["1M", 21],
-                    ["3M", 63],
-                    ["6M", 126],
-                    ["1Y", 252],
-                  ] as const
-                ).map(([lbl, d]) => (
-                  <button
-                    type="button"
-                    key={lbl}
-                    onClick={() => setLookback(d)}
-                    className="text-[7px] px-1.5 py-0.5 border font-bold"
-                    style={{
-                      borderColor: lookback === d ? colors.accent : colors.border,
-                      color: lookback === d ? colors.accent : colors.textSecondary,
-                      background: lookback === d ? "#ff990015" : "transparent",
-                    }}
-                  >
-                    {lbl}
-                  </button>
-                ))}
-              </div>
-              <div className="flex gap-1">
-                {(["SPY", "QQQ", "ACWI"] as const).map((b) => (
-                  <button
-                    type="button"
-                    key={b}
-                    onClick={() => setBenchmark(b)}
-                    className="text-[7px] px-1.5 py-0.5 border font-bold"
-                    style={{
-                      borderColor: benchmark === b ? colors.accent : colors.border,
-                      color: benchmark === b ? colors.accent : colors.textSecondary,
-                      background: benchmark === b ? "#ff990015" : "transparent",
-                    }}
-                  >
-                    {b}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+            </>
+          }
+          right={
+            <>
+              <Seg
+                colors={colors}
+                options={[
+                  ["1M", 21],
+                  ["3M", 63],
+                  ["6M", 126],
+                  ["1Y", 252],
+                ]}
+                value={lookback}
+                onChange={setLookback}
+              />
+              <span style={{ color: "#333" }}>│</span>
+              <Seg
+                colors={colors}
+                options={[
+                  ["SPY", "SPY"],
+                  ["QQQ", "QQQ"],
+                  ["ACWI", "ACWI"],
+                ]}
+                value={benchmark}
+                onChange={setBenchmark}
+              />
+            </>
+          }
+          note={
+            <>
+              <b>α = RET − EXPECT</b> where EXPECT = rf + β × (IDX − rf) — every number on the row
+              is on screen, so the arithmetic checks by hand. RET is the money-weighted XIRR over
+              each account&apos;s own span and IDX covers that same span (hover for XIRR and the
+              cumulative index move). β is the book held today, in {currency}, which is also what
+              sizes the HEDGE column: β × market value = the {capm.benchmark} notional that offsets
+              the book. Nothing here reads the trade log&apos;s DATES — they carry bulk-import
+              placeholders, and a date-driven version of this table reported +96% alpha for an
+              account that returned 3.3%/yr. Greyed α = R² &lt; 0.10 ⚠, i.e. the wrong benchmark for
+              this book, not low risk. rf = {capm.rf_source ?? "—"}
+              {capm.rf_as_of ? ` (${String(capm.rf_as_of).slice(0, 10)})` : ""}, quoted in{" "}
+              {capm.rf_currency ?? "the report currency"} to match the returns. Benchmark data
+              through {capm.benchmark_last_date ?? "—"}.
+            </>
+          }
+        >
           {rfPanel && (
             <div
               className="mb-2 border p-2 text-[8px]"
@@ -1751,304 +2345,30 @@ export function AnalyticsTab({
               </div>
             );
           })()}
-          <div className="text-[7px] mt-1" style={{ color: "#444" }}>
-            <b>α = RET − EXPECT</b> where EXPECT = rf + β × (IDX − rf) — every number on the row is
-            on screen, so the arithmetic checks by hand. RET is the money-weighted XIRR over each
-            account&apos;s own span and IDX covers that same span (hover for XIRR and the cumulative
-            index move). β is the book held today, in {currency}, which is also what sizes the HEDGE
-            column: β × market value = the {capm.benchmark} notional that offsets the book. Nothing
-            here reads the trade log&apos;s DATES — they carry bulk-import placeholders, and a
-            date-driven version of this table reported +96% alpha for an account that returned
-            3.3%/yr. Greyed α = R² &lt; 0.10 ⚠, i.e. the wrong benchmark for this book, not low
-            risk. rf = {capm.rf_source ?? "—"}
-            {capm.rf_as_of ? ` (${String(capm.rf_as_of).slice(0, 10)})` : ""}, quoted in{" "}
-            {capm.rf_currency ?? "the report currency"} to match the returns. Benchmark data through{" "}
-            {capm.benchmark_last_date ?? "—"}.
-          </div>
-        </div>
+        </Card>
       )}
 
-      {/* Portfolio value (NAV) over time — built from daily capture-on-view snapshots */}
-      {navData.length > 0 && (
-        <div className="mx-2 mb-2 border p-2" style={{ borderColor: colors.border }}>
-          <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-            <div className="text-[9px] font-bold tracking-widest" style={{ color: colors.accent }}>
-              {navMode === "VALUE" ? "PORTFOLIO VALUE (NAV)" : `EQUITY CURVE vs ${benchmark}`}
-            </div>
-            <div className="flex items-center gap-1">
-              {navData.length < 2 && (
-                <div className="text-[7px] font-mono mr-1" style={{ color: "#666" }}>
-                  เก็บข้อมูลรายวัน — กราฟจะสมบูรณ์ขึ้นเมื่อมีหลายวัน
-                </div>
-              )}
-              {(["VALUE", "INDEX"] as const).map((m) => (
-                <button
-                  type="button"
-                  key={m}
-                  onClick={() => setNavMode(m)}
-                  title={
-                    m === "VALUE"
-                      ? "NAV เป็นเงิน — ฝาก/ถอนทำให้เส้นขยับ จึงเทียบกับดัชนีตรงๆ ไม่ได้"
-                      : "Time-weighted: หักกระแสเงินเข้า-ออกออกจากผลตอบแทนรายวัน แล้ว rebase = 100 เทียบกับดัชนีได้"
-                  }
-                  className="text-[7px] font-bold px-1.5 py-0.5 border"
-                  style={{
-                    borderColor: navMode === m ? colors.accent : colors.border,
-                    color: navMode === m ? colors.accent : colors.textSecondary,
-                    background: navMode === m ? "#ff990015" : "transparent",
-                  }}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
-          {navMode === "INDEX" ? (
-            <NavIndexChart
-              data={navIndex}
-              loading={navIndexLoading}
-              colors={colors}
-              benchmark={benchmark}
-              tooltipContentStyle={tooltipContentStyle}
-              tooltipLabelStyle={tooltipLabelStyle}
-              tooltipItemStyle={tooltipItemStyle}
-            />
-          ) : (
-            <NavValueChart
-              data={navData}
-              colors={colors}
-              sym={sym}
-              tooltipContentStyle={tooltipContentStyle}
-            />
-          )}
-        </div>
-      )}
-
-      {/* Monthly + Cumulative P&L side by side for a tighter aspect ratio */}
-      {monthData.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mx-2 mb-2">
-          <div className="border p-2" style={{ borderColor: colors.border }}>
-            <div
-              className="text-[9px] font-bold tracking-widest mb-2"
-              style={{ color: colors.accent }}
-            >
-              MONTHLY P&L
-            </div>
-            <ResponsiveContainer width="100%" height={170}>
-              <BarChart data={monthData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
-                <XAxis dataKey="month" tick={{ fill: "#666", fontSize: 8 }} tickLine={false} />
-                <YAxis
-                  tick={{ fill: "#666", fontSize: 8 }}
-                  tickLine={false}
-                  axisLine={false}
-                  // Always include the zero baseline so bar heights stay proportional
-                  domain={[(min: number) => Math.min(0, min), (max: number) => Math.max(0, max)]}
-                  tickFormatter={(v) => fmtK(v)}
-                />
-                <Tooltip
-                  content={({ active, payload, label }) => {
-                    const row = payload?.[0]?.payload as
-                      | { pnl?: number; economic_pnl?: number }
-                      | undefined;
-                    if (!active || !row) return null;
-                    const pnl = row.pnl ?? 0;
-                    const economicPnl = row.economic_pnl ?? pnl;
-                    return (
-                      <div style={tooltipContentStyle}>
-                        <div style={tooltipLabelStyle}>{label}</div>
-                        <div style={{ color: pnlColor(pnl) }}>
-                          P&L {sym}
-                          {fmtK(Math.abs(pnl))} {pnl >= 0 ? "▲" : "▼"}
-                        </div>
-                        <div style={{ color: pnlColor(economicPnl) }}>
-                          ECON {sym}
-                          {fmtK(Math.abs(economicPnl))} {economicPnl >= 0 ? "▲" : "▼"}
-                        </div>
-                        <div style={{ color: "#888", maxWidth: 260 }}>
-                          Formula: (entry cost + native P&L) × exit FX − entry cost × entry FX
-                        </div>
-                      </div>
-                    );
-                  }}
-                />
-                <ReferenceLine y={0} stroke="#444" />
-                <Bar dataKey="pnl" radius={[2, 2, 0, 0]}>
-                  {monthData.map((m, i) => (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: stable month order
-                    <Cell key={i} fill={m.pnl >= 0 ? "#22c55e" : "#ef4444"} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Cumulative P&L */}
-          <div className="border p-2" style={{ borderColor: colors.border }}>
-            <div
-              className="text-[9px] font-bold tracking-widest mb-2"
-              style={{ color: colors.accent }}
-            >
-              CUMULATIVE P&L
-            </div>
-            <ResponsiveContainer width="100%" height={170}>
-              <AreaChart data={cumulativeData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="cumGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
-                <XAxis dataKey="month" tick={{ fill: "#666", fontSize: 8 }} tickLine={false} />
-                <YAxis
-                  tick={{ fill: "#666", fontSize: 8 }}
-                  tickLine={false}
-                  axisLine={false}
-                  // Anchor the scale at zero so the filled area reflects true magnitude
-                  domain={[(min: number) => Math.min(0, min), (max: number) => Math.max(0, max)]}
-                  tickFormatter={(v) => fmtK(v)}
-                />
-                <Tooltip
-                  contentStyle={tooltipContentStyle}
-                  labelStyle={tooltipLabelStyle}
-                  itemStyle={tooltipItemStyle}
-                  // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
-                  formatter={(v: any) => [`${sym}${fmtK(v)}`, "Cumulative"]}
-                />
-                <ReferenceLine y={0} stroke="#444" />
-                <Area
-                  dataKey="cumPnl"
-                  stroke="#22c55e"
-                  strokeWidth={1.5}
-                  fill="url(#cumGrad)"
-                  baseValue={0}
-                  dot={false}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      )}
-
-      {/* Monthly breakdown table — exact figures the outlier-dominated chart can't show */}
-      {monthData.length > 0 && (
-        <div className="mx-2 mb-2 border p-2" style={{ borderColor: colors.border }}>
-          <div
-            className="text-[9px] font-bold tracking-widest mb-1"
-            style={{ color: colors.accent }}
-          >
-            MONTHLY BREAKDOWN
-          </div>
-          <div className="max-h-[200px] overflow-y-auto">
-            <table className="w-full text-[9px] font-mono">
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  {["MONTH", "P&L", "WIN%", "CUMULATIVE"].map((h, i) => (
-                    <th
-                      key={h}
-                      className={`py-0.5 sticky top-0 ${i === 0 ? "text-left" : "text-right"}`}
-                      style={{ color: colors.textSecondary, background: "#0a0a0a" }}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {monthData.map((m, i) => (
-                  <tr key={m.month} style={{ borderBottom: "1px solid #1a1a1a" }}>
-                    <td className="py-0.5" style={{ color: colors.text }}>
-                      {m.month}
-                    </td>
-                    <td className="text-right py-0.5 font-bold" style={{ color: pnlColor(m.pnl) }}>
-                      <div>
-                        {sym}
-                        {fmtK(Math.abs(m.pnl))} {m.pnl >= 0 ? "▲" : "▼"}
-                      </div>
-                      <div
-                        className="text-[7px] font-normal"
-                        style={{ color: pnlColor(m.economic_pnl) }}
-                        title={economicPnlTitle}
-                      >
-                        ECON {sym}
-                        {fmtK(Math.abs(m.economic_pnl))} {m.economic_pnl >= 0 ? "▲" : "▼"}
-                      </div>
-                    </td>
-                    <td
-                      className="text-right py-0.5"
-                      style={{ color: m.win_rate >= 50 ? "#4ade80" : "#f87171" }}
-                    >
-                      {m.win_rate != null ? `${m.win_rate.toFixed(0)}%` : "—"}
-                    </td>
-                    <td
-                      className="text-right py-0.5"
-                      style={{ color: pnlColor(cumulativeData[i]?.cumPnl ?? 0) }}
-                    >
-                      {sym}
-                      {fmtK(cumulativeData[i]?.cumPnl ?? 0)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr style={{ borderTop: `1px solid ${colors.border}` }}>
-                  <td className="py-0.5 font-bold" style={{ color: colors.textSecondary }}>
-                    TOTAL
-                  </td>
-                  <td className="text-right py-0.5 font-bold" style={{ color: pnlColor(totalPnl) }}>
-                    <div>
-                      {sym}
-                      {fmtK(Math.abs(totalPnl))} {totalPnl >= 0 ? "▲" : "▼"}
-                    </div>
-                    <div
-                      className="text-[7px] font-normal"
-                      style={{ color: pnlColor(totalEconomicPnl) }}
-                      title={economicPnlTitle}
-                    >
-                      ECON {sym}
-                      {fmtK(Math.abs(totalEconomicPnl))} {totalEconomicPnl >= 0 ? "▲" : "▼"}
-                    </div>
-                  </td>
-                  <td />
-                  <td />
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Dividend Trend + Allocation */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mx-2 mb-2">
+      {/* ── Dividends + breakdowns ────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
         {divByMonth.length > 0 && (
-          <div className="border p-2" style={{ borderColor: colors.border }}>
-            <div className="flex items-center justify-between mb-2">
-              <div
-                className="text-[9px] font-bold tracking-widest"
-                style={{ color: colors.accent }}
-              >
-                DIVIDEND / {divPeriod === "M" ? "MONTH" : divPeriod === "Q" ? "QUARTER" : "YEAR"}
-              </div>
-              <div className="flex gap-1">
-                {(["M", "Q", "Y"] as const).map((p) => (
-                  <button
-                    type="button"
-                    key={p}
-                    onClick={() => setDivPeriod(p)}
-                    className="text-[7px] px-1.5 py-0.5 border font-bold"
-                    style={{
-                      borderColor: divPeriod === p ? colors.accent : colors.border,
-                      color: divPeriod === p ? colors.accent : colors.textSecondary,
-                      background: divPeriod === p ? "#ff990015" : "transparent",
-                    }}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <ResponsiveContainer width="100%" height={150}>
+          <Card
+            colors={colors}
+            title="DIVIDENDS"
+            sub={`per ${divPeriod === "M" ? "month" : divPeriod === "Q" ? "quarter" : "year"}`}
+            right={
+              <Seg
+                colors={colors}
+                options={[
+                  ["M", "M"],
+                  ["Q", "Q"],
+                  ["Y", "Y"],
+                ]}
+                value={divPeriod}
+                onChange={setDivPeriod}
+              />
+            }
+          >
+            <ResponsiveContainer width="100%" height={170}>
               <BarChart data={divByMonth} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
                 <XAxis dataKey="month" tick={{ fill: "#666", fontSize: 7 }} tickLine={false} />
@@ -2067,10 +2387,65 @@ export function AnalyticsTab({
                   // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
                   formatter={(v: any) => [`${sym}${fmtK(v)}`, "Dividend"]}
                 />
-                <Bar dataKey="total" fill="#4ade80" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="total" fill="#4ade80" radius={[2, 2, 0, 0]} maxBarSize={28} />
               </BarChart>
             </ResponsiveContainer>
-          </div>
+          </Card>
+        )}
+        {breakdowns.map((b) =>
+          b.rows.length === 0 ? null : (
+            <Card
+              key={b.title}
+              colors={colors}
+              title={b.title}
+              sub={`realized · top ${Math.min(b.limit, b.rows.length)}`}
+            >
+              <div className="overflow-y-auto" style={{ maxHeight: 190 }}>
+                <table className="w-full text-[9px] font-mono">
+                  <thead>
+                    <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                      {th(b.col, "left")}
+                      {th(b.mid === "cnt" ? "TRADES" : "WIN%")}
+                      {th("P&L")}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {b.rows.slice(0, b.limit).map((r) => (
+                      <tr key={r[b.key]} style={rowStyle}>
+                        <td
+                          className={`py-0.5 px-1.5 truncate max-w-[140px] ${b.key === "symbol" ? "font-bold" : ""}`}
+                          style={{ color: b.key === "symbol" ? colors.accent : colors.text }}
+                          title={r[b.key]}
+                        >
+                          {r[b.key]}
+                        </td>
+                        <td
+                          className="text-right py-0.5 px-1.5"
+                          style={{
+                            color:
+                              b.mid === "cnt"
+                                ? colors.textSecondary
+                                : r.win_rate >= 50
+                                  ? "#4ade80"
+                                  : "#f87171",
+                          }}
+                        >
+                          {b.mid === "cnt" ? r.cnt : `${r.win_rate.toFixed(0)}%`}
+                        </td>
+                        <td
+                          className="text-right py-0.5 px-1.5 font-bold"
+                          style={{ color: pnlColor(r.pnl) }}
+                        >
+                          {r.pnl >= 0 ? "+" : "−"}
+                          {fmtK(Math.abs(r.pnl))}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )
         )}
       </div>
 
@@ -2078,137 +2453,8 @@ export function AnalyticsTab({
 
       <OptionAttributionCard accountId={accountId} colors={colors} />
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 p-2">
-        {(analytics?.by_sector ?? []).length > 0 && (
-          <div className="border p-2" style={{ borderColor: colors.border }}>
-            <div
-              className="text-[9px] font-bold tracking-widest mb-1"
-              style={{ color: colors.accent }}
-            >
-              BY SECTOR
-            </div>
-            <table className="w-full text-[9px] font-mono">
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <th className="text-left py-0.5" style={{ color: colors.textSecondary }}>
-                    SECTOR
-                  </th>
-                  <th className="text-right py-0.5" style={{ color: colors.textSecondary }}>
-                    W%
-                  </th>
-                  <th className="text-right py-0.5" style={{ color: colors.textSecondary }}>
-                    P&L
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {analytics?.by_sector.slice(0, 8).map((s) => (
-                  <tr key={s.sector} style={{ borderBottom: "1px solid #1a1a1a" }}>
-                    <td className="py-0.5" style={{ color: colors.text }}>
-                      {s.sector}
-                    </td>
-                    <td
-                      className="text-right py-0.5"
-                      style={{ color: s.win_rate >= 50 ? "#4ade80" : "#f87171" }}
-                    >
-                      {s.win_rate.toFixed(0)}%
-                    </td>
-                    <td className="text-right py-0.5 font-bold" style={{ color: pnlColor(s.pnl) }}>
-                      {fmtK(Math.abs(s.pnl))} {s.pnl >= 0 ? "▲" : "▼"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {(analytics?.top_symbols ?? []).length > 0 && (
-          <div className="border p-2" style={{ borderColor: colors.border }}>
-            <div
-              className="text-[9px] font-bold tracking-widest mb-1"
-              style={{ color: colors.accent }}
-            >
-              TOP SYMBOLS
-            </div>
-            <table className="w-full text-[9px] font-mono">
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <th className="text-left py-0.5" style={{ color: colors.textSecondary }}>
-                    SYMBOL
-                  </th>
-                  <th className="text-right py-0.5" style={{ color: colors.textSecondary }}>
-                    TRADES
-                  </th>
-                  <th className="text-right py-0.5" style={{ color: colors.textSecondary }}>
-                    P&L
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {analytics?.top_symbols.slice(0, 10).map((s) => (
-                  <tr key={s.symbol} style={{ borderBottom: "1px solid #1a1a1a" }}>
-                    <td className="py-0.5 font-bold" style={{ color: colors.accent }}>
-                      {s.symbol}
-                    </td>
-                    <td className="text-right py-0.5" style={{ color: colors.textSecondary }}>
-                      {s.cnt}
-                    </td>
-                    <td className="text-right py-0.5 font-bold" style={{ color: pnlColor(s.pnl) }}>
-                      {fmtK(Math.abs(s.pnl))} {s.pnl >= 0 ? "▲" : "▼"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {(analytics?.by_subport ?? []).length > 0 && (
-          <div className="border p-2" style={{ borderColor: colors.border }}>
-            <div
-              className="text-[9px] font-bold tracking-widest mb-1"
-              style={{ color: colors.accent }}
-            >
-              BY SUB-PORT
-            </div>
-            <table className="w-full text-[9px] font-mono">
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <th className="text-left py-0.5" style={{ color: colors.textSecondary }}>
-                    SUB-PORT
-                  </th>
-                  <th className="text-right py-0.5" style={{ color: colors.textSecondary }}>
-                    W%
-                  </th>
-                  <th className="text-right py-0.5" style={{ color: colors.textSecondary }}>
-                    P&L
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {analytics?.by_subport.slice(0, 10).map((s) => (
-                  <tr key={s.subport} style={{ borderBottom: "1px solid #1a1a1a" }}>
-                    <td className="py-0.5" style={{ color: colors.text }}>
-                      {s.subport}
-                    </td>
-                    <td
-                      className="text-right py-0.5"
-                      style={{ color: s.win_rate >= 50 ? "#4ade80" : "#f87171" }}
-                    >
-                      {s.win_rate.toFixed(0)}%
-                    </td>
-                    <td className="text-right py-0.5 font-bold" style={{ color: pnlColor(s.pnl) }}>
-                      {fmtK(Math.abs(s.pnl))} {s.pnl >= 0 ? "▲" : "▼"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
       {loading && (
-        <div className="py-8 text-center">
+        <div className="py-4 text-center">
           <Loader2 className="h-4 w-4 animate-spin mx-auto" style={{ color: colors.accent }} />
         </div>
       )}
