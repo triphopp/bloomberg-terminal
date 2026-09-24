@@ -2,6 +2,8 @@
 
 - [MKT IV 25Δ skew and curvature](sessions/2026-09-23-iv-smile-wing-metrics.md) — ✅ done 2026-09-23; observed quote metrics under IV smile
 
+- [Sector Rotation Map (RRG)](plans/completed/sector-rotation-map.md) — ✅ done 2026-09-25; RRG plot in MKT REGIME → ROT
+- [PORT ANALYTICS redesign](plans/completed/port-analytics-redesign.md) — ✅ done 2026-09-25; dashboard + GROWTH view + PORTFOLIO ROTATION
 - [Upstream event log (no UI)](plans/completed/upstream-event-log.md) — ✅ done 2026-09-24; log แทน alert bar + EM HY OAS removed
 - [FRED timeout hardening](plans/completed/fred-timeout-hardening.md) — ✅ done 2026-09-24; retry + cap + redact api_key
 - [Upstream health alerts](plans/completed/upstream-health-alerts.md) — ✅ done 2026-09-24; แจ้งเตือนเมื่อแหล่งข้อมูล/เน็ตมีปัญหา

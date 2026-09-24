@@ -1352,3 +1352,33 @@ interface MarketBatchCoverage {
 `StockQuote` (`lib/market-data-client.ts`) retains all existing fields; backend adds `source: "yfinance"` and `fetchedAt` (ISO snapshot assembly time). The actual trade timestamp remains `regularMarketTime`, with `quoteDate`/`isCurrentSession` and independently checked pre/post timestamps. Never treat `fetchedAt` as a trade time. The full quote route remains Yahoo-specific to preserve its richer session contract; registry-selected lightweight snapshots retain their existing provider policy.
 
 `PinnedAssetPatch` now also accepts `price_at_pin: number`; ADD writes membership first, then patches the price from the same cached/in-flight quote used by the row. Failure to obtain a price leaves it unknown, not zero.
+
+## `/api/rotation/map` (2026-09-24)
+
+```ts
+{
+  rows: { id: string; name: string; symbol: string;
+          quadrant: "Leading" | "Improving" | "Weakening" | "Lagging";
+          points: { date: string; ratio: number; mom: number }[] }[];  // oldest first, len = tail
+  expected: number;       // universe size; rows < expected = a sector missing from this Yahoo batch
+  bench: string;          // "SPY" | "^SET.BK" | "TDEX.BK" (fallback)
+  market: "US" | "TH"; tail: number; as_of: string | null; method: string;
+  error?: string;         // "benchmark data unavailable"
+}
+```
+RS = close/bench weekly; RS-Ratio = 100·RS/SMA8(RS); RS-Mom = 100·RS-Ratio/SMA4(RS-Ratio). Type: `RotationMapData` in `views/rotation-map.tsx`.
+
+## `/api/v2/portfolio/rotation` (2026-09-24)
+
+```ts
+{
+  weeks: string[];                 // W-FRI ISO dates, last = today
+  series: { key: string; values: number[]; latest: number; peak: number; open_symbols: string[] }[];
+  total: number[];                 // == sum of series per week
+  markers: { date: string; kind: "cut"; label: string }[];  // label is Thai
+  excluded: number; flat_since: string | null;
+  base_currency: "USD" | "THB"; group: "theme" | "sector" | "account";
+  basis: "open_lot_entry_cost"; taxonomy?: Record<string, string[]>;   // theme only
+}
+```
+Type: `PortfolioRotationResponse` in `portfolio/ui/PortfolioRotationChart.tsx`.
