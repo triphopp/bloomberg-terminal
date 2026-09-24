@@ -12,6 +12,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
 import { currentViewAtom } from "../atoms";
+import { type EventSeverity, SEVERITY_COLOR } from "../views/tail/market-events";
 
 type DimensionStatus = "ALERT" | "WATCH" | "NORMAL" | "UNKNOWN";
 type RiskLevel = "HIGH" | "ELEVATED" | "CAUTION" | "NORMAL";
@@ -41,6 +42,14 @@ interface RibbonData {
   dcc_v1_signal?: string;
   dcc_v3_signal?: string;
   data_health?: { degraded_count?: number };
+  events?: {
+    id: string;
+    name: string;
+    severity: EventSeverity;
+    summary: string;
+    channel_label: string;
+  }[];
+  risk_basis?: { driver: "events" | "dimensions" | null; events_rule: string };
 }
 
 /** Short tags — the full dimension labels don't fit an 18px strip. */
@@ -83,6 +92,7 @@ export function TailRiskRibbon() {
   const dims = data?.dimensions ?? [];
   const degraded = data?.data_health?.degraded_count ?? 0;
   const failed = data != null && data.ok === false;
+  const events = data?.events ?? [];
 
   const vix = data?.vix_term?.vix;
   const inverted =
@@ -155,6 +165,28 @@ export function TailRiskRibbon() {
                 </span>
               );
             })}
+            {/* Named events: what is happening, not which gauge lit. Two at
+                most — the strip is 18px; the rest are one click away in TAIL. */}
+            {events.slice(0, 2).map((e) => (
+              <span
+                key={e.id}
+                className="truncate"
+                style={{
+                  color: SEVERITY_COLOR[e.severity],
+                  fontSize: 7,
+                  fontWeight: "bold",
+                  marginLeft: 6,
+                }}
+                title={`${e.name} · ${e.severity} · ${e.channel_label}
+${e.summary}`}
+              >
+                ● {e.name.toUpperCase()}
+                <span style={{ fontWeight: "normal", opacity: 0.7 }}> {e.severity}</span>
+              </span>
+            ))}
+            {events.length > 2 && (
+              <span style={{ color: "#555", fontSize: 7 }}>+{events.length - 2}</span>
+            )}
           </>
         )}
       </div>

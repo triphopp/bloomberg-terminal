@@ -30,6 +30,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { type Decomposition, EnergySpreadsPanel, RealRatesPanel } from "./tail/decomposition";
 import {
   EventStrip,
   KIND_COLOR,
@@ -38,6 +39,12 @@ import {
   MacroReadPanel,
   useMacroContext,
 } from "./tail/macro-context";
+import {
+  type EventLogEntry,
+  type MarketEvent,
+  MarketEventsPanel,
+  type RiskBasis,
+} from "./tail/market-events";
 import { SectorRotationPanel } from "./tail/sector-rotation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -122,6 +129,15 @@ interface TailRiskData {
   ts: string;
   data_date: string;
   risk_level: RiskLevel;
+  risk_level_dimensions?: RiskLevel;
+  risk_basis?: RiskBasis;
+  events?: MarketEvent[];
+  event_log?: EventLogEntry[];
+  event_asof?: string | null;
+  events_ok?: boolean;
+  events_stale_hours?: number | null;
+  event_partial?: boolean;
+  decomposition?: Decomposition;
   alert_dimensions: string[];
   watch_dimensions: string[];
   dimensions: Dimension[];
@@ -160,14 +176,6 @@ const RISK_COLOR: Record<RiskLevel, { fg: string; bg: string }> = {
   ELEVATED: { fg: "#FF8800", bg: "#1a0a00" },
   CAUTION: { fg: "#FFCC00", bg: "#1a1500" },
   NORMAL: { fg: "#22CC66", bg: "#001a08" },
-};
-
-const VERDICT_COLOR: Record<string, string> = {
-  USEFUL: "#88DD44",
-  SENSITIVE: "#FFAA00",
-  MIXED: "#AAAAAA",
-  WEAK: "#FF6644",
-  UNVALIDATED: "#555566",
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -226,11 +234,11 @@ function VixTermCurve({ term }: { term: TailRiskData["vix_term"] }) {
       }}
     >
       <div className="flex items-center justify-between">
-        <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>VIX TERM</span>
+        <span style={{ color: "#888", fontSize: 10, letterSpacing: "0.12em" }}>VIX TERM</span>
         <span
           style={{
             color: inverted ? "#FF4444" : "#44AA66",
-            fontSize: 7,
+            fontSize: 9,
             fontWeight: "bold",
           }}
         >
@@ -254,7 +262,7 @@ function VixTermCurve({ term }: { term: TailRiskData["vix_term"] }) {
                 y={c.y - 5}
                 textAnchor="middle"
                 fill="#CCCCCC"
-                style={{ fontSize: 7, fontFamily: "monospace" }}
+                style={{ fontSize: 9, fontFamily: "monospace" }}
               >
                 {c.p.value.toFixed(1)}
               </text>
@@ -263,7 +271,7 @@ function VixTermCurve({ term }: { term: TailRiskData["vix_term"] }) {
                 y={H - 1}
                 textAnchor="middle"
                 fill="#555"
-                style={{ fontSize: 6.5, fontFamily: "monospace" }}
+                style={{ fontSize: 9, fontFamily: "monospace" }}
               >
                 {c.p.label}
               </text>
@@ -271,12 +279,12 @@ function VixTermCurve({ term }: { term: TailRiskData["vix_term"] }) {
           ))}
         </svg>
       ) : (
-        <div style={{ color: "#555", fontSize: 8, padding: "12px 0", textAlign: "center" }}>
+        <div style={{ color: "#555", fontSize: 10, padding: "12px 0", textAlign: "center" }}>
           TERM STRUCTURE UNAVAILABLE
         </div>
       )}
 
-      <div className="flex justify-between" style={{ fontSize: 6.5 }}>
+      <div className="flex justify-between" style={{ fontSize: 9 }}>
         <span style={{ color: term.backwardation_front ? "#FF4444" : "#333" }}>
           FRONT {term.backwardation_front == null ? "N/A" : term.backwardation_front ? "INV" : "OK"}
         </span>
@@ -293,10 +301,10 @@ function VixTermCurve({ term }: { term: TailRiskData["vix_term"] }) {
 function VolBoard({ rows }: { rows: VolRow[] }) {
   return (
     <div className="flex flex-col gap-1 p-2 border" style={{ borderColor: "#1e1e1e" }}>
-      <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>VOL BOARD</span>
+      <span style={{ color: "#888", fontSize: 10, letterSpacing: "0.12em" }}>VOL BOARD</span>
       <div
         className="grid items-center"
-        style={{ gridTemplateColumns: "42px 1fr 40px 34px 30px", fontSize: 6.5, color: "#444" }}
+        style={{ gridTemplateColumns: "48px 1fr 50px 42px 34px", fontSize: 9, color: "#666" }}
       >
         <span>INDEX</span>
         <span className="text-right">LEVEL</span>
@@ -311,8 +319,9 @@ function VolBoard({ rows }: { rows: VolRow[] }) {
             key={r.name}
             className="grid items-center"
             style={{
-              gridTemplateColumns: "42px 1fr 40px 34px 30px",
-              fontSize: 8,
+              gridTemplateColumns: "48px 1fr 50px 42px 34px",
+              fontSize: 10.5,
+              lineHeight: 1.6,
               opacity: r.ok ? 1 : 0.45,
             }}
             title={r.ok ? `${r.description} · ${r.source} · ${r.last_date}` : (r.reason ?? "")}
@@ -341,7 +350,7 @@ function VolBoard({ rows }: { rows: VolRow[] }) {
                 </span>
               </>
             ) : (
-              <span className="col-span-4 text-right" style={{ color: "#B06000", fontSize: 7 }}>
+              <span className="col-span-4 text-right" style={{ color: "#B06000", fontSize: 9 }}>
                 NO DATA
               </span>
             )}
@@ -361,8 +370,25 @@ function SignalRow({ sig, eventTag }: { sig: Signal; eventTag?: string | null })
 
   return (
     <div
-      className="flex items-center gap-1.5 py-0.5"
-      title={`${sig.rule}\n${sig.why}${sig.reason ? `\n\nUnavailable: ${sig.reason}` : ""}`}
+      className="flex items-center gap-1.5"
+      style={{ lineHeight: 1.7 }}
+      title={[
+        sig.rule,
+        sig.why,
+        sig.detail,
+        sig.validated
+          ? `${sig.verdict}${
+              sig.stats
+                ? ` · IS precision ${((sig.stats.prec_is ?? 0) * 100).toFixed(0)}% · recall ${(
+                    (sig.stats.rec_is ?? 0) * 100
+                  ).toFixed(0)}%`
+                : ""
+            }`
+          : "UNVALIDATED — ไม่มี backtest",
+        sig.reason ? `Unavailable: ${sig.reason}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n")}
     >
       <span
         style={{
@@ -373,7 +399,7 @@ function SignalRow({ sig, eventTag }: { sig: Signal; eventTag?: string | null })
           flexShrink: 0,
         }}
       />
-      <span className="truncate" style={{ color: labelColor, fontSize: 8.5 }}>
+      <span className="truncate" style={{ color: labelColor, fontSize: 10.5 }}>
         {sig.label}
       </span>
 
@@ -382,7 +408,7 @@ function SignalRow({ sig, eventTag }: { sig: Signal; eventTag?: string | null })
           style={{
             color: "#000",
             backgroundColor: "#FF8800",
-            fontSize: 6,
+            fontSize: 8.5,
             padding: "0 2px",
             flexShrink: 0,
           }}
@@ -392,50 +418,17 @@ function SignalRow({ sig, eventTag }: { sig: Signal; eventTag?: string | null })
         </span>
       )}
 
-      {!sig.validated && (
-        <span
-          style={{
-            color: VERDICT_COLOR.UNVALIDATED,
-            fontSize: 6,
-            border: "1px solid #23232e",
-            padding: "0 2px",
-            flexShrink: 0,
-          }}
-        >
-          UNVAL
-        </span>
-      )}
-
       <span className="ml-auto flex items-center gap-1.5 shrink-0">
         {sig.state === "unknown" ? (
-          <span style={{ color: "#B06000", fontSize: 7 }}>NO DATA</span>
+          <span style={{ color: "#B06000", fontSize: 9 }}>NO DATA</span>
         ) : (
           <>
             {sig.value != null && (
-              <span style={{ color: "#AAA", fontSize: 8 }}>
+              <span style={{ color: "#AAA", fontSize: 10 }}>
                 {typeof sig.value === "number" ? sig.value.toFixed(2) : sig.value}
               </span>
             )}
-            {sig.detail && <span style={{ color: "#3d3d3d", fontSize: 6.5 }}>{sig.detail}</span>}
           </>
-        )}
-        {sig.validated && (
-          <span
-            style={{ color: VERDICT_COLOR[sig.verdict] ?? "#555", fontSize: 6 }}
-            title={
-              sig.stats
-                ? `IS precision ${((sig.stats.prec_is ?? 0) * 100).toFixed(0)}% · recall ${(
-                    (sig.stats.rec_is ?? 0) * 100
-                  ).toFixed(0)}%${
-                    sig.stats.prec_fwd != null
-                      ? ` · FWD ${(sig.stats.prec_fwd * 100).toFixed(0)}% (+${sig.stats.edge_fwd_pp}pp)`
-                      : ""
-                  }${sig.stats.note ? `\n${sig.stats.note}` : ""}`
-                : undefined
-            }
-          >
-            {sig.verdict}
-          </span>
         )}
       </span>
     </div>
@@ -458,32 +451,18 @@ function DimensionCard({
     <div
       className="flex flex-col p-2 border"
       style={{ borderColor: c.border, backgroundColor: c.bg }}
+      title={dim.question}
     >
       <div className="flex items-center gap-2">
-        <span style={{ color: c.fg, fontSize: 9, fontWeight: "bold", letterSpacing: "0.1em" }}>
+        <span style={{ color: c.fg, fontSize: 11, fontWeight: "bold", letterSpacing: "0.1em" }}>
           {dim.label}
         </span>
-        <span
-          className="px-1"
-          style={{
-            color: c.fg,
-            backgroundColor: "#00000055",
-            border: `1px solid ${c.border}`,
-            fontSize: 6.5,
-            fontWeight: "bold",
-          }}
-        >
-          {dim.status}
-        </span>
-        <span className="ml-auto" style={{ color: "#444", fontSize: 7 }}>
+        <span style={{ color: c.fg, fontSize: 9 }}>{dim.status}</span>
+        <span className="ml-auto" style={{ color: "#666", fontSize: 9 }}>
           {dim.on_count}/{dim.total}
-          {dim.degraded ? ` · ${dim.unknown_count} NO DATA` : ""}
+          {dim.degraded ? ` · ${dim.unknown_count} ?` : ""}
         </span>
       </div>
-
-      <span style={{ color: "#4a4a4a", fontSize: 7, marginTop: 1, marginBottom: 3 }}>
-        {dim.question}
-      </span>
 
       <div className="flex flex-col" style={{ borderTop: "1px solid #141414", paddingTop: 2 }}>
         {members.map((s) => (
@@ -507,19 +486,19 @@ function HistoryChart({ history, events }: { history: HistoryItem[]; events: Mac
         <XAxis
           dataKey="date"
           tickFormatter={(d: string) => d.slice(5)}
-          tick={{ fill: "#3a3a3a", fontSize: 6.5 }}
+          tick={{ fill: "#3a3a3a", fontSize: 9 }}
           interval={19}
           axisLine={false}
           tickLine={false}
         />
         <YAxis
-          tick={{ fill: "#3a3a3a", fontSize: 6.5 }}
+          tick={{ fill: "#3a3a3a", fontSize: 9 }}
           axisLine={false}
           tickLine={false}
           allowDecimals={false}
         />
         <Tooltip
-          contentStyle={{ backgroundColor: "#0d0d0d", border: "1px solid #2a2a2a", fontSize: 9 }}
+          contentStyle={{ backgroundColor: "#0d0d0d", border: "1px solid #2a2a2a", fontSize: 11 }}
           labelStyle={{ color: "#888" }}
           formatter={(v: number, name: string) => [
             v,
@@ -572,8 +551,8 @@ function HealthStrip({ health, signals }: { health: DataHealth; signals: Signal[
       title={bySignal.join("\n")}
     >
       <AlertTriangle size={9} style={{ color: "#B06000", marginTop: 1, flexShrink: 0 }} />
-      <span style={{ color: "#B06000", fontSize: 7.5, fontWeight: "bold" }}>DEGRADED</span>
-      <span style={{ color: "#7a5a2a", fontSize: 7.5 }}>
+      <span style={{ color: "#B06000", fontSize: 9.5, fontWeight: "bold" }}>DEGRADED</span>
+      <span style={{ color: "#7a5a2a", fontSize: 9.5 }}>
         {unknown.length} signal{unknown.length > 1 ? "s" : ""} could not be evaluated
         {downSources.length > 0 ? ` — offline: ${downSources.join(", ")}` : ""}. They are reported
         as NO DATA, not as safe.
@@ -594,8 +573,8 @@ function HealthStrip({ health, signals }: { health: DataHealth; signals: Signal[
 function SectionRule({ label, note }: { label: string; note?: string }) {
   return (
     <div className="flex items-baseline gap-2 pt-1">
-      <span style={{ color: "#7a7a7a", fontSize: 8, letterSpacing: "0.18em" }}>{label}</span>
-      {note && <span style={{ color: "#3a3a3a", fontSize: 6.5 }}>{note}</span>}
+      <span style={{ color: "#7a7a7a", fontSize: 10, letterSpacing: "0.18em" }}>{label}</span>
+      {note && <span style={{ color: "#5a5a5a", fontSize: 9 }}>{note}</span>}
       <div className="flex-1" style={{ height: 1, background: "#181818" }} />
     </div>
   );
@@ -614,7 +593,7 @@ export function TailRiskView() {
     return (
       <div
         className="flex-1 flex items-center justify-center font-mono"
-        style={{ color: "#444", fontSize: 11 }}
+        style={{ color: "#666", fontSize: 12 }}
       >
         LOADING VOLATILITY SURFACE...
       </div>
@@ -626,16 +605,16 @@ export function TailRiskView() {
   if (error || !data || data.ok === false || !Array.isArray(data.signals)) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-2 font-mono">
-        <span style={{ color: "#FF4444", fontSize: 11 }}>SIGNAL COMPUTATION FAILED</span>
+        <span style={{ color: "#FF4444", fontSize: 12 }}>SIGNAL COMPUTATION FAILED</span>
         {data?.detail && (
-          <span style={{ color: "#555", fontSize: 8, maxWidth: 460, textAlign: "center" }}>
+          <span style={{ color: "#555", fontSize: 10, maxWidth: 460, textAlign: "center" }}>
             {data.detail}
           </span>
         )}
         <button
           type="button"
           onClick={() => refetch()}
-          style={{ color: "#666", fontSize: 9, border: "1px solid #333", padding: "2px 8px" }}
+          style={{ color: "#666", fontSize: 11, border: "1px solid #333", padding: "2px 8px" }}
         >
           RETRY
         </button>
@@ -660,10 +639,10 @@ export function TailRiskView() {
         className="shrink-0 flex items-center gap-3 px-3 py-1.5 border-b"
         style={{ borderColor: "#1a1a1a", backgroundColor: risk.bg }}
       >
-        <span style={{ color: risk.fg, fontSize: 11, fontWeight: "bold", letterSpacing: "0.12em" }}>
+        <span style={{ color: risk.fg, fontSize: 12, fontWeight: "bold", letterSpacing: "0.12em" }}>
           {data.risk_level}
         </span>
-        <span style={{ color: "#333", fontSize: 9 }}>|</span>
+        <span style={{ color: "#555", fontSize: 11 }}>|</span>
 
         <div className="flex items-center gap-1">
           {data.dimensions.map((d) => {
@@ -676,7 +655,7 @@ export function TailRiskView() {
                   color: c.fg,
                   border: `1px solid ${c.border}`,
                   backgroundColor: c.bg,
-                  fontSize: 6.5,
+                  fontSize: 9,
                   letterSpacing: "0.05em",
                 }}
                 title={`${d.question} — ${d.status} (${d.on_count}/${d.total})`}
@@ -687,18 +666,18 @@ export function TailRiskView() {
           })}
         </div>
 
-        <span style={{ color: "#555", fontSize: 8 }}>
+        <span style={{ color: "#555", fontSize: 10 }}>
           {data.alert_dimensions.length} alert · {data.watch_dimensions.length} watch
         </span>
 
         <div className="ml-auto flex items-center gap-2">
-          <span style={{ color: "#3a3a3a", fontSize: 8 }}>DATA {data.data_date}</span>
+          <span style={{ color: "#5a5a5a", fontSize: 10 }}>DATA {data.data_date}</span>
           <button
             type="button"
             onClick={() => refetch()}
             disabled={isFetching}
             className="flex items-center gap-1 px-2 py-0.5 border"
-            style={{ borderColor: "#2a2a2a", color: "#666", fontSize: 8 }}
+            style={{ borderColor: "#2a2a2a", color: "#666", fontSize: 10 }}
           >
             <RefreshCw size={8} className={isFetching ? "animate-spin" : ""} />
             {isFetching ? "..." : "REFRESH"}
@@ -712,14 +691,25 @@ export function TailRiskView() {
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="flex gap-2 p-2 pb-6 min-h-full">
           {/* ── Left: raw volatility surface ──────────────────────────────── */}
-          <div className="w-52 shrink-0 flex flex-col gap-2">
+          <div className="w-60 shrink-0 flex flex-col gap-2">
             <VixTermCurve term={data.vix_term} />
             <VolBoard rows={data.vol_table} />
           </div>
 
           {/* ── Right: dimensions, then evidence, then context, each named ── */}
           <div className="flex-1 min-w-0 flex flex-col gap-2">
-            <SectionRule label="RISK DIMENSIONS" note="นับใน composite risk level" />
+            <SectionRule label="MARKET EVENTS" note="กดการ์ดเพื่อดูรายละเอียด" />
+            <MarketEventsPanel
+              events={data.events}
+              log={data.event_log}
+              asof={data.event_asof}
+              basis={data.risk_basis}
+              ok={data.events_ok}
+              staleHours={data.events_stale_hours}
+              partial={data.event_partial}
+            />
+
+            <SectionRule label="RISK DIMENSIONS" note="นับใน risk level" />
             <div
               className="grid gap-2 content-start items-start"
               style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}
@@ -734,13 +724,17 @@ export function TailRiskView() {
               ))}
             </div>
 
-            <SectionRule label="EVIDENCE" note="ประวัติสัญญาณ + มาตรวัดรอบข้าง" />
+            <SectionRule label="EVIDENCE" note="ตัวเลขเบื้องหลัง" />
             <div
               className="grid gap-2 content-start items-start"
               style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}
             >
+              <RealRatesPanel rows={data.decomposition?.real_rates} />
+              <EnergySpreadsPanel rows={data.decomposition?.energy} />
               <div className="flex flex-col gap-1 p-2 border" style={{ borderColor: "#1e1e1e" }}>
-                <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>CONTEXT</span>
+                <span style={{ color: "#888", fontSize: 10, letterSpacing: "0.12em" }}>
+                  CONTEXT
+                </span>
                 {[
                   {
                     label: "FEAR & GREED",
@@ -770,12 +764,12 @@ export function TailRiskView() {
                   },
                 ].map(({ label, val, warn }) => (
                   <div key={label} className="flex justify-between items-center gap-2">
-                    <span style={{ color: "#4a4a4a", fontSize: 7.5 }}>{label}</span>
+                    <span style={{ color: "#6a6a6a", fontSize: 9.5 }}>{label}</span>
                     <span
                       className="truncate"
                       style={{
                         color: val == null ? "#333" : warn ? "#FF8800" : "#888",
-                        fontSize: 8,
+                        fontSize: 10,
                         fontWeight: warn ? "bold" : "normal",
                       }}
                     >
@@ -785,23 +779,19 @@ export function TailRiskView() {
                 ))}
               </div>
 
-              <div className="flex flex-col gap-1 p-2 border" style={{ borderColor: "#1e1e1e" }}>
-                <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>
+              <div
+                className="flex flex-col gap-1 p-2 border"
+                style={{ borderColor: "#1e1e1e" }}
+                title="แท่ง = จำนวนสัญญาณ vol/flow ที่ติดในวันนั้น · สี = จำนวนมิติที่ ALERT · เส้นประ = FOMC / CPI / NFP · credit และ correlation ไม่มีย้อนหลัง"
+              >
+                <span style={{ color: "#888", fontSize: 10, letterSpacing: "0.12em" }}>
                   90D SIGNAL HISTORY
                 </span>
                 <HistoryChart history={data.history} events={chartEvents} />
-                <span style={{ color: "#333", fontSize: 6.5, lineHeight: 1.4 }}>
-                  Bars = vol/flow signals on that day, coloured by how many dimensions reached
-                  ALERT. Dashed lines = FOMC / CPI / NFP days. Credit and correlation are
-                  point-in-time only and are not back-filled here.
-                </span>
               </div>
             </div>
 
-            <SectionRule
-              label="MACRO & ROTATION CONTEXT"
-              note="ไม่นับใน composite — เปลี่ยนวิธีอ่านสัญญาณ ไม่ใช่ตัวจุดสัญญาณ"
-            />
+            <SectionRule label="MACRO & ROTATION" note="บริบท ไม่นับใน risk level" />
             <div
               className="grid gap-2 content-start items-start"
               style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}
@@ -811,18 +801,28 @@ export function TailRiskView() {
               <MacroPanel ctx={macro} />
             </div>
 
-            <SectionRule label="METHOD" />
-            <div className="p-2 border" style={{ borderColor: "#111", backgroundColor: "#050505" }}>
-              <p style={{ color: "#333", fontSize: 6.5, lineHeight: 1.5 }}>
-                Risk level counts <b>dimensions</b> in ALERT, not raw signals — three VIX signals
-                firing together is one observation about equity vol, restated three ways. Verdicts
-                (USEFUL / SENSITIVE / WEAK / MIXED) come from the 2026-06-07 backtest at L2 (−3%)
-                with a 5-day lookahead; signals marked UNVAL have no backtest behind them and are
-                shown as raw evidence only. Volatility indices are sourced from CBOE daily files,
-                not Yahoo, and any series lagging VIX is reported as NO DATA rather than carried
-                forward.
-              </p>
-            </div>
+            <details style={{ color: "#666", fontSize: 10 }}>
+              <summary className="cursor-pointer" style={{ letterSpacing: "0.18em" }}>
+                METHOD
+              </summary>
+              <div className="p-2">
+                <p style={{ color: "#555", fontSize: 10, lineHeight: 1.6 }}>
+                  Market events score each input's <b>move</b> — the z of its 1- and 5-session
+                  change against its own trailing year of changes — and name the combination
+                  (trigger + confirmations, with the readings that did not confirm shown as
+                  CHECKED). Severity: 2σ = WATCH, 3σ or 2σ with two confirmations = ACTIVE, 4σ or 3σ
+                  with two = SEVERE. Events set a floor under the risk level per channel: one SEVERE
+                  channel = CAUTION, SEVERE plus ACTIVE in another = ELEVATED, SEVERE in three =
+                  HIGH. No backtest. Risk level counts <b>dimensions</b> in ALERT, not raw signals —
+                  three VIX signals firing together is one observation about equity vol, restated
+                  three ways. Verdicts (USEFUL / SENSITIVE / WEAK / MIXED) come from the 2026-06-07
+                  backtest at L2 (−3%) with a 5-day lookahead; signals marked UNVAL have no backtest
+                  behind them and are shown as raw evidence only. Volatility indices are sourced
+                  from CBOE daily files, not Yahoo, and any series lagging VIX is reported as NO
+                  DATA rather than carried forward.
+                </p>
+              </div>
+            </details>
           </div>
         </div>
       </div>

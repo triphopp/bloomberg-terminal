@@ -112,20 +112,20 @@ export function SectorRotationPanel({ window = 20 }: { window?: number }) {
   if (isLoading || !data) {
     return (
       <div className={box} style={{ borderColor: "#1e1e1e" }}>
-        <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>
+        <span style={{ color: "#888", fontSize: 10, letterSpacing: "0.12em" }}>
           SECTOR ROTATION · US
         </span>
-        <span style={{ color: "#333", fontSize: 7.5 }}>loading…</span>
+        <span style={{ color: "#555", fontSize: 9.5 }}>loading…</span>
       </div>
     );
   }
   if (data.error || !data.rows?.length) {
     return (
       <div className={box} style={{ borderColor: "#1e1e1e" }}>
-        <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>
+        <span style={{ color: "#888", fontSize: 10, letterSpacing: "0.12em" }}>
           SECTOR ROTATION · US
         </span>
-        <span style={{ color: "#444", fontSize: 7.5 }}>{data.error ?? "no data"}</span>
+        <span style={{ color: "#666", fontSize: 9.5 }}>{data.error ?? "no data"}</span>
       </div>
     );
   }
@@ -140,16 +140,16 @@ export function SectorRotationPanel({ window = 20 }: { window?: number }) {
   return (
     <div className={box} style={{ borderColor: "#1e1e1e" }}>
       <div className="flex items-center justify-between">
-        <span style={{ color: "#888", fontSize: 8, letterSpacing: "0.12em" }}>
+        <span style={{ color: "#888", fontSize: 10, letterSpacing: "0.12em" }}>
           SECTOR ROTATION · US
         </span>
-        <span style={{ color: "#3a3a3a", fontSize: 6.5 }}>{data.window_days}D</span>
+        <span style={{ color: "#5a5a5a", fontSize: 9 }}>{data.window_days}D</span>
       </div>
       {/* The caveat gets its own line rather than sharing the header: the left
           column is ~208px, and a wrapped header buries the one thing a reader
           has to know before trusting the bars. */}
       <span
-        style={{ color: "#3a3a3a", fontSize: 6.5 }}
+        style={{ color: "#5a5a5a", fontSize: 9 }}
         title={`${data.basis_note}\nไม่มี backtest รองรับ และไม่ถูกนับใน composite risk level`}
       >
         TURNOVER SHARE · NOT IN COMPOSITE
@@ -158,16 +158,16 @@ export function SectorRotationPanel({ window = 20 }: { window?: number }) {
       {/* The tilt — the only line here that TAIL is actually asking about. */}
       <div className="px-1 py-0.5" style={{ border: `1px solid ${tone}33` }}>
         <div className="flex items-baseline justify-between gap-2">
-          <span style={{ color: "#4a4a4a", fontSize: 6.5 }}>TILT</span>
-          <span style={{ color: tone, fontSize: 8, fontWeight: "bold" }}>
+          <span style={{ color: "#6a6a6a", fontSize: 9 }}>TILT</span>
+          <span style={{ color: tone, fontSize: 10, fontWeight: "bold" }}>
             {t.state ?? "NO DATA"}
           </span>
         </div>
         <div className="flex items-baseline justify-between gap-2" title={t.rule}>
-          <span style={{ color: "#666", fontSize: 6.5 }}>
+          <span style={{ color: "#666", fontSize: 9 }}>
             {t.bp == null ? "—" : `${bp(t.bp)} เข้าฝั่ง${t.bp > 0 ? "ตั้งรับ" : "วัฏจักร"}`}
           </span>
-          <span style={{ color: "#555", fontSize: 6.5 }}>
+          <span style={{ color: "#555", fontSize: 9 }}>
             {t.z == null ? "" : `z ${t.z >= 0 ? "+" : "−"}${Math.abs(t.z).toFixed(1)} (1y)`}
           </span>
         </div>
@@ -195,13 +195,13 @@ export function SectorRotationPanel({ window = 20 }: { window?: number }) {
                   the terminal (and the ETF) is called. */}
               <span
                 className="shrink-0"
-                style={{ color: "#777", fontSize: 6.5, width: 26, fontFamily: "monospace" }}
+                style={{ color: "#777", fontSize: 9, width: 26, fontFamily: "monospace" }}
               >
                 {r.symbol}
               </span>
               <span
                 className="shrink-0 truncate"
-                style={{ color: "#4a4a4a", fontSize: 6.5, width: 74 }}
+                style={{ color: "#6a6a6a", fontSize: 9, width: 74 }}
               >
                 {r.name}
               </span>
@@ -225,7 +225,7 @@ export function SectorRotationPanel({ window = 20 }: { window?: number }) {
               </div>
               <span
                 className="shrink-0 text-right"
-                style={{ color: c, fontSize: 6.5, width: 36, fontFamily: "monospace" }}
+                style={{ color: c, fontSize: 9, width: 36, fontFamily: "monospace" }}
               >
                 {bp(r.delta_bp)}
               </span>
@@ -234,7 +234,7 @@ export function SectorRotationPanel({ window = 20 }: { window?: number }) {
         })}
       </div>
 
-      <div className="flex items-center justify-between" style={{ color: "#555", fontSize: 6.5 }}>
+      <div className="flex items-center justify-between" style={{ color: "#555", fontSize: 9 }}>
         <span title="RRG quadrants from weekly relative strength vs the benchmark">
           RRG L{data.quadrants.Leading ?? 0} · I{data.quadrants.Improving ?? 0} · W
           {data.quadrants.Weakening ?? 0} · G{data.quadrants.Lagging ?? 0}
@@ -248,7 +248,7 @@ export function SectorRotationPanel({ window = 20 }: { window?: number }) {
           day the terminal started writing it down. */}
       <div
         className="flex items-center justify-between"
-        style={{ color: "#444", fontSize: 6.5 }}
+        style={{ color: "#666", fontSize: 9 }}
         title={
           data.aum?.available
             ? "Net creation/redemption ประมาณจาก AUM ที่บันทึกเอง — flow จริง ไม่ใช่ turnover"
