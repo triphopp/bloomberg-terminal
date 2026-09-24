@@ -355,6 +355,8 @@ Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as 
 
 ## What Could Be Built Next
 
+- [x] **Sector Rotation Map (RRG)** — done 2026-09-25; ROT tab MAP view, `/api/rotation/map`, TH bench fallback TDEX.BK (`plans/completed/sector-rotation-map.md`)
+- [x] **PORT ANALYTICS redesign** — done 2026-09-25; dashboard grid, KPI strip, GROWTH view (signals-style TWR + monthly table), PORTFOLIO ROTATION card, ledger, accounts table (`plans/completed/port-analytics-redesign.md`)
 - [x] **Upstream event log (no UI)** — done 2026-09-24; alert bar ลบ → `logs/upstream.jsonl` + `backend/scripts/upstream_report.py` + ขั้นตอนใน CLAUDE.md; ลบ EM HY OAS (FRED ลบ series) (`plans/completed/upstream-event-log.md`)
 - [x] **FRED timeout hardening** — done 2026-09-24; cap 3 + GET retry 2 ครั้ง + fail-fast + redact api_key; alert เหลืองต้อง ≥2 final failures (`plans/completed/fred-timeout-hardening.md`)
 - [x] **Upstream health alerts** — done 2026-09-24; bar แจ้งเตือนใต้ header เมื่อแหล่งข้อมูล/เน็ตมีปัญหา (429, DNS, timeout) + ข้อมูลไหนเก่า; `/api/health/upstream` (`plans/completed/upstream-health-alerts.md`)

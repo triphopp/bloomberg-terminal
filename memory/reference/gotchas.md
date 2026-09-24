@@ -1686,3 +1686,35 @@ z ของ **ระดับ** จึงตอบว่า "sector นี้ใ
 **ที่มีอยู่แล้ว (pre/post ครบทุกจุด):** WATCHLIST rows (`views/pinned-assets.tsx` → `SessionRow`),
 MKT header (`views/market-view.tsx` → `ExtendedHoursPrice`), STOCK view, PORT → POSITIONS
 (`/api/v2/portfolio/premarket` → `OpenPositionsTab.tsx`)
+
+## Yahoo `^SET.BK` history = 1 bar → every TH rotation quadrant blank (2026-09-24)
+
+`yf.download("^SET.BK", period="9mo")` (and `.history()`) returned **1 row**; `^SET50.BK` the same.
+`_rrg_state` needs ≥70 aligned dailies, so TH table quadrants were all `None` with no error.
+Fix in `routers/rotation.py`: `_th_bench()` uses `^SET.BK` when it has ≥70 bars, else `TDEX.BK`
+(SET50 ETF, full history); response `bench` names the one used. Table, map and constituents all go
+through it. Any other code benchmarking against `^SET.BK` history (e.g. `backtest_v2` default) is
+exposed to the same outage.
+
+## Backfilled lots carry the RECORDING date as `date_exit` (Dime, fixed 2026-09-25)
+
+21 Dime lots entered in one sitting on 2026-06-06 (Saturday) all had `date_exit = 2026-06-06`, but their
+`price_exit`s only traded in Jan–Apr (INTC @39.14 → only 2026-01-06; stock was $99 in June). Every
+time-based view read them as held Jan→Jun at once: PORTFOLIO ROTATION showed Dime at $99k against $22.8k
+deposited, MONTHLY P&L lumped them into June, XIRR dated the cashflows wrong. Realized P&L / cash were fine.
+Detect: `price_exit` outside that day's Low–High, or `date_exit < date_entry`, or `created_at` date ==
+`date_exit` with an old entry. Fix applied (case A): exit = first day the exit price traded, note
+`est. exit … (price-match; was 2026-06-06)`, via PATCH with `adjustment_reason`; gold @4337.10 → 06-05;
+ABBV row carrying UNH's exact prices deleted. Backup: `backend/portfolio.db.bak-20260925-pre-dime-exit-fix`
++ `backend/portfolio.db.bak-20260925-dime-lots.json`. Still open: SMR exit @18.68 (never traded),
+VT `date_exit` 03-17 < `date_entry` 06-01, GC=F 03-03 ×2 identical rows (possible duplicate).
+
+## NAV snapshots froze a dividend restatement into one day's return (fixed 2026-09-25)
+
+`portfolio_nav_snapshots.dividends` stores the cumulative dividend total as the table read on capture day.
+On 2026-07-28 14:13 every dividend row was updated (USD dividends re-tagged) → stored cumulative
+40,094 → 146,989 THB between the 07-27 and 08-03 captures, which TWR read as +10.6% on 08-03 (Growth
++18.41% instead of +11.66%). `get_nav_history` now recomputes dividends by pay_date from the current
+table (`dividends_stored` keeps the old number). Same class as the Dime backfill: any restated
+money field read from a snapshot turns an edit into performance. realized_pnl / open_cost are still
+read from snapshots — a restatement there (e.g. the Dime exit-date fix) is not re-derived.
