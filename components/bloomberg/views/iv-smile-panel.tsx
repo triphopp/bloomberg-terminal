@@ -38,6 +38,9 @@ const tenorColor = (months: number[], index: number) =>
       : index % TENOR_COLORS.length
   ] ?? TENOR_COLORS[0];
 
+const WING_TITLE =
+  "Observed, filtered quotes. 25Δ uses Black-Scholes spot delta with zero carry and linear interpolation between OTM strikes; no extrapolation. SKEW = C25Δ − P25Δ. CURV = (C25Δ + P25Δ)/2 − ATM IV. Values are IV percentage points; — means the required quotes are unavailable.";
+
 export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelProps) {
   const {
     symbol,
@@ -78,6 +81,30 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
     () => smilePlotRows(curves, fitted, oi?.points),
     [curves, fitted, oi?.points]
   );
+  // Tight IV domain from the series actually drawn: "auto" pads to round ticks, which
+  // flattens a 2–3pp smile into a straight line in a short panel.
+  const ivDomain = useMemo(() => {
+    const keys = curves.flatMap((curve) => {
+      const fitOk = fitted && curve.fit?.status === "ok";
+      return [
+        ...(fitOk ? [`${curve.id}_fit`] : []),
+        ...(!fitted || model.showPoints || !fitOk ? [`${curve.id}_observed`] : []),
+      ];
+    });
+    let lo = Number.POSITIVE_INFINITY;
+    let hi = Number.NEGATIVE_INFINITY;
+    for (const row of plotRows)
+      for (const key of keys) {
+        const v = row[key];
+        if (v != null && Number.isFinite(v)) {
+          lo = Math.min(lo, v);
+          hi = Math.max(hi, v);
+        }
+      }
+    if (!Number.isFinite(lo)) return ["auto", "auto"] as const;
+    const pad = Math.max(0.5, (hi - lo) * 0.08);
+    return [Math.floor((lo - pad) * 2) / 2, Math.ceil((hi + pad) * 2) / 2] as const;
+  }, [curves, plotRows, fitted, model.showPoints]);
   const wingMetrics = model.slices.map((slice) => ({
     expiry: slice.expiry,
     months: slice.months,
@@ -112,7 +139,7 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
     spot <= (plotRows.at(-1)?.strike ?? Number.NEGATIVE_INFINITY);
   return (
     <div
-      className="h-full flex flex-col overflow-hidden font-mono"
+      className="h-full flex flex-col overflow-y-auto overflow-x-hidden font-mono"
       style={{ fontSize, background: "#000" }}
     >
       <div
@@ -225,11 +252,6 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
             {model.showPoints ? "● POINTS" : "POINTS OFF"}
           </button>
         )}
-      </div>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1 shrink-0" style={muted}>
-        <span title={compare ? "Color = expiry; solid = Call, dashed = Put" : undefined}>
-          {side === "both" ? "— CALL · ┄ PUT" : side.toUpperCase()}
-        </span>
         <select
           aria-label="IV smile strike range"
           value={rangePercent}
@@ -262,11 +284,6 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
         >
           OI {model.showOi ? "ON" : "OFF"}
         </button>
-        {fitted && (
-          <span title="Root mean square IV error in percentage points; fit minimizes robust total-variance residuals.">
-            RMSE (pp)
-          </span>
-        )}
       </div>
       {model.showOi && (
         <div
@@ -316,71 +333,9 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
           {oiVisible && distinctStrikes < 3 && <span>Insufficient IV · OI available</span>}
         </div>
       )}
-      {!loading && model.slices.length > 0 && (
-        <div className="shrink-0 max-h-24 overflow-y-auto px-2 pb-1" style={muted}>
-          {model.slices.map((slice, index) => {
-            const details = slice.samples
-              .map((s) => {
-                const fit = slice.fit?.series[s.name];
-                return fit?.status === "ok"
-                  ? `${s.name.toUpperCase()} ${fit.rmseIvPct?.toFixed(2)}`
-                  : `${s.name.toUpperCase()} N/A`;
-              })
-              .join(" · ");
-            const status = !slice.expiry
-              ? "No expiry within ±45D"
-              : slice.loading
-                ? "LOADING…"
-                : slice.error
-                  ? "CHAIN ERROR"
-                  : fitted && slice.timeYears <= 0
-                    ? "0DTE · OBSERVED ONLY"
-                    : fitted && slice.data && !(slice.data.spot > 0)
-                      ? "NO SPOT · OBSERVED ONLY"
-                      : fitted && slice.fitLoading
-                        ? "FITTING…"
-                        : slice.fitError
-                          ? "FIT ERROR"
-                          : fitted && slice.fit
-                            ? details
-                            : slice.samples
-                                .map(
-                                  (s) =>
-                                    `${s.points.length}${s.name === "otm" ? " OTM" : s.name[0].toUpperCase()}`
-                                )
-                                .join(" / ");
-            const explanation =
-              slice.error?.message ??
-              slice.fitError?.message ??
-              slice.samples
-                .map((s) => {
-                  const fit = slice.fit?.series[s.name];
-                  return `${s.name}: ${fit?.reason ?? `${fit?.usedPoints ?? s.points.length} points`}`;
-                })
-                .join("; ");
-            return (
-              <div
-                key={slice.expiry ?? slice.months.join("-")}
-                className="flex items-center gap-1 leading-4"
-                title={explanation}
-              >
-                {compare && (
-                  <span style={{ color: tenorColor(slice.months, index) }}>
-                    ● {slice.months.join("/")}M ≈
-                  </span>
-                )}
-                <span>
-                  {slice.expiry ?? "—"}
-                  {slice.days != null ? ` · ${slice.days}D` : ""}
-                </span>
-                <span className="ml-auto text-right">{status}</span>
-              </div>
-            );
-          })}
-        </div>
-      )}
       <div
-        className="flex-1 min-h-0 px-1"
+        className="flex-1 px-1"
+        style={{ minHeight: compact ? 150 : 280 }}
         role="img"
         aria-label={`IV smile for ${symbol ?? "selected symbol"}; ${compare ? "multiple expiries" : (expiry ?? "unavailable")}; ${fitted ? "Raw SVI fit" : "observed"}; K strike versus IV percent${oiVisible ? `; open interest contracts for ${model.oiExpiry} on right axis` : ""}`}
       >
@@ -426,8 +381,8 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
                 tick={{ fontSize, fill: colors.textSecondary }}
                 tickLine={false}
                 axisLine={false}
-                domain={["auto", "auto"]}
-                tickCount={4}
+                domain={[ivDomain[0], ivDomain[1]]}
+                tickCount={compact ? 4 : 6}
                 tickFormatter={(value: number) => `${Number(value.toFixed(1))}`}
                 label={{
                   value: "IV (%)",
@@ -566,26 +521,94 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
         )}
       </div>
       <div
-        className="shrink-0 max-h-24 overflow-y-auto border-t px-2 py-1 leading-4"
+        className="shrink-0 max-h-28 overflow-y-auto border-t px-2 py-1 leading-4"
         style={{ ...muted, borderColor: colors.border }}
-        title="Observed, filtered quotes. 25Δ uses Black-Scholes spot delta with zero carry and linear interpolation between OTM strikes; no extrapolation. SKEW = C25Δ − P25Δ. CURV = (C25Δ + P25Δ)/2 − ATM IV. Values are IV percentage points; — means the required quotes are unavailable."
       >
-        {wingMetrics.map((row, index) => (
-          <div key={row.expiry ?? row.months.join("-")} className="flex flex-wrap gap-x-2">
-            {compare && (
-              <span style={{ color: tenorColor(row.months, index) }}>{row.expiry ?? "—"}</span>
-            )}
-            <span>OBS</span>
-            <span>
-              SKEW 25Δ <strong style={{ color: colors.text }}>{formatPp(row.values.skew)}</strong>
-            </span>
-            <span>
-              CURV 25Δ{" "}
-              <strong style={{ color: colors.text }}>{formatPp(row.values.curvature)}</strong>
-            </span>
-          </div>
-        ))}
-        {!wingMetrics.length && <span>OBS · SKEW 25Δ — · CURV 25Δ —</span>}
+        <div
+          className="grid gap-x-2"
+          style={{ gridTemplateColumns: "minmax(0,1fr) auto auto auto" }}
+        >
+          <span title={compare ? "Color = expiry; solid = Call, dashed = Put" : undefined}>
+            {side === "both" ? "— CALL · ┄ PUT" : side.toUpperCase()}
+          </span>
+          <span
+            className="text-right"
+            title={
+              fitted
+                ? "Root mean square IV error in percentage points; fit minimizes robust total-variance residuals."
+                : "Observed points per side"
+            }
+          >
+            {fitted ? "RMSE (pp)" : "N"}
+          </span>
+          <span className="text-right" title={WING_TITLE}>
+            SKEW 25Δ
+          </span>
+          <span className="text-right" title={WING_TITLE}>
+            CURV 25Δ
+          </span>
+          {model.slices.map((slice, index) => {
+            const details = slice.samples
+              .map((s) => {
+                const fit = slice.fit?.series[s.name];
+                return fit?.status === "ok"
+                  ? `${s.name.toUpperCase()} ${fit.rmseIvPct?.toFixed(2)}`
+                  : `${s.name.toUpperCase()} N/A`;
+              })
+              .join(" · ");
+            const status = !slice.expiry
+              ? "No expiry within ±45D"
+              : slice.loading
+                ? "LOADING…"
+                : slice.error
+                  ? "CHAIN ERROR"
+                  : fitted && slice.timeYears <= 0
+                    ? "0DTE · OBSERVED ONLY"
+                    : fitted && slice.data && !(slice.data.spot > 0)
+                      ? "NO SPOT · OBSERVED ONLY"
+                      : fitted && slice.fitLoading
+                        ? "FITTING…"
+                        : slice.fitError
+                          ? "FIT ERROR"
+                          : fitted && slice.fit
+                            ? details
+                            : slice.samples
+                                .map(
+                                  (s) =>
+                                    `${s.points.length}${s.name === "otm" ? " OTM" : s.name[0].toUpperCase()}`
+                                )
+                                .join(" / ");
+            const explanation =
+              slice.error?.message ??
+              slice.fitError?.message ??
+              slice.samples
+                .map((s) => {
+                  const fit = slice.fit?.series[s.name];
+                  return `${s.name}: ${fit?.reason ?? `${fit?.usedPoints ?? s.points.length} points`}`;
+                })
+                .join("; ");
+            const wing = wingMetrics[index]?.values;
+            return (
+              <div key={slice.expiry ?? slice.months.join("-")} className="contents">
+                <span className="truncate" title={explanation}>
+                  {compare && <span style={{ color: tenorColor(slice.months, index) }}>● </span>}
+                  {slice.expiry ?? "—"}
+                  {slice.days != null ? ` · ${slice.days}D` : ""}
+                  {compare ? ` · ${slice.months.join("/")}M` : ""}
+                </span>
+                <span className="text-right" title={explanation}>
+                  {loading ? "LOADING…" : status}
+                </span>
+                <strong className="text-right" style={{ color: colors.text }}>
+                  {formatPp(wing?.skew ?? null)}
+                </strong>
+                <strong className="text-right" style={{ color: colors.text }}>
+                  {formatPp(wing?.curvature ?? null)}
+                </strong>
+              </div>
+            );
+          })}
+        </div>
       </div>
       {fitted && (
         <details
