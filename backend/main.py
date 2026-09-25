@@ -45,6 +45,7 @@ class _SuppressReloadShutdownRace(logging.Filter):
 
 logging.getLogger("uvicorn.error").addFilter(_SuppressReloadShutdownRace())
 
+import dev_status  # noqa: F401 — snapshots source mtimes; must load before routers
 from config import CORS_ORIGINS
 import upstream_health  # noqa: F401 — observes every outbound call; must load before routers
 import yahoo_gate  # noqa: F401 — caps concurrent Yahoo requests app-wide; must load before routers
@@ -69,6 +70,7 @@ from contextlib import asynccontextmanager
 from analytics.bc_calibration import ensure_calibrated
 from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, graphs, series, ir_stress, market_state, dcf
 from routers import health as upstream_health_router
+from routers import dev as dev_router
 import sync
 from sources.errors import UpstreamRateLimited, is_rate_limit
 from sync.gate import is_synced_write, should_gate
@@ -144,6 +146,7 @@ iv_scheduler.start_background_recorder()
 series_scheduler.start_background_recorder()
 
 # ── Mount routers ─────────────────────────────────────────────────────────────
+app.include_router(dev_router.router)
 app.include_router(market.router)
 app.include_router(stock.router)
 app.include_router(options.router)

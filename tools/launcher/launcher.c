@@ -15,8 +15,9 @@
  *
  * Command line flags:
  *   --no-browser        do not open the browser once the backend is healthy
- *   --reload            run uvicorn with --reload (development)
- *   --prod              run `next start` instead of `next dev`
+ *   --no-reload         run uvicorn WITHOUT --reload (auto-reload is the default)
+ *   --reload            force --reload even with --prod
+ *   --prod              run `next start` instead of `next dev` (implies --no-reload)
  *   --backend-port N    backend port (default 9317)
  *   --frontend-port N   frontend port (default 9318)
  *   --host NAME         host name to open (default bloomberg.localhost)
@@ -59,7 +60,12 @@ static int     g_frontendPort = 9318;
  * forces onto HTTPS and would therefore refuse to load over plain HTTP. */
 static wchar_t g_host[64]     = L"bloomberg.localhost";
 static BOOL    g_openBrowser  = TRUE;
-static BOOL    g_reload       = FALSE;
+/* Backend auto-reload is ON by default. Without it uvicorn keeps the modules
+ * it imported at start, so every Python edit is silently absent until someone
+ * remembers to restart — and a missing route looks exactly like a coding bug.
+ * TRUE/FALSE once parsed; -1 = not given, resolved against --prod. */
+static int     g_reloadArg    = -1;
+static BOOL    g_reload       = TRUE;
 static BOOL    g_prod         = FALSE;
 
 /* ── runtime state ──────────────────────────────────────────────────────── */
@@ -344,8 +350,23 @@ static void startBackend(void)
         return;
     }
     _snwprintf(cwd, MAX_PATH, L"%s\\backend", g_root);
-    _snwprintf(cmd, ARRAYSIZE(cmd), L"\"%s\" -m uvicorn main:app --port %d%s",
-               python, g_backendPort, g_reload ? L" --reload" : L"");
+    /* tests/ and scripts/ are not part of the running server; saving a test
+     * must not bounce the backend. dev_status.py skips the same folders.
+     * ABSOLUTE paths: uvicorn keeps a relative exclude dir as-is and tests it
+     * against absolute file paths, so `--reload-exclude tests` never matches. */
+    if (g_reload)
+        _snwprintf(cmd, ARRAYSIZE(cmd),
+                   L"\"%s\" -m uvicorn main:app --port %d --reload"
+                   L" --reload-exclude \"%s\\tests\" --reload-exclude \"%s\\scripts\"",
+                   python, g_backendPort, cwd, cwd);
+    else
+        _snwprintf(cmd, ARRAYSIZE(cmd), L"\"%s\" -m uvicorn main:app --port %d",
+                   python, g_backendPort);
+    /* Tell the backend how it is run: /api/dev/status reports "stale" only
+     * when it can be, and /api/dev/restart knows whether to touch a file
+     * (reload) or simply exit and let our watchdog start it again. */
+    SetEnvironmentVariableW(L"BT_SUPERVISOR", L"launcher");
+    SetEnvironmentVariableW(L"BT_BACKEND_RELOAD", g_reload ? L"1" : L"0");
     g_backendProc = spawn(cmd, cwd, L"backend.log");
     g_backendDiedAt = 0;
 }
@@ -509,7 +530,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     g_healthy = TRUE;
                     /* A stack that came back up earns its restart budget back. */
                     g_backendRestarts = g_frontendRestarts = 0;
-                    setTip(APP_NAME L" - running");
+                    setTip(g_reload ? APP_NAME L" - running (backend auto-reload)"
+                                    : APP_NAME L" - running");
                     notify(APP_NAME,
                            (g_backendExternal || g_frontendExternal)
                            ? L"Running. Attached to a server that was already up."
@@ -580,7 +602,8 @@ static void parseArgs(BOOL *installStartup, BOOL *uninstallStartup, BOOL *stop)
     if (!argv) return;
     for (int i = 1; i < argc; i++) {
         if      (!wcscmp(argv[i], L"--no-browser"))        g_openBrowser = FALSE;
-        else if (!wcscmp(argv[i], L"--reload"))            g_reload = TRUE;
+        else if (!wcscmp(argv[i], L"--reload"))            g_reloadArg = TRUE;
+        else if (!wcscmp(argv[i], L"--no-reload"))         g_reloadArg = FALSE;
         else if (!wcscmp(argv[i], L"--prod"))              g_prod = TRUE;
         else if (!wcscmp(argv[i], L"--install-startup"))   *installStartup = TRUE;
         else if (!wcscmp(argv[i], L"--uninstall-startup")) *uninstallStartup = TRUE;
@@ -600,6 +623,8 @@ static void parseArgs(BOOL *installStartup, BOOL *uninstallStartup, BOOL *stop)
         }
     }
     LocalFree(argv);
+    /* Production serves a build; nothing is being edited under it. */
+    g_reload = (g_reloadArg == -1) ? !g_prod : g_reloadArg;
 }
 
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE prev, LPWSTR cmdLine, int show)

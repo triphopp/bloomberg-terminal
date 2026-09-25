@@ -6,7 +6,8 @@ Windows start-up item without two `cmd` windows popping up on every login.
 
 ## What it does
 
-- Starts **backend** (`python -m uvicorn main:app --port 9317`, cwd `backend\`)
+- Starts **backend** (`python -m uvicorn main:app --port 9317 --reload`, cwd `backend\`)
+  — auto-reload is the default, so a saved `.py` is live a few seconds later
   and **frontend** (`node node_modules/next/dist/bin/next dev --port 9318`,
   cwd repo root) as **hidden** processes — no console windows.
 - Puts both in a **Job Object** with `KILL_ON_JOB_CLOSE`, so quitting (or
@@ -65,8 +66,9 @@ rewritten to `https://` before it ever reaches the dev server and fails. Use
 | Flag | Effect |
 |------|--------|
 | `--no-browser` | don't open the browser when the backend goes healthy |
-| `--reload` | run uvicorn with `--reload` (development) |
-| `--prod` | run `next start` instead of `next dev` (needs `npm run build` first) |
+| `--no-reload` | run uvicorn **without** `--reload` (default is ON) |
+| `--reload` | force `--reload` even with `--prod` |
+| `--prod` | run `next start` instead of `next dev` (needs `npm run build` first); implies `--no-reload` |
 | `--backend-port N` | backend port (default 9317) |
 | `--frontend-port N` | frontend port (default 9318) |
 | `--host NAME` | host name to open (default `bloomberg.localhost`) |
@@ -79,24 +81,32 @@ The start-up registration runs the exe with `--no-browser`, so logging into
 Windows brings the terminal up quietly in the tray rather than throwing a
 browser window at you.
 
-## After pulling backend changes
+## Backend edits: auto-reload + the stale-backend banner (2026-09-25)
 
-The launcher runs Python without `--reload` by default. Next.js development
-mode picks up frontend changes automatically, but the backend keeps its old
-imports and routes until restarted. After a `git pull` that changes Python
-files, use the tray menu's **Restart servers**, then refresh the browser.
-Opening the exe a second time only opens the browser; it does not restart
-the existing backend.
+The launcher runs uvicorn with `--reload` by default (the log-on task and the
+Run key included — they pass no reload flag). Saving any backend `.py`
+restarts the worker a few seconds later; `tests\` and `scripts\` are excluded,
+passed as **absolute** paths because uvicorn tests a relative exclude dir
+against absolute file paths and never matches it.
 
-A stale backend can show **Not Found** in newly added DCF/REGIME panels and
-**FIT ERROR** for Raw SVI (`POST /api/options/smile-fit` returns 405 when only
-the older `GET /api/options/{symbol}` route is loaded). Check the running
-`http://127.0.0.1:9317/openapi.json` for the new routes before changing model
-code or reinstalling dependencies. `/health` alone only confirms liveness.
+The launcher also sets `BT_SUPERVISOR=launcher` and `BT_BACKEND_RELOAD=1|0`
+for the backend. `backend/dev_status.py` snapshots the mtime of every backend
+source file at start; `GET /api/dev/status` compares the disk against it. In
+`next dev` a strip at the top of the terminal (`core/backend-status-banner.tsx`)
+turns that into one of three answers, so a missing route is never mistaken for
+a coding bug:
 
-For automatic Python reload during development, quit the existing tray
-launcher first, then start `BloombergTerminal.exe --reload`. Passing the flag
-to a second copy while the first is running does not reconfigure it.
+| Strip | Meaning | Do |
+|---|---|---|
+| (none) | backend = code on disk | — |
+| yellow **RUNNING OLD CODE** + file names | edited after start and not reloaded (`--no-reload`, or a server started by hand) | **RESTART BACKEND** (touches `main.py` in reload mode, exits for the watchdog otherwise) |
+| red **BACKEND DOWN** | not answering — after a Python edit this is almost always an import/syntax error | read `logs\backend.log`; fix the code and reload picks it up |
+
+A backend older than this feature has no `/api/dev/status`; the strip says so
+("started before this check existed") — use tray → **Restart servers** once.
+
+A rebuilt exe cannot be copied over the running one: `BloombergTerminal.exe --stop`,
+copy, start it again (servers are down for ~20s).
 
 ## Starting it automatically
 

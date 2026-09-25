@@ -26,7 +26,10 @@ Details + flags: `tools/launcher/README.md`. Auto-start at log-on:
 `scripts\win\install-startup-task.ps1` (scheduled task, 30s delay, restarts the
 launcher if it dies) or the tray's "Run at Windows start-up" (`HKCU\...\Run`) —
 never a copy of the exe in `shell:startup`. The launcher also restarts a dead
-backend/frontend by itself (3 tries, budget resets when healthy). Icons (exe + browser favicon)
+backend/frontend by itself (3 tries, budget resets when healthy). **Backend runs with
+`--reload` by default** (`--no-reload` to opt out); in `next dev` a strip at the top says
+RUNNING OLD CODE (+ RESTART button) or BACKEND DOWN (→ `logs\backend.log`) — read it
+before debugging a "missing" route or field (`GET /api/dev/status`). Icons (exe + browser favicon)
 มาจาก `npm run icons` (`scripts/gen-icons.mjs`) แหล่งเดียว. Per-server debug windows live in
 `scripts\win\`.
 
