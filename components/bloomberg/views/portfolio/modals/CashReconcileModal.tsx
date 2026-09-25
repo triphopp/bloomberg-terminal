@@ -31,6 +31,7 @@ export function CashReconcileModal({ summary, currency, colors, accountId, onClo
   const [actual, setActual] = useState<string>(current.toFixed(2));
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [note, setNote] = useState("");
+  const [category, setCategory] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<CashAdjustment[]>([]);
@@ -83,6 +84,7 @@ export function CashReconcileModal({ summary, currency, colors, accountId, onClo
           currency,
           date,
           note,
+          category,
         }),
       });
       if (!r.ok) {
@@ -91,6 +93,7 @@ export function CashReconcileModal({ summary, currency, colors, accountId, onClo
         return;
       }
       setNote("");
+      setCategory("");
       await refresh();
     } catch {
       setError("Network error");
@@ -225,6 +228,40 @@ export function CashReconcileModal({ summary, currency, colors, accountId, onClo
           </div>
         </div>
 
+        <div className="text-[9px] mb-1" style={{ color: colors.textSecondary }}>
+          REASON CATEGORY
+        </div>
+        <select
+          aria-label="Cash adjustment category"
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          className={`${inputCls} mb-2`}
+          style={{ borderColor: colors.border, color: colors.text, background: "#0a0a0a" }}
+        >
+          <option value="">Choose a category</option>
+          {[
+            "FX_REVALUATION",
+            "FEE",
+            "TAX",
+            "INTEREST",
+            "MISSING_DEPOSIT",
+            "MISSING_WITHDRAWAL",
+            "MISSING_TRADE",
+            "DATA_FIX",
+            "UNKNOWN",
+          ].map((value) => (
+            <option key={value} value={value}>
+              {value.replaceAll("_", " ")}
+            </option>
+          ))}
+        </select>
+        {category.startsWith("MISSING_") || ["FEE", "TAX", "INTEREST"].includes(category) ? (
+          <p className="text-[8px] mb-3" style={{ color: colors.textSecondary }}>
+            This category describes the gap. Record the actual transaction when broker evidence is
+            available.
+          </p>
+        ) : null}
+
         <div className="flex items-center gap-2 justify-end mb-3">
           {error && (
             <span className="text-[9px] mr-auto" style={{ color: "#f87171" }}>
@@ -242,7 +279,13 @@ export function CashReconcileModal({ summary, currency, colors, accountId, onClo
           <button
             type="button"
             onClick={save}
-            disabled={saving || !Number.isFinite(parsed) || Math.abs(delta) < 0.005}
+            disabled={
+              saving ||
+              !category ||
+              (category === "UNKNOWN" && !note.trim()) ||
+              !Number.isFinite(parsed) ||
+              Math.abs(delta) < 0.005
+            }
             className="text-[9px] px-3 py-1 border font-bold disabled:opacity-40 flex items-center gap-1"
             style={{ borderColor: colors.accent, color: colors.accent }}
           >
@@ -277,7 +320,7 @@ export function CashReconcileModal({ summary, currency, colors, accountId, onClo
                   {money(h.amount, h.currency === "USD" ? "USD" : "THB")}
                 </span>
                 <span className="truncate flex-1" style={{ color: colors.textSecondary }}>
-                  {h.note}
+                  {h.category || "UNKNOWN"} · {h.note}
                 </span>
                 <button
                   type="button"

@@ -13,6 +13,7 @@ import {
 import { type Colors, fmt, fmtK, fmtPct, groupKey, pnlColor, subPortLabel } from "../helpers";
 import { AvgCostModal } from "../modals/AvgCostModal";
 import { SellModal } from "../modals/SellModal";
+import { StockCardModal } from "../modals/StockCardModal";
 import { TradeEditModal } from "../modals/TradeEditModal";
 import { portfolioQueries } from "../queries";
 import type { Trade } from "../types";
@@ -449,6 +450,7 @@ export function OpenPositionsTab({
   });
   const [showColPicker, setShowColPicker] = useState(false);
   const [filter, setFilter] = useState("");
+  const [stockCard, setStockCard] = useState<{ accountId: string; symbol: string } | null>(null);
   const [sellCtx, setSellCtx] = useState<{
     target: Trade;
     avgEntry?: number;
@@ -1017,6 +1019,18 @@ export function OpenPositionsTab({
                             <span className="font-bold" style={{ color: groupColor }}>
                               {p.symbol}
                             </span>
+                            <button
+                              type="button"
+                              className="text-[7px] px-1 border"
+                              style={{ borderColor: colors.border, color: colors.textSecondary }}
+                              title="Stock card: compare AVCO and FIFO"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setStockCard({ accountId: p.account_id, symbol: p.symbol });
+                              }}
+                            >
+                              CARD
+                            </button>
                             {onOpenThesis && (
                               <button
                                 type="button"
@@ -1443,6 +1457,9 @@ export function OpenPositionsTab({
           onClose={() => setSellCtx(null)}
           onSold={load}
         />
+      )}
+      {stockCard && (
+        <StockCardModal {...stockCard} colors={colors} onClose={() => setStockCard(null)} />
       )}
       {editTarget && (
         <TradeEditModal

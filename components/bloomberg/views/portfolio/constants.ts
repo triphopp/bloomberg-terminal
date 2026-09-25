@@ -1,5 +1,5 @@
 import { atomWithStorage } from "jotai/utils";
-import type { CashEntry, Dividend } from "./types";
+import type { CashFlowForm, Dividend } from "./types";
 
 // ── Column definitions ──────────────────────────────────────────────────────
 
@@ -146,12 +146,11 @@ export const STRATEGIES = [
 
 // ── Blank form states ─────────────────────────────────────────────────────────
 
-export const BLANK_CASH: Omit<CashEntry, "id"> = {
-  account_id: "finansia",
+export const BLANK_CASH: CashFlowForm = {
+  account_id: "",
   date: "",
-  income: 0,
-  investment: 0,
-  exchange_rate: 1,
+  flow_type: "DEPOSIT",
+  amount: 0,
   note: "",
 };
 
