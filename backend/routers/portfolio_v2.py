@@ -1077,6 +1077,42 @@ def get_ledger_stock_card(account_id: str, symbol: str, method: str = "AVCO"):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.get("/ledger/evidence")
+def get_ledger_evidence(account_id: Optional[str] = None):
+    """Broker fills (screenshots) vs the reconstructed book. Read-only."""
+    from config import DB_PATH
+    from accounting_io import read_book
+    import evidence_match
+    with read_book(DB_PATH) as conn:
+        aid = None if account_id in (None, "", "all") else account_id
+        if aid and not conn.execute("SELECT 1 FROM portfolio_accounts WHERE id=?", (aid,)).fetchone():
+            raise HTTPException(status_code=404, detail="Unknown account")
+        return evidence_match.run(conn, aid)
+
+
+@router.get("/ledger/evidence/image")
+def get_ledger_evidence_image(fill_id: str):
+    """The cited screenshot of one fill, served only if its SHA-256 still matches."""
+    import hashlib
+    from pathlib import Path
+    from fastapi.responses import FileResponse
+    from config import DB_PATH
+    from accounting_io import read_book
+    with read_book(DB_PATH) as conn:
+        row = conn.execute("SELECT source_image, source_sha256 FROM broker_executions WHERE id=?",
+                           (fill_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Unknown fill")
+    name = row["source_image"]
+    if Path(name).name != name:
+        raise HTTPException(status_code=422, detail="Invalid image reference")
+    backups = Path(DB_PATH).resolve().parent / "backups"
+    for candidate in sorted(backups.glob(f"*/{name}")):
+        if hashlib.sha256(candidate.read_bytes()).hexdigest() == row["source_sha256"]:
+            return FileResponse(candidate)
+    raise HTTPException(status_code=404, detail="Evidence image missing or changed")
+
+
 class BrokerStatementPositionIn(BaseModel):
     symbol: str
     qty: Decimal

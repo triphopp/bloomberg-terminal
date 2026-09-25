@@ -357,6 +357,28 @@ def broker_statement_reconciliation(ctx):
                           "Broker cash or holdings differ from reconstructed history.", comparison)
 
 
+@check("E1", "warn", "position")
+def broker_evidence(ctx):
+    import evidence_match
+    report = evidence_match.run(ctx.conn)
+    if not report["fills"]:
+        ctx.count("E1", 0, "skipped", "No cited broker fills are recorded.")
+        return
+    for s in report["symbols"]:
+        ctx.count("E1")
+        if s["verified"]:
+            continue
+        c = s["counts"]
+        gaps = [f"{c[k]} {k.lower().replace('_', ' ')}" for k in ("MISSING_IN_DB", "NETTED", "NO_EVIDENCE") if c.get(k)]
+        yield Finding("E1", "warn" if gaps or not s["qty_match"] else "info", s["account_id"], s["symbol"],
+                      f"Broker fills {s['coverage_from']}..{s['coverage_to']} differ from the book"
+                      + (f": {', '.join(gaps)}" if gaps else "")
+                      + f"; cash gap before fees {s['cash_gap_ex_fees']:+,.2f} {s['currency']}.",
+                      {k: s[k] for k in ("coverage_from", "coverage_to", "fills", "counts", "broker_net_qty",
+                                         "book_net_qty", "qty_match", "cash_gap", "fee_gap",
+                                         "cash_gap_ex_fees", "missing_realized")})
+
+
 @check("R1", "error", "account")
 def adjustment_categories(ctx):
     for row in _rows(ctx.conn, "cash_adjustments"):
