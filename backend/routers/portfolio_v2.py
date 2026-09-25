@@ -3891,6 +3891,9 @@ def get_nav_history(account_id: Optional[str] = Query(None), days: int = Query(3
         day = str(row["snapshot_date"])[:10]
         row["invested_stored"] = row.get("invested_capital")
         row["invested_capital"] = round(sum(v for d, v in flow_events if d and d <= day), 2)
+        # Capital dated strictly before this snapshot (e.g. a weekend transfer
+        # valued on the Monday) — /nav-index treats that part as start-of-day.
+        row["invested_before_day"] = round(sum(v for d, v in flow_events if d and d < day), 2)
         row["dividends_stored"] = row.get("dividends")
         row["dividends"] = round(sum(v for d, v in dividend_events if d and d <= day), 2)
         adj = sum(
@@ -3927,11 +3930,13 @@ def get_nav_index(
     withdrawal drops it, neither of which is performance. So each day's return
     is taken net of that day's external flow,
 
-        r_t = (NAV_t - flow_t - NAV_{t-1}) / NAV_{t-1}
+        r_t = (NAV_t - flow_t - NAV_{t-1}) / (NAV_{t-1} + before_t)
 
     with `flow_t` = the change in invested capital plus any reconciliation
-    offset dated that day, and the curve is the geometric product of those —
-    time-weighted, which is what an index is. Gaps in the snapshot series (a day
+    offset dated that day, `before_t` = the part of that capital dated before
+    day t (no snapshot in between — it was invested at the open), and the
+    curve is the geometric product of those — time-weighted, which is what an
+    index is. Gaps in the snapshot series (a day
     nobody opened the terminal) are linked across rather than interpolated.
 
     The benchmark is translated into `base_currency` before it is rebased, so a
@@ -3972,7 +3977,15 @@ def get_nav_index(
         else:
             flow = cum_flow - (prev_flow_base or 0.0)
             capital_flow = cum_capital - (prev_capital_base or 0.0)
-            ret = (nav - flow - prev_nav) / prev_nav
+            # Capital that arrived on a day with no snapshot (weekend/holiday,
+            # or an in-kind transfer valued at the prior close) was in the book
+            # from the start of this day, so it earns this day's move and
+            # belongs in the base; same-day flows stay end-of-day.
+            before = convert_amount(
+                _to_float_or_zero(r.get("invested_before_day")), "THB", base, date=day,
+            ) - (prev_capital_base or 0.0)
+            before = before if abs(before) > 0.005 and prev_nav + before > 0 else 0.0
+            ret = (nav - flow - prev_nav) / (prev_nav + before)
             index *= 1 + ret
         # A day that moves more than half the book is almost always a flow the
         # ledger did not record, not a return. It is kept in the curve and
