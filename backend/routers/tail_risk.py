@@ -106,6 +106,11 @@ _BACKTEST: dict[str, dict] = {
     # DCC backtest 2026-06-07 (SPIKE+, L1 −1.5%, 5-day lookahead)
     "dcc_v1":  {"prec_is": 0.35, "rec_is": 0.41, "fires_is": 0.229, "fires_oos": 0.028,
                 "verdict": "MIXED", "prec_oos": 0.21, "prec_fwd": 0.15, "edge_fwd_pp": 8},
+    # COT crowding 2026-09-25 (backtest-idea/06_cot_crowding, release-dated, L2 −3% / 5-day).
+    # Union of 9 flags is lit ~72–94% of days → no information; stays counted=False.
+    "cot_crowding": {"prec_is": 0.065, "rec_is": 0.844, "fires_is": 0.723, "fires_oos": 0.944,
+                     "verdict": "WEAK", "prec_fwd": 0.007, "edge_fwd_pp": -3,
+                     "note": "fires most days; per-flag context only — no flag robust across IS/OOS/FWD"},
     "dcc_hmm": {"prec_is": 0.32, "rec_is": 0.30, "fires_is": 0.211, "fires_oos": 0.048,
                 "verdict": "MIXED", "prec_oos": 0.33, "prec_fwd": 0.24, "edge_fwd_pp": 18,
                 "note": "EXTREME level alone: 58% precision / +55pp edge on OOS"},
@@ -207,6 +212,15 @@ SIGNAL_META: dict[str, dict] = {
         "label": "Fear & Greed < 25", "dimension": "flow_positioning",
         "rule": "CNN Fear & Greed < 25",
         "why": "Sentiment at capitulation levels",
+    },
+    "cot_crowding": {
+        "label": "COT Crowding", "dimension": "flow_positioning",
+        "rule": "Any CFTC crowding flag: net/OI 3y z ≥ |2| or pct ≤ 5 / ≥ 95 (weekly, as of Tue)",
+        "why": "The positions themselves, not a price proxy — a crowded book is fuel for a forced unwind",
+        # Weekly, 3-day-lagged, and WEAK in the 2026-09-25 backtest (_BACKTEST
+        # above): shown in its dimension as evidence, NOT counted toward the
+        # dimension status or the composite.
+        "counted": False,
     },
     # ── correlation ───────────────────────────────────────────────────────────
     "dcc_v1": {
@@ -933,6 +947,25 @@ def _market_events(vf: VolFrame, crisis: dict, ctx: dict) -> dict:
 # ─── Assembly ─────────────────────────────────────────────────────────────────
 
 
+def _cot_state() -> dict:
+    """COT crowding from the stored CFTC snapshot. Stale (> 1 release behind) = unknown."""
+    try:
+        from routers import cot
+        snap = cot.build_snapshot()
+    except Exception as exc:
+        return _state(None, reason=f"COT unavailable: {type(exc).__name__}")
+    if not snap["contracts"]:
+        return _state(None, reason="COT backfill not run yet")
+    as_of = snap["as_of"]
+    behind = (datetime.fromisoformat(cot.expected_as_of()) - datetime.fromisoformat(as_of)).days
+    if behind > 7:
+        return _state(None, reason=f"COT stale: as of {as_of}, expected {cot.expected_as_of()}")
+    flags = snap["flags"]
+    detail = "; ".join(f"{f['label']} {f['contract']} z{f['z']:+.1f} p{f['pct']:.0f}" for f in flags)
+    return _state(bool(flags), value=len(flags),
+                  detail=f"as of {as_of} · " + (detail or "no crowding flag"))
+
+
 def _state(active: bool | None, *, value=None, detail=None, reason=None) -> dict:
     return {
         "state": "unknown" if active is None else ("on" if active else "off"),
@@ -1106,6 +1139,9 @@ def _compute() -> dict:
         states["dcc_v1"] = _state(None, reason="DCC asset download failed")
         states["dcc_hmm"] = _state(None, reason="DCC asset download failed")
 
+    # ── Positioning (CFTC COT, SQLite — no outbound call here) ───────────────
+    states["cot_crowding"] = _cot_state()
+
     # ── Build signal payload ──────────────────────────────────────────────────
     signals_out = []
     for sig_id, meta in SIGNAL_META.items():
@@ -1125,6 +1161,7 @@ def _compute() -> dict:
                 "reason": st["reason"],
                 "validated": bt is not None,
                 "verdict": bt["verdict"] if bt else "UNVALIDATED",
+                "counted": meta.get("counted", True),
                 "stats": (
                     {
                         "prec_is": bt.get("prec_is"),
@@ -1145,7 +1182,9 @@ def _compute() -> dict:
     # ── Dimension scoring ─────────────────────────────────────────────────────
     dimensions_out = []
     for dim_id, dim in sorted(DIMENSIONS.items(), key=lambda kv: kv[1]["order"]):
-        members = [s for s in signals_out if s["dimension"] == dim_id]
+        # `counted: False` signals are displayed in the card but are evidence
+        # only — they never move a dimension's status (see cot_crowding).
+        members = [s for s in signals_out if s["dimension"] == dim_id and s["counted"]]
         on = [s for s in members if s["state"] == "on"]
         unknown = [s for s in members if s["state"] == "unknown"]
         if len(on) >= 2:

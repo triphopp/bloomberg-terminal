@@ -12,6 +12,7 @@ import {
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { type Colors, fmt, fmtK, pnlColor } from "../helpers";
+import { CotCrowdingPanel } from "../ui/CotCrowdingPanel";
 
 type SubTab = "overview" | "options";
 
@@ -349,6 +350,9 @@ export function RiskTab({
           riskColor={riskColor}
           accountId={accountId}
         />
+      )}
+      {subTab === "overview" && (
+        <CotCrowdingPanel accountId={accountId} currency={currency} colors={colors} />
       )}
       {subTab === "options" && (
         <OptionsRiskSection
