@@ -5,6 +5,7 @@ import {
   CartesianGrid,
   ComposedChart,
   Line,
+  ReferenceArea,
   ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
@@ -15,7 +16,8 @@ import {
 import { type Colors, fmtK, pnlColor } from "../helpers";
 
 // Signals-style growth view of the book: cumulative time-weighted growth (a
-// deposit does not move it), deposit ▲ / withdrawal ▼ marks, a least-squares
+// deposit does not move it), deposit ▲ / withdrawal ▼ marks (cash EDIT offsets ◆
+// apart — a correction is not money moved), a least-squares
 // trend line, and a year × month table of compounded monthly returns.
 // Data: /api/v2/portfolio/nav-index — the same daily TWR as the INDEX mode.
 
@@ -23,9 +25,15 @@ export interface NavGrowthPoint {
   date: string;
   nav: number;
   flow: number;
+  /** Deposits/withdrawals only (cash_ledger). Absent from older backends. */
+  capital_flow?: number;
+  /** Cash EDIT / reconcile offsets — a correction, not money moved. */
+  adjustment_flow?: number;
   return_pct: number;
   port_index: number;
   suspect: boolean;
+  /** Rebuilt from closing prices after the fact (scripts/backfill_nav.py). */
+  estimated?: boolean;
 }
 
 export interface NavGrowthData {
@@ -33,12 +41,15 @@ export interface NavGrowthData {
   base_currency: string;
   suspect_days: number;
   port_twr_pct: number | null;
+  /** Last date of the rebuilt span; null when every point was captured live. */
+  estimated_until?: string | null;
   note?: string;
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const UP = "#4ade80";
 const DOWN = "#f87171";
+const ADJ = "#9ca3af";
 
 /** Year rows visible before the table scrolls — the rest stay one scroll away. */
 const TABLE_ROWS_VISIBLE = 5;
@@ -70,7 +81,8 @@ export function NavGrowthChart({
       date: p.date,
       growth: p.port_index - 100,
       nav: p.nav,
-      flow: p.flow,
+      flow: p.capital_flow ?? p.flow,
+      adj: p.adjustment_flow ?? 0,
       ret: p.return_pct,
       suspect: p.suspect,
     }));
@@ -95,13 +107,25 @@ export function NavGrowthChart({
       byMonth.set(k, (byMonth.get(k) ?? 1) * (1 + r.ret / 100));
     }
     const years = [...new Set([...byMonth.keys()].map((k) => k.slice(0, 4)))].sort();
+    // Net deposits − withdrawals per month, so the table shows WHEN money came
+    // in or went out next to how the money already there performed.
+    const flowByMonth = new Map<string, number>();
+    for (const r of rows.slice(1)) {
+      if (Math.abs(r.flow) <= 0.5) continue;
+      const k = r.date.slice(0, 7);
+      flowByMonth.set(k, (flowByMonth.get(k) ?? 0) + r.flow);
+    }
     const table = years.map((y) => {
       const cells = MONTHS.map((_, m) => {
         const g = byMonth.get(`${y}-${String(m + 1).padStart(2, "0")}`);
         return g == null ? null : (g - 1) * 100;
       });
       const yearG = cells.reduce<number>((a, c) => (c == null ? a : a * (1 + c / 100)), 1);
-      return { year: y, cells, total: (yearG - 1) * 100 };
+      const flows = MONTHS.map(
+        (_, m) => flowByMonth.get(`${y}-${String(m + 1).padStart(2, "0")}`) ?? null
+      );
+      const flowTotal = flows.reduce<number>((a, f) => a + (f ?? 0), 0);
+      return { year: y, cells, total: (yearG - 1) * 100, flows, flowTotal };
     });
     // Newest year on top: once the table outgrows its box, the year you are
     // living in is the one that stays visible.
@@ -114,6 +138,10 @@ export function NavGrowthChart({
     );
     const deposits = flows.filter((r) => r.flow > 0).reduce((a, r) => a + r.flow, 0);
     const withdrawals = flows.filter((r) => r.flow < 0).reduce((a, r) => a - r.flow, 0);
+    const adjustments = rows.filter(
+      (r) => r.i > 0 && Math.abs(r.adj) > Math.max(1, FLOW_MIN_SHARE * r.nav)
+    );
+    const adjTotal = adjustments.reduce((a, r) => a + r.adj, 0);
 
     const vals = rows.flatMap((r) => [r.growth, (r as typeof r & { trend: number }).trend]);
     const lo = Math.min(0, ...vals);
@@ -126,8 +154,12 @@ export function NavGrowthChart({
       flows,
       deposits,
       withdrawals,
+      adjustments,
+      adjTotal,
       domain: [lo - pad, hi + pad] as [number, number],
-      firstMonth: rows[0].date.slice(0, 7),
+      // Partial only when data starts after the month's first few days (a
+      // series starting on the 1st–3rd has missed at most a holiday).
+      firstMonth: Number(rows[0].date.slice(8, 10)) > 3 ? rows[0].date.slice(0, 7) : null,
       multiYear: rows[0].date.slice(0, 4) !== rows[rows.length - 1].date.slice(0, 4),
     };
   }, [pts]);
@@ -199,8 +231,25 @@ export function NavGrowthChart({
           DOWN,
           "External outflows in the chart span"
         )}
+        {model.adjustments.length > 0 &&
+          stat(
+            "Cash adj.",
+            `${model.adjTotal < 0 ? "−" : ""}${sym}${fmtK(Math.abs(model.adjTotal))}`,
+            colors.text,
+            ADJ,
+            "Cash EDIT / reconcile offsets (◆) — corrections to the cash figure, not deposits. Netted out of growth like a flow."
+          )}
         <span className="text-[8px] font-mono ml-auto" style={{ color: "#666" }}>
           {model.rows[0].date} → {model.rows.at(-1)?.date} · {model.rows.length}d
+          {data?.estimated_until && (
+            <span
+              title="Before this date NAV was not captured on the day; it was rebuilt from trade history and daily closes (validated against the live span: median error 0.4%)"
+              style={{ color: "#9ca3af" }}
+            >
+              {" "}
+              · est. ≤ {data.estimated_until}
+            </span>
+          )}
           {(data?.suspect_days ?? 0) > 0 && (
             <span
               style={{ color: DOWN }}
@@ -236,6 +285,23 @@ export function NavGrowthChart({
             tickFormatter={(v: number) => `${Number(v.toFixed(1))}%`}
             width={44}
           />
+          {/* Days nobody opened the terminal, rebuilt from closing prices. */}
+          {data?.estimated_until && model.rows[0].date <= data.estimated_until && (
+            <ReferenceArea
+              x1={model.rows[0].date}
+              x2={data.estimated_until}
+              fill="#9ca3af"
+              fillOpacity={0.06}
+              stroke="none"
+              ifOverflow="hidden"
+              label={{
+                value: "EST. — rebuilt from closes",
+                position: "insideTopLeft",
+                fill: "#6b7280",
+                fontSize: 8,
+              }}
+            />
+          )}
           <ReferenceLine y={0} stroke="#444" />
           <Tooltip
             content={({ active, payload }) => {
@@ -263,6 +329,13 @@ export function NavGrowthChart({
                     <div style={{ color: r.flow > 0 ? UP : DOWN }}>
                       {r.flow > 0 ? "Deposit" : "Withdrawal"} {sym}
                       {fmtK(Math.abs(r.flow))}
+                    </div>
+                  )}
+                  {Math.abs(r.adj) > 0.5 && (
+                    <div style={{ color: ADJ }}>
+                      Cash adj. {r.adj < 0 ? "−" : "+"}
+                      {sym}
+                      {fmtK(Math.abs(r.adj))}
                     </div>
                   )}
                   {r.suspect && <div style={{ color: DOWN }}>⚠ suspect day</div>}
@@ -303,6 +376,26 @@ export function NavGrowthChart({
               }}
             />
           ))}
+          {model.adjustments.map((f) => (
+            <ReferenceDot
+              key={`adj-${f.date}`}
+              x={f.date}
+              y={model.domain[1]}
+              r={0}
+              ifOverflow="visible"
+              shape={(p: { cx?: number; cy?: number }) => {
+                const cx = p.cx ?? 0;
+                const cy = (p.cy ?? 0) + 4;
+                return (
+                  <path
+                    d={`M${cx},${cy - 4} L${cx + 4},${cy} L${cx},${cy + 4} L${cx - 4},${cy} Z`}
+                    fill={ADJ}
+                    opacity={0.7}
+                  />
+                );
+              }}
+            />
+          ))}
         </ComposedChart>
       </ResponsiveContainer>
 
@@ -324,7 +417,7 @@ export function NavGrowthChart({
             </tr>
           </thead>
           <tbody>
-            {model.table.map((row) => (
+            {model.table.map((row) => [
               <tr key={row.year} style={{ borderBottom: "1px solid #151515" }}>
                 <td className="py-1 px-1.5" style={{ color: colors.text }}>
                   {row.year}
@@ -349,13 +442,42 @@ export function NavGrowthChart({
                 >
                   {pct(row.total)}
                 </td>
-              </tr>
-            ))}
+              </tr>,
+              row.flows.some((f) => f != null) && (
+                <tr
+                  key={`${row.year}-flow`}
+                  style={{ borderBottom: "1px solid #151515" }}
+                  title="Net deposits − withdrawals recorded in CASH, per month"
+                >
+                  <td className="py-0.5 px-1.5 text-[8px]" style={{ color: "#666" }}>
+                    flow
+                  </td>
+                  {row.flows.map((f, m) => (
+                    <td
+                      key={MONTHS[m]}
+                      className="text-right py-0.5 px-1.5 text-[8px]"
+                      style={{ color: f == null ? "#333" : f > 0 ? UP : DOWN }}
+                    >
+                      {f == null ? "" : `${f > 0 ? "▲" : "▼"}${fmtK(Math.abs(f))}`}
+                    </td>
+                  ))}
+                  <td
+                    className="text-right py-0.5 px-1.5 text-[8px]"
+                    style={{ color: row.flowTotal >= 0 ? UP : DOWN }}
+                  >
+                    {row.flowTotal >= 0 ? "▲" : "▼"}
+                    {sym}
+                    {fmtK(Math.abs(row.flowTotal))}
+                  </td>
+                </tr>
+              ),
+            ])}
           </tbody>
           <tfoot className="sticky bottom-0" style={{ background: "#050505" }}>
             <tr>
               <td colSpan={13} className="pt-1 px-1.5 text-[8px]" style={{ color: "#666" }}>
-                % per month, compounded from daily time-weighted returns · * partial month
+                % per month, compounded from daily time-weighted returns · * partial month · flow =
+                net deposits − withdrawals
               </td>
               <td
                 className="pt-1 px-1.5 text-right font-bold"

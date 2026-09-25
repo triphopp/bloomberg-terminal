@@ -49,6 +49,28 @@ export function SummaryBar({
       className="flex flex-wrap items-center gap-x-3 md:gap-x-4 gap-y-1 px-3 py-1.5 border-b text-[10px] font-mono"
       style={{ background: "#080808", borderColor: colors.border }}
     >
+      {/* Currency + FX in one chip, first on the bar because it frames every
+          number after it. The lit symbol is the display currency (every figure
+          on the page carries the same ฿/$), the dim one is where a click — or
+          Y — takes you. Replaces the separate "FX: …" label and the orange
+          "Y VIEW IN USD" button, which said the same thing in two places. */}
+      <button
+        type="button"
+        onClick={onToggleCurrency}
+        title={`Showing ${currency} · 1 USD = ฿${summary.thb_per_usd.toFixed(2)} — click or press Y for ${currency === "THB" ? "USD" : "THB"}`}
+        className="flex items-center gap-1 hover:opacity-80"
+      >
+        <span className="font-bold text-xs">
+          <span style={{ color: currency === "THB" ? colors.accent : colors.textSecondary }}>
+            ฿
+          </span>
+          <span style={{ color: colors.textSecondary, opacity: 0.5 }}>/</span>
+          <span style={{ color: currency === "USD" ? colors.accent : colors.textSecondary }}>
+            $
+          </span>
+        </span>
+        <span style={{ color: colors.text }}>{summary.thb_per_usd.toFixed(2)}</span>
+      </button>
       <div>
         <span style={{ color: colors.textSecondary }}>TOTAL P&L </span>
         <span className="font-bold text-xs" style={{ color: pnlColor(totalPnl) }}>
@@ -123,26 +145,6 @@ export function SummaryBar({
           onClose={() => setEditCash(false)}
         />
       )}
-      <div style={{ color: colors.textSecondary }}>
-        FX: <span style={{ color: colors.text }}>1 USD = ฿{summary.thb_per_usd.toFixed(2)}</span>
-      </div>
-      <button
-        type="button"
-        onClick={onToggleCurrency}
-        title="Switch display currency (Y)"
-        className="ml-auto flex items-center gap-1 text-[8px] px-2 py-0.5 border font-bold hover:opacity-80"
-        style={{ borderColor: "#ff990044", color: "#ff9900" }}
-      >
-        <kbd
-          className="px-1 leading-none rounded-sm"
-          style={{ background: "#ff990022", border: "1px solid #ff990055", fontSize: 7 }}
-        >
-          Y
-        </kbd>
-        <span style={{ letterSpacing: "0.05em" }}>
-          VIEW IN {currency === "THB" ? "USD" : "THB"}
-        </span>
-      </button>
     </div>
   );
 }
