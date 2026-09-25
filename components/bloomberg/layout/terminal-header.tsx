@@ -6,11 +6,13 @@ import type React from "react";
 import { bloombergColors } from "../lib/theme-config";
 import { ProviderSwitch } from "./provider-switch";
 import { SyncStatus } from "./sync-status";
+import { handleViewLinkClick } from "./view-navigation";
 
 export interface NavItem {
   id: string;
   label: string;
   shortcut: string;
+  href: string;
   onClick: () => void;
 }
 
@@ -109,10 +111,10 @@ export function TerminalHeader({
         {navItems.map((item) => {
           const isActive = currentView === item.id;
           return (
-            <button
+            <a
               key={item.id}
-              type="button"
-              onClick={item.onClick}
+              href={item.href}
+              onClick={(event) => handleViewLinkClick(event, item.href, item.onClick)}
               className="flex items-center gap-0 px-1.5 h-full whitespace-nowrap transition-colors"
               style={{
                 backgroundColor: isActive ? colors.accent : "transparent",
@@ -122,6 +124,7 @@ export function TerminalHeader({
                 borderRight: sep,
               }}
               title={`${item.label} (${item.shortcut})`}
+              aria-current={isActive ? "page" : undefined}
             >
               <span
                 className="font-bold mr-0.5"
@@ -130,7 +133,7 @@ export function TerminalHeader({
                 {item.shortcut}
               </span>
               <span>{item.label}</span>
-            </button>
+            </a>
           );
         })}
       </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import type { NavItem } from "./terminal-header";
+import { handleViewLinkClick } from "./view-navigation";
 
 type MobileNavProps = {
   currentView: string;
@@ -29,10 +30,10 @@ export function MobileNav({ currentView, navItems, colors }: MobileNavProps) {
       {navItems.map((item) => {
         const isActive = currentView === item.id;
         return (
-          <button
+          <a
             key={item.id}
-            type="button"
-            onClick={item.onClick}
+            href={item.href}
+            onClick={(event) => handleViewLinkClick(event, item.href, item.onClick)}
             className="flex-1 min-w-[48px] h-11 flex items-center justify-center text-[11px] tracking-wider"
             style={{
               color: isActive ? colors.accent : colors.textSecondary,
@@ -41,7 +42,7 @@ export function MobileNav({ currentView, navItems, colors }: MobileNavProps) {
             aria-current={isActive ? "page" : undefined}
           >
             {item.label}
-          </button>
+          </a>
         );
       })}
     </nav>
