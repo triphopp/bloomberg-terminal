@@ -70,7 +70,7 @@ from analytics.regime_v2 import ensure_v2_fresh
 from contextlib import asynccontextmanager
 
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, bonds, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, graphs, series, ir_stress, market_state, dcf, cot
+from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, bonds, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, graphs, series, ir_stress, market_state, dcf, market_heatmap, cot
 from routers import health as upstream_health_router
 from routers import dev as dev_router
 import sync
@@ -208,6 +208,7 @@ app.include_router(paper_trading.router, tags=["Paper Trading"])
 app.include_router(providers.router, tags=["Providers"])
 app.include_router(sync_router.router, tags=["Sync"])
 app.include_router(watchlist_signals.router)
+app.include_router(market_heatmap.router, tags=["Heatmap"])
 app.include_router(cot.router, tags=["COT"])
 
 
