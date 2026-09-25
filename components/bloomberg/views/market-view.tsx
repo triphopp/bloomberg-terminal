@@ -5,8 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   Activity,
-  ArrowDown,
-  ArrowUp,
   BarChart2,
   Check,
   ChevronDown,
@@ -23,7 +21,16 @@ import {
   Search,
   Settings,
 } from "lucide-react";
-import { type DragEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type DragEvent,
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Area,
   Bar,
@@ -67,9 +74,11 @@ import {
 import type { BarInterval, IndicatorRegistryEntry, OhlcvBar, TimePeriod } from "../chart";
 import { FearGreedPane } from "../chart/FearGreedPane";
 import { PEPane } from "../chart/PEPane";
+import { RegressionControls } from "../chart/RegressionControls";
 import { VolumeEventPanel } from "../chart/VolumeEventPanel";
 import { useAutoExtendRange } from "../chart/useAutoExtendRange";
 import { useSdBands } from "../chart/useSdBands";
+import { COT_KEY_BY_RATE_ID, CotChip } from "../core/cot-chip";
 import {
   ExtendedHoursPrice,
   MarketSessionBadge,
@@ -77,6 +86,7 @@ import {
   staleMoveStyle,
 } from "../core/market-session";
 import { UsMarketClock } from "../core/us-market-clock";
+import { type CotFlag, cotKeyFor, useCotSnapshot } from "../hooks/useCot";
 import { type FxPair, useFxTicks } from "../hooks/useFxTicks";
 import { useMarketDataQuery } from "../hooks/useMarketDataQuery";
 import { type RateRowData, useRatesCurve } from "../hooks/useRatesCurve";
@@ -87,10 +97,12 @@ import {
   useStockSearch,
 } from "../hooks/useStockData";
 import { calcHurst } from "../lib/market-utils";
+import { recordSearchHit } from "../lib/search-stats";
 import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import { displayName, displaySymbol } from "../lib/symbol-display";
 import { bloombergColors } from "../lib/theme-config";
 import type { MarketItem } from "../types";
+import { FrequentSearchList, MostActiveList } from "./discover-lists";
 import { PinnedAssets } from "./pinned-assets";
 import { SectorRegimeHeatmap } from "./sector-regime-heatmap";
 
@@ -283,6 +295,15 @@ function fmtVolShort(n: number): string {
 
 const LS_MOBILE_PANEL_KEY = "bloomberg_mkt_mobile_tab";
 
+/** Feeds that share the MKT left panel's top slot (see views/discover-lists.tsx). */
+type LeftFeed = "watch" | "freq" | "active";
+const LS_LEFT_FEED = "bloomberg_mkt_left_feed";
+const LEFT_FEEDS: { key: LeftFeed; label: string; desc: string }[] = [
+  { key: "watch", label: "WATCH", desc: "Your pinned watchlist" },
+  { key: "freq", label: "FREQ", desc: "Top 30 symbols you open most from a search box" },
+  { key: "active", label: "ACTIVE", desc: "Top 30 most-traded US stocks by share volume today" },
+];
+
 const PANEL_LABELS: Record<PanelId, string> = {
   watchlist: "WATCHLIST",
   chart: "CHART",
@@ -355,95 +376,100 @@ interface VolatilityItem extends MarketItem {
 }
 
 // ── Tick Data Row ─────────────────────────────────────────────────────────────
+//
+// The board is read squeezed to its minimum width, so it carries four columns
+// only — NAME · LAST · CHG · YTD — at 9px with no vertical padding. The
+// sparkline and absolute-change columns were dropped: at that width they
+// pushed YTD off the edge, and YTD answers "what is happening" better than a
+// 36px squiggle. CHG is %chg for indices/FX/vol and bp for yields.
+//
+// Rows are memoised and receive a stable `onSelect`, so a keystroke elsewhere
+// in MKT re-renders the section headers, not ~70 rows.
 
-function TickRow({
+const TICK_COLS = 4;
+const UP = "#00FF00";
+const DOWN = "#FF0000";
+const CELL = "pl-1 pr-0.5 py-0 text-right whitespace-nowrap tabular-nums";
+
+function fmtYtd(n: number) {
+  return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+}
+
+function rowStyle(isSelected: boolean) {
+  return {
+    background: isSelected ? "#0a1628" : undefined,
+    borderBottom: "1px solid #111",
+    boxShadow: isSelected ? "inset 2px 0 #00FFFF" : undefined,
+  };
+}
+
+function NameCell({
+  label,
+  color,
+  isSelected,
+  cot,
+}: {
+  label: string;
+  color: string;
+  isSelected: boolean;
+  /** CFTC crowding flags for this row's contract — renders a small ▼p/▲p mark */
+  cot?: CotFlag[];
+}) {
+  return (
+    <td
+      className="px-1 py-0 text-left font-bold truncate max-w-0 w-full"
+      style={{ color: isSelected ? "#00FFFF" : color }}
+      title={label}
+    >
+      {cot?.length ? (
+        <span className="flex items-center min-w-0">
+          <span className="truncate">{label}</span>
+          <CotChip flags={cot} />
+        </span>
+      ) : (
+        label
+      )}
+    </td>
+  );
+}
+
+const TickRow = memo(function TickRow({
   item,
   colors,
   isSelected,
-  onClick,
+  onSelect,
+  cot,
 }: {
   item: MarketItem;
   colors: typeof bloombergColors.dark;
   isSelected: boolean;
-  onClick: () => void;
+  onSelect: (item: MarketItem) => void;
+  cot?: CotFlag[];
 }) {
-  const isUp = item.pctChange >= 0;
-  const pctColor = isUp ? "#00FF00" : "#FF0000";
-  // Dim + date a move that belongs to a session which has already ended, so a
-  // closed market's last change cannot be misread as today's.
+  const pctColor = item.pctChange >= 0 ? UP : DOWN;
+  // Dim a move that belongs to a session which has already ended, so a closed
+  // market's last change cannot be misread as today's. The day tag ("Thu")
+  // lives in the tooltip only — inline it widened CHG by ~15px on every row.
   const stale = staleMoveStyle(item);
   return (
     <tr
-      className="cursor-pointer hover:bg-[#111] transition-colors"
-      style={{
-        background: isSelected ? "#0a1628" : undefined,
-        borderBottom: "1px solid #1a1a1a",
-        borderLeft: isSelected ? "2px solid #00FFFF" : "2px solid transparent",
-      }}
-      onClick={onClick}
+      className="cursor-pointer hover:bg-[#111]"
+      style={rowStyle(isSelected)}
+      onClick={() => onSelect(item)}
     >
-      <td className="px-1 py-0.5 text-left">
-        <span
-          className="font-bold text-[10px]"
-          style={{ color: isSelected ? "#00FFFF" : colors.accent }}
-        >
-          {item.id}
-        </span>
-      </td>
-      <td className="px-1 py-0.5 text-right font-bold text-[10px]" style={{ color: colors.text }}>
+      <NameCell label={item.id} color={colors.accent} isSelected={isSelected} cot={cot} />
+      <td className={CELL} style={{ color: colors.text }}>
         {fmtPrice(item.value)}
       </td>
-      <td
-        className="px-1 py-0.5 text-right text-[10px]"
-        style={{ color: pctColor, opacity: stale?.opacity }}
-        title={stale?.title}
-      >
-        {isUp ? "+" : ""}
-        {item.change.toFixed(2)}
+      <td className={CELL} style={{ color: pctColor }} title={stale?.title}>
+        <span style={{ opacity: stale?.opacity }}>{fmtPct(item.pctChange)}</span>
       </td>
-      <td
-        className="px-1 py-0.5 text-right font-bold text-[10px]"
-        style={{ color: pctColor }}
-        title={stale?.title}
-      >
-        <span style={{ opacity: stale?.opacity }}>
-          <span className="text-[8px]">{isUp ? "▲" : "▼"}</span> {fmtPct(item.pctChange)}
-        </span>
-        {stale?.tag && (
-          <span className="text-[7px] ml-0.5 font-normal" style={{ color: colors.textSecondary }}>
-            {stale.tag}
-          </span>
-        )}
-      </td>
-      <td className="px-1 py-0.5 text-right text-[9px]">
-        {item.ytd !== 0 && (
-          <span style={{ color: item.ytd >= 0 ? "#4ade80" : "#f87171" }}>{fmtPct(item.ytd)}</span>
-        )}
-      </td>
-      <td className="px-0.5 py-0.5 w-[40px]">
-        {item.sparkline1 && item.sparkline1.length > 2 && (
-          <MiniSparkline data={item.sparkline1} color={pctColor} />
-        )}
+      <td className={CELL} style={{ color: item.ytd >= 0 ? "#4ade80" : "#f87171" }}>
+        {item.ytd !== 0 ? fmtYtd(item.ytd) : ""}
       </td>
     </tr>
   );
-}
-
-function MiniSparkline({ data, color }: { data: number[]; color: string }) {
-  const w = 36;
-  const h = 12;
-  const min = Math.min(...data);
-  const max = Math.max(...data);
-  const range = max - min || 1;
-  const points = data
-    .map((v, i) => `${(i / (data.length - 1)) * w},${h - ((v - min) / range) * h}`)
-    .join(" ");
-  return (
-    <svg width={w} height={h} className="block">
-      <polyline fill="none" stroke={color} strokeWidth="1" points={points} />
-    </svg>
-  );
-}
+});
 
 /**
  * A quieter header for a run of rows inside a section.
@@ -461,11 +487,11 @@ function SubGroupHeader({
   return (
     <tr>
       <td
-        colSpan={6}
-        className="px-1 py-0 text-[8px] font-bold tracking-widest"
+        colSpan={TICK_COLS}
+        className="px-1 py-0 text-[7px] font-bold tracking-widest leading-[11px]"
         style={{ background: "#080808", color: `${colors.textSecondary}cc` }}
       >
-        <span className="pl-3">{label}</span>
+        <span className="pl-2">{label}</span>
       </td>
     </tr>
   );
@@ -479,98 +505,66 @@ function RegionHeader({
   collapsed,
   onToggle,
   note,
-  orderIndex,
   isDropTarget,
   onDragStart,
   onDragOver,
   onDrop,
   onDragEnd,
-  onMove,
 }: {
   id: TickSection;
   label: string;
   count: number;
   colors: typeof bloombergColors.dark;
   collapsed: boolean;
-  onToggle: () => void;
+  onToggle: (id: TickSection) => void;
   /** small right-aligned annotation, e.g. a stale-data warning */
   note?: string;
-  orderIndex: number;
   isDropTarget: boolean;
-  onDragStart: (id: TickSection, event: DragEvent<HTMLButtonElement>) => void;
+  onDragStart: (id: TickSection, event: DragEvent<HTMLTableRowElement>) => void;
   onDragOver: (id: TickSection, event: DragEvent<HTMLTableRowElement>) => void;
   onDrop: (id: TickSection, event: DragEvent<HTMLTableRowElement>) => void;
   onDragEnd: () => void;
-  onMove: (id: TickSection, direction: -1 | 1) => void;
 }) {
+  // The whole header row is the drag handle — a separate grip and ↑/↓ buttons
+  // cost ~50px of a row that is read at minimum width.
   return (
-    <tr onDragOver={(event) => onDragOver(id, event)} onDrop={(event) => onDrop(id, event)}>
+    <tr
+      draggable
+      title={`${label} — click to fold, drag to reorder`}
+      onDragStart={(event) => onDragStart(id, event)}
+      onDragOver={(event) => onDragOver(id, event)}
+      onDrop={(event) => onDrop(id, event)}
+      onDragEnd={onDragEnd}
+    >
       <td
-        colSpan={6}
-        className="px-1 py-0.5 text-[9px] font-bold tracking-widest cursor-pointer hover:bg-[#141414]"
+        colSpan={TICK_COLS}
+        className="px-1 py-0 text-[8px] font-bold tracking-widest cursor-pointer hover:bg-[#141414] leading-[14px]"
         style={{
           background: "#0a0a0a",
           color: colors.accent,
           borderBottom: `1px solid ${colors.border}`,
           boxShadow: isDropTarget ? `inset 0 2px ${colors.accent}` : undefined,
         }}
-        onClick={onToggle}
+        onClick={() => onToggle(id)}
       >
-        <span className="inline-flex items-center gap-1 w-full">
-          <button
-            type="button"
-            draggable
-            aria-label={`Drag ${label} to reorder`}
-            title={`Drag ${label} to reorder`}
-            className="inline-flex h-5 w-5 items-center justify-center cursor-grab active:cursor-grabbing"
-            onClick={(event) => event.stopPropagation()}
-            onDragStart={(event) => onDragStart(id, event)}
-            onDragEnd={onDragEnd}
-          >
-            <GripVertical className="h-3 w-3 shrink-0" />
-          </button>
+        <span className="flex items-center gap-0.5 w-full min-w-0">
           {collapsed ? (
             <ChevronRight className="h-2.5 w-2.5 shrink-0" />
           ) : (
             <ChevronDown className="h-2.5 w-2.5 shrink-0" />
           )}
-          {label}{" "}
-          <span className="font-mono" style={{ color: colors.textSecondary }}>
-            ({count})
+          <span className="truncate">{label}</span>
+          <span className="font-mono shrink-0" style={{ color: colors.textSecondary }}>
+            {count}
           </span>
-          <span className="ml-auto inline-flex items-center gap-1">
-            {note && (
-              <span className="font-mono text-[8px] normal-case" style={{ color: "#facc15" }}>
-                {note}
-              </span>
-            )}
-            <button
-              type="button"
-              aria-label={`Move ${label} up`}
-              title={`Move ${label} up`}
-              disabled={orderIndex === 0}
-              className="inline-flex h-5 w-5 items-center justify-center disabled:opacity-25 hover:opacity-70"
-              onClick={(event) => {
-                event.stopPropagation();
-                onMove(id, -1);
-              }}
+          {note && (
+            <span
+              className="ml-auto font-mono text-[7px] normal-case truncate"
+              style={{ color: "#facc15" }}
             >
-              <ArrowUp className="h-2.5 w-2.5" />
-            </button>
-            <button
-              type="button"
-              aria-label={`Move ${label} down`}
-              title={`Move ${label} down`}
-              disabled={orderIndex === TICK_SECTIONS.length - 1}
-              className="inline-flex h-5 w-5 items-center justify-center disabled:opacity-25 hover:opacity-70"
-              onClick={(event) => {
-                event.stopPropagation();
-                onMove(id, 1);
-              }}
-            >
-              <ArrowDown className="h-2.5 w-2.5" />
-            </button>
-          </span>
+              {note}
+            </span>
+          )}
         </span>
       </td>
     </tr>
@@ -589,155 +583,102 @@ function TickNotice({
   error?: string | null;
   empty?: boolean;
 }) {
-  if (error) {
-    return (
-      <tr>
-        <td colSpan={6} className="px-2 py-1 text-[9px] font-mono" style={{ color: "#facc15" }}>
-          {error}
-        </td>
-      </tr>
-    );
-  }
-  if (loading) {
-    return (
-      <tr>
-        <td
-          colSpan={6}
-          className="px-2 py-1 text-[9px] font-mono"
-          style={{ color: colors.textSecondary }}
-        >
-          loading…
-        </td>
-      </tr>
-    );
-  }
-  if (empty) {
-    return (
-      <tr>
-        <td
-          colSpan={6}
-          className="px-2 py-1 text-[9px] font-mono"
-          style={{ color: colors.textSecondary }}
-        >
-          no data
-        </td>
-      </tr>
-    );
-  }
-  return null;
+  const text = error ?? (loading ? "loading…" : empty ? "no data" : null);
+  if (!text) return null;
+  return (
+    <tr>
+      <td
+        colSpan={TICK_COLS}
+        className="px-1 py-0 text-[8px] font-mono"
+        style={{ color: error ? "#facc15" : colors.textSecondary }}
+      >
+        {text}
+      </td>
+    </tr>
+  );
 }
 
 /** Yield row: value is a percentage and moves are basis points, not %chg.
  *  Colour follows MACRO's convention — yield up = red (bond price down). */
-function RateRow({
+const RateRow = memo(function RateRow({
   row,
   colors,
   isSelected,
-  onClick,
+  onSelect,
+  cot,
 }: {
   row: RateRowData;
   colors: typeof bloombergColors.dark;
   isSelected: boolean;
-  onClick: () => void;
+  onSelect: (row: RateRowData) => void;
+  cot?: CotFlag[];
 }) {
   const chg = row.changeBp;
-  const chgColor =
-    chg == null || chg === 0 ? colors.textSecondary : chg > 0 ? "#FF0000" : "#00FF00";
-  const ytdColor = row.ytdBp >= 0 ? "#f87171" : "#4ade80";
+  const chgColor = chg == null || chg === 0 ? colors.textSecondary : chg > 0 ? DOWN : UP;
   const chartable = row.chartSymbol != null;
   return (
     <tr
-      className="cursor-pointer hover:bg-[#111] transition-colors"
-      style={{
-        background: isSelected ? "#0a1628" : undefined,
-        borderBottom: "1px solid #1a1a1a",
-        borderLeft: isSelected ? "2px solid #00FFFF" : "2px solid transparent",
-      }}
-      onClick={onClick}
+      className="cursor-pointer hover:bg-[#111]"
+      style={rowStyle(isSelected)}
+      onClick={() => onSelect(row)}
       title={
         chartable
           ? `${row.id} — as of ${row.asOf}`
           : `${row.id} — as of ${row.asOf} · no intraday series for this tenor`
       }
     >
-      <td className="px-1 py-0.5 text-left">
-        <span
-          className="font-bold text-[10px]"
-          style={{
-            color: isSelected ? "#00FFFF" : chartable ? colors.accent : colors.textSecondary,
-          }}
-        >
-          {row.tenor}
-        </span>
+      <NameCell
+        label={row.tenor}
+        color={chartable ? colors.accent : colors.textSecondary}
+        isSelected={isSelected}
+        cot={cot}
+      />
+      <td className={CELL} style={{ color: colors.text }}>
+        {row.value.toFixed(3)}
       </td>
-      <td className="px-1 py-0.5 text-right font-bold text-[10px]" style={{ color: colors.text }}>
-        {row.value.toFixed(3)}%
-      </td>
-      <td className="px-1 py-0.5 text-right text-[10px]" style={{ color: chgColor }}>
+      <td className={CELL} style={{ color: chgColor }}>
         {fmtBp(chg)}
       </td>
-      {/* %CHG is meaningless on a yield (0.05% → 0.10% is not "+100%") */}
-      <td className="px-1 py-0.5 text-right text-[9px]" style={{ color: colors.textSecondary }}>
-        —
-      </td>
-      <td className="px-1 py-0.5 text-right text-[9px]">
-        <span style={{ color: ytdColor }}>{fmtBp(row.ytdBp)}</span>
-      </td>
-      <td className="px-0.5 py-0.5 w-[40px]">
-        {row.sparkline1?.length > 2 && <MiniSparkline data={row.sparkline1} color={chgColor} />}
+      <td className={CELL} style={{ color: row.ytdBp >= 0 ? "#f87171" : "#4ade80" }}>
+        {`${row.ytdBp >= 0 ? "+" : ""}${row.ytdBp.toFixed(0)}bp`}
       </td>
     </tr>
   );
-}
+});
 
 /** FX row: rates need 5 decimals (3 for JPY crosses), not the 2 fmtPrice gives. */
-function FxRow({
+const FxRow = memo(function FxRow({
   pair,
   colors,
   isSelected,
-  onClick,
+  onSelect,
+  cot,
 }: {
   pair: FxPair;
   colors: typeof bloombergColors.dark;
   isSelected: boolean;
-  onClick: () => void;
+  onSelect: (pair: FxPair) => void;
+  cot?: CotFlag[];
 }) {
   const pct = pair.pctChange ?? 0;
-  const isUp = pct >= 0;
-  const pctColor = isUp ? "#00FF00" : "#FF0000";
   return (
     <tr
-      className="cursor-pointer hover:bg-[#111] transition-colors"
-      style={{
-        background: isSelected ? "#0a1628" : undefined,
-        borderBottom: "1px solid #1a1a1a",
-        borderLeft: isSelected ? "2px solid #00FFFF" : "2px solid transparent",
-      }}
-      onClick={onClick}
+      className="cursor-pointer hover:bg-[#111]"
+      style={rowStyle(isSelected)}
+      onClick={() => onSelect(pair)}
     >
-      <td className="px-1 py-0.5 text-left">
-        <span
-          className="font-bold text-[10px]"
-          style={{ color: isSelected ? "#00FFFF" : colors.accent }}
-        >
-          {pair.id}
-        </span>
-      </td>
-      <td className="px-1 py-0.5 text-right font-bold text-[10px]" style={{ color: colors.text }}>
+      <NameCell label={pair.id} color={colors.accent} isSelected={isSelected} cot={cot} />
+      <td className={CELL} style={{ color: colors.text }}>
         {fmtFxPrice(pair.id, pair.price)}
       </td>
-      <td className="px-1 py-0.5 text-right text-[10px]" style={{ color: pctColor }}>
-        {pair.change == null ? "—" : `${isUp ? "+" : ""}${fmtFxPrice(pair.id, pair.change)}`}
-      </td>
-      <td className="px-1 py-0.5 text-right font-bold text-[10px]" style={{ color: pctColor }}>
-        <span className="text-[8px]">{isUp ? "▲" : "▼"}</span> {fmtPct(pct)}
+      <td className={CELL} style={{ color: pct >= 0 ? UP : DOWN }}>
+        {fmtPct(pct)}
       </td>
       {/* FX overview carries no YTD — left blank rather than faked */}
-      <td className="px-1 py-0.5 text-right text-[9px]" />
-      <td className="px-0.5 py-0.5 w-[40px]" />
+      <td className={CELL} />
     </tr>
   );
-}
+});
 
 // ── Quote fields ──────────────────────────────────────────────────────────────
 
@@ -1094,6 +1035,18 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   const jpRates = ratesData?.jp ?? [];
   const fxPairs = fxData?.pairs ?? [];
 
+  // CFTC crowding flags (weekly). Only flagged contracts get a mark on their row.
+  const { data: cotData } = useCotSnapshot();
+  const cotFlags = useMemo(() => {
+    const m = new Map<string, CotFlag[]>();
+    for (const f of cotData?.flags ?? []) m.set(f.contract, [...(m.get(f.contract) ?? []), f]);
+    return m;
+  }, [cotData]);
+  const cotForSymbol = (symbol: string | null | undefined) => {
+    const k = cotKeyFor(symbol);
+    return k ? cotFlags.get(k) : undefined;
+  };
+
   // Which tick row is lit. Kept separate from selectedLabel — that captions
   // whatever the chart is drawing, and the two diverge for tenors with no
   // chartable series (clicking US 7Y must light the row without relabelling a
@@ -1136,7 +1089,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   const draggedTickSection = useRef<TickSection | null>(null);
   const [tickDropTarget, setTickDropTarget] = useState<TickSection | null>(null);
   const handleTickDragStart = useCallback(
-    (id: TickSection, event: DragEvent<HTMLButtonElement>) => {
+    (id: TickSection, event: DragEvent<HTMLTableRowElement>) => {
       draggedTickSection.current = id;
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", id);
@@ -1166,12 +1119,6 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   const handleTickDragEnd = useCallback(() => {
     draggedTickSection.current = null;
     setTickDropTarget(null);
-  }, []);
-  const handleTickMove = useCallback((id: TickSection, direction: -1 | 1) => {
-    setTickOrder((previous) => {
-      const index = previous.indexOf(id);
-      return moveTickOrder(previous, index, index + direction);
-    });
   }, []);
 
   // Layout settings
@@ -1368,11 +1315,14 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     removeIndicator: removeHeatmapIndicator,
     windowUnit: heatmapWindowUnit,
     toggleWindowUnit: toggleHeatmapWindowUnit,
-    regressionSel: mktRegressionSel,
+    regressionChannels: mktRegressionChannels,
+    activeRegressionId: mktActiveRegressionId,
     regressionArmed: mktRegressionArmed,
     regressionPending: mktRegressionPending,
     regressionOpts: mktRegressionOpts,
     toggleRegression: toggleMktRegression,
+    removeRegression: removeMktRegression,
+    selectRegression: selectMktRegression,
     setRegressionMode: setMktRegressionMode,
     handleChartClick: handleMktChartClick,
     toggleVolumeProfile: toggleHeatmapVP,
@@ -1473,8 +1423,14 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   const historyQuery = heatmapChartType === "candle" ? candleHistQuery : areaHistQuery;
 
   const quote = quoteQuery.data;
+  // Opening an event card re-renders MKT. Keep the filtered bars stable until
+  // the query actually changes: a fresh array here cascades into new OHLCV and
+  // makes ModularChart refill every series/overlay on each card click.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rawChartData = (historyQuery.data?.quotes ?? []).filter((q: any) => q.close != null);
+  const rawChartData = useMemo(
+    () => (historyQuery.data?.quotes ?? []).filter((q: any) => q.close != null),
+    [historyQuery.data?.quotes]
+  );
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const chartData = useMemo(
     () =>
@@ -1637,6 +1593,34 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     setSelectedTickId(pair.id);
   }, []);
 
+  // Which feed fills the left panel's top slot. Restored after mount — the
+  // server renders the default, so reading storage in the initializer would
+  // be a hydration mismatch.
+  const [leftFeed, setLeftFeed] = useState<LeftFeed>("watch");
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(LS_LEFT_FEED);
+      if (LEFT_FEEDS.some((f) => f.key === v)) setLeftFeed(v as LeftFeed);
+    } catch {
+      /* private mode */
+    }
+  }, []);
+  const selectLeftFeed = useCallback((f: LeftFeed) => {
+    setLeftFeed(f);
+    try {
+      localStorage.setItem(LS_LEFT_FEED, f);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Stable identity: PinnedAssets is memoised, and an inline arrow here made
+  // it re-render (~30ms) on every MKT state change — a keystroke in SYMBOL.
+  const handleWatchlistPick = useCallback((sym: string) => {
+    setSelectedSymbol(sym);
+    setSelectedLabel(sym);
+  }, []);
+
   const handleSearchSubmit = useCallback(() => {
     const sym = searchInput.trim().toUpperCase();
     if (!sym) return;
@@ -1644,6 +1628,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     setSelectedLabel(sym);
     setSelectedTickId(null);
     addToRecent(sym, sym);
+    recordSearchHit(sym);
     setSearchInput("");
     setShowDropdown(false);
     setDropdownIdx(-1);
@@ -1660,6 +1645,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
       setSelectedLabel(dispName ? `${dispSym} – ${dispName}` : dispSym);
       setSelectedTickId(null);
       addToRecent(symbol, dispName || dispSym);
+      recordSearchHit(symbol);
       setSearchInput("");
       setSearchQuery("");
       setShowDropdown(false);
@@ -1745,13 +1731,28 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
             className="flex items-center gap-1 px-1 py-0.5 shrink-0"
             style={{ background: "#0a0a0a", borderBottom: `1px solid ${colors.border}` }}
           >
-            <Activity className="h-2.5 w-2.5" style={{ color: colors.accent }} />
-            <span className="text-[9px] font-bold tracking-widest" style={{ color: colors.accent }}>
-              WATCHLIST
-            </span>
-            <span className="text-[9px] font-mono" style={{ color: colors.textSecondary }}>
-              ({pins.length})
-            </span>
+            <Activity className="h-2.5 w-2.5 shrink-0" style={{ color: colors.accent }} />
+            {/* Same switcher shape as REGIME's CORR/GEOM/…/IV — one slot, three feeds. */}
+            <div className="flex overflow-hidden border" style={{ borderColor: colors.border }}>
+              {LEFT_FEEDS.map(({ key, label, desc }) => (
+                <button
+                  type="button"
+                  key={key}
+                  title={desc}
+                  className="text-[8px] font-bold tracking-wider px-1.5 py-0 leading-4"
+                  style={{
+                    background: leftFeed === key ? `${colors.accent}20` : "transparent",
+                    color: leftFeed === key ? colors.accent : colors.textSecondary,
+                  }}
+                  onClick={() => selectLeftFeed(key)}
+                >
+                  {label}
+                  {key === "watch" && (
+                    <span className="font-mono font-normal ml-0.5">{pins.length}</span>
+                  )}
+                </button>
+              ))}
+            </div>
             <div className="ml-auto flex items-center gap-1">
               <button
                 className="text-[8px] px-1 hover:opacity-70"
@@ -1776,12 +1777,17 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
             className="flex-1 overflow-y-auto overflow-x-hidden"
             style={{ scrollbarWidth: "thin", scrollbarColor: "#333 #000" }}
           >
-            <PinnedAssets
-              onSymbolClick={(sym) => {
-                setSelectedSymbol(sym);
-                setSelectedLabel(sym);
-              }}
-            />
+            {/* WATCHLIST stays mounted while hidden: remounting re-runs its DB
+                bootstrap and drops any open add/edit form. */}
+            <div style={{ display: leftFeed === "watch" ? undefined : "none" }}>
+              <PinnedAssets onSymbolClick={handleWatchlistPick} />
+            </div>
+            {leftFeed === "freq" && (
+              <FrequentSearchList colors={colors} onSymbolClick={handleWatchlistPick} />
+            )}
+            {leftFeed === "active" && (
+              <MostActiveList colors={colors} onSymbolClick={handleWatchlistPick} />
+            )}
           </div>
         </div>
 
@@ -1854,44 +1860,31 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
         <UsMarketClock colors={colors} />
         <div className="flex-1 overflow-y-auto overflow-x-hidden" style={SCROLLBAR_THIN_LIGHTER}>
           {
-            <table className="w-full text-[10px] font-mono" style={{ borderCollapse: "collapse" }}>
+            <table
+              className="w-full text-[9px] leading-[13px] font-mono"
+              style={{ borderCollapse: "collapse" }}
+            >
               <thead>
-                <tr style={{ background: "#050505", position: "sticky", top: 0, zIndex: 1 }}>
-                  <th
-                    className="px-1 py-0.5 text-left text-[8px] font-bold tracking-wider"
-                    style={{ color: colors.textSecondary }}
-                  >
-                    INDEX
-                  </th>
-                  <th
-                    className="px-1 py-0.5 text-right text-[8px] font-bold tracking-wider"
-                    style={{ color: colors.textSecondary }}
-                  >
-                    LAST
-                  </th>
-                  <th
-                    className="px-1 py-0.5 text-right text-[8px] font-bold tracking-wider"
-                    style={{ color: colors.textSecondary }}
-                  >
+                <tr
+                  className="text-[7px] font-bold tracking-wider leading-[12px]"
+                  style={{
+                    background: "#050505",
+                    color: colors.textSecondary,
+                    position: "sticky",
+                    top: 0,
+                    zIndex: 1,
+                  }}
+                >
+                  <th className="px-1 py-0 text-left">NAME</th>
+                  <th className="px-1 py-0 text-right">LAST</th>
+                  <th className="px-1 py-0 text-right" title="%chg · bp for yields">
                     CHG
                   </th>
-                  <th
-                    className="px-1 py-0.5 text-right text-[8px] font-bold tracking-wider"
-                    style={{ color: colors.textSecondary }}
-                  >
-                    %CHG
-                  </th>
-                  <th
-                    className="px-1 py-0.5 text-right text-[8px] font-bold tracking-wider"
-                    style={{ color: colors.textSecondary }}
-                  >
-                    YTD
-                  </th>
-                  <th className="px-1 py-0.5 w-[40px]" />
+                  <th className="px-1 py-0 text-right">YTD</th>
                 </tr>
               </thead>
               <tbody>
-                {tickOrder.map((id, index) => {
+                {tickOrder.map((id) => {
                   const collapsed = collapsedSections.includes(id);
                   const header = (label: string, count: number, note?: string) => (
                     <RegionHeader
@@ -1900,15 +1893,13 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                       count={count}
                       colors={colors}
                       collapsed={collapsed}
-                      onToggle={() => toggleSection(id)}
+                      onToggle={toggleSection}
                       note={note}
-                      orderIndex={index}
                       isDropTarget={tickDropTarget === id}
                       onDragStart={handleTickDragStart}
                       onDragOver={handleTickDragOver}
                       onDrop={handleTickDrop}
                       onDragEnd={handleTickDragEnd}
-                      onMove={handleTickMove}
                     />
                   );
 
@@ -1933,9 +1924,14 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                             <RateRow
                               key={row.id}
                               row={row}
+                              cot={
+                                COT_KEY_BY_RATE_ID[row.id]
+                                  ? cotFlags.get(COT_KEY_BY_RATE_ID[row.id])
+                                  : undefined
+                              }
                               colors={colors}
                               isSelected={selectedTickId === row.id}
-                              onClick={() => handleRateSelect(row)}
+                              onSelect={handleRateSelect}
                             />
                           ))}
                       </Fragment>
@@ -1963,7 +1959,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                               row={row}
                               colors={colors}
                               isSelected={selectedTickId === row.id}
-                              onClick={() => handleRateSelect(row)}
+                              onSelect={handleRateSelect}
                             />
                           ))}
                       </Fragment>
@@ -1984,9 +1980,10 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                             <TickRow
                               key={item.id}
                               item={item}
+                              cot={cotForSymbol(item.symbol)}
                               colors={colors}
                               isSelected={selectedTickId === item.id}
-                              onClick={() => handleTickSelect(item)}
+                              onSelect={handleTickSelect}
                             />
                           ))}
                       </Fragment>
@@ -2017,9 +2014,10 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                               )}
                               <TickRow
                                 item={item}
+                                cot={cotForSymbol(item.symbol)}
                                 colors={colors}
                                 isSelected={selectedTickId === item.id}
-                                onClick={() => handleTickSelect(item)}
+                                onSelect={handleTickSelect}
                               />
                             </Fragment>
                           ))}
@@ -2033,10 +2031,11 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                         fxPairs.map((pair) => (
                           <FxRow
                             key={pair.symbol}
+                            cot={cotForSymbol(pair.symbol)}
                             pair={pair}
                             colors={colors}
                             isSelected={selectedTickId === pair.id}
-                            onClick={() => handleFxSelect(pair)}
+                            onSelect={handleFxSelect}
                           />
                         ))}
                     </Fragment>
@@ -2371,8 +2370,8 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
         )}
       </div>
 
-      {/* Period + bar interval + chart type — one row that never wraps.
-          Same control the popped-out chart windows use (chart/TimeframeRow). */}
+      {/* Chart controls share one row when the panel is wide. In a narrow panel,
+          indicators move beneath the timeframe so each control stays reachable. */}
       <TimeframeRow
         colors={colors}
         timePeriod={timePeriod as TimePeriod}
@@ -2380,6 +2379,124 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
         chartType={heatmapChartType}
         onPeriodChange={(p) => handleHeatmapPeriod(p, heatmapChartType)}
         onIntervalChange={(iv) => handleHeatmapInterval(iv)}
+        middle={
+          heatmapChartType === "candle" ? (
+            <div className="flex items-center gap-1 min-w-0 flex-1 whitespace-nowrap">
+              <IndicatorPicker
+                data={heatmapOhlcv}
+                colors={colors}
+                activeIndicators={heatmapIndicators}
+                onAdd={addHeatmapIndicator}
+                onRemove={removeHeatmapIndicator}
+                windowUnit={heatmapWindowUnit}
+                onToggleWindowUnit={toggleHeatmapWindowUnit}
+                compact
+              />
+              {(() => {
+                // Volume Profile needs traded volume, and several things reachable
+                // from this view report none: calculated indices (^VIX, ^OVX — a
+                // formula over option prices, nothing actually trades), yields
+                // (^TNX) and FX (=X). Cash indices like ^GSPC/^DJI DO carry volume
+                // (Yahoo sums the constituents), so this can't key off "is an index".
+                // Show the button greyed out with a reason rather than unmounting
+                // it, which reads as "the indicator vanished".
+                const hasVolume = heatmapOhlcv.some((d) => (d.volume ?? 0) > 0);
+                return (
+                  <button
+                    className="text-[8px] px-1 py-0 font-bold border"
+                    style={{
+                      borderColor: heatmapShowVP && hasVolume ? colors.accent : colors.border,
+                      color: !hasVolume
+                        ? colors.border
+                        : heatmapShowVP
+                          ? colors.accent
+                          : colors.textSecondary,
+                      background: heatmapShowVP && hasVolume ? `${colors.accent}15` : "transparent",
+                      cursor: hasVolume ? "pointer" : "not-allowed",
+                    }}
+                    disabled={!hasVolume}
+                    title={
+                      hasVolume
+                        ? "Volume Profile"
+                        : "Volume Profile — this symbol reports no volume (calculated indices like VIX, plus yields and FX, quote a level with nothing trading behind it)"
+                    }
+                    onClick={toggleHeatmapVP}
+                  >
+                    VP
+                  </button>
+                );
+              })()}
+              {(() => {
+                const hasVolume = heatmapOhlcv.some((d) => (d.volume ?? 0) > 0);
+                return (
+                  <button
+                    className="text-[8px] px-1 py-0 font-bold border"
+                    style={{
+                      borderColor: heatmapShowVolumeEvents && hasVolume ? "#26a69a" : colors.border,
+                      color: !hasVolume
+                        ? colors.border
+                        : heatmapShowVolumeEvents
+                          ? "#26a69a"
+                          : colors.textSecondary,
+                      background:
+                        heatmapShowVolumeEvents && hasVolume ? "#26a69a15" : "transparent",
+                      cursor: hasVolume ? "pointer" : "not-allowed",
+                    }}
+                    disabled={!hasVolume}
+                    title={
+                      hasVolume
+                        ? "Volume Events — classify each bar's participation against its result (climax / absorption / vacuum / breakout / no-demand / dry-up) as chips on the bars plus a list below"
+                        : "Volume Events — this symbol reports no volume, so there is nothing to classify"
+                    }
+                    onClick={toggleHeatmapVolumeEvents}
+                  >
+                    VEVT
+                  </button>
+                );
+              })()}
+              <RegressionControls
+                channels={mktRegressionChannels}
+                activeId={mktActiveRegressionId}
+                armed={mktRegressionArmed}
+                pending={mktRegressionPending}
+                options={mktRegressionOpts}
+                onToggle={toggleMktRegression}
+                onSelect={selectMktRegression}
+                onRemove={removeMktRegression}
+                onModeChange={setMktRegressionMode}
+                border={colors.border}
+                muted={colors.textSecondary}
+              />
+              {heatmapSupportsEvents && (
+                <button
+                  className="text-[8px] px-1 py-0 font-bold border"
+                  style={{
+                    borderColor: heatmapShowPE ? "#ba68c8" : colors.border,
+                    color: heatmapShowPE ? "#ba68c8" : colors.textSecondary,
+                    background: heatmapShowPE ? "#ba68c815" : "transparent",
+                  }}
+                  onClick={toggleHeatmapPE}
+                  title="Toggle Trailing P/E history pane"
+                >
+                  P/E{heatmapShowPE && heatmapPeLoading ? "…" : ""}
+                </button>
+              )}
+              {isCryptoSymbol && (
+                <button
+                  className="text-[8px] px-1 py-0 font-bold border"
+                  style={{
+                    borderColor: showFootprint ? "#ff9800" : colors.border,
+                    color: showFootprint ? "#ff9800" : colors.textSecondary,
+                    background: showFootprint ? "#ff980015" : "transparent",
+                  }}
+                  onClick={toggleFootprint}
+                >
+                  FP{footprintLoading ? "…" : ""}
+                </button>
+              )}
+            </div>
+          ) : null
+        }
         trailing={
           <>
             {/* The period buttons keep showing what the user picked; this says
@@ -2475,148 +2592,6 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
           </>
         }
       />
-
-      {/* Indicator picker bar (candle mode only) */}
-      {heatmapChartType === "candle" && (
-        <div
-          className="flex items-center gap-1 px-1 py-0.5 shrink-0"
-          style={{ background: "#050505", borderBottom: `1px solid ${colors.border}` }}
-        >
-          <IndicatorPicker
-            data={heatmapOhlcv}
-            colors={colors}
-            activeIndicators={heatmapIndicators}
-            onAdd={addHeatmapIndicator}
-            onRemove={removeHeatmapIndicator}
-            windowUnit={heatmapWindowUnit}
-            onToggleWindowUnit={toggleHeatmapWindowUnit}
-          />
-          {(() => {
-            // Volume Profile needs traded volume, and several things reachable
-            // from this view report none: calculated indices (^VIX, ^OVX — a
-            // formula over option prices, nothing actually trades), yields
-            // (^TNX) and FX (=X). Cash indices like ^GSPC/^DJI DO carry volume
-            // (Yahoo sums the constituents), so this can't key off "is an index".
-            // Show the button greyed out with a reason rather than unmounting
-            // it, which reads as "the indicator vanished".
-            const hasVolume = heatmapOhlcv.some((d) => (d.volume ?? 0) > 0);
-            return (
-              <button
-                className="text-[8px] px-1 py-0 font-bold border"
-                style={{
-                  borderColor: heatmapShowVP && hasVolume ? colors.accent : colors.border,
-                  color: !hasVolume
-                    ? colors.border
-                    : heatmapShowVP
-                      ? colors.accent
-                      : colors.textSecondary,
-                  background: heatmapShowVP && hasVolume ? `${colors.accent}15` : "transparent",
-                  cursor: hasVolume ? "pointer" : "not-allowed",
-                }}
-                disabled={!hasVolume}
-                title={
-                  hasVolume
-                    ? "Volume Profile"
-                    : "Volume Profile — this symbol reports no volume (calculated indices like VIX, plus yields and FX, quote a level with nothing trading behind it)"
-                }
-                onClick={toggleHeatmapVP}
-              >
-                VP
-              </button>
-            );
-          })()}
-          {(() => {
-            const hasVolume = heatmapOhlcv.some((d) => (d.volume ?? 0) > 0);
-            return (
-              <button
-                className="text-[8px] px-1 py-0 font-bold border"
-                style={{
-                  borderColor: heatmapShowVolumeEvents && hasVolume ? "#26a69a" : colors.border,
-                  color: !hasVolume
-                    ? colors.border
-                    : heatmapShowVolumeEvents
-                      ? "#26a69a"
-                      : colors.textSecondary,
-                  background: heatmapShowVolumeEvents && hasVolume ? "#26a69a15" : "transparent",
-                  cursor: hasVolume ? "pointer" : "not-allowed",
-                }}
-                disabled={!hasVolume}
-                title={
-                  hasVolume
-                    ? "Volume Events — classify each bar's participation against its result (climax / absorption / vacuum / breakout / no-demand / dry-up) as chips on the bars plus a list below"
-                    : "Volume Events — this symbol reports no volume, so there is nothing to classify"
-                }
-                onClick={toggleHeatmapVolumeEvents}
-              >
-                VEVT
-              </button>
-            );
-          })()}
-          <button
-            className="text-[8px] px-1 py-0 font-bold border"
-            title={
-              mktRegressionSel
-                ? "Clear regression channel"
-                : mktRegressionArmed
-                  ? "Click two bars on the chart to set the range (click again to cancel)"
-                  : "Regression Channel: click two bars to fit a trend + channel"
-            }
-            style={{
-              borderColor: mktRegressionArmed || mktRegressionSel ? "#ffc107" : colors.border,
-              color: mktRegressionArmed || mktRegressionSel ? "#ffc107" : colors.textSecondary,
-              background: mktRegressionArmed || mktRegressionSel ? "#ffc10715" : "transparent",
-            }}
-            onClick={toggleMktRegression}
-          >
-            {mktRegressionArmed ? (mktRegressionPending ? "REG 2/2" : "REG 1/2") : "REG"}
-          </button>
-          {mktRegressionSel && (
-            <button
-              className="text-[8px] px-1 py-0 font-bold border"
-              title={
-                mktRegressionOpts.mode === "stddev"
-                  ? "Rails at \u00b1k\u03c3 of the residuals (symmetric). Click for quantile rails."
-                  : "Rails fitted as conditional quantiles (asymmetric). Click for \u00b1k\u03c3 rails."
-              }
-              style={{ borderColor: "#ffc107", color: "#ffc107", background: "#ffc10708" }}
-              onClick={() =>
-                setMktRegressionMode(mktRegressionOpts.mode === "stddev" ? "quantile" : "stddev")
-              }
-            >
-              {mktRegressionOpts.mode === "stddev"
-                ? `${mktRegressionOpts.stdDevMult}\u03c3`
-                : `q${mktRegressionOpts.tauPct}`}
-            </button>
-          )}
-          {heatmapSupportsEvents && (
-            <button
-              className="text-[8px] px-1 py-0 font-bold border"
-              style={{
-                borderColor: heatmapShowPE ? "#ba68c8" : colors.border,
-                color: heatmapShowPE ? "#ba68c8" : colors.textSecondary,
-                background: heatmapShowPE ? "#ba68c815" : "transparent",
-              }}
-              onClick={toggleHeatmapPE}
-              title="Toggle Trailing P/E history pane"
-            >
-              P/E{heatmapShowPE && heatmapPeLoading ? "…" : ""}
-            </button>
-          )}
-          {isCryptoSymbol && (
-            <button
-              className="text-[8px] px-1 py-0 font-bold border"
-              style={{
-                borderColor: showFootprint ? "#ff9800" : colors.border,
-                color: showFootprint ? "#ff9800" : colors.textSecondary,
-                background: showFootprint ? "#ff980015" : "transparent",
-              }}
-              onClick={toggleFootprint}
-            >
-              FP{footprintLoading ? "…" : ""}
-            </button>
-          )}
-        </div>
-      )}
 
       {/* Chart area */}
       <div
