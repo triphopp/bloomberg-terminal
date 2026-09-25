@@ -152,30 +152,12 @@ const NAV: CommandDef[] = [
     },
   },
   {
-    name: "GMOV",
+    name: "BOND",
     group: "nav",
-    description: "Go to Market Movers",
+    description: "Go to Bond Monitor (price vs supply)",
     handler: (_, ctx) => {
-      ctx.setView("movers");
-      return { kind: "navigate", view: "movers" };
-    },
-  },
-  {
-    name: "CLIP",
-    group: "nav",
-    description: "Go to Clippings / AI",
-    handler: (_, ctx) => {
-      ctx.setView("clippings");
-      return { kind: "navigate", view: "clippings" };
-    },
-  },
-  {
-    name: "CRDT",
-    group: "nav",
-    description: "Go to Credit view",
-    handler: (_, ctx) => {
-      ctx.setView("credit");
-      return { kind: "navigate", view: "credit" };
+      ctx.setView("bonds");
+      return { kind: "navigate", view: "bonds" };
     },
   },
   {
@@ -296,6 +278,47 @@ const INFO: CommandDef[] = [
 // ─────────────────────────────────────────────────────────────────────────────
 // ANALYSIS function commands
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── heatmap(MARKET, period?) ─────────────────────────────────────────────────
+// A view, not a scalar: the handler hands the market to HMAP and navigates.
+// The optional period picks the colour metric — 1d, 52w, 50d, 200d.
+const HEATMAP_METRIC: Record<string, string> = {
+  "1d": "d1",
+  "52w": "w52",
+  "1y": "w52",
+  "50d": "d50",
+  "200d": "d200",
+};
+
+const VIEWS: CommandDef[] = [
+  {
+    name: "HEATMAP",
+    // Not "HM": bare HM must stay a stock lookup (H&M trades as HM).
+    aliases: ["HMAP"],
+    group: "nav",
+    args: [
+      { name: "market", type: "symbol", optional: true, default: "US" },
+      { name: "period", type: "period", optional: true, default: "1d" },
+    ],
+    description:
+      "Market heatmap by sector, sized by market cap — heatmap(TH), heatmap(US, 52w). Markets: US TH JP HK CN KR TW IN UK DE FR SG AU CA …",
+    handler: (args, ctx) => {
+      // Bare HMAP / heatmap() reopens the last market on its last metric.
+      const market = sym(args, 0);
+      const p = args.positional.length ? period(args, "1d") : "";
+      if (!p) {
+        ctx.openHeatmap(market);
+        return { kind: "navigate", view: "heatmap" };
+      }
+      const metric = HEATMAP_METRIC[p];
+      if (!metric) {
+        return { kind: "error", message: "heatmap period must be 1d, 52w, 50d or 200d" };
+      }
+      ctx.openHeatmap(market, metric);
+      return { kind: "navigate", view: "heatmap" };
+    },
+  },
+];
 
 const ANALYSIS: CommandDef[] = [
   // ── corr(A, B, period?) ────────────────────────────────────────────────────
@@ -817,16 +840,22 @@ const ANALYSIS: CommandDef[] = [
 // Exports
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const ALL_COMMANDS: CommandDef[] = [...NAV, ...SETTINGS, ...INFO, ...ANALYSIS];
+export const ALL_COMMANDS: CommandDef[] = [...NAV, ...VIEWS, ...SETTINGS, ...INFO, ...ANALYSIS];
 
 /** Canonical names of nav commands (single-word) */
-export const NAV_NAMES = new Set(NAV.map((c) => c.name));
+// VIEWS join them so a bare `HMAP` / `HEATMAP` opens the default market.
+export const NAV_NAMES = new Set([
+  ...NAV.map((c) => c.name),
+  ...VIEWS.flatMap((c) => [c.name, ...(c.aliases ?? [])]),
+]);
 
 /** Canonical names of setting commands (multi-word) */
 export const SETTING_NAMES = new Set(SETTINGS.map((c) => c.name));
 
 /** Canonical names of analysis functions */
-export const FUNC_NAMES = new Set(ANALYSIS.flatMap((c) => [c.name, ...(c.aliases ?? [])]));
+export const FUNC_NAMES = new Set(
+  [...VIEWS, ...ANALYSIS].flatMap((c) => [c.name, ...(c.aliases ?? [])])
+);
 
 /** Master lookup map: name/alias → CommandDef */
 export const CMD_MAP = new Map<string, CommandDef>(

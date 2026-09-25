@@ -24,6 +24,8 @@ import {
   type PinGroup,
   type PinnedAsset,
   currentViewAtom,
+  heatmapMarketAtom,
+  heatmapMetricAtom,
   isDarkModeAtom,
   isGlobalSearchOpenAtom,
   pinGroupsAtom,
@@ -32,6 +34,7 @@ import {
   stockSearchSymbolAtom,
   tickerEnabledAtom,
 } from "../atoms";
+import { recordSearchHit } from "../lib/search-stats";
 import { displayName, displaySymbol } from "../lib/symbol-display";
 import { bloombergColors } from "../lib/theme-config";
 import {
@@ -417,6 +420,8 @@ export function GlobalSearch() {
   const [groups, setGroups] = useAtom(pinGroupsAtom);
   const setCurrentView = useSetAtom(currentViewAtom);
   const setStockSymbol = useSetAtom(stockSearchSymbolAtom);
+  const setHeatmapMarket = useSetAtom(heatmapMarketAtom);
+  const setHeatmapMetric = useSetAtom(heatmapMetricAtom);
   const setTickerEnabled = useSetAtom(tickerEnabledAtom);
   const setShowYTD = useSetAtom(showYTDAtom);
   const setIsDarkMode = useSetAtom(isDarkModeAtom);
@@ -456,7 +461,16 @@ export function GlobalSearch() {
     setTickerEnabled: (b) => setTickerEnabled(b),
     setDarkMode: (b) => setIsDarkMode(b),
     setShowYTD: (b) => setShowYTD(b),
-    setStockSymbol: (s) => setStockSymbol(s),
+    setStockSymbol: (s) => {
+      recordSearchHit(s);
+      setStockSymbol(s);
+    },
+    openHeatmap: (market, metric) => {
+      if (market) setHeatmapMarket(market);
+      if (metric) setHeatmapMetric(metric);
+      // biome-ignore lint/suspicious/noExplicitAny: "heatmap" is a valid view atom value
+      setCurrentView("heatmap" as any);
+    },
     invalidate: (ks) => {
       for (const k of ks) queryClient.invalidateQueries({ queryKey: [k] });
     },
@@ -563,6 +577,7 @@ export function GlobalSearch() {
 
   const openEquity = useCallback(
     (sym: string) => {
+      recordSearchHit(sym);
       setStockSymbol(sym);
       // biome-ignore lint/suspicious/noExplicitAny: "stock" is a valid view atom value
       setCurrentView("stock" as any);
@@ -610,6 +625,11 @@ export function GlobalSearch() {
       try {
         const result = await executeAst(ast, ctx, ctrl.signal);
         if (ctrl.signal.aborted) return;
+        // A function can navigate too — heatmap(TH) opens a view, not a result card.
+        if (result.kind === "navigate" || result.kind === "action") {
+          setIsOpen(false);
+          return;
+        }
         setExecResult(result);
       } finally {
         if (!ctrl.signal.aborted) setExecLoading(false);

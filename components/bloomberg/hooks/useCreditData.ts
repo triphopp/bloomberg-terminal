@@ -2,8 +2,6 @@
 
 import { QUERY_RETRY_ONCE } from "@/lib/constants";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAtomValue } from "jotai";
-import { currentViewAtom } from "../atoms";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -57,14 +55,13 @@ async function fetchCredit(): Promise<CreditData> {
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
-export function useCreditData() {
-  const currentView = useAtomValue(currentViewAtom);
-  const isActive = currentView === "credit";
-
+/** `/api/crisis` — read by BOND (status-bar level + CONDITIONS tab; was the CRDT
+ *  view until 2026-09-25). Fetched once on mount for the level badge; `isActive`
+ *  gates the 5-minute poll so it only runs while CONDITIONS is open. */
+export function useCreditData(isActive: boolean) {
   return useQuery<CreditData>({
     queryKey: ["crisis"],
     queryFn: fetchCredit,
-    enabled: isActive,
     staleTime: 5 * 60_000,
     refetchInterval: isActive ? 5 * 60_000 : false,
     retry: QUERY_RETRY_ONCE,
