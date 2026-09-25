@@ -39,6 +39,7 @@ from portfolio_currency import (
     normalize_currency,
     realized_economic_pnl_in_report,
     realized_pnl_in_report,
+    entry_fee_in_report,
     report_currency,
     trade_currency,
     trade_value_in_report,
@@ -466,6 +467,10 @@ class TradeIn(BaseModel):
     vix_index: str = ""
     note: str = ""
     is_reinvest: bool = False
+    # None = estimate from the account's broker fee profile; a number (0
+    # included) is what the confirmation says and is kept as typed.
+    fee_entry: Optional[float] = None
+    fee_exit: Optional[float] = None
 
 
 class TradePatch(BaseModel):
@@ -491,6 +496,8 @@ class TradePatch(BaseModel):
     is_reinvest:     Optional[bool]  = None
     # Audit meta — NOT persisted to trades table, only to audit log
     adjustment_reason: Optional[str] = None
+    fee_entry: Optional[float] = None
+    fee_exit: Optional[float] = None
 
 
 class CashIn(BaseModel):
@@ -867,6 +874,40 @@ def list_trades(
     return {"trades": trades, "thb_per_usd": _get_thb_per_usd()}
 
 
+def _fee_for(conn, account_id: str, currency: str, side: str, qty, price, given):
+    """(amount, detail) for one side of a trade: the typed value or the broker estimate."""
+    import broker_fees
+    if given is not None:
+        return float(given), {"total": float(given), "source": "manual"}
+    profile = broker_fees.profile_for(conn, account_id, currency)
+    if not profile or not qty or not price or float(qty) <= 0 or float(price) <= 0:
+        return None, None
+    est = broker_fees.estimate(profile, side, float(qty), float(price))
+    return est["total"], est
+
+
+@router.get("/fees/estimate")
+def estimate_fees(account_id: str, side: str, qty: float, price: float,
+                  symbol: str = "", market: Optional[str] = None,
+                  currency: Optional[str] = None):
+    """Broker fees for an order before it is saved. profile None = no schedule."""
+    import broker_fees
+    with get_db() as conn:
+        acc = conn.execute("SELECT currency FROM portfolio_accounts WHERE id = ?",
+                           (account_id,)).fetchone()
+        if not acc:
+            raise HTTPException(status_code=404, detail="Unknown account")
+        ccy = (infer_instrument_currency(market, None, symbol, None)
+               or normalize_currency(currency) or normalize_currency(acc["currency"], "THB"))
+        profile = broker_fees.profile_for(conn, account_id, ccy)
+    if not profile:
+        return {"profile": None, "currency": ccy, "total": None}
+    try:
+        return broker_fees.estimate(profile, side, qty, price)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.post("/trades", status_code=201)
 def create_trade(body: TradeIn):
     trade_id = str(uuid.uuid4())
@@ -897,6 +938,18 @@ def create_trade(body: TradeIn):
                 body.exit_exchange_rate,
                 conn=conn,
             )
+        fee_entry, entry_detail = _fee_for(conn, body.account_id, currency, "BUY",
+                                           body.volume, body.price_entry, body.fee_entry)
+        fee_exit = exit_detail = None
+        pnl_amount = body.pnl_amount
+        if body.price_exit and (body.date_exit or body.win_loss.upper() != "P"):
+            fee_exit, exit_detail = _fee_for(conn, body.account_id, currency, "SELL",
+                                             body.volume, body.price_exit, body.fee_exit)
+            # pnl_amount is net of the sale's fees, as /sell stores it.
+            if pnl_amount is not None and fee_exit:
+                pnl_amount = round(pnl_amount - fee_exit, 2)
+        details = {k: v for k, v in (("entry", entry_detail), ("exit", exit_detail)) if v}
+        fee_detail = json.dumps(details) if details else None
         conn.execute("""
             INSERT INTO trades (id, account_id, symbol, resolved_symbol, market,
                 sector, date_entry, date_exit,
@@ -904,25 +957,28 @@ def create_trade(body: TradeIn):
                 pnl_amount, win_loss, pnl_percent, currency, exchange_rate, exit_exchange_rate,
                 strategy_name, entry_trigger, exit_trigger, market_trend,
                 news_sentiment, expectation_based, factor_based,
-                fear_greed_index, vix_index, note, is_reinvest)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                fear_greed_index, vix_index, note, is_reinvest,
+                fee_entry, fee_exit, fee_detail)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (trade_id, body.account_id, body.symbol.upper(),
               (body.resolved_symbol or "").upper() or None,
               (body.market or "").upper() or None, body.sector,
               body.date_entry, body.date_exit,
               body.price_entry, body.price_exit, body.price_stoploss, body.price_target,
-              body.volume, body.amount, body.pnl_amount, body.win_loss.upper(),
+              body.volume, body.amount, pnl_amount, body.win_loss.upper(),
               body.pnl_percent, currency, entry_fx, exit_fx,
               body.strategy_name, body.entry_trigger, body.exit_trigger,
               body.market_trend, body.news_sentiment, body.expectation_based,
               body.factor_based, body.fear_greed_index, body.vix_index, body.note,
-              1 if body.is_reinvest else 0))
+              1 if body.is_reinvest else 0, fee_entry, fee_exit, fee_detail))
     return {
         "ok": True,
         "id": trade_id,
         "currency": currency,
         "exchange_rate": entry_fx,
         "exit_exchange_rate": exit_fx,
+        "fee_entry": fee_entry,
+        "fee_exit": fee_exit,
     }
 
 
@@ -936,12 +992,17 @@ def patch_trade(trade_id: str, body: TradePatch):
         updates["symbol"] = updates["symbol"].upper()
     if "win_loss" in updates and updates["win_loss"]:
         updates["win_loss"] = updates["win_loss"].upper()
-    set_clause = ", ".join(f"{k} = ?" for k in updates)
     with get_db() as conn:
         old = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
         if not old:
             raise HTTPException(status_code=404, detail="Trade not found")
         old_dict = dict(old)
+        # pnl_amount is net of fee_exit: a corrected fee moves it by the difference.
+        if "fee_exit" in updates and "pnl_amount" not in updates and old_dict.get("pnl_amount") is not None:
+            delta = float(updates["fee_exit"] or 0) - float(old_dict.get("fee_exit") or 0)
+            if delta:
+                updates["pnl_amount"] = round(float(old_dict["pnl_amount"]) - delta, 2)
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
         with audit_reason(conn, reason):
             cur = conn.execute(f"UPDATE trades SET {set_clause} WHERE id = ?",
                                list(updates.values()) + [trade_id])
@@ -1392,7 +1453,7 @@ class SellIn(BaseModel):
     sell_volume: float = 0               # How many shares/units to sell (0 = all)
     sell_price: float = 0                # Exit price
     sell_date: str                       # Date of sale (YYYY-MM-DD)
-    commission: float = 0                # Optional commission
+    commission: Optional[float] = None   # None = broker fee estimate; a number = as typed
 
 
 @router.post("/sell", status_code=201)
@@ -1445,18 +1506,21 @@ def sell_position(body: SellIn):
         remaining   = round(total_volume - sell_vol, 8)
         pos_ccy = _position_currency(pos)
         exit_fx = _capture_thb_rate(pos_ccy, body.sell_date, conn=conn)
+        fee_exit, _ = _fee_for(conn, pos["account_id"], pos_ccy, "SELL",
+                               sell_vol, exit_price, body.commission)
+        fee_exit = fee_exit or 0.0
 
         if remaining <= 1e-8:
             # ── Full sell: close the position ────────────────────────────────
             pnl = round((exit_price - entry_price) * total_volume, 2)
             pnl_pct = round(((exit_price / entry_price) - 1) * 100, 2) if entry_price > 0 else 0
-            pnl_net = round(pnl - float(body.commission), 2)
+            pnl_net = round(pnl - fee_exit, 2)
             wl = "W" if pnl_net >= 0 else "L"
 
             new_vals = {
                 "date_exit": body.sell_date, "price_exit": exit_price,
                 "pnl_amount": pnl_net, "win_loss": wl, "pnl_percent": pnl_pct,
-                "exit_exchange_rate": exit_fx,
+                "exit_exchange_rate": exit_fx, "fee_exit": fee_exit,
             }
             # price_entry follows the AVCO the P&L was computed from, so the
             # closed row's entry, exit and P&L agree in the trade log.
@@ -1465,10 +1529,10 @@ def sell_position(body: SellIn):
                 """UPDATE trades SET date_exit = ?, price_exit = ?,
                    price_entry = ?,
                    pnl_amount = ?, win_loss = ?, pnl_percent = ?,
-                   exit_exchange_rate = ?, note = note || ?
+                   exit_exchange_rate = ?, fee_exit = ?, note = note || ?
                    WHERE id = ?""",
                 (body.sell_date, exit_price, entry_price, pnl_net, wl, pnl_pct, exit_fx,
-                  f"\n[SOLD {body.sell_date}] @ {exit_price} | P&L: {pnl_net}",
+                  fee_exit, f"\n[SOLD {body.sell_date}] @ {exit_price} | P&L: {pnl_net}",
                   body.trade_id),
             )
             _write_audit_log(conn, body.trade_id, "SELL_FULL", pos, new_vals,
@@ -1485,13 +1549,14 @@ def sell_position(body: SellIn):
                 "pnl_amount": pnl_net,
                 "pnl_percent": pnl_pct,
                 "win_loss": wl,
+                "fee_exit": fee_exit,
             }
         else:
             # ── Partial sell: split into sold + remaining ────────────────────
             sold_volume = sell_vol
             sold_pnl = round((exit_price - entry_price) * sold_volume, 2)
             sold_pnl_pct = round(((exit_price / entry_price) - 1) * 100, 2) if entry_price > 0 else 0
-            sold_pnl_net = round(sold_pnl - float(body.commission), 2)
+            sold_pnl_net = round(sold_pnl - fee_exit, 2)
             sold_wl = "W" if sold_pnl_net >= 0 else "L"
 
             import uuid as _uuid
@@ -1500,15 +1565,15 @@ def sell_position(body: SellIn):
                 """INSERT INTO trades (id, account_id, symbol, resolved_symbol, market,
                    sector, date_entry, date_exit,
                    price_entry, price_exit, volume, pnl_amount, win_loss, pnl_percent,
-                   currency, exchange_rate, exit_exchange_rate, strategy_name, note)
+                   currency, exchange_rate, exit_exchange_rate, strategy_name, note, fee_exit)
                    SELECT ?, account_id, symbol, resolved_symbol, market,
                    sector, date_entry, ?,
                    ?, ?, ?, ?, ?, ?,
-                   currency, exchange_rate, ?, strategy_name, ?
+                   currency, exchange_rate, ?, strategy_name, ?, ?
                    FROM trades WHERE id = ?""",
                 (sold_id, body.sell_date, avg_cost, exit_price, sold_volume,
                   sold_pnl_net, sold_wl, sold_pnl_pct, exit_fx,
-                  "",
+                  "", fee_exit,
                   body.trade_id),
             )
 
@@ -1545,6 +1610,7 @@ def sell_position(body: SellIn):
                 "pnl_amount": sold_pnl_net,
                 "pnl_percent": sold_pnl_pct,
                 "win_loss": sold_wl,
+                "fee_exit": fee_exit,
             }
 
 
@@ -1553,7 +1619,7 @@ class SellAllLotsIn(BaseModel):
     symbol: str
     sell_price: float
     sell_date: str
-    commission: float = 0
+    commission: Optional[float] = None
 
 
 @router.post("/sell-all-lots", status_code=201)
@@ -1574,12 +1640,17 @@ def sell_all_lots(body: SellAllLotsIn):
         avg_cost  = sum(float(l["price_entry"]) * float(l["volume"]) for l in lots) / total_vol
         exit_price = float(body.sell_price)
         closed_ids = []
+        # One order: fees on the whole sale, shared across the lots by volume.
+        fee_total, _ = _fee_for(conn, body.account_id, _position_currency(lots[0]), "SELL",
+                                total_vol, exit_price, body.commission)
+        fee_total = fee_total or 0.0
 
         for pos in lots:
             vol = float(pos["volume"])
             pnl = round((exit_price - avg_cost) * vol, 2)
             pnl_pct = round(((exit_price / avg_cost) - 1) * 100, 2) if avg_cost > 0 else 0
-            pnl_net = round(pnl - float(body.commission) / len(lots), 2)
+            lot_fee = round(fee_total * vol / total_vol, 6) if total_vol else 0.0
+            pnl_net = round(pnl - lot_fee, 2)
             wl = "W" if pnl_net >= 0 else "L"
             exit_fx = _capture_thb_rate(
                 _position_currency(pos), body.sell_date, conn=conn
@@ -1590,10 +1661,10 @@ def sell_all_lots(body: SellAllLotsIn):
                 """UPDATE trades SET date_exit = ?, price_exit = ?,
                    price_entry = ?,
                    pnl_amount = ?, win_loss = ?, pnl_percent = ?,
-                   exit_exchange_rate = ?, note = note || ?
+                   exit_exchange_rate = ?, fee_exit = ?, note = note || ?
                    WHERE id = ?""",
                 (body.sell_date, exit_price, avg_cost, pnl_net, wl, pnl_pct, exit_fx,
-                  f"\n[SOLD {body.sell_date}] @ {exit_price} | P&L: {pnl_net}",
+                  lot_fee, f"\n[SOLD {body.sell_date}] @ {exit_price} | P&L: {pnl_net}",
                   pos["id"]),
             )
             _write_audit_log(conn, pos["id"], "SELL_ALL_LOTS", pos,
@@ -2853,6 +2924,25 @@ def get_summary(base_currency: str = Query("THB")):
             ytd_base_map[aid] = ytd_base_map.get(aid, 0.0) + in_base
             ytd_economic_acct_map[aid] = ytd_economic_acct_map.get(aid, 0.0) + economic_in_acct
             ytd_economic_base_map[aid] = ytd_economic_base_map.get(aid, 0.0) + economic_in_base
+    # Buy fees are paid on the buy date and are not in the cost basis, so they
+    # hit realized P&L (and therefore derived cash) whether the lot is open or not.
+    fees_base_map: dict[str, float] = {}
+    for r in list(closed_pnl_rows) + list(open_cost_rows):
+        row = dict(r)
+        if not row.get("fee_entry"):
+            continue
+        aid = row["account_id"]
+        acct_ccy = str(row.get("acc_currency") or "USD").upper()
+        fee_acct = entry_fee_in_report(row, acct_ccy)
+        fee_base = entry_fee_in_report(row, base_currency)
+        fees_base_map[aid] = fees_base_map.get(aid, 0.0) + fee_base
+        for m, v in ((pnl_acct_map, fee_acct), (pnl_base_map, fee_base),
+                     (economic_pnl_acct_map, fee_acct), (economic_pnl_base_map, fee_base)):
+            m[aid] = m.get(aid, 0.0) - v
+        if str(row.get("date_entry") or "") >= year_start:
+            for m, v in ((ytd_acct_map, fee_acct), (ytd_base_map, fee_base),
+                         (ytd_economic_acct_map, fee_acct), (ytd_economic_base_map, fee_base)):
+                m[aid] = m.get(aid, 0.0) - v
 
     # Open cost basis per account, converted at the ENTRY rate — the same basis
     # `/allocation-detail` reports, so the two cannot disagree.
@@ -3041,6 +3131,7 @@ def get_summary(base_currency: str = Query("THB")):
             "open_cost_base": round(open_cost, 2),
             "cash_base": round(cash_base, 2),
             "cash_derived_base": round(cash_derived_base, 2),
+            "entry_fees_base": round(fees_base_map.get(aid, 0.0), 2),
             "cash_adjustment_base": round(cash_adjustment_base, 2),
             "cash_reconciled_at": adj_last_map.get(aid),
         })
@@ -3371,6 +3462,10 @@ def get_portfolio_returns(
         a.invested += cost
         a.first = d_entry if a.first is None else min(a.first, d_entry)
         a.cf.append((d_entry, -cost))
+        fee = entry_fee_in_report(t, base_currency)
+        if fee:
+            a.realized -= fee
+            a.cf.append((d_entry, -fee))
 
         if (t.get("win_loss") or "P") != "P":   # closed
             pnl = realized_pnl_in_report(t, base_currency)
@@ -3578,6 +3673,8 @@ def _maybe_capture_nav() -> None:
         realized_map: dict = _dd(float)
         for row in closed_rows:
             realized_map[row["account_id"]] += realized_pnl_in_report(row, "THB")
+        for row in list(closed_rows) + list(open_rows):
+            realized_map[row["account_id"]] -= entry_fee_in_report(row, "THB")
         div_map: dict = _dd(float)
         for row in dividend_rows:
             div_map[row["account_id"]] += convert_amount(

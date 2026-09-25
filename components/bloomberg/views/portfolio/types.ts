@@ -38,6 +38,10 @@ export interface Trade {
   market_trend?: string;
   note?: string;
   is_reinvest?: number;
+  /** Broker commission + VAT on the buy, instrument currency. Not in the cost basis. */
+  fee_entry?: number | null;
+  /** Broker fees on the sale (commission, VAT, SEC, TAF). Already inside pnl_amount. */
+  fee_exit?: number | null;
   current_price?: number;
   unrealized_pnl?: number;
   unrealized_pct?: number;

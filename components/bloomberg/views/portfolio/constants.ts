@@ -190,7 +190,9 @@ export const BLANK_FORM = {
   is_reinvest: false,
   option_type: "Call",
   option_direction: "Long",
-  vat_amount: "",
+  // Blank = the broker fee estimate (Dime); a typed number is kept as is.
+  fee_entry: "",
+  fee_exit: "",
 };
 
 // ── Sub-accounts ──────────────────────────────────────────────────────────────

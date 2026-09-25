@@ -128,3 +128,38 @@ export interface EvidenceReport {
   rows: EvidenceRow[];
   note: string;
 }
+
+/** GET /api/v2/portfolio/fees/estimate — profile null means the account has no fee schedule. */
+export interface FeeEstimate {
+  profile: string | null;
+  basis?: string;
+  currency: string;
+  side?: "BUY" | "SELL";
+  value?: number;
+  commission?: number;
+  vat?: number;
+  sec_fee?: number;
+  taf_fee?: number;
+  total: number | null;
+}
+
+export async function fetchFeeEstimate(
+  params: Record<string, string | number>,
+  signal?: AbortSignal
+): Promise<FeeEstimate | null> {
+  const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]));
+  try {
+    const r = await fetch(`/api/v2/portfolio/fees/estimate?${qs}`, { signal });
+    return r.ok ? ((await r.json()) as FeeEstimate) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function feeBreakdown(f: FeeEstimate | null): string {
+  if (!f || f.total == null) return "";
+  const parts = [`commission ${f.commission?.toFixed(2)}`, `VAT ${f.vat?.toFixed(2)}`];
+  if (f.sec_fee) parts.push(`SEC ${f.sec_fee.toFixed(2)}`);
+  if (f.taf_fee) parts.push(`TAF ${f.taf_fee.toFixed(2)}`);
+  return parts.join(" + ");
+}

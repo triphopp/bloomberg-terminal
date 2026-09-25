@@ -1,6 +1,7 @@
 "use client";
 import { AlertTriangle, CheckCircle, Loader2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { type FeeEstimate, feeBreakdown, fetchFeeEstimate } from "../accounting-types";
 import {
   BLANK_FORM,
   SECTORS_BY_ACCOUNT,
@@ -135,12 +136,57 @@ export function ImportTab({
       return next;
     });
 
-  const autoVat = () => {
-    const pe = Number.parseFloat(form.price_entry);
+  // Broker fee estimate for what is typed. The backend applies the same
+  // estimate when a fee field is left blank, so the placeholder is exactly
+  // what will be charged; a typed number (from the confirmation) wins.
+  const [feeEst, setFeeEst] = useState<{ buy: FeeEstimate | null; sell: FeeEstimate | null }>({
+    buy: null,
+    sell: null,
+  });
+  const pickedMarket = resolve.status === "resolved" ? (resolve.picked?.market ?? "") : "";
+  const pickedCcy = resolve.status === "resolved" ? (resolve.picked?.currency ?? "") : "";
+  useEffect(() => {
     const vol = Number.parseFloat(form.volume);
-    if (!Number.isNaN(pe) && !Number.isNaN(vol) && pe > 0 && vol > 0)
-      setForm((f) => ({ ...f, vat_amount: (pe * vol * 0.07).toFixed(2) }));
-  };
+    const pe = Number.parseFloat(form.price_entry);
+    const px = Number.parseFloat(form.price_exit);
+    if (!form.account_id || !form.symbol || !(vol > 0) || form.is_option) {
+      setFeeEst({ buy: null, sell: null });
+      return;
+    }
+    const ctl = new AbortController();
+    const base = {
+      account_id: form.account_id,
+      symbol: form.symbol.toUpperCase(),
+      qty: vol,
+      ...(pickedMarket ? { market: pickedMarket } : {}),
+      ...(pickedCcy ? { currency: pickedCcy } : {}),
+    };
+    const t = setTimeout(async () => {
+      const [buy, sell] = await Promise.all([
+        pe > 0 ? fetchFeeEstimate({ ...base, side: "BUY", price: pe }, ctl.signal) : null,
+        side === "sell" && px > 0
+          ? fetchFeeEstimate({ ...base, side: "SELL", price: px }, ctl.signal)
+          : null,
+      ]);
+      if (!ctl.signal.aborted) setFeeEst({ buy, sell });
+    }, 300);
+    return () => {
+      clearTimeout(t);
+      ctl.abort();
+    };
+  }, [
+    form.account_id,
+    form.symbol,
+    form.volume,
+    form.price_entry,
+    form.price_exit,
+    form.is_option,
+    side,
+    pickedMarket,
+    pickedCcy,
+  ]);
+  const feePlaceholder = (f: FeeEstimate | null) =>
+    f?.total != null ? `auto ${f.total.toFixed(2)}` : "0.00";
 
   const calcPnl = (f: typeof BLANK_FORM) => {
     const pe = Number.parseFloat(f.price_entry);
@@ -286,12 +332,12 @@ export function ImportTab({
         entry_trigger: form.entry_trigger,
         exit_trigger: form.exit_trigger,
         is_reinvest: form.is_reinvest,
-        note: [
-          form.note,
-          form.vat_amount ? `VAT: ${Number.parseFloat(form.vat_amount).toFixed(2)}` : "",
-        ]
-          .filter(Boolean)
-          .join(" | "),
+        note: form.note,
+        // Blank → the backend applies the broker estimate shown as placeholder.
+        ...(form.fee_entry !== "" ? { fee_entry: Number.parseFloat(form.fee_entry) || 0 } : {}),
+        ...(side === "sell" && form.fee_exit !== ""
+          ? { fee_exit: Number.parseFloat(form.fee_exit) || 0 }
+          : {}),
       };
       const r = await fetch("/api/v2/portfolio/trades", {
         method: "POST",
@@ -893,7 +939,7 @@ export function ImportTab({
                 (side === "sell" ? 1 : 0) +
                 (extras.stop_loss ? 1 : 0) +
                 (extras.target ? 1 : 0) +
-                (extras.vat ? 1 : 0)
+                (extras.vat ? (side === "sell" ? 2 : 1) : 0)
               }, minmax(0, 1fr))`,
             }}
           >
@@ -981,35 +1027,56 @@ export function ImportTab({
             )}
             {extras.vat && (
               <div>
-                <div className="flex items-center justify-between mb-0.5">
-                  <span
-                    className="text-[8px] font-bold tracking-wider"
-                    style={{ color: "#facc15" }}
-                  >
-                    VAT
-                  </span>
-                  <button
-                    type="button"
-                    className="text-[7px] px-1 py-0 border font-bold hover:opacity-80"
-                    style={{ borderColor: "#facc1544", color: "#facc15", background: "#facc1510" }}
-                    onClick={autoVat}
-                    title="Auto 7%"
-                  >
-                    7%
-                  </button>
+                <div
+                  className="text-[8px] mb-0.5 font-bold tracking-wider"
+                  style={{ color: "#facc15" }}
+                  title={feeBreakdown(feeEst.buy)}
+                >
+                  BUY FEE
                 </div>
                 <input
                   className={inputCls}
                   style={{ ...iStyle, color: "#facc15" }}
-                  placeholder="0.00"
+                  placeholder={feePlaceholder(feeEst.buy)}
                   type="number"
                   step="any"
-                  value={form.vat_amount}
-                  onChange={set("vat_amount")}
+                  value={form.fee_entry}
+                  onChange={set("fee_entry")}
+                />
+              </div>
+            )}
+            {extras.vat && side === "sell" && (
+              <div>
+                <div
+                  className="text-[8px] mb-0.5 font-bold tracking-wider"
+                  style={{ color: "#facc15" }}
+                  title={feeBreakdown(feeEst.sell)}
+                >
+                  SELL FEE
+                </div>
+                <input
+                  className={inputCls}
+                  style={{ ...iStyle, color: "#facc15" }}
+                  placeholder={feePlaceholder(feeEst.sell)}
+                  type="number"
+                  step="any"
+                  value={form.fee_exit}
+                  onChange={set("fee_exit")}
                 />
               </div>
             )}
           </div>
+          {(feeEst.buy?.total != null || feeEst.sell?.total != null) && (
+            <div className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
+              FEES · {feeEst.buy?.basis ?? feeEst.sell?.basis}
+              {feeEst.buy?.total != null &&
+                ` · buy ${(form.fee_entry !== "" ? Number.parseFloat(form.fee_entry) || 0 : feeEst.buy.total).toFixed(2)} (${form.fee_entry !== "" ? "typed" : feeBreakdown(feeEst.buy)})`}
+              {side === "sell" &&
+                feeEst.sell?.total != null &&
+                ` · sell ${(form.fee_exit !== "" ? Number.parseFloat(form.fee_exit) || 0 : feeEst.sell.total).toFixed(2)} (${form.fee_exit !== "" ? "typed" : feeBreakdown(feeEst.sell)})`}
+              {" · "}not in cost basis; P&amp;L is shown net of the sell fee
+            </div>
+          )}
 
           <div
             className="grid gap-2"

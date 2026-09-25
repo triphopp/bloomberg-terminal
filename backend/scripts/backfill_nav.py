@@ -101,7 +101,7 @@ def fetch_prices(symbols: list[str], start: str) -> tuple[pd.DataFrame, pd.Serie
 
 def build(accounts, trades, closes, fx, days: list[str]) -> tuple[list[tuple], dict]:
     """Rows for portfolio_nav_snapshots + a record of what could not be priced."""
-    from portfolio_currency import realized_pnl_in_report, trade_value_in_report
+    from portfolio_currency import entry_fee_in_report, realized_pnl_in_report, trade_value_in_report
 
     idx = sorted(set(closes.index) | set(fx.index) | {date.fromisoformat(d) for d in days})
     closes = closes.reindex(idx).ffill()
@@ -111,6 +111,7 @@ def build(accounts, trades, closes, fx, days: list[str]) -> tuple[list[tuple], d
     # Realized per lot in THB is date-independent once exited; compute once.
     realized_thb = {t["id"]: realized_pnl_in_report(t, "THB")
                     for t in trades if t.get("win_loss") != "P" and _d(t.get("date_exit"))}
+    fee_thb = {t["id"]: entry_fee_in_report(t, "THB") for t in trades if t.get("fee_entry")}
     cost_thb = {}
     for t in trades:
         native = _f(t.get("amount")) or _f(t["price_entry"]) * _f(t["volume"])
@@ -132,6 +133,8 @@ def build(accounts, trades, closes, fx, days: list[str]) -> tuple[list[tuple], d
                 de, dx = _d(t["date_entry"]), _d(t.get("date_exit"))
                 if dx and dx <= ds and t.get("win_loss") != "P":
                     realized += realized_thb.get(t["id"], 0.0)
+                if de and de <= ds:
+                    realized -= fee_thb.get(t["id"], 0.0)  # buy fee, paid on entry
                 if not de or de > ds or (dx and dx <= ds):
                     continue
                 if str(t["symbol"]).upper().startswith(("PUT_", "CALL_")):

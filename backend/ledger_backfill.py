@@ -238,6 +238,18 @@ def build_events(conn) -> tuple[list[Event], list[Issue]]:
             trade_time=str(root.get("created_at") or ""),
             note=f"lot {root_id[:8]}" + (f" + {len(members) - 1} split" if len(members) > 1 else ""),
         ))
+        # Buy commission + VAT: its own cash event, never in the cost basis
+        # (brokers report cost as qty x price). Summed over the lot family,
+        # since a partial sale leaves the fee on the row it was typed on.
+        buy_fee = sum(_f(trades[m].get("fee_entry")) for m in members)
+        if buy_fee > EPS:
+            events.append(Event(
+                id=_eid(f"fee|{root_id}"), account_id=acct, trade_date=_d(root["date_entry"]),
+                type="FEE", symbol=sym, net_cash=-buy_fee, currency=ccy, fee=buy_fee,
+                fx_rate=_thb_rate(conn, ccy, _d(root["date_entry"]), root.get("exchange_rate")),
+                source_ref=sorted(members), trade_time=str(root.get("created_at") or ""),
+                note=f"buy fee lot {root_id[:8]}",
+            ))
         if _d(root.get("date_exit")) and _d(root["date_exit"]) < _d(root["date_entry"]):
             issues.append(Issue("ERROR", "I7", acct, sym,
                 f"lot {root_id[:8]}: date_exit {_d(root['date_exit'])} before date_entry {_d(root['date_entry'])}"))
@@ -262,7 +274,10 @@ def build_events(conn) -> tuple[list[Event], list[Issue]]:
         gross = qty * price
         fee = 0.0
         stored_pnl = sum(_f(t.get("pnl_amount")) for t in legs)
-        for t in legs:
+        recorded = [t for t in legs if t.get("fee_exit") is not None]
+        if recorded:
+            fee = sum(_f(t.get("fee_exit")) for t in legs)
+        for t in (legs if not recorded else []):
             # pnl_amount = (exit − entry) × vol − commission. Recover the
             # commission; a negative or outsized one means the stored P&L does
             # not follow from the row's own prices (caught later by I3).

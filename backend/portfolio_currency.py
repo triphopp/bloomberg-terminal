@@ -303,6 +303,19 @@ def realized_pnl_in_report(
     )
 
 
+def entry_fee_in_report(row: Mapping[str, object], report_ccy: object, *, conn=None) -> float:
+    """Buy-side broker fee (commission + VAT) in the report currency, at entry FX.
+
+    It is not in the cost basis (brokers report cost as qty x price), so every
+    cash identity charges it to realized P&L on the buy date. The sale's fees
+    are already inside pnl_amount.
+    """
+    fee = float(row.get("fee_entry") or 0)
+    if not fee:
+        return 0.0
+    return trade_value_in_report(row, fee, report_ccy, when="entry", conn=conn)
+
+
 def realized_economic_pnl_in_report(
     row: Mapping[str, object],
     report_ccy: object,

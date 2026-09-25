@@ -142,7 +142,8 @@ def test_cost_override_beats_the_lot_math_and_is_what_lots_rebase_to(dbfile):
 
     out = portfolio_v2.sell_position(
         portfolio_v2.SellIn(
-            trade_id=a, sell_volume=1.0, sell_price=1800.0, sell_date="2026-09-21"
+            trade_id=a, sell_volume=1.0, sell_price=1800.0, sell_date="2026-09-21",
+            commission=0,  # fees are covered in test_trade_fees.py
         )
     )
     assert out["avg_cost"] == pytest.approx(1600.0)

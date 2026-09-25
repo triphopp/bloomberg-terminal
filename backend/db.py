@@ -382,6 +382,13 @@ def init_portfolio_v2() -> None:
         _ensure_column(conn, "trades", "market", "market TEXT")
         _ensure_column(conn, "trades", "exit_exchange_rate", "exit_exchange_rate REAL")
         _ensure_column(conn, "trades", "is_reinvest", "is_reinvest INTEGER NOT NULL DEFAULT 0")
+        # Broker fees in the instrument currency. Kept out of price_entry: the
+        # broker's own cost basis is qty x price (Dime shows it that way).
+        # fee_exit is already inside pnl_amount; fee_entry is charged to
+        # realized P&L on the buy date (see broker_fees.py).
+        _ensure_column(conn, "trades", "fee_entry", "fee_entry REAL")
+        _ensure_column(conn, "trades", "fee_exit", "fee_exit REAL")
+        _ensure_column(conn, "trades", "fee_detail", "fee_detail TEXT")
         _ensure_column(conn, "portfolio_accounts", "markets", "markets TEXT")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS cash_ledger (
