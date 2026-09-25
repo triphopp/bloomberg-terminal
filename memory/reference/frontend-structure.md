@@ -26,7 +26,7 @@ Preview POSTs do not write data. Choosing FIFO here does not change the live sel
 ```
 components/bloomberg/
 ├── layout/
-│   ├── bloomberg-terminal.tsx   ← root view router (9 views)
+│   ├── bloomberg-terminal.tsx   ← root view router (6 views: MKT · NEWS · BOND · PORT · TAIL · HMAP)
 │   ├── terminal-header.tsx      ← top nav bar + view buttons (phone <768px: title + search only)
 │   ├── mobile-nav.tsx           ← phone bottom view switcher (replaces header nav; ribbon + ticker hidden)
 │   ├── terminal-layout.tsx      ← keyboard shortcut binding wrapper
@@ -348,9 +348,9 @@ components/bloomberg/
 | `Ctrl+Shift+T` | Toggle Area / Candlestick chart |
 | `Ctrl+N` | New watchlist |
 | `?` (Shift) | Show shortcuts help |
+| `i` | Focus the MKT symbol search |
 
 Shortcuts use physical letter/number keys when a Thai keyboard layout is active; IME composition and ordinary typing in input fields are ignored. Header and mobile view tabs are real `/?view=...` links: Ctrl/Meta+click and middle click open a new tab, while plain clicks update the current view and browser history.
-| `i` | Focus heatmap symbol search |
 
 ---
 

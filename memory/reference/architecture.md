@@ -29,96 +29,62 @@ Still pending: broker cost-method confirmation, actual opening statements, remai
 
 **2024-25 Excel history review:** `backend/scripts/stage_portfolio_history.py` stages source rows and market-price checks in local `portfolio_history_review`; `routers/portfolio_v2.py` exposes read-only `/history-review` through the Next proxy. This table is deliberately outside live trades/cash/NAV and cloud sync until ambiguous execution dates, cost lots and Dime funding currency are resolved. Audit CSVs and the online DB backup live under ignored `backend/backups/portfolio-history-20260926/`.
 
+**Portfolio takeover (2026-09-26):** lots received in kind are `trades.acquisition_type='TRANSFER_IN'` at fair value on the transfer date, previous owner's cost in `original_price_entry` (memo, fixed through AVCO rebases and splits). `GET /takeover` reports prior cost / value at transfer / inherited P&L / realized since. `backend/scripts/apply_portfolio_takeover.py` performed the one-off re-booking (also re-based live NAV snapshots and dropped backfill rows for `backfill_nav.py`). `/nav-index` now puts capital dated before a snapshot day into that day's base (`invested_before_day`).
+
+**2024-25 import:** `backend/scripts/apply_portfolio_reconciliation_2024_2025.py` imported the 20 independently verified closed trades from the reconciliation workbook and released the matching cash offsets (`cash_adjustments` DATA_FIX), so today's cash did not move; the other 145 rows stay `REVIEW_REQUIRED`.
+
 `GET /ledger/check` also returns `read_switch_gates`: posted journal coverage, source-cited statement coverage for active accounts, broker cost policy, shadow comparison and the current read path. These gates remain separate from a filtered finding count, so a zero-error `codes=` query cannot imply activation readiness.
 
-## Running (2 terminals always required)
+## Running
 
-```powershell
-# Terminal 1 — Python backend (set env vars in backend/.env)
-cd backend
-python -m uvicorn main:app --port 8000 --reload
-
-# Terminal 2 — Next.js
-npm run dev
-```
+See `project_summary.md` → How to Run (tray launcher `BloombergTerminal.exe`, `npm run dev:all`, or two terminals on ports **9317** backend / **9318** frontend).
 
 ## Data flow
 ```
-Browser → Next.js (/api/*) → Python (localhost:8000) → yfinance / FRED / AV / Ollama / BOT API / filesystem
-                ↓ fallback if Python is down
-           static marketData.ts  (market data only)
+Browser → Next.js (app/api/* proxies, PYTHON_API from lib/constants.ts) → FastAPI (localhost:9317)
+        → yfinance (provider registry + yahoo_gate 6 concurrent + market_requests coordinator)
+        / FRED / MOF / CBOE / CFTC / SEC EDGAR / Treasury fiscaldata / Gamma / BOT / World Bank / filesystem
+Every outbound requests/yfinance call → upstream_health.record → logs/upstream.jsonl (+ /api/health/upstream)
 
 Macro data path:
-  /api/macro → memory cache (5min)
-             → macro_series.json disk cache (per-series TTL: 1d–30d)
-             → FRED JSON API concurrent (primary)
-             → Alpha Vantage sequential (fallback, 350ms apart)
-             → yfinance (real-time yield curve only, 1hr TTL)
+  /api/macro → memory cache (5min) → macro_series.json disk cache (per-series TTL 1d–30d)
+             → FRED JSON API (primary, 2 retries) → Alpha Vantage (fallback) → yfinance (yield curve only)
 
 BOT data path:
-  /api/bot/* → memory cache (5min)
-             → bot_cache.json disk cache (1–4hr TTL)
-             → BOT API (gateway.api.bot.or.th) — each category has its own token
+  /api/bot/* → memory cache (5min) → bot_cache.json (1–4h) → BOT API (one token per category)
+
+Background work: main.py calls alert_scheduler.start_background_scan(), iv_scheduler.start_background_recorder()
+and series_scheduler.start_background_recorder() at startup (explicit calls — never a scheduler started by an import);
+COT refreshes in its own background thread (`cot-refresh`) when its cache is stale; the sync worker runs when SYNC_ENABLED.
 ```
 
-## Backend Routers (all in `backend/routers/`)
+## Backend Routers
 
-| Router | Prefix | Source |
-|--------|--------|--------|
-| market.py | /api/market-data, /api/heatmap | yfinance |
-| stock.py | /api/stock/* | yfinance |
-| dcf.py | /api/dcf/* | yfinance statements/quotes + pure `analytics/dcf.py` |
-| market_heatmap.py | /api/market-heatmap | yfinance `screen()` per sector (11 parallel) |
-| cot.py | /api/cot/{snapshot,history,basis,factor,portfolio,status} | CFTC Socrata (TFF + Disaggregated), background refresh → `cot_*` SQLite |
-| discover.py | /api/search-stats/*, /api/most-active | SQLite `search_hits` + yfinance `screen("most_actives")` |
-| options.py | /api/options/*, positions + Greeks | yfinance + greeks.py |
-| pins.py | /api/pins/* | SQLite |
-| clippings.py | /api/clippings/* | filesystem + Ollama |
-| news.py | /api/news/facebook | RSSHub / Graph API |
-| macro.py | /api/macro | FRED + Alpha Vantage (2-layer cache) |
-| crisis.py | /api/crisis | FRED |
-| sovereign.py | /api/sovereign/* | World Bank |
-| portfolio.py | /api/portfolio/* | filesystem + SQLite |
-| portfolio_v2.py | /api/v2/portfolio/* (accounts, trades, sell, dividends) | SQLite |
-| risk.py | /api/v2/portfolio/risk/* (VaR/CVaR/Parity/Stress/Sizing) | Ledoit-Wolf |
-| fx.py | /api/fx/* | yfinance |
-| crypto.py | /api/crypto/* | yfinance |
-| etf.py | /api/etf/* | yfinance |
-| footprint.py | /api/crypto/footprint | Binance |
-| central_banks.py | /api/central-banks/* | SDMX/REST (no key) |
-| polymarket.py | /api/polymarket/* (signals, search, MCP) | Gamma API + SQLite |
-| bot.py | /api/bot/* (auctions, rates, fx, statistics) | BOT API (4 tokens) |
-| sectors.py | /api/sectors/* (classification, search, override) | Wikipedia + yfinance + SQLite |
-| sec.py | /api/sec/* (legacy, expires 2026-06-30) | api.sec.or.th old portal |
-| sec_v2.py | /api/sec/v2/* (52 routes: Bond v2 + Fund v2 + One Report v1) | api.sec.or.th new portal |
-| allocation.py | /api/allocation/* (signal, layers, history) | FRED + ETF |
-| country_rotation.py | /api/country-rotation/* (scores, history, universe) | yfinance + World Bank |
-| sector.py | /api/sector/* (sector selection signal, factors, history) | FRED + yfinance |
-| regime.py | /api/regime/correlation | yfinance (5min cache) |
-| rotation.py | /api/rotation/table (theme/sector momentum + RRG quadrant) | yfinance batch (15min cache) |
-| paper_trading.py | /api/paper/* (accounts, orders, positions, fills, equity-curve) | yfinance + SQLite |
-| watchlist_signals.py | /api/watchlist/signals (batch daily technical scan) | yfinance batch (15min cache) |
+61 routers in `backend/routers/`, all mounted in `main.py`. The maintained table (prefix + source per router) is
+`project_summary.md` → "Backend Architecture — Modular Routers"; every endpoint is in `api-endpoints.md`.
+Added 2026-09-25/26: `bonds.py`, `cot.py`, `discover.py`, `market_heatmap.py`, `dev.py`; `macro.py` gained
+`/api/macro/calendar`; `portfolio_v2.py` gained `/takeover`, `/history-review` and the `/nav-index`
+start-of-day flow rule.
 
-## 9 Frontend Views (post-RMI removal 2026-05-24)
+## Frontend Views (6, since 2026-09-26)
 
 | Key | Atom value | Button | View file |
 |-----|------------|--------|-----------|
-| `1` | market (default) | MKT | market-view.tsx |
-| `2` | news | NEWS | news-view.tsx |
-| `3` | heatmap | HMAP | heatmap-view.tsx (command `heatmap(MARKET)`) |
-| `4` | bonds | BOND | views/bonds/ (MARKET · CONDITIONS) — replaced CLIP, absorbed CRDT 2026-09-25 |
-| `5` | macro | MACRO | macro-view.tsx |
-| `P` | portfolio | PORT | portfolio-view.tsx (barrel → portfolio/) |
-| `C` | crypto | CRYP | crypto-view.tsx |
-| `E` | fx | FX | fx-view.tsx |
+| `1` | market (default) | MKT | `views/market-view.tsx` (eager) |
+| `2` | news | NEWS | `views/news-view.tsx` → `views/news/` |
+| `3` / `b` | bonds | BOND | `views/bonds/` (MARKET · CONDITIONS) |
+| `4` / `p` | portfolio | PORT | `views/portfolio-view.tsx` → `views/portfolio/` |
+| `5` / `t` | tail | TAIL | `views/tail-risk-view.tsx` + `views/tail/` |
+| `h` | heatmap | — (command `heatmap(MARKET)`) | `views/heatmap-view.tsx` |
 
-**Not routed (no nav button):** stock-view.tsx — accessible via global search / market view click  
-**Deleted:** rmi-view.tsx + rmi-chart.tsx (2026-05-24), volatility-view.tsx (2026-05-21)
+**Not routed:** `stock-view.tsx` (global search / heatmap / watchlist click), `volatility-view.tsx` (exported, unused).
+**Deleted:** `market-movers-view.tsx`, `credit-view.tsx`, `clippings-view.tsx` (2026-09-25), `macro-view.tsx` (2026-09-17), crypto/fx views (2026-08-01), `rmi-view.tsx` (2026-05-24).
+URL carries the view (`?view=bonds`, `layout/view-navigation.ts`).
 
 ## Key files
 
 ### Backend
-- `backend/main.py` — App init, CORS, mounts all 27 routers
+- `backend/main.py` — app init, CORS, schema init, mounts all 61 routers; imports `dev_status`, `upstream_health`, `yahoo_gate` before any router
 - `backend/mcp_server.py` — MCP stdio server (not mounted; separate process spawned by the MCP client via `/.mcp.json`). HTTP client of the backend, writes tagged `X-Thesis-Actor: agent:<name>`
 - `backend/config.py` — All env vars + BOT tokens (BOT_API_TOKEN, BOT_IR_TOKEN, BOT_FX_TOKEN, BOT_STATS_TOKEN) + SEC_KEYS (old portal) + SEC2_KEYS (new portal, falls back to SEC2_API_KEY)
 - `backend/db.py` — SQLite connection manager + schema init + compute_holdings() + sector_classifications helpers
@@ -155,7 +121,7 @@ BOT data path:
   - `regime_calibration.py` — Regime Detection calibration math
   - `market_state/` — **per-symbol** latent-state model (2026-09-13), distinct from `regime_v2.py` which is market-wide. `features.py` (5 model features + 7 candidates kept only for the redundancy report) · `hmm.py` (Gaussian HMM + `filtered_posterior`, a ONE-PASS forward recursion that equals hmmlearn's prefix `predict_proba` to 1e-9 — same causal quantity `regime_v2` gets from O(n) forward-backward passes, verified in `tests/test_market_state.py`; archetype naming via Hungarian assignment so two states can never share a name) · `scores.py` (Trend/Momentum/Volatility + derivatives, tanh not clip) · `interpret.py` (the sentence; knows nothing about trading) · `strategy.py` (the decision layer; knows nothing about phrasing) · `validate.py` (walk-forward refit, overlap-adjusted t). **Interpretation and decision are separate modules on purpose** — see the package docstring
   - `svi.py` — optional Raw SVI smile slices: supplied percentage IV → total variance, deterministic multistart SciPy soft-L1 fit with positive minimum variance; parameters + IV RMSE and explicit unavailable states. `POST /api/options/smile-fit` runs in FastAPI's threadpool with a bounded payload cache. `GET /api/options/{symbol}` also uses the threadpool for independent multi-expiry Yahoo calls. No new provider, package or database schema.
-- `backend/tests/` — 58 unit tests (pytest): `test_greeks.py` (BS price/GC correction/Greeks/moments), `test_sec_api.py` (10 SEC legacy endpoints), `conftest.py` (sys.path setup)
+- `backend/tests/` — ~1,013 pytest tests (portfolio, accounting, sync, options, COT, bonds, events, dev status …); pass `--basetemp` to a writable folder on Windows
 - `.github/workflows/tests.yml` — CI/CD on push/PR to main: `backend-tests` (Python 3.11 → pytest) + `frontend-typecheck` (Node 20 → tsc --noEmit)
 - `backend/routers/bot.py` — BOT API: bond auctions + interest rates + FX + statistics; uses `_bot_get()` + `_cached()` helpers
 - `backend/routers/central_banks.py` — 10 central banks via SDMX/REST (ECB, BOE, BOC, Norges, Bundesbank, SNB, BOJ, SARB, CBR, RBA, Eurostat)
@@ -170,8 +136,8 @@ BOT data path:
 - `bot_cache.json` — BOT API (auctions, rates, fx)
 
 ### Frontend
-- `components/bloomberg/layout/bloomberg-terminal.tsx` — view router (9 views)
-- `components/bloomberg/layout/terminal-header.tsx` — nav buttons
+- `components/bloomberg/layout/bloomberg-terminal.tsx` — view router (6 views), shortcuts, URL ↔ view sync, dev `BackendStatusBanner`
+- `components/bloomberg/layout/terminal-header.tsx` / `mobile-nav.tsx` — nav links (`<a href>` via `view-navigation.ts`)
 - `components/bloomberg/atoms/index.ts` — Jotai atoms (currentViewAtom)
 - `components/bloomberg/hooks/useTerminalUI.ts` — view navigation handlers
 - `components/bloomberg/views/market-view.tsx` — MKT default view (eager-loaded); exports `MarketView` + `KeyIndicatorsBar`
