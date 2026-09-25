@@ -30,6 +30,32 @@ from cache import TTLCache
 
 # (decision date, has Summary of Economic Projections)
 FOMC_DECISIONS: tuple[tuple[str, bool], ...] = (
+    # 2023–2025: past decisions, so the price chart's event rail has FOMC
+    # history to line reactions up against (TAIL only ever looked ahead).
+    ("2023-02-01", False),
+    ("2023-03-22", True),
+    ("2023-05-03", False),
+    ("2023-06-14", True),
+    ("2023-07-26", False),
+    ("2023-09-20", True),
+    ("2023-11-01", False),
+    ("2023-12-13", True),
+    ("2024-01-31", False),
+    ("2024-03-20", True),
+    ("2024-05-01", False),
+    ("2024-06-12", True),
+    ("2024-07-31", False),
+    ("2024-09-18", True),
+    ("2024-11-07", False),
+    ("2024-12-18", True),
+    ("2025-01-29", False),
+    ("2025-03-19", True),
+    ("2025-05-07", False),
+    ("2025-06-18", True),
+    ("2025-07-30", False),
+    ("2025-09-17", True),
+    ("2025-10-29", False),
+    ("2025-12-10", True),
     ("2026-01-28", False),
     ("2026-03-18", True),
     ("2026-04-29", False),

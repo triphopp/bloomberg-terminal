@@ -26,9 +26,12 @@ def test_fomc_list_matches_fed_sep_meetings():
     # SEP meetings cross-checked against FRED release 326 on 2026-09-16.
     sep = [d for d, s in ec.FOMC_DECISIONS if s and d.startswith("2026")]
     assert sep == ["2026-03-18", "2026-06-17", "2026-09-16", "2026-12-09"]
-    # Decision dates are the second day of the meeting: always a Wednesday
-    # in the published 2026–2027 schedule.
-    assert all(ec._d(d).weekday() == 2 for d, _ in ec.FOMC_DECISIONS)
+    # Decision dates are the second day of the meeting: a Wednesday, except the
+    # November 2024 meeting, moved to Wed–Thu around the election.
+    thursday = {"2024-11-07"}
+    assert all(
+        ec._d(d).weekday() == (3 if d in thursday else 2) for d, _ in ec.FOMC_DECISIONS
+    )
 
 
 def test_decision_day_is_day_zero():
