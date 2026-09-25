@@ -32,15 +32,8 @@ const RAIL_BOTTOM_PAD = 3;
 const CHIP_PAD_X = 3;
 /** Every icon chip is the same width — nothing has to be measured to lay them out. */
 const CHIP_W = ICON_SIZE + CHIP_PAD_X * 2;
-/**
- * Pane colour painted under each chip, at ~87% opacity.
- *
- * Not fully opaque: a hard rectangle punched out of the candles is as loud as
- * the old full-width band was. At this alpha a wick behind a chip reads as a
- * shadow rather than as a line crossing the icon.
- */
-const CHIP_BACKDROP_DARK = "#0b0b0bde";
-const CHIP_BACKDROP_LIGHT = "#f2f2f2de";
+/** Opacity of upcoming-event marks — faded so they never pass for recorded ones. */
+const FUTURE_ALPHA = 0.55;
 /** Chips closer than this collapse into a cluster. */
 const CLUSTER_GAP = 3;
 /** Gap between the last bar and the first upcoming chip. */
@@ -150,23 +143,6 @@ export function clusterChips(positioned: PositionedChip[], gap = CLUSTER_GAP): C
   return chips;
 }
 
-function roundedRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number
-) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-
 /**
  * Takes events already resolved onto bars (see `placeEvents`) rather than raw
  * markers, so the placement rule is applied exactly once per chart build and the
@@ -264,13 +240,8 @@ export function createEventRailOverlay(placed: PlacedEvent[]): EventRailOverlay 
         }
       }
 
-      // No band and no divider under the row. The rail used to paint an opaque
-      // strip across the full pane width, which was a solid bar of chart real
-      // estate spent on a handful of chips and read as a second axis. The chips
-      // carry their own backdrop instead, so the row is invisible where nothing
-      // sits on it.
-      const backdrop = isDark ? CHIP_BACKDROP_DARK : CHIP_BACKDROP_LIGHT;
-
+      // Bare marks: no band, no chip frame, no fill. The icon's colour and
+      // shape carry the type; a box around it only added weight to the row.
       const cy = railTop + RAIL_HEIGHT / 2;
       for (const chip of chips) {
         const clustered = chip.count > 1;
@@ -284,18 +255,6 @@ export function createEventRailOverlay(placed: PlacedEvent[]): EventRailOverlay 
         const y = cy - h / 2;
         hitboxes.push({ x, y, width: w, height: h, markers: chip.markers });
 
-        roundedRect(ctx, x, y, w, h, 2);
-        // Two passes: the pane colour first so gridlines and wicks do not run
-        // through the mark, then the type tint over it. One translucent fill
-        // cannot do both — it either hides the chart or fails to hide it.
-        ctx.fillStyle = backdrop;
-        ctx.fill();
-        ctx.fillStyle = `${color}22`;
-        ctx.fill();
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
         if (text === null) {
           drawEventIcon(ctx, chip.style.icon, chip.x, cy, ICON_SIZE, color);
         } else {
@@ -304,8 +263,9 @@ export function createEventRailOverlay(placed: PlacedEvent[]): EventRailOverlay 
         }
       }
 
-      // Same chip, dashed outline and no fill — an announced date is not a
-      // recorded one, and the rail should not let the two look alike.
+      // Same mark, faded — an announced date is not a recorded one, and the
+      // rail should not let the two look alike.
+      ctx.globalAlpha = FUTURE_ALPHA;
       for (const chip of futureChips) {
         const h = RAIL_HEIGHT - 4;
         const x = chip.x - chip.w / 2;
@@ -317,17 +277,6 @@ export function createEventRailOverlay(placed: PlacedEvent[]): EventRailOverlay 
           height: h,
           markers: chip.marker ? [chip.marker] : [],
         });
-
-        roundedRect(ctx, x, y, chip.w, h, 2);
-        ctx.fillStyle = backdrop;
-        ctx.fill();
-        ctx.setLineDash([2, 2]);
-        ctx.strokeStyle = chip.style.color;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        // The dash belongs to the chip border, not to the mark inside it — an
-        // icon drawn with a dashed stroke at 11px falls apart into dots.
-        ctx.setLineDash([]);
 
         drawEventIcon(ctx, chip.style.icon, chip.x, cy, ICON_SIZE, chip.style.color);
       }
