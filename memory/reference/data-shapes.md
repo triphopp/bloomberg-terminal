@@ -5,6 +5,53 @@
 
 ---
 
+## REG channels (client storage, 2026-09-25)
+
+No backend response change. `localStorage["chart:regression"]` stores `StoredRegressionChannel[]`: `{id, symbol, barInterval, fromTime, toTime, color, options:{mode:"stddev"|"quantile",stdDevMult,tauPct,extend}}`. `fromTime` and `toTime` are bar times, not array indices. The previous single `{fromTime,toTime}` value is accepted and migrated on the next edit. Only channels for the current symbol and bar interval render; mode changes and removal affect the selected channel.
+
+## Accounting previews (2026-09-25)
+
+`GET /api/v2/portfolio/history-review` returns `{total:number,summary:[{account_id,record_type,review_status,count}],rows:[PortfolioHistoryReview]}` with optional `account_id`, `review_status`, `review_decision`, `limit` and `offset`. `PortfolioHistoryReview` contains source coordinates and hash, recorded trade/cash values, market day/high/low, `entry_price_check`, `exit_price_check`, `review_status`, optional `lot_match_status` (`covered_cost_near` | `covered_cost_mismatch` | `insufficient_prior_buy_qty`), `matched_source_rows`, `unmatched_quantity`, `source_weighted_cost`, and optional `review_decision` (`IMPORTED` | `REVIEW_REQUIRED`) / `review_note` (JSON with source hashes, proposed dates/prices/quantity/P&L, reason, 97 linked `missing_buy_proposals` across 2024–25 review rows, and trade ID when imported). Review rows alone do not feed cash, holdings, P&L or NAV; 20 separately posted 2024–25 trades do. Review statuses: `buy_candidate`, `sale_candidate`, `mark_candidate` (recorded date does not support exit price; later sale is also possible), `ambiguous_both_prices`, `unresolved`, `investment_match`, `amount_conflict`. Market daily range and same-symbol lot coverage support plausibility only; neither confirms a broker execution.
+
+Exports in `components/bloomberg/views/portfolio/accounting-types.ts`:
+
+- `AccountingFinding`: `{code, severity:'error'|'warn'|'info', account_id:string|null, symbol:string|null, message, evidence:Record<string,unknown>}`; backend additionally returns nullable `fix` (currently no automatic fixes).
+- H2 finding evidence includes `{currency,lowest,date,first_negative_date,first_negative_balance,negative_event_days,basis}`. Amounts are reconstructed from legacy transaction dates before EDIT offsets; they are not asserted broker balances.
+- `AccountingReport`: `{as_of, source:'reconstructed', counts:{error,warn,info}, checks:[{code,status,evaluated,reason?}], findings, events, posted_events, read_switch_gates:[{id,status:'blocked'|'pending'|'met',reason,missing_account_ids?}], ready_for_read_switch, read_switch_reason}`. Backend also returns `account_id`. Gates are computed independently of `codes=` filters; entered statement references are not broker authentication. `status:'checked'` means evaluated, **not passed**; inspect findings. `skipped`/`partial` are incomplete evidence. `ready_for_read_switch` remains false in preparation.
+- `StockCard`: `{account_id,symbol,currency,method:'AVCO'|'FIFO',source:'reconstructed',cost_in,cost_out,remaining_cost,remaining_qty,realized,findings,rows}`. Rows contain serialized `event`, `qty_in`, `qty_out`, `cost_in`, `cost_out`, nullable `realized`, `bal_qty`, `bal_cost`, nullable `avg`, `allocations[{buy_event_id,qty,cost}]` (backend also includes sell id/unit cost).
+- Dividend preview: `{mode:'preview',recorded:false,currency,note,entitlements:[{account_id,sub_account,asset,ex_date,units,gross_amount,tax_withheld,total_received,effective_rate,rate_matches}]}`.
+- Opening preview: `{mode:'preview',recorded:false,account_id,currency,as_of,cash,market_value,calculated_market_value,difference,O1,O2,quantity_differences:[{symbol,statement_qty,ledger_qty}],performance_basis:'market_value',pnl_basis:'cost_basis'}`. `O2:null` means unavailable comparison in the pure calculator; HTTP validates recorded dates and supplies quantities. These comparisons do not certify broker completeness.
+
+The first preparation phase added no persisted schema. Existing `ledger_events` remains empty until reviewed migration; method selection affects preview only.
+
+**Evidence phase extension (same date):** `broker_statements` is now persisted. GET `/ledger/statements` returns `{count,statements:[{statement:{id,account_id,as_of,currency,cash,market_value,holdings_json,source_ref,source_note,supersedes_id,positions,...},comparison}]}`. `comparison` has `statement_cash`, nullable `reconstructed_cash_before_offsets`/`cash_difference`, `missing_fx_event_ids`, `O1`, `O2`, `quantity_differences`, `matched`, `market_value_checked_against_history:false`, `broker_source_verified:false`, `basis`. POST returns `{id,recorded:true,comparison,note}`. A source reference is user supplied; no broker file is authenticated by the app. `cash_adjustments.category` is a new non-null TEXT field, old rows default `UNKNOWN`; cash adjustment TypeScript interface adds optional `category` for compatibility.
+
+**Dime Activity image import (same date):** `broker_executions` stores `{id,account_id,broker,symbol,side:'BUY'|'SELL',executed_at_local,display_timezone:'UNKNOWN',quantity,unit_price,instrument_ccy:'USD',order_amount?,order_ccy?,source_image,source_sha256,source_note,created_at,updated_at}`. Quantity/price/amount are decimal strings. Every row cites a SHA-256-checked image. The 29 imported rows appear in existing `/audit-events?table_name=broker_executions` responses; there is no new execution API. This evidence table is excluded from current cash, trade lots, P&L, NAV and `ledger_events` until funding and settlement reconcile. Sale amount is null because the Activity images only show quantity and execution price.
+
+## COT Snapshot (`GET /api/cot/snapshot`) — 2026-09-25
+```ts
+{ window: number, as_of: string|null, released: string|null,
+  flags: Array<{ id; label; contract /* key */; contract_label; group; side: "long"|"short"; z; pct; net_oi; as_of; released; why }>,
+  contracts: Array<{
+    code: string; key: string /* UST10Y, SOFR3M, ES, VIX, JPY, GOLD … */; label: string;
+    dataset: "TFF" | "DIS"; class: "rates"|"equity"|"vol"|"fx"|"crypto"|"commod";
+    focus: "lev" | "mm"; yahoo: string; dv01: number | null;
+    as_of: "YYYY-MM-DD" /* Tuesday */; released: "YYYY-MM-DD" /* scheduled Friday */;
+    oi: number; d_oi: number | null;
+    conc4_long, conc4_short, conc8_long, conc8_short: number | null;   // % of OI, gross
+    groups: Record<"dealer"|"am"|"lev"|"other"|"nonrept"   // TFF
+                 | "prod"|"swap"|"mm"|"other"|"nonrept",   // DIS
+      { long; short; net; net_oi /* % */; d_net: number|null;
+        traders_long; traders_short: number|null;           // null for nonrept
+        z: number|null; pct: number|null /* 0–100, low = most net-short */; n: number }> }>,
+  status: { running; last_error: string|null; cooldown; rows_last_run; expected_as_of; stored; contracts } }
+```
+Basis (`/api/cot/basis`): `{window, as_of, released, unit, stats:{am|lev|dealer:{net,d_net,z,pct,n}}, series:[{date,released,am,lev,dealer,oi}] (10Y-eq, oldest first), tenors:[snapshot contract + dv01_net{grp:number}], status}`
+Factor (`/api/cot/factor`): `{series:[{date,value}], loadings:{KEY:number}, explained, weeks, window, group, as_of, status}`
+Portfolio (`/api/cot/portfolio`): `{as_of, released, base_currency, rows:[{key,label,side,exposure,weight_pct,symbols[],proxy,focus,focus_z,focus_pct,flags:[flag + relation "WITH_CROWD"|"AGAINST_CROWD"]}], with_crowd_weight_pct, mapped_weight_pct, unmapped_weight_pct, unpriced[], status}`
+TAIL `/api/tail-risk/signals` → each signal gains `counted: boolean` (false = shown, not counted; only `cot_crowding` today).
+History (`/api/cot/history`): `{code,key,label,dataset,focus,rows:[{date,released,oi,conc4_long…,groups:{grp:{long,short,net,spread,traders_long,traders_short}}}],status}` oldest first.
+
 ## Market Data (`GET /api/market-data`)
 ```json
 {
@@ -889,7 +936,7 @@ interface Trade { id: string; account_id: string; symbol: string; date_entry: st
 interface AccountStat { pnl_base: number; pnl_economic_base?: number; ytd_realized_base?: number; ytd_economic_realized_base?: number; }
 interface Summary { total_pnl_base: number; total_economic_pnl_base?: number; total_ytd_realized_base?: number; total_ytd_economic_realized_base?: number; }
 interface Account { id: string; name: string; broker: string; country: string; currency: string; account_type: string; }
-interface CashEntry { id: string; account_id: string; date: string; income: number; investment: number; exchange_rate: number; note: string; entry_type?: "CASH" | "TRANSFER"; linked_id?: string; }  // TRANSFER rows come in linked pairs (same linked_id, opposite investment sign) — see plans/completed/cash-transfer-feature.md
+interface CashEntry { id: string; account_id: string; date: string; income: number; investment: number; exchange_rate: number; note: string; entry_type?: "CASH" | "DEPOSIT" | "WITHDRAW" | "TRANSFER"; linked_id?: string; flow_type?: "DEPOSIT" | "WITHDRAW" | "TRANSFER_IN" | "TRANSFER_OUT"; }  // investment = signed capital flow (withdraw < 0); income = display-only gross. POST body = CashFlowForm {account_id, date, flow_type, amount>0, note, income?}.  // TRANSFER rows come in linked pairs (same linked_id, opposite investment sign) — see plans/completed/cash-transfer-feature.md
 interface Dividend { id: string; account_id: string; asset: string; pay_date: string; amount_per_unit: number; total_received: number; currency: string; amount_per_unit_base?: number; total_received_base?: number; reinvested_amount_base?: number; }
 ```
 
@@ -1048,6 +1095,37 @@ interface PolySignal { type: string; label: string; color: string; question: str
 
 
 ---
+
+## `/api/bonds/*` — BOND view (`routers/bonds.py`, TS: `views/bonds/types.ts`)
+
+```jsonc
+// overview — values in %, null = no print that day
+{ "ok": true, "asOf": "2026-09-23", "errors": [], "source": "...",
+  "kpis": [{ "id": "UST10Y", "label": "UST 10Y", "fred_id": "DGS10", "group": "treasury|credit|derived",
+             "unit": "%", "value": 5.11, "asOf": "2026-09-23",
+             "chg1d_bp": 15.0, "chg5d_bp": 10.0, "chg20d_bp": 47.0, "pctile_1y": 100.0 }],
+  "history": [{ "date": "2026-09-23", "UST2Y": 4.85, "UST10Y": 5.11, "UST30Y": 5.4, "TP10": null,
+                "REAL10": 2.76, "IG_OAS": 0.77, "HY_OAS": 2.73, "BBB_Y": 6.01, "AAA_Y": 6.06,
+                "BAA_Y": 6.5, "CURVE_2S10S": 0.26, "BAA_AAA": 0.44 }] }
+// supply
+{ "auctions": { "upcoming": [Auction], "recent": [Auction] },   // recent newest-first, ≤40
+  "weekly": [{ "week": "2026-09-21", "bills_bn": 493.0, "coupons_bn": 211.0 }],
+  "slow": [{ "id": "NFC_DEBT_SEC", "fred_id": "NCBDBIQ027S", "label": "...", "unit": "$bn|% net",
+             "freq": "q|m", "points": [{ "date", "value", "chg_pct", "yoy_pct" }] }], "errors": [] }
+// Auction
+{ "auction_date", "issue_date", "type": "Bill|CMB|Note|Bond|TIPS|FRN", "term": "7-Year", "reopening": false,
+  "offering_bn", "accepted_bn", "high_yield", "bid_to_cover", "dealer_pct", "indirect_pct", "upcoming": false }
+// issuance — deals = distinct issuers per day
+{ "daily": [{ "date", "CORP", "FIN", "ABS", "SOV", "BANK", "ex_bank" }],
+  "weekly": [{ "week", "CORP", "FIN", "ABS", "days", "UST10Y", "IG_OAS" }],   // yields = week close
+  "recent": [{ "adsh", "file_date", "form", "issuer", "cik", "sic", "category": "CORP|FIN", "filings", "url" }],
+  "event_study": { "ready": true, "threshold": 6, "n_days": 250, "n_event": 25, "n_other": 225,
+    "rows": [{ "series": "UST10Y|IG_OAS", "h": 0, "event_mean_bp", "other_mean_bp", "diff_bp", "t",
+               "n_event", "n_other" }],
+    "weekly_corr": { "UST10Y": { "r": 0.1, "n": 50 }, "IG_OAS": { "r": -0.2, "n": 50 } }, "note": "..." },
+  "backfill": { "days_total": 262, "days_stored": 120, "pending": 142, "running": true, "last_error": null },
+  "method": { "query", "forms", "unit", "caveat", "excluded" }, "source": "SEC EDGAR full-text search" }
+```
 
 ## `/api/rates/curve` — bond curve tick rows (`routers/rates.py`)
 
@@ -1382,3 +1460,58 @@ RS = close/bench weekly; RS-Ratio = 100·RS/SMA8(RS); RS-Mom = 100·RS-Ratio/SMA
 }
 ```
 Type: `PortfolioRotationResponse` in `portfolio/ui/PortfolioRotationChart.tsx`.
+
+### nav-index point (2026-09-25)
+```ts
+interface NavGrowthPoint { date: string; nav: number; flow: number; capital_flow?: number; adjustment_flow?: number; return_pct: number; port_index: number; suspect: boolean; estimated?: boolean; }
+// response adds estimated_until: string | null. DB: portfolio_nav_snapshots.source TEXT NOT NULL DEFAULT 'live' ('live' | 'backfill')
+// flow = capital_flow (CASH deposits − withdrawals) + adjustment_flow (cash EDIT offsets). GROWTH draws ▲▼ from capital_flow only, ◆ from adjustment_flow.
+```
+
+### /returns row (2026-09-25 additions)
+```ts
+interface ReturnsRow { cagr_pct; xirr_pct; xirr_flag?: string | null; xirr_capital_pct?: number | null; xirr_capital_flag?: string | null; net_deposited?: number; nav_now?: number; simple_pct; invested; end_value; holding_days; first_date; name? }
+// flags → components/bloomberg/views/portfolio/tabs/AnalyticsTab.tsx XIRR_FLAG_TEXT (hide → "—", caveat → value + "*")
+```
+
+```ts
+interface PeriodReturn { period: string; ytd: boolean; start: string; end: string; days: number; start_nav: number; end_nav: number; net_flow: number; xirr_pct: number | null; period_pct: number | null; flag: string | null; estimated: boolean }
+// ReturnsRow.periods?: PeriodReturn[] (2026-09-25)
+```
+
+## Discover feeds (`routers/discover.py`, 2026-09-25)
+
+```ts
+// GET /api/search-stats/top
+{ items: { symbol: string; count: number; last_at: string /* UTC "YYYY-MM-DD HH:MM:SS" */ }[]; error?: string }
+// GET /api/most-active
+{ items: { symbol: string; name: string | null; price: number | null; pctChange: number | null;
+           volume: number | null; avgVolume: number | null; rvol: number | null;
+           marketState: string | null; time: number | null /* epoch s */;
+           preMarketPrice/Change/ChangePercent, postMarketPrice/Change/ChangePercent: number | null }[];
+  asOf: number; error?: string }
+```
+SQLite: `search_hits(symbol TEXT PK, count INTEGER, last_at TEXT)` — local only, not synced.
+
+## Market heatmap (`routers/market_heatmap.py`, 2026-09-25)
+
+```ts
+// GET /api/market-heatmap?market=US&per=25   (compact keys — ~60 KB for 275 names)
+{ market: string; currency?: string; asOf?: number; partial?: boolean; ms?: number; stale?: boolean; error?: string;
+  tiles: { s: string; n: string; sec: string /* Yahoo sector */; cap: number; px: number;
+           d1, w52, d50, d200, hi /* ≤0 */, rv, pe, pre, post: number | null;  // all % except rv (×) and pe
+           cur: string | null; ms: string | null /* marketState */ }[] }
+```
+
+### `GET /api/v2/portfolio/ledger/evidence` (EvidenceReport, `accounting-types.ts`)
+`{ as_of, source, display_timezone_assumed: "Asia/Bangkok", fills, counts{status:n}, totals{ccy:{cash_gap, fee_gap, cash_gap_ex_fees, missing_realized}}, symbols[], rows[], note }`
+- `symbols[]`: `account_id, symbol, currency, coverage_from, coverage_to, fills, counts, broker_cash, book_cash, cash_gap (book − broker), fee_gap, cash_gap_ex_fees, broker_net_qty, book_net_qty, qty_match, missing_realized, verified`
+- `rows[]`: `status, account_id, symbol, side, fill_ids[], event_ids[], source_refs[], images[], us_date, local_time, fill_qty, fill_price, book_date, book_qty, book_price, broker_cash, book_cash, fee_gap, sold_qty?, missing_realized?`
+- `verified` = no MISSING/NETTED/NO_EVIDENCE and |cash_gap − fee_gap| ≤ 0.05
+
+### trades fee columns (2026-09-26)
+`fee_entry REAL` buy commission+VAT, `fee_exit REAL` sale commission+VAT+SEC+TAF (already inside `pnl_amount`), `fee_detail TEXT` JSON `{entry:{…estimate or {total,source:"manual"}}, exit:{…}}`. Instrument currency. Not in `price_entry`/`amount`. `/summary` accounts add `entry_fees_base`.
+
+### trades takeover columns + `GET /api/v2/portfolio/takeover` (2026-09-26)
+`acquisition_type TEXT` (`'TRANSFER_IN'` = lot received in kind at a portfolio takeover; NULL = normal buy), `original_price_entry REAL` (previous owner's cost/unit, memo), `transfer_price_entry REAL` (fair value/unit on the transfer date). For these lots `price_entry`/`amount`/`date_entry` = fair value on the transfer date, so every return starts there. Both memo prices are copied on partial-sell splits and never AVCO-rebased.
+`/takeover?account_id&base_currency` → `{ base_currency, transfer_dates[], lots[{id, account_id, symbol, date_transfer, date_exit, open, volume, currency, original_price_entry, transfer_price_entry, original_cost_base, transfer_value_base, inherited_pnl_base, realized_since_base}], totals{original_cost, transfer_value, inherited_pnl, realized_since} }`. `inherited_pnl = (transfer − original) × volume` (pre-takeover, fixed). Unrealized since takeover = open-positions `unrealized_pnl_base` matched by `id`. Types `TakeoverPayload`/`TakeoverLot` in `views/portfolio/queries.ts`.

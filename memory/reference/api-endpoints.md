@@ -5,6 +5,23 @@
 
 ---
 
+## Portfolio accounting preparation (2026-09-25)
+
+Mounted in `routers/portfolio_v2.py`; matching Next proxies under `app/api/v2/portfolio/ledger/`. The first four routes below are read-only and uncached. Statement POST writes cited evidence only; it does not post trades, cash offsets, or journal events. Invalid inputs return 422.
+
+| Method/path (prefix `/api/v2/portfolio/ledger`) | Inputs | Result |
+|---|---|---|
+| GET `/check` | optional `account_id`, comma-separated `codes` | Registry findings, evidence, coverage, reconstructed/posted event counts. C1/N1 skipped without external samples; D1 partial without market declarations. |
+| GET `/stock-card` | `account_id`, `symbol`, `method=AVCO\|FIFO` | Reconstructed stock card, cost/quantity/P&L totals and sell allocations. Oversell/incomplete replay rejected. |
+| POST `/prepare-dividend` | `account_id`, `symbol`, `ex_date`, `amount_per_unit`, explicit `tax_rate` (fraction) | Sub-account entitlements and gross/withholding/net; `recorded:false`. Future XD rejected. |
+| POST `/check-opening` | `account_id`, `as_of`, `cash`, `market_value`, `positions[{symbol,qty,cost_basis,market_price}]` | O1 market-value arithmetic and O2 quantities vs recorded history; `recorded:false`. Amounts in account currency. |
+| GET `/statements` | optional `account_id` | Latest statement revision per account/date plus comparison: cash before EDIT offsets, dated quantities, missing FX; conflicting current versions are flagged by R3. |
+| POST `/statements` | account/date/currency, cash, total market value, complete positions, `source_ref`, optional `supersedes_id` | Append a broker statement revision (201). O1 arithmetic and source reference required; duplicate date needs current id to supersede. `broker_source_verified:false`. |
+
+`POST /api/v2/portfolio/cash/reconcile` now accepts `category` (`FX_REVALUATION|FEE|TAX|INTEREST|MISSING_DEPOSIT|MISSING_WITHDRAWAL|MISSING_TRADE|DATA_FIX|UNKNOWN`). UI requires selection and a note for UNKNOWN; legacy API calls default UNKNOWN and are audited by R2. GET `/cash/adjustments` returns `category`.
+
+Audit CLI: `python scripts/accounting_audit.py --api-url http://localhost:9317 --nav-validation <samples.json> --json <report.json>` from `backend/`; exit 1 on findings with severity error, 2 on invalid arguments. HTTP `/check` does not fetch market/API samples itself. Details: [session](../sessions/2026-09-25-accounting-foundation.md).
+
 ## Market / Heatmap (`routers/market.py`)
 - `GET /api/market-data` — 20 global indices (Americas/EMEA/Asia, incl. KOSPI), 60s cache
 - `GET /api/volatility` — 19 VIX-family "fear" indices for the TICK DATA VOLATILITY section, 60s cache. Rows are the SAME shape as a market-data index row plus `group` (`S&P TERM` / `VOL OF VOL` / `EQUITY` / `GLOBAL` / `COMMOD/RATES`) → `{ items: [...], lastUpdated, dataSource }`. Symbol list lives in `config.VOL_INDICES` (table `symbol_lists`, list_id `volatility`)
@@ -19,7 +36,32 @@
 - `GET /api/stock/analyst/{symbol}` — analyst ratings
 - `GET /api/stock/dividends/{symbol}` — `{dividends, splits, upcomingDividends}`; cache 1h. `dividends` is paid history only (yfinance `ticker.dividends` can never hold a future date) — the next **declared** ex-date comes from `ticker.calendar` as `upcomingDividends: [{date, payDate, dividend, estimated}]`, empty when Yahoo's calendar date is already in the past. Next.js proxy: `type=dividends`
 - `GET /api/stock/earnings-calendar/{symbol}` — earnings dates + EPS estimate/reported/surprise%; **includes the next scheduled report** (reportedEPS `null`)
+  - (2026-09-25) when `earnings_dates` has no row dated today or later, ONE next report is appended: `Ticker.calendar` first (`source: yahoo_calendar`, `estimated` + `windowEnd` when Yahoo gives a from/to window), else for `.BK` only the SET filing deadline (`backend/earnings_deadlines.py`: Q ≤45d, FY ≤60d after period end; `source: set_rule`, `deadline: true`, `period`, `periodEnd`) — a deadline, not a scheduled date
+- `GET /api/macro/calendar?back_days=730&ahead_days=120` (2026-09-25) — `{events[{date,kind,label,sep,impact,source}], releases_ok, fomc_calendar_through, fomc_calendar_stale}` oldest first; same `event_calendar.calendar_payload` as TAIL (FOMC hardcoded 2023→2027 from federalreserve.gov, CPI/NFP/PCE/GDP from FRED release dates). Used by the price chart event rail
 - `GET /api/stock/pe-history/{symbol}` — trailing (TTM) P/E weekly series (adj-EPS) + percentile stats + earnings list; cache 1h. Next.js proxy: `type=pe-history`
+
+## Market heatmap (`routers/market_heatmap.py`) — HMAP view
+
+- `GET /api/market-heatmap?market=US&per=25` → `{market, tiles:[{s,n,sec,cap,px,d1,w52,d50,d200,hi,rv,pe,cur,ms,pre,post}], currency, asOf, partial, ms, stale?, error?}`.
+  `market` = alias (US SET TH JP HK CN KR TW IN UK DE FR SG AU CA BR …) or any Yahoo screener region
+  code; unknown → 400. One `yf.screen` per Yahoo sector (11, parallel), sorted by `intradaymarketcap`,
+  over-fetched ×4 then filtered: non-EQUITY, Thai `-R/-F/-P/NN.BK` (NVDR/foreign/preferred/DR), share
+  classes deduped by long name. Units: `d50 d200 hi` converted fraction→%, `w52` already %. `rv` is
+  partial-day while trading. Cache 90s; failure negative-cached 60s and answered with the last good
+  map (6h) flagged `stale`. Cold ~1.4 s (US) – 4 s (TH).
+- Next proxy: `app/api/market-heatmap`.
+
+## Discover feeds (`routers/discover.py`) — MKT left panel FREQ / ACTIVE
+
+- `POST /api/search-stats/hit` `{symbol}` → `{ok, symbol}` — upsert `search_hits` count+1. Called by
+  `lib/search-stats.ts#recordSearchHit` from global search (`openEquity`, `<TICKER> <GO>`) and the MKT
+  SYMBOL box. Symbols failing `^[A-Z0-9^][A-Z0-9.\-=^]{0,19}$` are rejected (`ok:false`).
+- `GET /api/search-stats/top?limit=30` (max 50) → `{items:[{symbol,count,last_at}]}` — count desc, ties → most recent.
+- `DELETE /api/search-stats/{symbol}` → `{ok}` — the × on a FREQ row.
+- `GET /api/most-active?count=30` (max 50) → `{items:[{symbol,name,price,pctChange,volume,avgVolume,rvol,marketState,time,pre/postMarket{Price,Change,ChangePercent}}], asOf, error?}`
+  — Yahoo predefined screener; 2 min cache, failures negative-cached 60s (`items:[]`, `error`).
+  Before the open it still ranks the previous session (`marketState != REGULAR`).
+- Next proxies: `app/api/search-stats/{hit,top,[symbol]}`, `app/api/most-active`.
 
 ## Adaptive DCF (`routers/dcf.py`)
 
@@ -168,13 +210,13 @@ US listings only (EDGAR ไม่มี `.BK`/`.KS` → ใช้ `routers/sec_v
 - `DELETE /api/v2/portfolio/dividends/{id}` — delete dividend
 - `POST /api/v2/portfolio/import` — bulk import Excel
 - `GET /api/tail-risk/macro-context` — **+ `macro_read` (2026-09-20)**: three axes read from the latest prints, each carrying the `rule` that produced it — `inflation` (core PCE YoY vs the 2% target, ±0.15pp over 3m sets DISINFLATION / STICKY / REFLATION / AT TARGET, with core CPI as the stand-in when PCE has not printed), `growth` (the ISM **proxy**, EXPANDING / STALLING / CONTRACTING) and `rates_vol` (MOVE: CALM / ELEVATED ≥110 or z>0.5 / STRESSED ≥140 or z>1.5). Also `ism_proxy_components` (the three regional prints + their dates). `counted_in_composite: false`, `validated: false` — it describes the backdrop, it does not forecast. Indicators gained `cpi_core`, `pce`, `pce_core`, `ism_proxy`
-- `GET /api/v2/portfolio/nav-index?account_id&days=365&benchmark=SPY&base_currency=THB` — **time-weighted** equity curve vs an index, both rebased to 100 (added 2026-09-20). Raw NAV cannot be compared with an index (a deposit lifts it), so each day is `r = (NAV − flow − NAV₋₁)/(NAV₋₁ + before)` (`before` = capital dated before the snapshot day with no snapshot in between — weekend deposit or in-kind transfer valued at the prior close — counted start-of-day; `/nav-history` rows carry `invested_before_day`; added 2026-09-26) with `flow` = Δ`invested_capital` + Δ`cash_adjustment` from `/nav-history`, linked geometrically. Snapshots are THB; each row is converted at ITS OWN date, and the benchmark is translated into `base_currency` before rebasing. Returns `points[{date, nav, flow, return_pct, port_index, bench_index, suspect}]` + `port_twr_pct` / `bench_pct` / `excess_pct` / `net_flow` / `suspect_days` / `benchmark_available`. `suspect` = |r| > 50% in a day — almost always an unrecorded flow, kept in the curve and flagged, never clipped. <2 snapshots returns a `note`, not an error.
+- `GET /api/v2/portfolio/nav-index?account_id&days=365&benchmark=SPY&base_currency=THB` — **time-weighted** equity curve vs an index, both rebased to 100 (added 2026-09-20). Raw NAV cannot be compared with an index (a deposit lifts it), so each day is `r = (NAV − flow − NAV₋₁)/(NAV₋₁ + before)` (`before` = capital dated before the snapshot day with no snapshot in between — weekend deposit or in-kind transfer valued at the prior close — counted start-of-day; `/nav-history` rows carry `invested_before_day`; added 2026-09-26) with `flow` = Δ`invested_capital` + Δ`cash_adjustment` from `/nav-history`, linked geometrically. **Since 2026-09-25 `/nav-history` re-derives `invested_capital` by date from the current `cash_ledger`** (snapshot value kept as `invested_stored`) — a withdrawal recorded after the day's capture used to be invisible. Snapshots are THB; each row is converted at ITS OWN date, and the benchmark is translated into `base_currency` before rebasing. Returns `points[{date, nav, flow, capital_flow, adjustment_flow, return_pct, port_index, bench_index, suspect}]` (`flow = capital_flow + adjustment_flow`; capital = CASH deposits/withdrawals, adjustment = cash EDIT offsets — added 2026-09-25) + `net_capital_flow` / `net_adjustment_flow`; each point also has `estimated` (snapshot `source='backfill'`) and the response `estimated_until` (last rebuilt date, or null) + `port_twr_pct` / `bench_pct` / `excess_pct` / `net_flow` / `suspect_days` / `benchmark_available`. `suspect` = |r| > 50% in a day — almost always an unrecorded flow, kept in the curve and flagged, never clipped. <2 snapshots returns a `note`, not an error.
   - (2026-09-25) `/nav-history` rows now re-derive `dividends` from TODAY's `dividends` table by pay_date (THB, same conversion as capture) instead of the snapshot's stored cumulative; stored value kept as `dividends_stored`. Stops dividend restatements/backfills landing as a one-day return in VALUE/INDEX/GROWTH. ANALYTICS NAV card default mode = GROWTH (`NavGrowthChart`, fetches nav-index days=3650)
 - `GET /api/v2/portfolio/rotation?account_id&base_currency=USD&group=theme|sector|account` (2026-09-24) — the book's own rotation map: entry cost (entry FX, same as `/trades?base_currency`) of lots open at each W-FRI week-end (last = today), per bucket. Theme taxonomy in `backend/portfolio_rotation.py` (`THEMES`; symbol → theme, else TH market → TH LEGACY, crypto → CRYPTO, else OTHER). Leading flat run ≥8 weeks (placeholder 2025-01-01 imports) trimmed → `flat_since`. `markers`: `cut` only (total −20%+ in a week; per-bucket "เข้า …" labels removed 2026-09-25). Lots W/L with no `date_exit` → `excluded`. Options not included. Used by ANALYTICS → PORTFOLIO ROTATION
-- `GET /api/v2/portfolio/returns` — cost-based annualized returns: CAGR (time-weighted growth of deployed cost) + XIRR (money-weighted IRR from dated cashflows: buys−/sells+/divs+/mark-to-market+). Per-account + total. Params: `account_id`, `base_currency`. NOT the same as CAPM RET ANN (which is market-price, cost-agnostic).
-- `GET /api/v2/portfolio/cash` — cash ledger entries (filter `account_id`); rows include `entry_type` (`CASH`|`TRANSFER`), `linked_id`
-- `POST /api/v2/portfolio/cash` — add manual cash entry (`entry_type` defaults `'CASH'`)
-- `PUT /api/v2/portfolio/cash/{id}` — edit cash entry
+- `GET /api/v2/portfolio/returns` — cost-based annualized returns: CAGR (time-weighted growth of deployed cost) + XIRR (money-weighted IRR from dated cashflows: buys−/sells+/divs+/mark-to-market+). Per-account + total. Params: `account_id`, `base_currency`. NOT the same as CAPM RET ANN (which is market-price, cost-agnostic). **Since 2026-09-25** every row also has `xirr_flag` (`inflow_before_outflow` | `extreme` | null — raw `xirr_pct` kept, UI shows — when flagged) and capital-based `xirr_capital_pct` / `xirr_capital_flag` (`opening_balance_at_cost` | `inflow_before_outflow` | `extreme` | `no_ledger` | null) / `net_deposited` / `nav_now` (deposits/withdrawals in cash_ledger − , latest `/nav-history` nav_with_cash +). Also `periods[{period: 'YYYY', ytd, start, end, days, start_nav, end_nav, net_flow, xirr_pct (annualised; null < 30d), period_pct, flag, estimated}]` per row — money-weighted per calendar year from NAV snapshots: start = last snapshot of the previous year (or first of this one) as the money in, flows = Δ(invested_capital + cash_adjustment) exactly like GROWTH, end = last NAV. UI uses the ytd period as the headline XIRR (`_period_returns`, 2026-09-25).
+- `GET /api/v2/portfolio/cash` — cash ledger entries (filter `account_id`, newest first); rows include `entry_type` (`CASH`|`DEPOSIT`|`WITHDRAW`|`TRANSFER`), `linked_id`, and derived **`flow_type`** (`DEPOSIT`|`WITHDRAW`|`TRANSFER_IN`|`TRANSFER_OUT`) — legacy `CASH` rows get it from the sign of `investment`
+- `POST /api/v2/portfolio/cash` — preferred body `{account_id, date, flow_type: DEPOSIT|WITHDRAW, amount>0, note, income?}` → stores `investment = ±amount`, `entry_type = flow_type` (2026-09-25). Legacy `{income, investment}` body still accepted (`entry_type='CASH'`). 404 unknown account, 400 bad type / amount ≤ 0
+- `PUT /api/v2/portfolio/cash/{id}` — edit cash entry (same body); **409 on a TRANSFER leg** (editing one leg unbalances the pair — delete and re-enter)
 - `DELETE /api/v2/portfolio/cash/{id}` — delete cash entry; if `entry_type='TRANSFER'`, cascades to delete the linked pair (matched by `linked_id`)
 - `GET /api/v2/portfolio/allocation-detail?account_id&base_currency` — ALLOCATION (OPEN) on two bases: per symbol + per sector `cost_base` (entry FX) vs `market_value` (live FX), `growth_pct`, `unrealized`, `weight_cost_pct`/`weight_mv_pct`/`drift_pp`, `contrib_growth_pct`, `share_of_gain_pct`, plus rebalance sizing (`target_pct`, `target_source` explicit|cost_weight, `delta_value`, `delta_shares` lot-rounded TH=100/US=1, `est_value`, `est_realized`, `in_band`, `action`). Applies `position_cost_overrides` so growth matches the positions table. Reuses `_open_positions_enriched()` (shared with `/open-positions`). Option lots enter as their own rows (`SYM OPT`, `instrument: "option"`): money columns stay premium-based, but weighting runs off **`exposure_base`** (delta notional) via `weight_exposure_pct`, with `exposure_source` = `delta` | `market_value` | `mixed` saying which basis the row's weight actually came from. Totals gain `exposure_base`, `options_exposure_base`, `options_exposure_pct`. Option rows get `delta_shares: null` — sizing contracts back to a premium-weighted target is not a share count
 - `GET /api/v2/portfolio/allocation-targets?account_id` — target weights (account-specific row beats the `all` default)
@@ -273,6 +315,46 @@ HTTP client over the running backend (`PYTHON_API_URL`, default :9317) — never
   - Deliberately separate from `/api/macro/global-yields`, which owns the `table/curves/series` shape
     that MACRO [6] → YIELD renders. Do not merge them.
 - `DELETE /api/rates/curve` — clear the cache
+
+## Bonds (`routers/bonds.py`) — BOND view `B` (2026-09-25)
+- `GET /api/bonds/overview` — 10 FRED daily series (DGS2/10/30, THREEFFTP10, DFII10, BAMLC0A0CM,
+  BAMLH0A0HYM2, BAMLC0A4CBBBEY, DAAA, DBAA) + derived 2s10s, Baa−Aaa → KPIs (1d/5d/20d bp, 1Y pctile)
+  + aligned ~2y history. Cache 1h (10 min when any series failed).
+- `GET /api/bonds/supply` — Treasury auctions (fiscaldata `auctions_query`, no key, last 190d + announced):
+  high yield (bills = `high_investment_rate`), bid-to-cover, dealer/indirect % of competitive; weekly
+  bills vs coupons $bn; slow FRED `NCBDBIQ027S` (Z.1, $M→$bn), `BUSLOANS`, `DRTSCILM`, `GFDEBTN`. Cache 6h.
+- `GET /api/bonds/issuance` — corporate-deal proxy from SEC EFTS (`q="aggregate principal amount"`,
+  forms 424B2/424B5, one query per day, paged 100). Rows keyed on `adsh`; classified by SIC:
+  BANK (6021/6022/6029/6035/6036/6199/6211 = structured notes, excluded) · ABS 6189 · SOV 8888 · FIN
+  other 6xxx · CORP. Deal = distinct issuer per day. Lazy background backfill of 365 days
+  (newest first, ~4 req/s, 3 failures → 10 min cooldown) into `bond_issuance_*` tables. Returns daily,
+  weekly (+10Y/IG OAS week close), recent deals, event study (top-decile days vs rest, Δ from t−1 to
+  t/t+1/t+3, Welch t), backfill status. Cache 30 min (30 s while backfill runs).
+- `DELETE /api/bonds/cache`
+- Proxy: `app/api/bonds/[section]/route.ts` (overview|supply|issuance, 60s timeout)
+
+### COT (`routers/cot.py`) — CFTC Commitments of Traders (2026-09-25)
+- `GET /api/cot/snapshot?window=156` (52–1040 weeks) — per contract (17: UST 2Y/5Y/10Y/Ultra10Y/Bond/UltraBond,
+  SOFR 3M, ES/NQ/RTY, VIX, JPY/EUR, BTC [TFF] · WTI/Gold/Copper [Disaggregated]): OI, Δ1w, top-4/8 gross
+  concentration, per group long/short/net, net/OI %, Δnet 1w, trader counts, z + percentile of net/OI over window
+  (None below 52 obs). `focus` = lev (financial) | mm (commodity). `dv01` = approx 10Y-eq ratio (UST only).
+- `GET /api/cot/history?code=<cftc code|key>&weeks=156` — oldest-first weekly rows with all groups; 404 unknown.
+- `GET /api/cot/basis?window=156&weeks=260` — UST basis trade: AM / lev / dealer net summed over 2Y/5Y/10Y/Ultra10Y/Bond/UltraBond
+  in 10Y-note equivalents (approx DV01 weights), only weeks where every tenor reported; stats z/pct of net/OI; per-tenor table
+  (`dv01_net`). BOND → MARKET `BasisTradePanel` + CONDITIONS `DealerBalanceSheetPanel`.
+- `GET /api/cot/factor?window=156&weeks=260` — PC1 of every contract's causal rolling z (focus group net/OI), loadings,
+  explained share; weekly. MKT REGIME → COT. Display only (not an HMM input). In-process cache keyed on latest report dates.
+- `GET /api/cot/portfolio?account_id=&base_currency=THB` — open positions (`portfolio_v2._open_positions_enriched`) mapped to
+  contracts (explicit SYMBOL_MAP; US single stock → ES proxy; TH etc. unmapped; SVXY inverse) × crowding flags →
+  WITH_CROWD / AGAINST_CROWD, weights, `unpriced` (no live price → not sized). PORT → RISK `CotCrowdingPanel`.
+- `GET /api/cot/status` — running, last_error, cooldown, stored/contracts, expected_as_of.
+- Snapshot also returns `as_of`, `released`, `flags[]` (9 rules in `FLAG_RULES`: |z| ≥ 2 or pct ≤ 5 / ≥ 95 on the rule's group+side).
+- TAIL: `tail_risk.py` signal `cot_crowding` (flow_positioning) = any flag; `counted: False` → never moves the dimension or
+  composite; `_BACKTEST` verdict WEAK (2026-09-25, `backtest-idea/06_cot_crowding`).
+- All three answer from SQLite and call `_refresher.ensure()`: background thread pulls stale contracts
+  (full history first, `> max(report_date)` after). Stale = behind the latest Tuesday whose Fri 15:30 ET release
+  passed; late CFTC (holiday) → retry every 6h; 3 consecutive fails → 15 min cooldown. Observed as source `CFTC`.
+- Proxy: `app/api/cot/[section]/route.ts` (snapshot|history|basis|factor|portfolio|status, query string forwarded, 20s timeout)
 
 ## FX (`routers/fx.py`)
 - `GET /api/fx` — 20 major FX pairs overview (rate, day change)
@@ -647,3 +729,31 @@ app/api/
 ├── ai/route.ts
 └── watchlist/{quotes,signals,sparklines}/route.ts
 ```
+
+## Dev (`routers/dev.py`, 2026-09-25)
+- `GET /api/dev/status` — `{pid, started_at, reload, supervised, stale, changed[{file,change,at}], changed_count, restart: "reload"|"launcher"|null}`. Compares backend `.py` mtimes (minus `tests/`, `scripts/`) to the snapshot `dev_status.py` took at import; in reload mode a file saved <5s ago is not stale yet. Next proxy `app/api/dev/status` returns `{state: ok|stale|down}` + the above; a backend without this route (404) → `{state:"stale", legacy:true}`.
+- `POST /api/dev/restart` — needs header `X-BT-Dev: 1` (403 otherwise; forces a CORS preflight). reload → touches `main.py`; launcher-supervised → `os._exit(0)` after 0.5s, watchdog restarts in ~5s; started by hand → 409. Proxy `app/api/dev/restart` adds the header.
+
+## Dev (`routers/dev.py`, 2026-09-25)
+- `GET /api/dev/status` — `{pid, started_at, reload, supervised, stale, changed[{file,change,at}], changed_count, restart: "reload"|"launcher"|null}`. Compares backend `.py` mtimes (minus `tests/`, `scripts/`) with the snapshot `dev_status.py` took at import; in reload mode a file saved <5s ago is not stale yet. Next proxy `app/api/dev/status` adds `state: ok|stale|down`; a backend without this route (404) → `{state:"stale", legacy:true}`.
+- `POST /api/dev/restart` — needs header `X-BT-Dev: 1` (403 otherwise; forces a CORS preflight). reload → touches `main.py`; launcher-supervised → `os._exit(0)` after 0.5s, watchdog restarts in ~5s; started by hand → 409. Proxy `app/api/dev/restart` adds the header.
+
+## Dividend units (2026-09-25)
+- `POST /api/v2/portfolio/dividends/check` — body = DividendIn; never writes. Returns `{asset, instrument_currency, entered_currency, expected_per_unit, expected_ex_date, ratio, held_units, gross_expected, issues[{level: error|warn|info, code, message, fix?{currency, amount_per_unit, total_received, label}, alt_fix?{currency, label}}]}`. Codes: `looks_thb_as_usd`, `looks_usd_as_thb` (error), `per_unit_mismatch`, `no_market_dividend`, `not_held`, `total_vs_holding`, `matches_one_lot` (warn), `no_trades` (info). Proxy: `app/api/v2/portfolio/dividends/check/route.ts` (own file — `[id]` has no POST).
+- `POST /dividends` and `PUT /dividends/{id}` now run the same check: **422** `{detail: {message, check}}` on an error-level issue unless body `force: true`; success responses include `currency` + `check`. Currency rule: sent currency ≠ account currency → kept; = account currency → the asset's currency wins (stale form default).
+
+### Broker evidence match (2026-09-26, `routers/portfolio_v2.py` → `backend/evidence_match.py`)
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/v2/portfolio/ledger/evidence?account_id=` | read-only; `broker_executions` vs reconstructed BUY/SELL; statuses MATCHED / CONSOLIDATED / NETTED / MISSING_IN_DB / NO_EVIDENCE / OUT_OF_COVERAGE |
+| GET | `/api/v2/portfolio/ledger/evidence/image?fill_id=` | serves the cited screenshot from `backend/backups/*/` only if its SHA-256 still matches, else 404 |
+Proxies: `app/api/v2/portfolio/ledger/evidence/route.ts`, `…/evidence/image/route.ts` (binary pass-through). Check `E1` in `/ledger/check` = one finding per unverified symbol.
+
+### Excel history review (2026-09-26)
+| GET | `/api/v2/portfolio/history-review?account_id=&review_status=&review_decision=&limit=100&offset=0` | `{total,summary,rows}` from local `portfolio_history_review`. `review_decision=REVIEW_REQUIRED` lists the 145 uncertain 2024–25 reconciliation proposals; `IMPORTED` lists the 20 rows posted to `trades`. The review table itself has no balance effect. Proxy: `app/api/v2/portfolio/history-review/route.ts`. |
+`backend/scripts/stage_portfolio_history.py` checks the source workbook SHA-256 and audited CSV rows; `--apply` takes a SQLite online backup before idempotent staging. The legacy `/import/excel` route is not suitable for this ambiguous workbook; see risk report.
+
+### Broker fees (2026-09-26, `backend/broker_fees.py`)
+| GET | `/api/v2/portfolio/fees/estimate?account_id&side=BUY|SELL&qty&price[&symbol&market&currency]` | `{profile, basis, currency, side, value, commission, vat, sec_fee, taf_fee, total, source}`; `profile: null` = no schedule for this account/currency |
+`POST /trades` takes `fee_entry` / `fee_exit` (None = estimate, number = as typed); `/sell` and `/sell-all-lots` `commission` None = estimate (split by volume across lots). Proxy `app/api/v2/portfolio/fees/estimate/route.ts`.
+| GET | `/api/v2/portfolio/takeover?account_id&base_currency` | in-kind takeover lots (fair-value basis) + previous owner's cost memo; see data-shapes. Proxy `app/api/v2/portfolio/takeover/route.ts`; shown as the TAKEOVER strip in PORT → POSITIONS (2026-09-26) |

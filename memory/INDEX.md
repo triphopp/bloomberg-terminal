@@ -1,7 +1,29 @@
 # Bloomberg Terminal — Memory Index
 
+- [Terminal Navigation Accessibility](plans/completed/terminal-navigation-accessibility.md) — ✅ done 2026-09-26; menu numbering, Thai keyboard shortcuts, browser links; [session](sessions/2026-09-26-terminal-navigation-accessibility.md)
+
+- [MKT Compact Chart Toolbar](plans/completed/mkt-compact-chart-toolbar.md) — ✅ done 2026-09-25; responsive timeframe + indicator controls
+- [Multiple Regression Channels](plans/completed/multi-regression-channels.md) — ✅ done 2026-09-25; per-chart REG overlays
+
 - [MKT IV 25Δ skew and curvature](sessions/2026-09-23-iv-smile-wing-metrics.md) — ✅ done 2026-09-23; observed quote metrics under IV smile
 
+- [CFTC COT Positioning](plans/completed/cot-positioning.md) — ✅ done 2026-09-25; TAIL/BOND/MKT/stock/PORT + backtest (WEAK → context only); [session](sessions/2026-09-25-cot-positioning.md); [risks](reports/cot-session-risk-report.md)
+
+- [PORT Accounting Subsystems](plans/port-accounting-subsystems.md) — 🔄 audit + replay/preflight preparation 2026-09-25; [session](sessions/2026-09-25-accounting-foundation.md); migration/activation ยังค้าง
+- [PORT 2024-25 history DB backfill](sessions/2026-09-26-portfolio-history-db-backfill.md) — Excel-backed closed trades 20 posted, 145 proposals tracked; [original staging](sessions/2026-09-26-portfolio-history-reconciliation.md) and [bulk-import risk](reports/portfolio-excel-import-risk-report.md)
+- [PORT accounting evidence phase](sessions/2026-09-25-accounting-evidence.md) — statement revisions/R3, cash EDIT category/R1/R2; no actual broker statement yet
+
+- [Dime broker execution images](sessions/2026-09-25-dime-broker-execution-evidence.md) — 29 image-cited fills imported as audited evidence; cash/NAV unchanged
+
+- [PORT cash-gap follow-up](sessions/2026-09-25-accounting-cash-gap.md) — user opening/transfer clarification, Dime wallet verification steps, H2 wording fixed; no money rows changed
+- [PORT independent review handoff](sessions/reports/portfolio-independent-review-2026-09-25-report.md) — สแนปช็อต/ภาพหลักฐาน/ผลเทียบยอดและวิธีตรวจซ้ำให้ผู้ตรวจสอบภายนอก; source snapshot แยกสำหรับรีวิวโค้ด; [session](sessions/2026-09-25-portfolio-review-handoff.md)
+- [PORT review revision 2](sessions/reports/portfolio-independent-review-2026-09-25-r2-report.md) — ยอด Dime หลัง 3 trades ใหม่จาก DB, snapshot ก่อน/หลังพร้อม SHA; ยังไม่มี broker post-trade statement; [session](sessions/2026-09-25-portfolio-review-r2.md)
+- [PORT local agent review bundle](sessions/2026-09-25-portfolio-local-agent-review-bundle.md) — 34 source files ใหม่เฉพาะบัญชี, 10 integration paths+hashes, ไม่รวม project/DB; เปิด `backend/backups/portfolio-accounting-new-files-20260925/AGENT-REVIEW.md` บนเครื่อง
+- [PORT review-ready staging](sessions/2026-09-25-portfolio-review-ready-staging.md) — `NEW` 34 + `MODIFIED` 11, patch/manifest, guarded apply สำหรับ checkout Git HEAD เดียวกัน; backend 98 tests + tsc ผ่าน
+- [PORT Evidence Match](plans/port-evidence-match.md) — 🔄 2026-09-26; broker fills ↔ reconstructed trades, AUDIT → EVIDENCE
+- [PORT Accounting Ledger](plans/port-accounting-ledger.md) — 🔄 verified backup + guarded apply + reconstructed stock-card/CHECK preview; ยังไม่สลับ read path
+- [Accounting validation risks](reports/accounting-validation-risk-report.md) — H2/C1/N1 remain open; WAL backup and live-only NAV validation fixed
+- [BOND view](plans/completed/bond-view.md) — ✅ done 2026-09-25; price vs supply (SEC deals, Treasury auctions, event study); [session](sessions/2026-09-25-bond-view.md)
 - [Sector Rotation Map (RRG)](plans/completed/sector-rotation-map.md) — ✅ done 2026-09-25; RRG plot in MKT REGIME → ROT
 - [PORT ANALYTICS redesign](plans/completed/port-analytics-redesign.md) — ✅ done 2026-09-25; dashboard + GROWTH view + PORTFOLIO ROTATION
 - [Upstream event log (no UI)](plans/completed/upstream-event-log.md) — ✅ done 2026-09-24; log แทน alert bar + EM HY OAS removed

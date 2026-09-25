@@ -10,6 +10,27 @@ Python backend serves yfinance + FRED + Alpha Vantage + Ollama + BOT data to Nex
 
 **Why BOT API token (no Bearer):** IBM API Connect format — raw base64 JSON token goes directly in `Authorization` header, no prefix.
 
+## Accounting preparation layer (2026-09-25)
+
+`ledger_backfill.build_events` reconstructs legacy transactions → `ledger_engine.replay` calculates deterministic Decimal AVCO/FIFO cards → `accounting_checks` registry supplies read-only API/CLI findings. Legacy `stock_card` AVCO diagnostics remain tolerant so damaged histories can still be reported; strict preview rejects impossible sales. The live sell/summary/read paths have not switched.
+
+- `backend/accounting_io.py`: read-only consistent SQLite transaction + `.backup()` (includes WAL) + integrity check.
+- `backend/accounting_preflight.py`: explicit dividend tax arithmetic, XD eligibility/sub-accounts, validated trade dates, opening market value vs cost, wallet FX coverage, transfer in-transit calculator. No persistence/scheduler.
+- `backend/scripts/accounting_audit.py`: local audit; optional localhost endpoint samples C1 and live NAV samples N1. Missing evidence never counts as pass.
+- `backend/scripts/preview_cost_methods.py`: both-method historical comparison without restatement.
+- `backend/scripts/backfill_ledger.py`: backup before apply, refuse audit errors/unacknowledged warnings, recompare reconstruction under a write lock, atomic/idempotent insert; changed posted content requires reviewed reversal.
+- `backend/scripts/backfill_nav.py --validate --validation-json ...`: compare only `source='live'`, never validation against generated backfill itself.
+
+Still pending: broker cost-method confirmation, actual opening statements, remaining S1–S7 persistence/migrations, shadow dual-write, append-only cloud sync, and read switch. [Plans/evidence](../sessions/2026-09-25-accounting-foundation.md).
+
+**Evidence phase extension:** `backend/accounting_statements.py` stores API append revisions of manually referenced broker statements and compares each with reconstructed pre-offset cash and day-end holdings. `broker_statements` is synced (UUID PK; `updated_at`) and audited; concurrent current revisions are an R3 conflict. `cash_adjustments.category` is additive with legacy `UNKNOWN`; R1/R2 track missing reasons. The statement reference itself is not authenticated and no user's actual statement has been entered. See [follow-up session](../sessions/2026-09-25-accounting-evidence.md).
+
+**Dime Activity fills:** `backend/broker_executions.py` validates each manifest row against an image SHA-256 before `backend/scripts/import_broker_executions.py` imports it. `broker_executions` is synced and audited, with deterministic IDs and idempotent insert. It records broker execution evidence only; live `trades`, cash and journal calculations do not read it. Images and the private manifest remain under ignored `backend/backups/accounting-evidence-20260925/`. See [import session](../sessions/2026-09-25-dime-broker-execution-evidence.md).
+
+**2024-25 Excel history review:** `backend/scripts/stage_portfolio_history.py` stages source rows and market-price checks in local `portfolio_history_review`; `routers/portfolio_v2.py` exposes read-only `/history-review` through the Next proxy. This table is deliberately outside live trades/cash/NAV and cloud sync until ambiguous execution dates, cost lots and Dime funding currency are resolved. Audit CSVs and the online DB backup live under ignored `backend/backups/portfolio-history-20260926/`.
+
+`GET /ledger/check` also returns `read_switch_gates`: posted journal coverage, source-cited statement coverage for active accounts, broker cost policy, shadow comparison and the current read path. These gates remain separate from a filtered finding count, so a zero-error `codes=` query cannot imply activation readiness.
+
 ## Running (2 terminals always required)
 
 ```powershell
@@ -47,6 +68,9 @@ BOT data path:
 | market.py | /api/market-data, /api/heatmap | yfinance |
 | stock.py | /api/stock/* | yfinance |
 | dcf.py | /api/dcf/* | yfinance statements/quotes + pure `analytics/dcf.py` |
+| market_heatmap.py | /api/market-heatmap | yfinance `screen()` per sector (11 parallel) |
+| cot.py | /api/cot/{snapshot,history,basis,factor,portfolio,status} | CFTC Socrata (TFF + Disaggregated), background refresh → `cot_*` SQLite |
+| discover.py | /api/search-stats/*, /api/most-active | SQLite `search_hits` + yfinance `screen("most_actives")` |
 | options.py | /api/options/*, positions + Greeks | yfinance + greeks.py |
 | pins.py | /api/pins/* | SQLite |
 | clippings.py | /api/clippings/* | filesystem + Ollama |
@@ -81,10 +105,9 @@ BOT data path:
 |-----|------------|--------|-----------|
 | `1` | market (default) | MKT | market-view.tsx |
 | `2` | news | NEWS | news-view.tsx |
-| `3` | movers | GMOV | market-movers-view.tsx |
-| `4` | clippings | CLIP | clippings-view.tsx |
+| `3` | heatmap | HMAP | heatmap-view.tsx (command `heatmap(MARKET)`) |
+| `4` | bonds | BOND | views/bonds/ (MARKET · CONDITIONS) — replaced CLIP, absorbed CRDT 2026-09-25 |
 | `5` | macro | MACRO | macro-view.tsx |
-| `6` | credit | CRDT | credit-view.tsx |
 | `P` | portfolio | PORT | portfolio-view.tsx (barrel → portfolio/) |
 | `C` | crypto | CRYP | crypto-view.tsx |
 | `E` | fx | FX | fx-view.tsx |

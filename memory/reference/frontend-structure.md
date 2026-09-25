@@ -6,6 +6,21 @@
 
 ---
 
+## Portfolio accounting exports (2026-09-25)
+
+All paths below are relative to `components/bloomberg/views/portfolio/`.
+
+| File | Exports / consumer |
+|---|---|
+| `accounting-types.ts` | `AccountingFinding`, `AccountingReport`, `StockCard` interfaces; [shapes](data-shapes.md#accounting-previews-2026-09-25) |
+| `modals/StockCardModal.tsx` | `StockCardModal`: account/symbol card, AVCO/FIFO preview, running quantities/costs, allocation detail; native dialog with Escape |
+| `ui/AccountingChecksPanel.tsx` | `AccountingChecksPanel`: React Query findings, severity filters, evidence, explicit read-switch gates, incomplete coverage labels, card drill-down |
+| `ui/AccountingPreparePanel.tsx` | `AccountingPreparePanel`: dividend XD/sub-account and opening preview; records cited broker statement revision only after arithmetic preview; shows dated cash/quantity differences; edits invalidate stale responses |
+| `tabs/AuditTab.tsx` | ACCOUNTING CHECK / PREPARE RECORDS / CHANGE LOG under PORT → TOOLS → AUDIT; BROKER FILLS filter shows cited Dime execution rows and expandable image/hash fields |
+| `tabs/OpenPositionsTab.tsx` | CARD button per displayed symbol opens account-wide stock card (combines its sub-accounts) |
+
+Preview POSTs do not write data. Choosing FIFO here does not change the live sell method. Next proxies: `app/api/v2/portfolio/ledger/{check,stock-card,prepare-dividend,check-opening}/route.ts`.
+
 ## Component Tree
 
 ```
@@ -31,14 +46,19 @@ components/bloomberg/
 │   │   ├── prediction-ladder.tsx← implied distribution panel (CLOSE ABOVE CDF + TOUCH LADDER)
 │   │   ├── useWatchlistNews.ts  ← useWatchlistSymbols() (pins atom → localStorage fallback) + React Query
 │   │   ├── constants.ts / helpers.ts / types.ts
-│   ├── market-movers-view.tsx   ← GMOV: global indices table + heatmap treemap
-│   ├── clippings-view.tsx       ← CLIP: Obsidian reader + Ollama AI panel
+│   ├── heatmap-view.tsx         ← HMAP: `heatmap(MARKET)` sector treemap (replaced GMOV 2026-09-25)
 │   ├── tail-risk-view.tsx       ← TAIL: 6 dimensions + macro context (EventStrip under HealthStrip, MacroPanel in left column, EVENT tag on VIX signals, event ReferenceLines on 90D chart)
 │   ├── tail/macro-context.tsx   ← useMacroContext() + EventStrip + MacroPanel + KIND_COLOR (2026-09-17)
 │   ├── tail/decomposition.tsx   ← RealRatesPanel + EnergySpreadsPanel (EVIDENCE section, 2026-09-24)
 │   ├── tail/market-events.tsx   ← MarketEventsPanel — named events + evidence + earlier sessions (2026-09-24)
 │   ├── tail/sector-rotation.tsx ← SectorRotationPanel + useSectorRotation() — diverging bars + tilt (2026-09-23)
-│   ├── credit-view.tsx          ← CRDT: 4 tabs (overview/spreads/stress/consumer)
+│   ├── tail/positioning.tsx     ← PositioningPanel — CFTC crowding flags + table (POSITIONING section, 2026-09-25)
+│   ├── bonds/                   ← BOND [B] (2026-09-25): price (Treasury leg / credit leg) vs supply (SEC deals, Treasury auctions, Z.1)
+│   │   ├── index.tsx            ← BondView — 3 queries /api/bonds/{overview,supply,issuance}; polls 8s while EDGAR backfill runs
+│   │   ├── charts.tsx           ← HistoryChart, IssuanceChart, TreasurySupplyChart, SlowCard, RANGES
+│   │   ├── tables.tsx           ← KpiStrip, EventStudyPanel, DealsPanel, AuctionsTable
+│   │   ├── conditions.tsx       ← ConditionsTab (ex-CRDT): crisis LevelPanel + FSI/NFCI, breakevens, household credit charts
+│   │   ├── ui.tsx / types.ts    ← C palette (up = red: rising yield/spread = tightening), Panel, fmtBp; API types
 │   ├── stock-view.tsx           ← Equity analysis tabs incl. DCF/RATE STRESS/REGIME — no nav button, via search/heatmap
 │   ├── stock/dcf/index.tsx      ← shared adaptive DCF lab: model/scenario controls + 5 quant sub-tabs
 │   ├── stock/dcf/types.ts       ← DcfModel/DcfScenario and API response contracts
@@ -86,7 +106,7 @@ components/bloomberg/
 │               ui/useEntryExtras.tsx ← `useEntryExtras()` (state in `localStorage["bloomberg_entry_extra_fields"]`, `showExtra` reveals but never hides) + `<ExtraFieldToggles>`, the text-only `+ FIELD` / `− FIELD` row
 │
 ├── chart/
-│   ├── ModularChart.tsx         ← reusable chart container (candle + overlay/pane indicators + event rail). **Grid in the price pane only** — the library's chart-wide grid is `visible: false`; the price pane draws its own via `createPriceGridOverlay()` (`price-grid-overlay.ts`), an `OverlayPrimitive` at `zOrder: "bottom"`, always first in `allOverlays`. Indicator sub-panes have no grid because nothing draws one there. No `createSeriesMarkers` — events are drawn by the rail overlay. `onBarClick(time, ctx)` reports every marker within 2 bars of the click + viewport coords
+│   ├── ModularChart.tsx         ← reusable chart container (candle + overlay/pane indicators + event rail). **Grid in the price pane only** — the library's chart-wide grid is `visible: false`; the price pane draws its own via `createPriceGridOverlay()` (`price-grid-overlay.ts`), an `OverlayPrimitive` at `zOrder: "bottom"`, always first in `allOverlays`. Indicator sub-panes have no grid because nothing draws one there. No `createSeriesMarkers` — events are drawn by the rail overlay. `onBarClick(time, ctx)` reports markers only when the drawn icon/cluster is clicked (including future whitespace) + viewport coords
 │   ├── price-grid-overlay.ts   ← the chart grid as our own bottom layer in the price pane: horizontal lines on round prices (`niceStep()` / `priceLevels()`, ~10 rows), vertical lines on calendar boundaries in the data — `chooseBoundaries()` picks the finest of month/week/day/hour that fits the pane width (weeks are Monday-aligned), then thinned to ≥30px apart, so a 3M chart and a 5Y chart end up equally dense. Drawn as LaTeX/TikZ-style dot rules (round cap + zero-length dash, 4px pitch) so the grid reads as background against the indicator lines over it. Pure helpers tested in `__tests__/price-grid-overlay.test.ts`
 │   ├── event-icons.ts          ← Path2D icon set for the rail (`cash` · `arrowUp` · `arrowDown` · `clock` · `split`) + `drawEventIcon()`. Lucide 24×24 grid so `EventDetailPopover` can render the matching `lucide-react` component and the canvas/DOM marks stay the same vocabulary
 │   ├── event-rail-overlay.ts    ← CanvasOverlay drawing icon chips on a fixed 18px row at the bottom of the price pane — **no background band or divider** (removed 2026-08-31; each chip paints its own ~87% pane-colour backdrop so wicks pass behind it and the row is invisible where nothing sits on it): banknote = dividend, trending up/down = beat/miss, clock = no surprise reported, split, `···N` cluster (still text — a count is the one thing an icon cannot say). Dashed border = `upcoming`, queued right of the last bar. `clusterChips()` + `eventChipStyle()` are pure and tested
@@ -97,7 +117,7 @@ components/bloomberg/
 │   ├── bollinger-fit.ts         ← pure 209-pair grid search (n=10..100 step 5, k=1..3.5 step .25); long/cash breakout %B > 1 enter / <= .5 exit at next open, net per-bar Sharpe, common warmup + train/holdout. WeakMap cache per immutable OHLCV array and cost.
 │   ├── BollingerFitSummary.tsx  ← picker diagnostics: selected n/k, train/holdout Sharpe, net returns, trades, date ranges, assumptions and explicit unavailable/manual fallback.
 │   ├── ChartTimeframeBar.tsx    ← period selector (1D/1W/1M/3M/YTD/1Y/5Y/MAX)
-│   ├── TimeframeRow.tsx         ← THE timeframe control, shared by the MKT panel and every chart window: period buttons (invalid ones for the current interval greyed) + `IntervalPicker` — the TF dropdown, listing all nine intervals with a `→period` hint on the ones that would move the range. `trailing` slot carries the row's right-hand controls (chart type, POP, window buttons). Was defined inline in market-view; a popped-out chart had a nine-button row instead until it moved here
+│   ├── TimeframeRow.tsx         ← Shared period + interval control. `middle` slot lets MKT put indicator controls on the same row when panel ≥950px; ResizeObserver moves them below at narrower widths. `trailing` carries chart type/POP. Other chart windows keep their existing timeframe row.
 │   ├── useAnchoredPanel.ts      ← open state + fixed-viewport coords for a dropdown that must escape a clipping toolbar. Listeners bind to the trigger's OWN document/window, so the panel also closes correctly inside a detached chart window
 │   ├── ChartPanel.tsx           ← the MKT chart panel packaged for reuse: quote header · indicator bar (IndicatorPicker + VP/VEVT/REG/P·E/FP — **no EVT button**: the event rail is always on for an equity candle chart, see `useChartIndicators`) · `TimeframeRow` · ModularChart (+ F&G / P/E sub-panes, EventDetailPopover) · OHLC footer. Owns its queries; `paused` skips the history fetch and body (minimized window) while keeping the quote. market-view still renders its own inline copy of the whole panel — it is entangled with the symbol search and layout splitters — but both now share `TimeframeRow`
 │   ├── DetachedChartWindow.tsx  ← chart in a REAL `window.open` window, portalled into the child document so it stays one React tree (same atoms, same React Query cache). Parent stylesheets are cloned into the child head. **Window name is unique per detach** — Chrome remembers a named popup's geometry (including maximized, which script cannot resize) and would pin the chart there forever. Saved bounds are re-applied at 0/60/300/800/1500ms because a freshly opened popup ignores `resizeTo` until it settles. Screen bounds sampled every 2s → `chartWindowNativeBoundsAtom`. Closing the native window closes the entry; closing the terminal tab closes the window
@@ -105,10 +125,11 @@ components/bloomberg/
 │   ├── FloatingChartWindow.tsx  ← one draggable/resizable in-page chart popup: `<ChartPanel>` plus window controls (detach ⧉ / minimize / close) in the panel's header row, which doubles as the drag handle, and a resize grip. Per-window state = symbol + timePeriod + barInterval + geometry ONLY — indicators still come from the global spec atoms, so every chart (incl. the MKT panel) shares one indicator set. Minimized ⇒ history query disabled + chart unmounted; the quote stays so the collapsed bar keeps its price. **Clamping is display-only** — the stored x/y/w/h is the user's intent and is never rewritten to fit the viewport; an earlier version committed the clamped value on mount and on every browser resize, which permanently "reset" any window near an edge whenever the browser was resized or moved to another monitor. **Resize freeze**: ModularChart rebuilds its whole lightweight-charts instance whenever its measured height changes, so while `isResizing` the chart body is pinned at the height it had at gesture start and re-measures once, on release — without it a resize drag tore the chart down ~18 times
 │   ├── useWindowDrag.ts         ← pointer-driven drag + resize. Listeners on `window` (not the element) so the gesture survives the cursor outrunning the box; geometry is local state during the gesture and committed via `onCommit` once on pointerup, so a drag is ONE localStorage write, not one per mousemove. `[data-no-drag]` on a title-bar child keeps it clickable. Re-clamps on mount + window resize
 │   ├── window-geometry.ts       ← dependency-free rules behind the windows: `clampWindow` (title bar can never leave the viewport — body may hang off bottom/right), `cascadeOrigin` (+28px diagonal, wraps every 8, bounded by the ACTUAL window size not the default), `resolveOpenGeometry` (remembered layout → last-used size + cascade → defaults), `rememberLayout` (recency-ordered, capped at `MAX_REMEMBERED_LAYOUTS`), `hasGeometry`, `nextZ`, `canOpenWindow` (cap 10, but re-opening an existing symbol always allowed — it focuses instead of duplicating). Tested in `__tests__/window-geometry.test.ts`
-│   ├── IndicatorPicker.tsx      ← technical indicator selector (number params + `type:"select"` dropdown params)
+│   ├── IndicatorPicker.tsx      ← technical indicator selector (number params + `type:"select"` dropdown params); `compact` keeps active chips on a scrollable line, and the menu portals to the trigger's document so clipped MKT toolbars and detached chart windows remain usable
+│   ├── RegressionControls.tsx   ← REG + เพิ่ม channel; R1/R2… เลือกชุดที่ปรับ mode; × ลบทีละชุด ใช้ร่วมกันใน MKT และ ChartPanel
 │   ├── FearGreedPane.tsx        ← recharts sub-pane (F&G 0–100 + zone bands)
 │   ├── PEPane.tsx               ← recharts sub-pane: trailing P/E line + p10/p90 valuation bands + percentile label (consumes /api/stock/pe-history)
-│   ├── useChartIndicators.ts    ← indicator/overlay state; exposes vpConfig, showPE via atoms, plus `selectedEvent`/`clearSelectedEvent` for the detail card. Regression arming wins the click when both could claim it
+│   ├── useChartIndicators.ts    ← indicator/overlay state; exposes vpConfig, showPE via atoms, plus `selectedEvent`/`clearSelectedEvent` for the detail card. REG หลายชุดใน `chart:regression` แยก symbol/bar interval, มี active channel สำหรับปรับ mode, และ regression arming wins the click when event rail could claim it
 │   ├── indicators/volume-profile.ts ← session+composite VP (gap-based sessions, delta, naked POC, HVN/LVN, VRVP)
 │   ├── indicators/atr.ts            ← Wilder ATR / ATR% pane with native green/red per-bar line colors; prior ATR% SMA threshold + rising EMA trend filter; configurable settings and explicit gray warmup.
 │   ├── indicators/rv-core.ts        ← realized-vol math shared by the 3 RV panes: `calcRealizedVol(bars, period, estimator, periodsPerYear)` (cc/parkinson/gk/rs/yz, returns ANNUALISED %), `inferPeriodsPerYear()` (median bar spacing → 252/52/12 or 252×bars-per-session), `rollingPercentRank()`. Tested in `__tests__/rv-core.test.ts`
@@ -183,6 +204,8 @@ components/bloomberg/
 | `chart/ChartWindowLayer.tsx` | `ChartWindowLayer` |
 | `chart/FloatingChartWindow.tsx` | `FloatingChartWindow` |
 | `chart/ChartPanel.tsx` | `ChartPanel`, `ChartPanelProps` |
+| `chart/RegressionControls.tsx` | `RegressionControls` |
+| `chart/indicators/regression-channel.ts` | `RegressionSelection`, `RegressionChannelOptions`, `StoredRegressionChannel`, `REGRESSION_COLORS`, `createRegressionChannelOverlay` |
 | `chart/bollinger-fit.ts` | `BOLLINGER_PERIOD_GRID`, `BOLLINGER_DEVIATION_GRID`, `BOLLINGER_FIT_MIN_BARS`, `BOLLINGER_FIT_PARAMS`, `calcBollingerStats`, `bollingerPercentB`, `evaluateBollingerBreakout`, `fitBollingerSharpe`, `resolveBollingerParameters`; types `BollingerStats`, `BollingerBacktest`, `BollingerFitCandidate`, `BollingerFitResult` |
 | `chart/indicators/atr.ts` | `createATR`, `calcAtrRegime`, `resolveAtrConfig`, `validAtrInputs`, `ATR_REGIME_PARAMS`, `ATR_REGIME_COLORS`; types `AtrRegimeConfig`, `AtrRegimePoint`. Public chart/indicator barrels re-export all except picker-only `validAtrInputs`. |
 | `chart/types.ts` (indicator points) | `SeriesDataPoint` accepts optional native line `color`; `WhitespaceDataPoint` supplies an explicit missing time; both are accepted by `IndicatorSeriesOutput.data`. |
@@ -197,7 +220,7 @@ components/bloomberg/
 | `chart/useAutoExtendRange.ts` | `useAutoExtendRange({symbol, period, interval, barCount, isLoading, enabled})` → `{ effectivePeriod, onLogicalRange, atMaxHistory, extended, viewportKey }` — ซูมออกสุดข้อมูล → ไต่ period ladder โหลดประวัติเพิ่มเอง; plus `periodSpanDays`, `ladderSteps` |
 | `chartkit/prefetch.ts` | `isApproachingEdge`, `planPrefetch` — warm history window ถัดไปล่วงหน้า (เทคนิค stream LOD); คู่กับ `usePrefetchStockHistory()` ใน `hooks/useStockData.ts` |
 | `chartkit/` (lib ของเราเอง) | `buildLadder`, `nextWider`, `needsExtend`, `planExtend`, types `LogicalRange`/`TimeRange`/`ViewportSample`; `chartkit/adapters/lightweight-charts` → `watchLogicalRange`, `captureVisibleRange`, `applyVisibleRange`. **กฎ:** core บริสุทธิ์ (ห้าม import engine/React), engine อยู่ใน `adapters/` เท่านั้น — ดู `chartkit/README.md` |
-| `chart/ModularChart.tsx` (perf contract) | props `indicators`/`overlays`/`eventMarkers` = **โครงสร้าง** (ต้อง memo ที่ call site); `data` ไม่ใช่ — บาร์ใหม่ถูก push เข้า series เดิมผ่าน refill path, rebuild เฉพาะเมื่อ refill ทำไม่ได้. Optional `referencePriceLine` วาดเส้นประพร้อมป้ายราคาบน candle pane; quote update/remove ใช้ price-line API และ autoscale ใน series เดิม จึงไม่ reset viewport |
+| `chart/ModularChart.tsx` (perf contract) | props `indicators`/`overlays` = **โครงสร้าง** (ต้อง memo ที่ call site); `eventMarkers` เปลี่ยนแล้ว update rail primitive ใน chart เดิม; `viewportKey` เปลี่ยนแล้วรอ data ใหม่ก่อน `fitContent()`. `data` reference ใหม่จะเรียก refill ทุก series/overlay — `market-view.tsx` จึง memo `rawChartData` จาก `historyQuery.data.quotes`. วัดความสูงก่อน build เพื่อเลี่ยงสร้าง chart สองรอบ. Optional `referencePriceLine` อัปเดตใน series เดิม |
 | `core/market-session.tsx` | `extendedHoursPriceLine(quote)` คืนราคาและสีสำหรับ `PRE`/`POST` ที่มีราคา valid เท่านั้น; MKT, stock-view และ `ChartPanel` (floating/detached) ส่งเข้า `ModularChart`. `PREPRE`/`POSTPOST`/`CLOSED` ไม่วาดเส้น; backend ล้างราคา extended-hours ที่ timestamp เก่า |
 | `chart/useWindowDrag.ts` | `useWindowDrag()` → `{ x, y, w, h, isGesturing, isResizing, beginDrag, beginResize }` |
 | `views/iv-smile-panel.tsx` | `IvSmilePanel`, `IvSmilePanelProps` — compact/expanded K vs IV%, Raw SVI/points/RMSE, multiple tenors; observed 25Δ skew/curvature below chart; optional stacked Call/Put OI with separate contracts axis and selected-expiry control |
@@ -213,21 +236,35 @@ components/bloomberg/
 | `portfolio/constants.ts` | `ALL_COLS`, `DEFAULT_COLS`, `DENSE_COLS`, `TH_SECTORS` (34), `US_SECTORS` (11), `GROUP_COLORS`, `FINANSIA_SUBS`, `ALLOC_COLORS`, `SECTOR_COLORS`, `BLANK_CASH`, `BLANK_DIV`, `BLANK_FORM`, `STRATEGIES` |
 | `portfolio/ui/AccBadge.tsx` | `AccBadge`, `WLBadge` |
 | `portfolio/ui/SummaryBar.tsx` | `SummaryBar` |
+| `views/bonds/index.tsx` | `BondView` (default) — BOND [B] 2026-09-25 |
+| `views/bonds/charts.tsx` | `HistoryChart` (toggleable lines, right axis), `IssuanceChart` (weekly deals stacked + 10Y/IG OAS line), `TreasurySupplyChart`, `SlowCard`, `RANGES`, `RangeKey` |
+| `views/bonds/conditions.tsx` | `ConditionsTab` — reads `useCreditData(isActive)` (`/api/crisis`); TED excluded (dead series) |
+| `hooks/useCreditData.ts` | `useCreditData(isActive)` — always fetches once (status-bar level), polls 5 min only while CONDITIONS open; `useCreditRefresh()`; types `CreditData` `CreditSignal` `CrisisLevel` |
+| `views/bonds/tables.tsx` | `KpiStrip`, `EventStudyPanel`, `DealsPanel`, `AuctionsTable` |
+| `views/bonds/types.ts` | `BondOverview`, `BondKpi`, `BondSupply`, `Auction`, `SlowSeries`, `BondIssuance`, `IssuanceDay`, `IssuanceWeek`, `Deal`, `EventStudy`, `EventRow` |
 | `views/tail-risk-view.tsx` | `TailRiskView`, `SectionRule` (2026-09-23 — TAIL แบ่ง 4 หัวข้อ: RISK DIMENSIONS · EVIDENCE · MACRO & ROTATION CONTEXT · METHOD; คอลัมน์ซ้าย 208px เหลือแค่ VIX TERM + VOL BOARD, การ์ดที่เหลือย้ายลงกริดเต็มความกว้าง) |
 | `views/tail/decomposition.tsx` | `RealRatesPanel` (nominal = real + breakeven per tenor + split line), `EnergySpreadsPanel` (crude/products/cracks, ROLL + EST tags); types `Decomposition` `DecompRow` (2026-09-24) |
 | `views/tail/market-events.tsx` | `MarketEventsPanel` (2026-09-24 compact: name · severity · `headline` · ≤4 number chips; click = summary/checked/definition/rule; props `staleHours`, `partial`), `SEVERITY_COLOR`; types `MarketEvent` `EventEvidence` `EventLogEntry` `RiskBasis` `EventSeverity` (2026-09-24 — top section of TAIL; ribbon imports `SEVERITY_COLOR` and prints the top 2 event names after the dimension chips) |
 | `views/rotation-table.tsx` | `RotationTable` — MKT REGIME → ROT; TABLE/MAP toggle (`localStorage["bloomberg_rotation_view"]`), US|TH, tail 4/8/12W in MAP (2026-09-24) |
 | `views/rotation-map.tsx` | `RotationMap` (SVG RRG: quadrants, faded weekly tails, hover focus, legend-by-quadrant click-to-hide), `RotationMapPanel`, `useRotationMap(market, tail, enabled)`, `RotationMapData`, `QUAD_COLOR` (2026-09-24) |
+| `hooks/useCot.ts` | `useCotSnapshot(enabled, window)`, `useCotHistory(key, weeks)`, `cotExtreme()`, `cotKeyFor(symbol)`, `COT_KEY_BY_SYMBOL` (keep in step with backend `cot.SYMBOL_MAP`), `COT_GROUP_LABEL`, `fmtContracts`; types `CotSnapshot` `CotContract` `CotGroupStats` `CotFlag` `CotHistory` `CotGroup` (2026-09-25) |
+| `core/cot-chip.tsx` | `CotChip` (▼p/▲p mark on MKT TICK DATA rows with an active flag), `COT_KEY_BY_RATE_ID` (2026-09-25) |
+| `views/tail/positioning.tsx` | `PositioningPanel` — TAIL → POSITIONING (context, not counted) (2026-09-25) |
+| `views/bonds/positioning.tsx` | `BasisTradePanel` (MARKET), `DealerBalanceSheetPanel` (CONDITIONS), `useCotBasis()` (2026-09-25) |
+| `views/cot-factor-panel.tsx` | `CotFactorPanel` — REGIME panel mode `COT` (PC1 + loadings + extremes) (2026-09-25) |
+| `views/stock/cot/index.tsx` | `CotTab` — stock-view tab `COT`, shown only when `cotKeyFor(symbol)` maps (2026-09-25) |
+| `views/portfolio/ui/CotCrowdingPanel.tsx` | `CotCrowdingPanel` — PORT → RISK overview, book vs crowded futures (2026-09-25) |
 | `views/tail/sector-rotation.tsx` | `SectorRotationPanel` (TILT + 11 diverging bars + RRG tally + AUM record line), `useSectorRotation(window)` (2026-09-23) |
 | `views/tail/macro-context.tsx` | `EventStrip`, `MacroPanel`, `MacroReadPanel` (2026-09-20 — 3 axes + CPI/core CPI/PCE/core PCE cross-check row), `useMacroContext`, `MacroContextData`, `MacroRead`, `MacroAxis`, `KIND_COLOR` |
 | `portfolio/tabs/AnalyticsTab.tsx` | `AnalyticsTab` — NAV card has VALUE / INDEX modes (`localStorage["bloomberg_nav_chart_mode"]`): VALUE draws `NavValueChart` (4 labelled series: NAV area + HOLDINGS/CASH lines + dashed COST, legend chips double as show/hide so CASH can own the axis), INDEX draws `NavIndexChart` — the time-weighted curve vs the CAPM benchmark from `/api/v2/portfolio/nav-index`. Both internal to the file. CAPM card: β HEDGE / HEDGE notional / β REAL / vs IDX / α CAPM / t / R² / N; rf chip เปิดแผงตั้งค่า (override ต่อสกุลใน `localStorage["bloomberg_capm_rf"]`) |
 | `portfolio/ui/AllocationBasisCard.tsx` | `AllocationBasisCard`, `AllocRow` — ALLOCATION (OPEN) cost-vs-market card (COST/VALUE/DRIFT modes + rebalance table) |
 | `portfolio/ui/PortfolioRotationChart.tsx` | `PortfolioRotationChart`, `RotationGroup`, `RotationMode`, `PortfolioRotationResponse` — stacked weekly open-cost by theme/sector/account, COST/% modes, markers, legend click-to-hide; fixed `THEME_COLOR` per theme (2026-09-24) |
 | `portfolio/ui/NavGrowthChart.tsx` | `NavGrowthChart`, `NavGrowthData`, `NavGrowthPoint` — signals-style TWR growth: Growth/Avg-month/Deposits/Withdrawals stats, growth line + least-squares trend, ▲ deposit ▼ withdrawal marks, year × month compounded table; default mode of ANALYTICS NAV card (`localStorage["bloomberg_nav_chart_mode_v2"]` GROWTH/VALUE/INDEX) (2026-09-25) |
+| `hooks/useStockEvents.ts` | `useStockEvents(symbol)` — chart event rail markers: dividends/splits, earnings (beat/miss, upcoming `E?`, SET deadline `E≤`), macro `FOMC`/`CPI`/`NFP` from `/api/macro/calendar` (`.BK` = FOMC only; upcoming = next of each kind within 45 days so earnings is not pushed off the pane). Marker type `macro` + fields `deadline/period/windowEnd/macroKind/macroLabel/sep/source` in `chart/types.ts`; icon `flag` (2026-09-25) |
 - `views/portfolio/ui/PayoffChart.tsx` — payoff chart (2026-09-10): expiry line solid, T+0 dashed, shaded profit/loss regions, reference lines at spot and each breakeven, plus the headline stats. Exports `PayoffChart`, `PayoffResult`, `PayoffPoint`
 - `views/portfolio/ui/usePayoff.ts` — `usePayoff(legs)` returns the expiry curve immediately from `localPayoff()` and swaps in the backend's answer (T+0 + POP) after a debounce. ⚠️ Depends on `JSON.stringify(legs)`, NOT the array: callers build it inline, so depending on the array re-ran the effect every render and aborted the request every time
 - `views/portfolio/tabs/AuditTab.tsx` — PORT → TOOLS → AUDIT (2026-09-16): every change from `/audit-events`, filter by table + action, follows active account, click row for field-by-field BEFORE/AFTER, LOAD OLDER paging. Exports `AuditTab`
-- `views/portfolio/modals/CashReconcileModal.tsx` — cash EDIT (2026-09-16): pick account, see DERIVED / ADJUST / CASH NOW, type broker balance → stores the difference; effective date + note; history with undo. Opened from SummaryBar CASH chip (always shown) and CASH tab EDIT. Invalidates `["portfolio","summary"]`. Exports `CashReconcileModal`
+- `views/portfolio/modals/CashReconcileModal.tsx` — cash EDIT (2026-09-16; category 2026-09-25): pick account, see DERIVED / ADJUST / CASH NOW, type broker balance → stores the difference; effective date + required UI reason category (UNKNOWN needs note); history with undo. Opened from SummaryBar CASH chip and CASH tab EDIT. Invalidates `["portfolio","summary"]`. Exports `CashReconcileModal`
 - `views/portfolio/modals/PayoffModal.tsx` — payoff for a saved lot, combined across every lot on the same underlying by default (a hedge read alone looks like a pure loss) with a `THIS LOT ONLY` toggle
 - `views/portfolio/modals/OptionTradeEditModal.tsx` — correct a mis-entered option trade (2026-09-10): every field plus a required-by-convention `reason`, contract terms locked while the trade is matched, and the trade's audit log inline. Exports `OptionTradeEditModal`
 - `views/portfolio/ui/OptionTradeLog.tsx` — OPTIONS tab · TRADES view (2026-09-10): every
@@ -298,11 +335,12 @@ components/bloomberg/
 
 | Shortcut | Action |
 |----------|--------|
-| `1`–`6` | Navigate views: MKT(1), NEWS(2), GMOV(3), CLIP(4), MACRO(5), CRDT(6) |
-| `P` | Portfolio view |
+| `1`–`5` | Navigate visible views: MKT(1), NEWS(2), BOND(3), PORT(4), TAIL(5) |
+| `H` | Heatmap (last market; hidden nav) |
+| `P` / `T` / `B` | Aliases for PORT / TAIL / BOND |
 | `C` | *(free — was Crypto until 2026-08-01)* |
 | `E` | *(free — was FX until 2026-08-01)* |
-| `Alt+1`–`Alt+N` | Switch sub-tab within current view (MACRO 1-7, CRDT 1-4, PORT 1-8, NEWS 1-2) |
+| `Alt+1`–`Alt+N` | Switch sub-tab within current view (BOND 1-2, PORT 1-8, NEWS 1-2) |
 | `/` or `Ctrl+K` | Open global search |
 | `Esc` / `← ESC` button | Back to market/home |
 | `Ctrl+R` | Refresh data |
@@ -310,6 +348,8 @@ components/bloomberg/
 | `Ctrl+Shift+T` | Toggle Area / Candlestick chart |
 | `Ctrl+N` | New watchlist |
 | `?` (Shift) | Show shortcuts help |
+
+Shortcuts use physical letter/number keys when a Thai keyboard layout is active; IME composition and ordinary typing in input fields are ignored. Header and mobile view tabs are real `/?view=...` links: Ctrl/Meta+click and middle click open a new tab, while plain clicks update the current view and browser history.
 | `i` | Focus heatmap symbol search |
 
 ---
@@ -324,12 +364,58 @@ components/bloomberg/
 
 ---
 
+## HMAP — market heatmap (`views/heatmap-view.tsx`)
+
+Opened by the terminal command `heatmap(MARKET, period?)` (alias `HMAP`; bare = last market) →
+`TerminalCtx.openHeatmap` sets `heatmapMarketAtom` / `heatmapMetricAtom` and navigates to view
+`"heatmap"`. Period picks the metric: `1d` `52w`(`1y`) `50d` `200d`. Global search now closes on a
+`navigate` result from a function call too (it used to only for bare nav words).
+- Data `/api/market-heatmap` — compact keys: `s n sec cap px d1 w52 d50 d200 hi rv pe cur ms pre post`.
+- Layout: hand-rolled squarified treemap (`squarify`) of absolutely positioned divs, sectors first
+  then names; `SIZE CAP | √CAP`. `TileLayer` is `memo` and gets stable `onHover`/`onPick`, so the
+  hover line re-renders alone. Metric switch ≈25 ms (dev) with no request.
+- Colour: diverging red/slate/green with sqrt easing, clamps 1D ±3 · 52W ±60 · 50D ±12 · 200D ±30;
+  HIGH centred at −12%; RVOL slate→orange (1×→3×).
+- Sector strip: cap-weighted metric per sector, best→worst; click = zoom, `← ALL` back.
+- Don't add `HM` as an alias — bare `HM` must stay the H&M stock lookup.
+
+## MKT — left panel feeds (`views/market-view.tsx` + `views/discover-lists.tsx`)
+
+The WATCHLIST header is a REGIME-style switcher **WATCH · FREQ · ACTIVE**
+(`localStorage["bloomberg_mkt_left_feed"]`, restored after mount). WATCH (`PinnedAssets`) stays
+mounted but hidden when another feed is shown — remounting re-runs its DB bootstrap.
+`FrequentSearchList` (top 30 most-searched, `SYM · LAST · CHG · HITS`, × on hover forgets a symbol,
+refetches on the `SEARCH_HIT_EVENT` window event) and `MostActiveList` (top 30, `SYM · LAST · CHG · VOL`, VOL
+orange when RVOL ≥ 2, dimmed + "session of <date>" before the open) use the TICK DATA row grammar.
+Clicking a row loads it in the MKT chart (`handleWatchlistPick`).
+**Extended hours — same line:** while any row in a list has a trading PRE/AH quote
+(`extLabelOf(quotes)`), two columns appear after CHG with header `PRE`/`AH` (`ExtHead`, colSpan 2):
+ext price · ext %chg (`ExtCells`; rows with no ext quote, e.g. indices, get empty cells). Outside
+PRE/AH the table is back to its plain columns. Exported from `discover-lists.tsx`, used by WATCH
+LIST, FREQ and ACTIVE. Never a second line per row — the user reads this panel squeezed. Search counting:
+`lib/search-stats.ts#recordSearchHit` — fire-and-forget, only for symbols opened from a search box
+(clicks on the watchlist / board / these feeds are NOT counted).
+
+## MKT — WATCHLIST view modes (`views/pinned-assets.tsx`)
+
+Header text chip cycles **LIST → TABLE → CARDS**; choice persists in
+`localStorage["bloomberg_watchlist_view"]` (restored after mount). **LIST is the default** and
+uses the TICK DATA grammar: `CompactWatchRow` (memo) — one 13px line, `SYM · LAST · CHG · SIG`,
+headers sort (`handleSort`). Name / pin return / targets / comment / stale-session note live in the
+row tooltip; buy/sell target hit = tinted row + coloured symbol. With >1 group and filter = ALL,
+groups render as foldable sections (`localStorage["bloomberg_watchlist_folded_groups"]`).
+Click = open in chart, shift-click = chart window, double-click = edit form, right-click = context
+menu, **drag row = reorder** (switches sort to manual, same `handleReorder` as TABLE; dropping on a
+row of another group also moves the pin into that group via `patch.groupId`). Rows get `stableOpen`/`stableRemove` (ref-backed) so a quote tick doesn't re-render them all.
+Header actions (ADD · GRP · group filter) sit left of the signal summary so a squeezed panel never
+clips them; the header wraps instead.
+
 ## MKT — TICK DATA board (`views/market-view.tsx`)
 
 The right-hand `tickdata` panel is a cross-asset board with seven sections. Each is
 collapsible; collapse state persists in `localStorage["bloomberg_tickdata_sections"]`
-(default collapsed: `ratesJP`, `fx`). Drag a section's grip onto another header or use
-its up/down buttons to reorder whole sections. The order persists in
+(default collapsed: `ratesJP`, `fx`). Drag a section header onto another header to reorder
+whole sections (the whole header row is the drag handle — no grip/↑↓ buttons). The order persists in
 `localStorage["bloomberg_tickdata_order"]`, independently from collapse state.
 Invalid/duplicate stored IDs are ignored and newly added sections append to the saved order.
 
@@ -343,6 +429,13 @@ The US market clock and column headings stay fixed above the reordered sections.
 | AMERICAS / EMEA / ASIA PACIFIC | `useMarketDataQuery` → `/api/market-data` | `TickRow` |
 | VOLATILITY (VIX family) | `/api/volatility` | `TickRow` + subgroup headers |
 | FX (20 pairs) | `useFxTicks` → `/api/fx` | `FxRow` |
+
+**Layout (2026-09-25 minimal redesign):** 4 columns only — `NAME · LAST · CHG · YTD` at 9px /
+13px row, no vertical padding. No sparkline column and no absolute-change column: the board is
+read squeezed to its 15% minimum, where those pushed YTD off the edge. CHG = %chg for
+indices/FX/vol, **bp for yields**; rate YTD is whole bp; rate LAST has no `%`. A stale session
+move is only dimmed — its day tag lives in the tooltip. `TickRow`/`RateRow`/`FxRow` are
+`memo` and take a stable `onSelect(item)` — never pass an inline `onClick` closure.
 
 Things that will bite:
 - **One highlight, one state.** `selectedTickId` lights the row; `selectedLabel` captions the chart.
@@ -403,3 +496,13 @@ Things that will bite:
 | `components/bloomberg/views/pinned-assets.tsx` | full-list price/signal/PM data, sort before paging100 rows, overlapping groups share queries; cards request only displayed sparklines; coverage/errors shown; ADD saves before waiting for price |
 
 The browser transport permits three batch requests concurrently. Quote jobs have priority, with an older non-quote job admitted after three quote jobs. Each reader owns its cancellation; cancelling one reader never aborts a surviving reader's shared request. Query retention30min survives panel remounts. Realtime quotes poll60s (off300s), technical scans900s and PM180s after a pass finishes. Metadata edits do not change quote keys. Data refresh remains full-list even though rendering is paged; groups are optional.
+
+- `core/backend-status-banner.tsx` → `BackendStatusBanner` (2026-09-25) — dev-only (`NODE_ENV==="development"`) strip above the header in `layout/bloomberg-terminal.tsx`: yellow RUNNING OLD CODE + changed files + RESTART BACKEND, red BACKEND DOWN (2 failed polls), blue RESTARTING. Polls `/api/dev/status` every 15s (2s while restarting) and on window focus; renders nothing when current.
+
+- `core/backend-status-banner.tsx` → `BackendStatusBanner` (2026-09-25) — dev-only (`NODE_ENV==="development"`) strip above the header in `layout/bloomberg-terminal.tsx`: yellow RUNNING OLD CODE + changed files + RESTART BACKEND, red BACKEND DOWN (2 failed polls), blue RESTARTING. Polls `/api/dev/status` every 15s (2s while restarting) and on window focus; renders nothing when current.
+
+- `views/portfolio/ledger-filter.ts` (2026-09-25) — pure filter for PORT → CASH ledgers: `LedgerFilter` (range ALL/1M/3M/YTD/1Y/YEAR/CUSTOM, `q` all-words search, account, types[], `minAmount` by |amount|, sort date/amt), `applyFilter(rows, f, RowAccess, today)`, `rangeBounds`, `isFiltered`, `yearsOf`. Undated rows drop out once any date bound is set. Tests: `__tests__/ledger-filter.test.ts` (`npm run test:views`).
+- `views/portfolio/ui/LedgerFilterBar.tsx` → `LedgerFilterBar` — the strip above CASH / DIVIDENDS / REINVEST: search, type chips (CASH: DEPOSIT·WITHDRAW·TRANSFER · DIV: THB·USD · REINVEST: FROM DIV·TRADE), range + YEAR + from–to, account (only when tab scope = ALL), ≥ amount, sort cycle, filtered row count + totals, CLEAR. `onUpdate(fn)` is functional so rapid clicks don't overwrite each other. State per sub-tab in `localStorage["bloomberg_cash_filters"]`. CASH's NET CAPITAL column stays the true running balance of the whole ledger, not of the filtered rows.
+- `tabs/CashTab.tsx` DIVIDENDS form (2026-09-25): live unit check via `/dividends/check` (500 ms debounce) → line `MARKET … · HELD … → gross …` + issues with one-click fixes; currency follows the asset until the user picks one (`currencyTouched`); save handles 422 with **SAVE ANYWAY** (`force: true`).
+
+- `views/portfolio/ui/EvidenceMatchPanel.tsx` — PORT → TOOLS → AUDIT → **BROKER EVIDENCE** (2026-09-26): per-symbol broker fills vs book, expand for fill ↔ row table + IMAGE link; exports `EvidenceMatchPanel`. Types `EvidenceReport/EvidenceSymbol/EvidenceRow/EvidenceStatus` in `accounting-types.ts`.
