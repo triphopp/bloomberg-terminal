@@ -8,6 +8,7 @@ import logging
 import re
 import threading
 import uuid
+from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional
@@ -38,6 +39,7 @@ from portfolio_currency import (
     normalize_currency,
     realized_economic_pnl_in_report,
     realized_pnl_in_report,
+    entry_fee_in_report,
     report_currency,
     trade_currency,
     trade_value_in_report,
@@ -465,6 +467,10 @@ class TradeIn(BaseModel):
     vix_index: str = ""
     note: str = ""
     is_reinvest: bool = False
+    # None = estimate from the account's broker fee profile; a number (0
+    # included) is what the confirmation says and is kept as typed.
+    fee_entry: Optional[float] = None
+    fee_exit: Optional[float] = None
 
 
 class TradePatch(BaseModel):
@@ -490,15 +496,65 @@ class TradePatch(BaseModel):
     is_reinvest:     Optional[bool]  = None
     # Audit meta — NOT persisted to trades table, only to audit log
     adjustment_reason: Optional[str] = None
+    fee_entry: Optional[float] = None
+    fee_exit: Optional[float] = None
 
 
 class CashIn(BaseModel):
     account_id: str
     date: str
-    income: float = 0
+    # Typed flow (preferred): DEPOSIT puts capital in, WITHDRAW takes it out.
+    # `amount` is always positive — the sign comes from the type, so a
+    # withdrawal can never be typed as a deposit by a missing minus.
+    flow_type: Optional[str] = None
+    amount: Optional[float] = None
+    # Legacy two-column form. `investment` is the signed capital flow every
+    # calculation reads; `income` is display-only (the Excel import's gross).
+    income: Optional[float] = None
     investment: float = 0
     exchange_rate: float = 1
     note: str = ""
+
+
+CASH_FLOW_TYPES = ("DEPOSIT", "WITHDRAW")
+
+
+def _cash_values(body: "CashIn") -> tuple[str, float, float]:
+    """(entry_type, income, investment) for a cash row.
+
+    Typed flows store investment = +amount (DEPOSIT) or -amount (WITHDRAW),
+    the same sign convention the legacy "Case Out" rows already use, so
+    `SUM(investment)` stays the one net-capital number summary/NAV read.
+    """
+    if body.flow_type is None:
+        income, investment = float(body.income or 0), float(body.investment or 0)
+        # A row with no money in it is never intended — it is what a client
+        # sending fields this server does not know looks like after they are
+        # dropped. Refuse it rather than post a silent zero.
+        if income == 0 and investment == 0:
+            raise HTTPException(status_code=400, detail="cash entry has no amount")
+        return "CASH", income, investment
+    ftype = body.flow_type.upper()
+    if ftype not in CASH_FLOW_TYPES:
+        raise HTTPException(status_code=400, detail=f"flow_type must be one of {CASH_FLOW_TYPES}")
+    amount = float(body.amount or 0)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be positive")
+    signed = amount if ftype == "DEPOSIT" else -amount
+    income = amount if body.income is None else float(body.income)
+    return ftype, income, signed
+
+
+def _cash_flow_type(row: dict) -> str:
+    """Direction of a cash row for display. Legacy 'CASH' rows carry it only
+    in the sign of `investment`."""
+    etype = str(row.get("entry_type") or "CASH").upper()
+    if etype in CASH_FLOW_TYPES:
+        return etype
+    inv = float(row.get("investment") or 0)
+    if etype == "TRANSFER":
+        return "TRANSFER_OUT" if inv < 0 else "TRANSFER_IN"
+    return "WITHDRAW" if inv < 0 else "DEPOSIT"
 
 
 class CashTransferIn(BaseModel):
@@ -517,6 +573,7 @@ class CashReconcileIn(BaseModel):
     # Effective date: NAV history applies the offset from this day forward.
     date: Optional[str] = None
     note: str = ""
+    category: str = "UNKNOWN"
 
 
 class DividendIn(BaseModel):
@@ -531,6 +588,9 @@ class DividendIn(BaseModel):
     reinvest_price: float = 0
     reinvest_units: float = 0
     currency: Optional[str] = None
+    # Save even though dividend_check found an error-level problem (the user
+    # saw the warning and confirmed).
+    force: bool = False
 
 
 # ── Symbol Resolver (plans/port-redesign.md Step 1) ──────────────────────────
@@ -726,6 +786,11 @@ def delete_account(account_id: str):
                 status_code=409,
                 detail=f"Account has {n_trades} trade(s). Delete or move them first.",
             )
+        # Broker evidence carries account FKs. Remove it only after the
+        # existing no-trades gate, in the same audited transaction.
+        conn.execute("DELETE FROM broker_executions WHERE account_id = ?", (account_id,))
+        # Statements also have revision links to earlier rows.
+        conn.execute("DELETE FROM broker_statements WHERE account_id = ?", (account_id,))
         cur = conn.execute("DELETE FROM portfolio_accounts WHERE id = ?", (account_id,))
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Account not found")
@@ -809,6 +874,40 @@ def list_trades(
     return {"trades": trades, "thb_per_usd": _get_thb_per_usd()}
 
 
+def _fee_for(conn, account_id: str, currency: str, side: str, qty, price, given):
+    """(amount, detail) for one side of a trade: the typed value or the broker estimate."""
+    import broker_fees
+    if given is not None:
+        return float(given), {"total": float(given), "source": "manual"}
+    profile = broker_fees.profile_for(conn, account_id, currency)
+    if not profile or not qty or not price or float(qty) <= 0 or float(price) <= 0:
+        return None, None
+    est = broker_fees.estimate(profile, side, float(qty), float(price))
+    return est["total"], est
+
+
+@router.get("/fees/estimate")
+def estimate_fees(account_id: str, side: str, qty: float, price: float,
+                  symbol: str = "", market: Optional[str] = None,
+                  currency: Optional[str] = None):
+    """Broker fees for an order before it is saved. profile None = no schedule."""
+    import broker_fees
+    with get_db() as conn:
+        acc = conn.execute("SELECT currency FROM portfolio_accounts WHERE id = ?",
+                           (account_id,)).fetchone()
+        if not acc:
+            raise HTTPException(status_code=404, detail="Unknown account")
+        ccy = (infer_instrument_currency(market, None, symbol, None)
+               or normalize_currency(currency) or normalize_currency(acc["currency"], "THB"))
+        profile = broker_fees.profile_for(conn, account_id, ccy)
+    if not profile:
+        return {"profile": None, "currency": ccy, "total": None}
+    try:
+        return broker_fees.estimate(profile, side, qty, price)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.post("/trades", status_code=201)
 def create_trade(body: TradeIn):
     trade_id = str(uuid.uuid4())
@@ -839,6 +938,18 @@ def create_trade(body: TradeIn):
                 body.exit_exchange_rate,
                 conn=conn,
             )
+        fee_entry, entry_detail = _fee_for(conn, body.account_id, currency, "BUY",
+                                           body.volume, body.price_entry, body.fee_entry)
+        fee_exit = exit_detail = None
+        pnl_amount = body.pnl_amount
+        if body.price_exit and (body.date_exit or body.win_loss.upper() != "P"):
+            fee_exit, exit_detail = _fee_for(conn, body.account_id, currency, "SELL",
+                                             body.volume, body.price_exit, body.fee_exit)
+            # pnl_amount is net of the sale's fees, as /sell stores it.
+            if pnl_amount is not None and fee_exit:
+                pnl_amount = round(pnl_amount - fee_exit, 2)
+        details = {k: v for k, v in (("entry", entry_detail), ("exit", exit_detail)) if v}
+        fee_detail = json.dumps(details) if details else None
         conn.execute("""
             INSERT INTO trades (id, account_id, symbol, resolved_symbol, market,
                 sector, date_entry, date_exit,
@@ -846,25 +957,28 @@ def create_trade(body: TradeIn):
                 pnl_amount, win_loss, pnl_percent, currency, exchange_rate, exit_exchange_rate,
                 strategy_name, entry_trigger, exit_trigger, market_trend,
                 news_sentiment, expectation_based, factor_based,
-                fear_greed_index, vix_index, note, is_reinvest)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                fear_greed_index, vix_index, note, is_reinvest,
+                fee_entry, fee_exit, fee_detail)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (trade_id, body.account_id, body.symbol.upper(),
               (body.resolved_symbol or "").upper() or None,
               (body.market or "").upper() or None, body.sector,
               body.date_entry, body.date_exit,
               body.price_entry, body.price_exit, body.price_stoploss, body.price_target,
-              body.volume, body.amount, body.pnl_amount, body.win_loss.upper(),
+              body.volume, body.amount, pnl_amount, body.win_loss.upper(),
               body.pnl_percent, currency, entry_fx, exit_fx,
               body.strategy_name, body.entry_trigger, body.exit_trigger,
               body.market_trend, body.news_sentiment, body.expectation_based,
               body.factor_based, body.fear_greed_index, body.vix_index, body.note,
-              1 if body.is_reinvest else 0))
+              1 if body.is_reinvest else 0, fee_entry, fee_exit, fee_detail))
     return {
         "ok": True,
         "id": trade_id,
         "currency": currency,
         "exchange_rate": entry_fx,
         "exit_exchange_rate": exit_fx,
+        "fee_entry": fee_entry,
+        "fee_exit": fee_exit,
     }
 
 
@@ -878,12 +992,17 @@ def patch_trade(trade_id: str, body: TradePatch):
         updates["symbol"] = updates["symbol"].upper()
     if "win_loss" in updates and updates["win_loss"]:
         updates["win_loss"] = updates["win_loss"].upper()
-    set_clause = ", ".join(f"{k} = ?" for k in updates)
     with get_db() as conn:
         old = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
         if not old:
             raise HTTPException(status_code=404, detail="Trade not found")
         old_dict = dict(old)
+        # pnl_amount is net of fee_exit: a corrected fee moves it by the difference.
+        if "fee_exit" in updates and "pnl_amount" not in updates and old_dict.get("pnl_amount") is not None:
+            delta = float(updates["fee_exit"] or 0) - float(old_dict.get("fee_exit") or 0)
+            if delta:
+                updates["pnl_amount"] = round(float(old_dict["pnl_amount"]) - delta, 2)
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
         with audit_reason(conn, reason):
             cur = conn.execute(f"UPDATE trades SET {set_clause} WHERE id = ?",
                                list(updates.values()) + [trade_id])
@@ -913,6 +1032,213 @@ def _parse_json(raw) -> Optional[dict]:
         return json.loads(raw)
     except Exception:
         return None
+
+
+@router.get("/ledger/check")
+def get_ledger_check(account_id: Optional[str] = None, codes: Optional[str] = None):
+    from config import DB_PATH
+    from accounting_io import read_book
+    from accounting_checks import run
+    try:
+        with read_book(DB_PATH) as conn:
+            return run(conn, account_id=None if account_id == "all" else account_id,
+                       codes=[c.strip() for c in codes.split(",") if c.strip()] if codes else None)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class DividendPreparationIn(BaseModel):
+    account_id: str
+    symbol: str
+    ex_date: str
+    amount_per_unit: float
+    tax_rate: float
+
+
+@router.post("/ledger/prepare-dividend")
+def prepare_ledger_dividend(body: DividendPreparationIn):
+    from accounting_io import read_book
+    from accounting_preflight import dividend_amounts, entitlement_units
+    from config import DB_PATH
+    if body.amount_per_unit <= 0:
+        raise HTTPException(status_code=422, detail="Amount per unit must be positive")
+    try:
+        with read_book(DB_PATH) as conn:
+            if not conn.execute("SELECT 1 FROM portfolio_accounts WHERE id=?", (body.account_id,)).fetchone():
+                raise ValueError("Unknown account")
+            trades = [dict(r) for r in conn.execute(
+                "SELECT * FROM trades WHERE account_id=? AND upper(symbol)=?",
+                (body.account_id, body.symbol.strip().upper()))]
+        if not trades:
+            raise ValueError("No recorded trades; dividend eligibility cannot be verified")
+        proposals = entitlement_units(trades, body.ex_date)
+        for proposal in proposals:
+            proposal.update(dividend_amounts(gross=proposal["units"] * body.amount_per_unit, tax_rate=body.tax_rate))
+        return {"mode": "preview", "entitlements": proposals, "currency": trade_currency(trades[0]),
+                "recorded": False, "note": "Compare each sub-account with the broker dividend statement before recording."}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class OpeningPositionIn(BaseModel):
+    symbol: str
+    qty: float
+    cost_basis: float
+    market_price: float
+
+
+class OpeningPreparationIn(BaseModel):
+    account_id: str
+    as_of: str
+    cash: float
+    market_value: float
+    positions: list[OpeningPositionIn]
+
+
+@router.post("/ledger/check-opening")
+def check_ledger_opening(body: OpeningPreparationIn):
+    from accounting_io import read_book
+    from accounting_preflight import opening_balance, trade_dates
+    from ledger_engine import dec
+    from config import DB_PATH
+    try:
+        with read_book(DB_PATH) as conn:
+            account = conn.execute("SELECT currency FROM portfolio_accounts WHERE id=?", (body.account_id,)).fetchone()
+            if not account:
+                raise ValueError("Unknown account")
+            # The split rows retain their own entry/exit dates, so summing
+            # rows held at day-end reconstructs quantity without choosing a
+            # cost method or guessing market prices.
+            held = {}
+            for r in conn.execute("SELECT symbol,volume,date_entry,date_exit,win_loss FROM trades WHERE account_id=?", (body.account_id,)):
+                entry, exit_ = trade_dates(dict(r))
+                qty = dec(r["volume"])
+                if qty < 0:
+                    raise ValueError("Negative holding quantity")
+                if entry <= body.as_of and (not exit_ or exit_ > body.as_of):
+                    sym = r["symbol"].strip().upper()
+                    held[sym] = held.get(sym, 0) + float(qty)
+        result = opening_balance(as_of=body.as_of, cash=body.cash, market_value=body.market_value,
+                                 positions=[p.model_dump() for p in body.positions], held_units=held)
+        return {**result, "mode": "preview", "account_id": body.account_id,
+                "currency": account["currency"], "recorded": False}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/ledger/stock-card")
+def get_ledger_stock_card(account_id: str, symbol: str, method: str = "AVCO"):
+    from config import DB_PATH
+    from accounting_io import read_book
+    from accounting_checks import stock_card
+    try:
+        with read_book(DB_PATH) as conn:
+            return stock_card(conn, account_id, symbol.strip().upper(), method.upper())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/ledger/evidence")
+def get_ledger_evidence(account_id: Optional[str] = None):
+    """Broker fills (screenshots) vs the reconstructed book. Read-only."""
+    from config import DB_PATH
+    from accounting_io import read_book
+    import evidence_match
+    with read_book(DB_PATH) as conn:
+        aid = None if account_id in (None, "", "all") else account_id
+        if aid and not conn.execute("SELECT 1 FROM portfolio_accounts WHERE id=?", (aid,)).fetchone():
+            raise HTTPException(status_code=404, detail="Unknown account")
+        return evidence_match.run(conn, aid)
+
+
+@router.get("/ledger/evidence/image")
+def get_ledger_evidence_image(fill_id: str):
+    """The cited screenshot of one fill, served only if its SHA-256 still matches."""
+    import hashlib
+    from pathlib import Path
+    from fastapi.responses import FileResponse
+    from config import DB_PATH
+    from accounting_io import read_book
+    with read_book(DB_PATH) as conn:
+        row = conn.execute("SELECT source_image, source_sha256 FROM broker_executions WHERE id=?",
+                           (fill_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Unknown fill")
+    name = row["source_image"]
+    if Path(name).name != name:
+        raise HTTPException(status_code=422, detail="Invalid image reference")
+    backups = Path(DB_PATH).resolve().parent / "backups"
+    for candidate in sorted(backups.glob(f"*/{name}")):
+        if hashlib.sha256(candidate.read_bytes()).hexdigest() == row["source_sha256"]:
+            return FileResponse(candidate)
+    raise HTTPException(status_code=404, detail="Evidence image missing or changed")
+
+
+class BrokerStatementPositionIn(BaseModel):
+    symbol: str
+    qty: Decimal
+    cost_basis: Decimal
+    market_price: Decimal
+
+
+class BrokerStatementIn(BaseModel):
+    account_id: str
+    as_of: str
+    currency: Optional[str] = None
+    cash: Decimal
+    market_value: Decimal
+    positions: list[BrokerStatementPositionIn]
+    source_ref: str
+    source_note: str = ""
+    supersedes_id: Optional[str] = None
+
+
+@router.get("/ledger/statements")
+def get_ledger_statements(account_id: Optional[str] = None):
+    from accounting_io import read_book
+    from accounting_statements import list_current, reconcile
+    from config import DB_PATH
+
+    with read_book(DB_PATH) as conn:
+        if account_id and account_id != "all" and not conn.execute(
+            "SELECT 1 FROM portfolio_accounts WHERE id=?", (account_id,)
+        ).fetchone():
+            raise HTTPException(status_code=404, detail="Unknown account")
+        statements = list_current(conn, account_id)
+        result = []
+        for row in statements:
+            try:
+                comparison = reconcile(conn, row)
+            except ValueError as exc:
+                comparison = {"matched": False, "unavailable": str(exc)}
+            result.append({"statement": row, "comparison": comparison})
+        return {"statements": result, "count": len(result)}
+
+
+@router.post("/ledger/statements", status_code=201)
+def post_ledger_statement(body: BrokerStatementIn):
+    from accounting_statements import create, reconcile
+    from config import DB_PATH
+
+    import sqlite3
+    from db import audit_reason
+
+    try:
+        with get_db() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            with audit_reason(conn, "broker statement evidence"):
+                statement_id = create(conn, body.model_dump())
+            row = conn.execute("SELECT * FROM broker_statements WHERE id=?", (statement_id,)).fetchone()
+            try:
+                comparison = reconcile(conn, row)
+            except ValueError as exc:
+                comparison = {"matched": False, "unavailable": str(exc)}
+        return {"id": statement_id, "recorded": True, "comparison": comparison,
+                "note": "Broker evidence saved; trade and cash histories were not changed."}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Statement revision conflicted; reload and retry") from exc
 
 
 @router.get("/audit-events")
@@ -1037,6 +1363,58 @@ def get_cost_overrides(account_id: Optional[str] = Query(None)):
             rows = conn.execute("SELECT * FROM position_cost_overrides").fetchall()
     return [dict(r) for r in rows]
 
+@router.get("/takeover")
+def get_takeover(account_id: Optional[str] = Query(None), base_currency: str = Query("THB")):
+    """Lots received in kind when a portfolio was taken over for management.
+
+    Fund practice: the book carries them at fair value on the transfer date,
+    so every return figure starts there. The previous owner's cost is memo:
+    inherited_pnl = (transfer - original) x volume is the loss/gain that
+    happened before takeover and never moves afterwards. What happened since
+    is the ordinary P&L of these lots (realized here, unrealized on the
+    open-positions payload, matched by id).
+    """
+    base_currency = report_currency(base_currency)
+    where, params = ["acquisition_type = 'TRANSFER_IN'"], []
+    if account_id and account_id != "all":
+        where.append("account_id = ?")
+        params.append(account_id)
+    with get_db() as conn:
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT * FROM trades WHERE {' AND '.join(where)} ORDER BY date_entry, symbol", params
+        ).fetchall()]
+    lots, totals = [], {"original_cost": 0.0, "transfer_value": 0.0, "inherited_pnl": 0.0,
+                        "realized_since": 0.0}
+    for t in rows:
+        vol = _to_float_or_zero(t["volume"])
+        orig = _to_float_or_zero(t["original_price_entry"]) * vol
+        xfer = _to_float_or_zero(t["transfer_price_entry"]) * vol
+        ccy = _position_currency(t)
+        conv = lambda v: round(convert_amount(v, ccy, base_currency, date=t["date_entry"]), 2)
+        closed = t["win_loss"] != "P"
+        lot = {
+            "id": t["id"], "account_id": t["account_id"], "symbol": t["symbol"],
+            "date_transfer": t["date_entry"], "date_exit": t["date_exit"], "open": not closed,
+            "volume": vol, "currency": ccy,
+            "original_price_entry": t["original_price_entry"],
+            "transfer_price_entry": t["transfer_price_entry"],
+            "original_cost_base": conv(orig), "transfer_value_base": conv(xfer),
+            "inherited_pnl_base": conv(xfer - orig),
+            "realized_since_base": round(realized_pnl_in_report(t, base_currency), 2) if closed else None,
+        }
+        lots.append(lot)
+        totals["original_cost"] += lot["original_cost_base"]
+        totals["transfer_value"] += lot["transfer_value_base"]
+        totals["inherited_pnl"] += lot["inherited_pnl_base"]
+        totals["realized_since"] += lot["realized_since_base"] or 0.0
+    return {
+        "base_currency": base_currency,
+        "transfer_dates": sorted({l["date_transfer"] for l in lots}),
+        "lots": lots,
+        "totals": {k: round(v, 2) for k, v in totals.items()},
+    }
+
+
 @router.post("/cost-overrides")
 def set_cost_override(body: CostOverrideIn):
     with get_db() as conn:
@@ -1127,7 +1505,7 @@ class SellIn(BaseModel):
     sell_volume: float = 0               # How many shares/units to sell (0 = all)
     sell_price: float = 0                # Exit price
     sell_date: str                       # Date of sale (YYYY-MM-DD)
-    commission: float = 0                # Optional commission
+    commission: Optional[float] = None   # None = broker fee estimate; a number = as typed
 
 
 @router.post("/sell", status_code=201)
@@ -1180,18 +1558,21 @@ def sell_position(body: SellIn):
         remaining   = round(total_volume - sell_vol, 8)
         pos_ccy = _position_currency(pos)
         exit_fx = _capture_thb_rate(pos_ccy, body.sell_date, conn=conn)
+        fee_exit, _ = _fee_for(conn, pos["account_id"], pos_ccy, "SELL",
+                               sell_vol, exit_price, body.commission)
+        fee_exit = fee_exit or 0.0
 
         if remaining <= 1e-8:
             # ── Full sell: close the position ────────────────────────────────
             pnl = round((exit_price - entry_price) * total_volume, 2)
             pnl_pct = round(((exit_price / entry_price) - 1) * 100, 2) if entry_price > 0 else 0
-            pnl_net = round(pnl - float(body.commission), 2)
+            pnl_net = round(pnl - fee_exit, 2)
             wl = "W" if pnl_net >= 0 else "L"
 
             new_vals = {
                 "date_exit": body.sell_date, "price_exit": exit_price,
                 "pnl_amount": pnl_net, "win_loss": wl, "pnl_percent": pnl_pct,
-                "exit_exchange_rate": exit_fx,
+                "exit_exchange_rate": exit_fx, "fee_exit": fee_exit,
             }
             # price_entry follows the AVCO the P&L was computed from, so the
             # closed row's entry, exit and P&L agree in the trade log.
@@ -1200,10 +1581,10 @@ def sell_position(body: SellIn):
                 """UPDATE trades SET date_exit = ?, price_exit = ?,
                    price_entry = ?,
                    pnl_amount = ?, win_loss = ?, pnl_percent = ?,
-                   exit_exchange_rate = ?, note = note || ?
+                   exit_exchange_rate = ?, fee_exit = ?, note = note || ?
                    WHERE id = ?""",
                 (body.sell_date, exit_price, entry_price, pnl_net, wl, pnl_pct, exit_fx,
-                  f"\n[SOLD {body.sell_date}] @ {exit_price} | P&L: {pnl_net}",
+                  fee_exit, f"\n[SOLD {body.sell_date}] @ {exit_price} | P&L: {pnl_net}",
                   body.trade_id),
             )
             _write_audit_log(conn, body.trade_id, "SELL_FULL", pos, new_vals,
@@ -1220,13 +1601,14 @@ def sell_position(body: SellIn):
                 "pnl_amount": pnl_net,
                 "pnl_percent": pnl_pct,
                 "win_loss": wl,
+                "fee_exit": fee_exit,
             }
         else:
             # ── Partial sell: split into sold + remaining ────────────────────
             sold_volume = sell_vol
             sold_pnl = round((exit_price - entry_price) * sold_volume, 2)
             sold_pnl_pct = round(((exit_price / entry_price) - 1) * 100, 2) if entry_price > 0 else 0
-            sold_pnl_net = round(sold_pnl - float(body.commission), 2)
+            sold_pnl_net = round(sold_pnl - fee_exit, 2)
             sold_wl = "W" if sold_pnl_net >= 0 else "L"
 
             import uuid as _uuid
@@ -1235,15 +1617,17 @@ def sell_position(body: SellIn):
                 """INSERT INTO trades (id, account_id, symbol, resolved_symbol, market,
                    sector, date_entry, date_exit,
                    price_entry, price_exit, volume, pnl_amount, win_loss, pnl_percent,
-                   currency, exchange_rate, exit_exchange_rate, strategy_name, note)
+                   currency, exchange_rate, exit_exchange_rate, strategy_name, note, fee_exit,
+                   acquisition_type, original_price_entry, transfer_price_entry)
                    SELECT ?, account_id, symbol, resolved_symbol, market,
                    sector, date_entry, ?,
                    ?, ?, ?, ?, ?, ?,
-                   currency, exchange_rate, ?, strategy_name, ?
+                   currency, exchange_rate, ?, strategy_name, ?, ?,
+                   acquisition_type, original_price_entry, transfer_price_entry
                    FROM trades WHERE id = ?""",
                 (sold_id, body.sell_date, avg_cost, exit_price, sold_volume,
                   sold_pnl_net, sold_wl, sold_pnl_pct, exit_fx,
-                  "",
+                  "", fee_exit,
                   body.trade_id),
             )
 
@@ -1280,6 +1664,7 @@ def sell_position(body: SellIn):
                 "pnl_amount": sold_pnl_net,
                 "pnl_percent": sold_pnl_pct,
                 "win_loss": sold_wl,
+                "fee_exit": fee_exit,
             }
 
 
@@ -1288,7 +1673,7 @@ class SellAllLotsIn(BaseModel):
     symbol: str
     sell_price: float
     sell_date: str
-    commission: float = 0
+    commission: Optional[float] = None
 
 
 @router.post("/sell-all-lots", status_code=201)
@@ -1309,12 +1694,17 @@ def sell_all_lots(body: SellAllLotsIn):
         avg_cost  = sum(float(l["price_entry"]) * float(l["volume"]) for l in lots) / total_vol
         exit_price = float(body.sell_price)
         closed_ids = []
+        # One order: fees on the whole sale, shared across the lots by volume.
+        fee_total, _ = _fee_for(conn, body.account_id, _position_currency(lots[0]), "SELL",
+                                total_vol, exit_price, body.commission)
+        fee_total = fee_total or 0.0
 
         for pos in lots:
             vol = float(pos["volume"])
             pnl = round((exit_price - avg_cost) * vol, 2)
             pnl_pct = round(((exit_price / avg_cost) - 1) * 100, 2) if avg_cost > 0 else 0
-            pnl_net = round(pnl - float(body.commission) / len(lots), 2)
+            lot_fee = round(fee_total * vol / total_vol, 6) if total_vol else 0.0
+            pnl_net = round(pnl - lot_fee, 2)
             wl = "W" if pnl_net >= 0 else "L"
             exit_fx = _capture_thb_rate(
                 _position_currency(pos), body.sell_date, conn=conn
@@ -1325,10 +1715,10 @@ def sell_all_lots(body: SellAllLotsIn):
                 """UPDATE trades SET date_exit = ?, price_exit = ?,
                    price_entry = ?,
                    pnl_amount = ?, win_loss = ?, pnl_percent = ?,
-                   exit_exchange_rate = ?, note = note || ?
+                   exit_exchange_rate = ?, fee_exit = ?, note = note || ?
                    WHERE id = ?""",
                 (body.sell_date, exit_price, avg_cost, pnl_net, wl, pnl_pct, exit_fx,
-                  f"\n[SOLD {body.sell_date}] @ {exit_price} | P&L: {pnl_net}",
+                  lot_fee, f"\n[SOLD {body.sell_date}] @ {exit_price} | P&L: {pnl_net}",
                   pos["id"]),
             )
             _write_audit_log(conn, pos["id"], "SELL_ALL_LOTS", pos,
@@ -1352,22 +1742,37 @@ def list_cash(account_id: Optional[str] = Query(None)):
     sql = "SELECT * FROM cash_ledger"
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY date DESC"
+    sql += " ORDER BY date DESC, created_at DESC"
     with get_db() as conn:
         rows = conn.execute(sql, params).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["flow_type"] = _cash_flow_type(d)
+        out.append(d)
+    return out
+
+
+def _require_account(conn, account_id: str) -> None:
+    if not conn.execute(
+        "SELECT 1 FROM portfolio_accounts WHERE id = ?", (account_id,)
+    ).fetchone():
+        raise HTTPException(status_code=404, detail="Account not found")
 
 
 @router.post("/cash", status_code=201)
 def add_cash(body: CashIn):
+    entry_type, income, investment = _cash_values(body)
     entry_id = str(uuid.uuid4())
     with get_db() as conn:
+        _require_account(conn, body.account_id)
         conn.execute("""
-            INSERT INTO cash_ledger (id, account_id, date, income, investment, exchange_rate, note)
-            VALUES (?,?,?,?,?,?,?)
-        """, (entry_id, body.account_id, body.date, body.income, body.investment,
-              body.exchange_rate, body.note))
-    return {"ok": True, "id": entry_id}
+            INSERT INTO cash_ledger (id, account_id, date, income, investment,
+                                     exchange_rate, note, entry_type)
+            VALUES (?,?,?,?,?,?,?,?)
+        """, (entry_id, body.account_id, body.date, income, investment,
+              body.exchange_rate, body.note, entry_type))
+    return {"ok": True, "id": entry_id, "entry_type": entry_type, "investment": investment}
 
 
 @router.post("/cash/transfer", status_code=201)
@@ -1398,16 +1803,25 @@ def transfer_cash(body: CashTransferIn):
 
 @router.put("/cash/{entry_id}")
 def update_cash(entry_id: str, body: CashIn):
+    entry_type, income, investment = _cash_values(body)
     with get_db() as conn:
-        cur = conn.execute("""
-            UPDATE cash_ledger SET account_id=?, date=?, income=?, investment=?,
-                exchange_rate=?, note=?
-            WHERE id = ?
-        """, (body.account_id, body.date, body.income, body.investment,
-              body.exchange_rate, body.note, entry_id))
-        if cur.rowcount == 0:
+        row = conn.execute(
+            "SELECT entry_type FROM cash_ledger WHERE id = ?", (entry_id,)
+        ).fetchone()
+        if not row:
             raise HTTPException(status_code=404, detail="Cash entry not found")
-    return {"ok": True}
+        # A transfer leg edited alone would leave its pair unbalanced — money
+        # created or destroyed between accounts. Delete and re-enter instead.
+        if row["entry_type"] == "TRANSFER":
+            raise HTTPException(status_code=409, detail="Transfer legs cannot be edited; delete and re-enter")
+        _require_account(conn, body.account_id)
+        conn.execute("""
+            UPDATE cash_ledger SET account_id=?, date=?, income=?, investment=?,
+                exchange_rate=?, note=?, entry_type=?
+            WHERE id = ?
+        """, (body.account_id, body.date, income, investment,
+              body.exchange_rate, body.note, entry_type, entry_id))
+    return {"ok": True, "entry_type": entry_type, "investment": investment}
 
 
 @router.delete("/cash/{entry_id}")
@@ -1446,6 +1860,10 @@ def list_cash_adjustments(account_id: Optional[str] = Query(None)):
 
 @router.post("/cash/reconcile", status_code=201)
 def reconcile_cash(body: CashReconcileIn):
+    from accounting_preflight import CASH_ADJUSTMENT_CATEGORIES
+    category = body.category.strip().upper()
+    if category not in CASH_ADJUSTMENT_CATEGORIES:
+        raise HTTPException(status_code=422, detail="Unknown cash adjustment category")
     ccy = report_currency(body.currency)
     with get_db() as conn:
         if not conn.execute(
@@ -1470,13 +1888,13 @@ def reconcile_cash(body: CashReconcileIn):
     with get_db() as conn, audit_reason(conn, body.note or "cash reconcile"):
         conn.execute(
             """INSERT INTO cash_adjustments
-                   (id, account_id, date, amount, currency, target_balance, derived_before, note)
-               VALUES (?,?,?,?,?,?,?,?)""",
+                   (id, account_id, date, amount, currency, target_balance, derived_before, category, note)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
             (entry_id, body.account_id, date, delta, ccy,
-             float(body.actual_balance), current, body.note or ""),
+             float(body.actual_balance), current, category, body.note or ""),
         )
     return {"ok": True, "id": entry_id, "amount": delta, "cash_before": current,
-            "cash_after": float(body.actual_balance), "currency": ccy}
+            "cash_after": float(body.actual_balance), "currency": ccy, "category": category}
 
 
 @router.delete("/cash/adjustments/{adj_id}")
@@ -1550,37 +1968,88 @@ def list_dividends(
     return dividends
 
 
+def _dividend_currency(conn, body: DividendIn) -> str:
+    """The currency the amounts were TYPED in.
+
+    Two opposite mistakes both happened:
+    * a form still carrying the ACCOUNT's currency (USD in Dime) for a Thai
+      stock — the asset's own currency must win (test_portfolio_currency);
+    * a baht figure deliberately typed for a US stock and labelled THB — the
+      old rule (a matching trade always wins) stored it as USD, multiplied it
+      by USD/THB again on every report, and silently undid the fix on the next
+      edit (2026-07-28, Dime JEPQ/UNH/…).
+    So: a currency that differs from the account's is a choice and is kept; one
+    equal to the account's is treated as a possibly stale default and yields to
+    the asset's currency. dividend_check catches whatever slips through."""
+    acc = conn.execute(
+        "SELECT currency FROM portfolio_accounts WHERE id = ?", (body.account_id,)
+    ).fetchone()
+    acc_ccy = normalize_currency(acc["currency"] if acc else None, "THB") or "THB"
+    trade = conn.execute(
+        """SELECT currency, market, resolved_symbol, symbol FROM trades
+           WHERE account_id = ? AND upper(symbol) = upper(?)
+           ORDER BY date_entry DESC LIMIT 1""",
+        (body.account_id, body.asset),
+    ).fetchone()
+    asset_ccy = (
+        _position_currency({**dict(trade), "acc_currency": acc_ccy}) if trade else None
+    )
+    explicit = normalize_currency(body.currency)
+    if explicit and (explicit != acc_ccy or not asset_ccy):
+        return explicit
+    return asset_ccy or explicit or acc_ccy
+
+
+def _run_dividend_check(body: DividendIn, currency: str, dividend_id: Optional[str] = None) -> dict:
+    import dividend_check
+
+    try:
+        with get_db() as conn:
+            return dividend_check.check(
+                conn, account_id=body.account_id, asset=body.asset,
+                ex_date=body.ex_date, pay_date=body.pay_date,
+                amount_per_unit=float(body.amount_per_unit or 0),
+                total_received=float(body.total_received or 0), currency=currency,
+                dividend_id=dividend_id,
+            )
+    except Exception:
+        logger.exception("dividend check failed for %s", body.asset)
+        return {"issues": []}
+
+
+def _guard_dividend(body: DividendIn, currency: str, dividend_id: Optional[str] = None) -> dict:
+    """422 on an error-level unit problem unless body.force."""
+    import dividend_check
+
+    result = _run_dividend_check(body, currency, dividend_id)
+    if dividend_check.blocking(result) and not body.force:
+        raise HTTPException(status_code=422, detail={
+            "message": dividend_check.blocking(result)[0]["message"],
+            "check": result,
+        })
+    return result
+
+
+@router.post("/dividends/check")
+def check_dividend(body: DividendIn):
+    """Dry check of a dividend entry: per-unit vs the market's dividend for
+    that ex-date, total vs units held then. Never writes."""
+    with get_db() as conn:
+        currency = _dividend_currency(conn, body)
+    return _run_dividend_check(body, currency)
+
+
 @router.post("/dividends", status_code=201)
 def add_dividend(body: DividendIn):
     div_id = str(uuid.uuid4())
     with get_db() as conn:
-        ccy_row = conn.execute(
-            """
-            SELECT currency, market, resolved_symbol, symbol
-            FROM trades WHERE account_id = ? AND upper(symbol) = upper(?)
-            ORDER BY date_entry DESC LIMIT 1
-            """,
-            (body.account_id, body.asset),
-        ).fetchone()
-        acc = conn.execute(
-            "SELECT currency FROM portfolio_accounts WHERE id = ?", (body.account_id,)
-        ).fetchone()
-        if not acc:
+        if not conn.execute(
+            "SELECT 1 FROM portfolio_accounts WHERE id = ?", (body.account_id,)
+        ).fetchone():
             raise HTTPException(status_code=404, detail="Unknown account")
-        # A matching trade is authoritative. This also protects manual forms
-        # whose blank/default currency may still reflect the account rather
-        # than the asset selected by the user.
-        currency = None
-        if ccy_row:
-            currency = _position_currency(
-                {**dict(ccy_row), "acc_currency": acc["currency"]}
-            )
-        currency = (
-            currency
-            or normalize_currency(body.currency)
-            or normalize_currency(acc["currency"], "THB")
-            or "THB"
-        )
+        currency = _dividend_currency(conn, body)
+    check = _guard_dividend(body, currency)
+    with get_db() as conn:
         conn.execute("""
             INSERT INTO dividends (id, account_id, asset, ex_date, pay_date,
                 amount_per_unit, total_received, reinvested_amount,
@@ -1589,36 +2058,17 @@ def add_dividend(body: DividendIn):
         """, (div_id, body.account_id, body.asset, body.ex_date, body.pay_date,
               body.amount_per_unit, body.total_received, body.reinvested_amount,
               body.reinvest_asset, body.reinvest_price, body.reinvest_units, currency))
-    return {"ok": True, "id": div_id, "currency": currency}
+    return {"ok": True, "id": div_id, "currency": currency, "check": check}
 
 
 @router.put("/dividends/{div_id}")
 def update_dividend(div_id: str, body: DividendIn):
     with get_db() as conn:
-        old = conn.execute("SELECT currency FROM dividends WHERE id = ?", (div_id,)).fetchone()
-        if not old:
+        if not conn.execute("SELECT 1 FROM dividends WHERE id = ?", (div_id,)).fetchone():
             raise HTTPException(status_code=404, detail="Dividend entry not found")
-        trade = conn.execute(
-            """SELECT currency, market, resolved_symbol, symbol FROM trades
-               WHERE account_id = ? AND upper(symbol) = upper(?)
-               ORDER BY date_entry DESC LIMIT 1""",
-            (body.account_id, body.asset),
-        ).fetchone()
-        acc = conn.execute(
-            "SELECT currency FROM portfolio_accounts WHERE id = ?", (body.account_id,)
-        ).fetchone()
-        currency = None
-        if trade:
-            currency = _position_currency(
-                {**dict(trade or {}), "acc_currency": acc["currency"] if acc else "THB"}
-            )
-        currency = (
-            currency
-            or normalize_currency(body.currency)
-            or normalize_currency(old["currency"])
-            or normalize_currency(acc["currency"] if acc else None, "THB")
-            or "THB"
-        )
+        currency = _dividend_currency(conn, body)
+    check = _guard_dividend(body, currency, div_id)
+    with get_db() as conn:
         cur = conn.execute("""
             UPDATE dividends SET account_id=?, asset=?, ex_date=?, pay_date=?,
                 amount_per_unit=?, total_received=?, reinvested_amount=?,
@@ -1630,7 +2080,7 @@ def update_dividend(div_id: str, body: DividendIn):
               currency, div_id))
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Dividend entry not found")
-    return {"ok": True}
+    return {"ok": True, "currency": currency, "check": check}
 
 
 @router.delete("/dividends/{div_id}")
@@ -2528,6 +2978,25 @@ def get_summary(base_currency: str = Query("THB")):
             ytd_base_map[aid] = ytd_base_map.get(aid, 0.0) + in_base
             ytd_economic_acct_map[aid] = ytd_economic_acct_map.get(aid, 0.0) + economic_in_acct
             ytd_economic_base_map[aid] = ytd_economic_base_map.get(aid, 0.0) + economic_in_base
+    # Buy fees are paid on the buy date and are not in the cost basis, so they
+    # hit realized P&L (and therefore derived cash) whether the lot is open or not.
+    fees_base_map: dict[str, float] = {}
+    for r in list(closed_pnl_rows) + list(open_cost_rows):
+        row = dict(r)
+        if not row.get("fee_entry"):
+            continue
+        aid = row["account_id"]
+        acct_ccy = str(row.get("acc_currency") or "USD").upper()
+        fee_acct = entry_fee_in_report(row, acct_ccy)
+        fee_base = entry_fee_in_report(row, base_currency)
+        fees_base_map[aid] = fees_base_map.get(aid, 0.0) + fee_base
+        for m, v in ((pnl_acct_map, fee_acct), (pnl_base_map, fee_base),
+                     (economic_pnl_acct_map, fee_acct), (economic_pnl_base_map, fee_base)):
+            m[aid] = m.get(aid, 0.0) - v
+        if str(row.get("date_entry") or "") >= year_start:
+            for m, v in ((ytd_acct_map, fee_acct), (ytd_base_map, fee_base),
+                         (ytd_economic_acct_map, fee_acct), (ytd_economic_base_map, fee_base)):
+                m[aid] = m.get(aid, 0.0) - v
 
     # Open cost basis per account, converted at the ENTRY rate — the same basis
     # `/allocation-detail` reports, so the two cannot disagree.
@@ -2716,6 +3185,7 @@ def get_summary(base_currency: str = Query("THB")):
             "open_cost_base": round(open_cost, 2),
             "cash_base": round(cash_base, 2),
             "cash_derived_base": round(cash_derived_base, 2),
+            "entry_fees_base": round(fees_base_map.get(aid, 0.0), 2),
             "cash_adjustment_base": round(cash_adjustment_base, 2),
             "cash_reconciled_at": adj_last_map.get(aid),
         })
@@ -2805,6 +3275,153 @@ def _xirr(cashflows: list[tuple[datetime, float]]) -> Optional[float]:
         else:
             lo, flo = mid, fm
     return (lo + hi) / 2.0
+
+
+# An annualised rate beyond this is almost never a return — it is a short span
+# compounded, or a cashflow the series is missing.
+_XIRR_EXTREME = 1.0  # ±100% a year
+_OPENING_BALANCE_RE = re.compile(r"opening balance|ยอดยกมา", re.IGNORECASE)
+
+
+def _xirr_flag(cashflows: list[tuple[datetime, float]], rate: Optional[float]) -> Optional[str]:
+    """Why an XIRR should not be read as a return, or None if it can be.
+
+    `inflow_before_outflow`: money came back before any was put in — the
+    series starts mid-story (buys or deposits that were never recorded), so the
+    solver treats the early inflows as free money and the rate explodes.
+    `extreme`: beyond ±100%/yr.
+    """
+    outs = [d for d, a in cashflows if a < 0]
+    ins = [d for d, a in cashflows if a > 0]
+    if outs and ins and min(ins) < min(outs):
+        return "inflow_before_outflow"
+    if rate is not None and abs(rate) > _XIRR_EXTREME:
+        return "extreme"
+    return None
+
+
+def _capital_xirr(aid: Optional[str], base_currency: str, now: datetime) -> dict:
+    """Money-weighted return of the MONEY the investor put in: deposits (−),
+    withdrawals (+), today's NAV (+). Blind to trade history, so a missing
+    buy cannot distort it — but an opening balance booked at cost can: losses
+    made before that date then look as if they happened after it."""
+    scope = aid if aid and aid != "all" else None
+    with get_db() as conn:
+        active = {r["id"] for r in conn.execute(
+            "SELECT id FROM portfolio_accounts WHERE is_active = 1")}
+        rows = [dict(r) for r in conn.execute(
+            "SELECT account_id, date, investment, note FROM cash_ledger")]
+    rows = [r for r in rows if (r["account_id"] == scope if scope else r["account_id"] in active)]
+    cf: list[tuple[datetime, float]] = []
+    opening = False
+    for r in rows:
+        d = _parse_date(r.get("date"))
+        amt = _to_float_or_zero(r.get("investment"))
+        if d is None or amt == 0:
+            continue
+        # cash_ledger is THB; deposits are money OUT of the investor's pocket.
+        cf.append((d, -_conv(amt, "THB", base_currency, _get_thb_per_usd())))
+        opening = opening or bool(_OPENING_BALANCE_RE.search(r.get("note") or ""))
+    # Cash EDIT offsets are in today's NAV, so they must be flows here too —
+    # the same policy as GROWTH and the yearly periods. Left out, every
+    # unexplained difference (a withdrawal booked twice and re-pinned, FX on
+    # USD cash, an unrecorded deposit) would count as performance.
+    with get_db() as conn:
+        for a in _cash_adjustment_rows(conn):
+            if not (a["account_id"] == scope if scope else a["account_id"] in active):
+                continue
+            d = _parse_date(a.get("date"))
+            amt = convert_amount(_to_float_or_zero(a.get("amount")), a.get("currency") or "THB",
+                                 base_currency, date=a.get("date"))
+            if d is not None and amt:
+                cf.append((d, -amt))
+    hist = get_nav_history(scope or "all", 3)
+    if not cf or not hist:
+        return {"xirr_capital_pct": None, "xirr_capital_flag": "no_ledger", "nav_now": None}
+    nav = convert_amount(_to_float_or_zero(hist[-1].get("nav_with_cash")), "THB", base_currency)
+    cf.append((now, nav))
+    rate = _xirr(cf)
+    flag = _xirr_flag(cf, rate) or ("opening_balance_at_cost" if opening else None)
+    return {
+        "xirr_capital_pct": round(rate * 100, 2) if rate is not None else None,
+        "xirr_capital_flag": flag,
+        # deposits − withdrawals + EDIT offsets
+        "net_deposited": round(-sum(a for _, a in cf[:-1]), 2),
+        "nav_now": round(nav, 2),
+    }
+
+
+# Shorter than this, an annualised rate is mostly noise — report the period only.
+_PERIOD_MIN_DAYS = 30
+
+
+def _period_returns(rows: list[dict], base_currency: str, today: Optional[str] = None) -> list[dict]:
+    """Money-weighted return per calendar year from NAV snapshots.
+
+    Each period starts from the NAV already in the book — the last snapshot of
+    the previous year, or the first of this one — treated as the money put in
+    on that day; then every change in invested capital and in cash EDIT
+    offsets between snapshots is a flow (the same flows GROWTH nets out), and
+    the period's last NAV comes back out. It never looks before the period, so
+    a trade history missing its early buys cannot distort it, and a year that
+    starts after the system settled is exact.
+
+    `rows` = /nav-history rows, oldest first (THB). The current year is the YTD.
+    """
+    pts = [r for r in rows if _to_float_or_zero(r.get("nav_with_cash")) > 0]
+    if len(pts) < 2:
+        return []
+    today = today or datetime.now().strftime("%Y-%m-%d")
+
+    def nav(r):
+        d = str(r["snapshot_date"])[:10]
+        return convert_amount(_to_float_or_zero(r["nav_with_cash"]), "THB", base_currency, date=d)
+
+    def cum(r):
+        d = str(r["snapshot_date"])[:10]
+        return convert_amount(
+            _to_float_or_zero(r.get("invested_capital")) + _to_float_or_zero(r.get("cash_adjustment")),
+            "THB", base_currency, date=d,
+        )
+
+    years = sorted({str(r["snapshot_date"])[:4] for r in pts})
+    out = []
+    for y in years:
+        inside = [r for r in pts if str(r["snapshot_date"])[:4] == y]
+        before = [r for r in pts if str(r["snapshot_date"])[:4] < y]
+        start = before[-1] if before else inside[0]
+        span = [start] + [r for r in inside if r is not start]
+        if len(span) < 2:
+            continue
+        cf = [(_parse_date(start["snapshot_date"]), -nav(start))]
+        net_flow = 0.0
+        for a, b in zip(span, span[1:]):
+            f = cum(b) - cum(a)
+            if abs(f) > 0.5:
+                cf.append((_parse_date(b["snapshot_date"]), -f))
+                net_flow += f
+        end = span[-1]
+        cf.append((_parse_date(end["snapshot_date"]), nav(end)))
+        days = (cf[-1][0] - cf[0][0]).days
+        rate = _xirr(cf) if days >= 1 else None
+        period = (1 + rate) ** (days / 365.0) - 1 if rate is not None and days > 0 else None
+        out.append({
+            "period": y,
+            "ytd": y == today[:4],
+            "start": str(start["snapshot_date"])[:10],
+            "end": str(end["snapshot_date"])[:10],
+            "days": days,
+            "start_nav": round(nav(start), 2),
+            "end_nav": round(nav(end), 2),
+            "net_flow": round(net_flow, 2),
+            # Annualising a few weeks is noise; the period figure still stands.
+            "xirr_pct": round(rate * 100, 2) if rate is not None and days >= _PERIOD_MIN_DAYS else None,
+            "period_pct": round(period * 100, 2) if period is not None else None,
+            "flag": _xirr_flag(cf, rate) if days >= _PERIOD_MIN_DAYS else "short_period",
+            # Any day in the period rebuilt from closes rather than captured.
+            "estimated": any(r.get("source") == "backfill" for r in span),
+        })
+    return out
 
 
 @router.get("/returns")
@@ -2899,6 +3516,10 @@ def get_portfolio_returns(
         a.invested += cost
         a.first = d_entry if a.first is None else min(a.first, d_entry)
         a.cf.append((d_entry, -cost))
+        fee = entry_fee_in_report(t, base_currency)
+        if fee:
+            a.realized -= fee
+            a.cf.append((d_entry, -fee))
 
         if (t.get("win_loss") or "P") != "P":   # closed
             pnl = realized_pnl_in_report(t, base_currency)
@@ -2991,6 +3612,8 @@ def get_portfolio_returns(
         return {
             "cagr_pct": round(cagr * 100, 2) if cagr is not None else None,
             "xirr_pct": round(xirr * 100, 2) if xirr is not None else None,
+            # Raw rate kept; the flag says when not to read it as a return.
+            "xirr_flag": _xirr_flag(a.cf, xirr),
             "simple_pct": round((end_value - invested) / invested * 100, 2) if invested > 0 else None,
             "invested": round(invested, 2),
             "end_value": round(end_value, 2),
@@ -3012,11 +3635,26 @@ def get_portfolio_returns(
         if a.first and (total.first is None or a.first < total.first):
             total.first = a.first
 
+    def _with_capital(m: dict, aid: Optional[str]) -> dict:
+        try:
+            m = {**m, **_capital_xirr(aid, base_currency, now)}
+        except Exception:
+            logger.exception("capital XIRR failed for %s", aid)
+            m = {**m, "xirr_capital_pct": None, "xirr_capital_flag": "error"}
+        try:
+            m["periods"] = _period_returns(get_nav_history(aid or "all", 100000), base_currency)
+        except Exception:
+            logger.exception("period returns failed for %s", aid)
+            m["periods"] = []
+        return m
+
     return {
         "base_currency": base_currency,
         "thb_per_usd": thb_per_usd,
-        "total": _metrics(total),
-        "accounts": {aid: {**_metrics(a), "name": a.name} for aid, a in accs.items()},
+        "total": _with_capital(_metrics(total), account_id),
+        "accounts": {
+            aid: {**_with_capital(_metrics(a), aid), "name": a.name} for aid, a in accs.items()
+        },
     }
 
 
@@ -3089,6 +3727,8 @@ def _maybe_capture_nav() -> None:
         realized_map: dict = _dd(float)
         for row in closed_rows:
             realized_map[row["account_id"]] += realized_pnl_in_report(row, "THB")
+        for row in list(closed_rows) + list(open_rows):
+            realized_map[row["account_id"]] -= entry_fee_in_report(row, "THB")
         div_map: dict = _dd(float)
         for row in dividend_rows:
             div_map[row["account_id"]] += convert_amount(
@@ -3244,7 +3884,7 @@ def get_nav_history(account_id: Optional[str] = Query(None), days: int = Query(3
     with get_db() as conn:
         rows = conn.execute(
             """SELECT snapshot_date, total_value, open_cost_basis, unrealized_pnl,
-                      realized_pnl, invested_capital, dividends
+                      realized_pnl, invested_capital, dividends, source
                FROM portfolio_nav_snapshots
                WHERE account_id = ?
                ORDER BY snapshot_date DESC LIMIT ?""",
@@ -3265,6 +3905,23 @@ def get_nav_history(account_id: Optional[str] = Query(None), days: int = Query(3
             ).fetchall()
             if d["account_id"] == aid or (aid == "all" and d["account_id"] in active)
         ]
+        ledger_rows = [
+            dict(r) for r in conn.execute(
+                "SELECT account_id, date, investment FROM cash_ledger"
+            ).fetchall()
+            if r["account_id"] == aid or (aid == "all" and r["account_id"] in active)
+        ]
+    # Invested capital is re-derived from TODAY's cash_ledger by date, for the
+    # same reason as dividends below. The snapshot froze whatever the ledger
+    # said at capture: a withdrawal typed in after today's capture never showed
+    # at all, and a deposit backdated to 07-09 landed on 07-15 (the next
+    # capture) — so GROWTH's deposit/withdrawal marks were on the wrong day or
+    # missing. cash_ledger is THB; transfers between two active accounts net to
+    # zero under ALL, as they should.
+    flow_events = sorted(
+        (str(r.get("date") or "")[:10], _to_float_or_zero(r.get("investment")))
+        for r in ledger_rows
+    )
     # Dividends are re-derived from TODAY's table by pay date instead of read from
     # the snapshot. A snapshot stores whatever the table said on capture day, so a
     # restatement (2026-07-28: USD dividends re-tagged, cumulative 40k → 147k THB)
@@ -3286,6 +3943,11 @@ def get_nav_history(account_id: Optional[str] = Query(None), days: int = Query(3
     for r in reversed(rows):
         row = dict(r)
         day = str(row["snapshot_date"])[:10]
+        row["invested_stored"] = row.get("invested_capital")
+        row["invested_capital"] = round(sum(v for d, v in flow_events if d and d <= day), 2)
+        # Capital dated strictly before this snapshot (e.g. a weekend transfer
+        # valued on the Monday) — /nav-index treats that part as start-of-day.
+        row["invested_before_day"] = round(sum(v for d, v in flow_events if d and d < day), 2)
         row["dividends_stored"] = row.get("dividends")
         row["dividends"] = round(sum(v for d, v in dividend_events if d and d <= day), 2)
         adj = sum(
@@ -3322,11 +3984,13 @@ def get_nav_index(
     withdrawal drops it, neither of which is performance. So each day's return
     is taken net of that day's external flow,
 
-        r_t = (NAV_t - flow_t - NAV_{t-1}) / NAV_{t-1}
+        r_t = (NAV_t - flow_t - NAV_{t-1}) / (NAV_{t-1} + before_t)
 
     with `flow_t` = the change in invested capital plus any reconciliation
-    offset dated that day, and the curve is the geometric product of those —
-    time-weighted, which is what an index is. Gaps in the snapshot series (a day
+    offset dated that day, `before_t` = the part of that capital dated before
+    day t (no snapshot in between — it was invested at the open), and the
+    curve is the geometric product of those — time-weighted, which is what an
+    index is. Gaps in the snapshot series (a day
     nobody opened the terminal) are linked across rather than interpolated.
 
     The benchmark is translated into `base_currency` before it is rebased, so a
@@ -3340,7 +4004,7 @@ def get_nav_index(
     # date, because converting at today's rate would hide the FX leg of the
     # return instead of reporting it.
     points: list[dict] = []
-    prev_nav = prev_flow_base = None
+    prev_nav = prev_flow_base = prev_capital_base = None
     index = 100.0
     suspect = 0
     for r in rows:
@@ -3351,15 +4015,31 @@ def get_nav_index(
             _to_float_or_zero(r.get("invested_capital")) + _to_float_or_zero(r.get("cash_adjustment")),
             "THB", base, date=day,
         )
+        # Deposits/withdrawals alone — the reconciliation offsets inside
+        # cum_flow are corrections to the cash figure, not money moved in or
+        # out, and must not be drawn as a deposit.
+        cum_capital = convert_amount(
+            _to_float_or_zero(r.get("invested_capital")), "THB", base, date=day,
+        )
         if nav <= 0:
-            prev_nav, prev_flow_base = None, None
+            prev_nav, prev_flow_base, prev_capital_base = None, None, None
             continue
         if prev_nav is None:
             ret = 0.0
             flow = 0.0
+            capital_flow = 0.0
         else:
             flow = cum_flow - (prev_flow_base or 0.0)
-            ret = (nav - flow - prev_nav) / prev_nav
+            capital_flow = cum_capital - (prev_capital_base or 0.0)
+            # Capital that arrived on a day with no snapshot (weekend/holiday,
+            # or an in-kind transfer valued at the prior close) was in the book
+            # from the start of this day, so it earns this day's move and
+            # belongs in the base; same-day flows stay end-of-day.
+            before = convert_amount(
+                _to_float_or_zero(r.get("invested_before_day")), "THB", base, date=day,
+            ) - (prev_capital_base or 0.0)
+            before = before if abs(before) > 0.005 and prev_nav + before > 0 else 0.0
+            ret = (nav - flow - prev_nav) / (prev_nav + before)
             index *= 1 + ret
         # A day that moves more than half the book is almost always a flow the
         # ledger did not record, not a return. It is kept in the curve and
@@ -3371,12 +4051,18 @@ def get_nav_index(
             "date": day,
             "nav": round(nav, 2),
             "flow": round(flow, 2),
+            # flow = capital_flow + adjustment_flow
+            "capital_flow": round(capital_flow, 2),
+            "adjustment_flow": round(flow - capital_flow, 2),
             "return_pct": round(ret * 100, 4),
             "port_index": round(index, 3),
             "bench_index": None,
             "suspect": flagged,
+            # Rebuilt later from closing prices (scripts/backfill_nav.py),
+            # not captured on the day — the UI marks the span as estimated.
+            "estimated": r.get("source") == "backfill",
         })
-        prev_nav, prev_flow_base = nav, cum_flow
+        prev_nav, prev_flow_base, prev_capital_base = nav, cum_flow, cum_capital
 
     out = {
         "benchmark": benchmark,
@@ -3392,6 +4078,9 @@ def get_nav_index(
         "bench_pct": None,
         "excess_pct": None,
         "net_flow": round(sum(p["flow"] for p in points), 2) if points else 0.0,
+        "estimated_until": max((p["date"] for p in points if p["estimated"]), default=None),
+        "net_capital_flow": round(sum(p["capital_flow"] for p in points), 2) if points else 0.0,
+        "net_adjustment_flow": round(sum(p["adjustment_flow"] for p in points), 2) if points else 0.0,
     }
     if len(points) < 2:
         out["note"] = "ต้องมี snapshot อย่างน้อย 2 วันถึงจะมีเส้นผลตอบแทน"
@@ -3797,6 +4486,50 @@ def get_allocation_history(
 
 
 # ── Import from Excel ─────────────────────────────────────────────────────────
+
+@router.get("/history-review")
+async def get_history_review(
+    account_id: Optional[str] = None,
+    review_status: Optional[str] = None,
+    review_decision: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    """Read staged Excel evidence; this does not enter cash, trades or NAV."""
+    with get_db() as conn:
+        table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='portfolio_history_review'"
+        ).fetchone()
+        if table is None:
+            return {"total": 0, "summary": [], "rows": []}
+        where = []
+        params: list[object] = []
+        if account_id:
+            where.append("account_id = ?")
+            params.append(account_id)
+        if review_status:
+            where.append("review_status = ?")
+            params.append(review_status)
+        if review_decision:
+            where.append("review_decision = ?")
+            params.append(review_decision)
+        clause = " WHERE " + " AND ".join(where) if where else ""
+        total = conn.execute(
+            "SELECT COUNT(*) FROM portfolio_history_review" + clause, params
+        ).fetchone()[0]
+        summary = [dict(row) for row in conn.execute(
+            "SELECT account_id, record_type, review_status, COUNT(*) AS count "
+            "FROM portfolio_history_review" + clause +
+            " GROUP BY account_id, record_type, review_status ORDER BY account_id, review_status",
+            params,
+        ).fetchall()]
+        rows = [dict(row) for row in conn.execute(
+            "SELECT * FROM portfolio_history_review" + clause +
+            " ORDER BY recorded_date, account_id, source_sheet, source_row LIMIT ? OFFSET ?",
+            [*params, limit, offset],
+        ).fetchall()]
+    return {"total": total, "summary": summary, "rows": rows}
+
 
 @router.post("/import/excel")
 async def import_excel(file: UploadFile = File(...)):

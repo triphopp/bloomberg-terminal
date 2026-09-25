@@ -19,17 +19,15 @@
 
 | Command | View |
 |---------|------|
-| `MKT` | Market view — watchlist, chart, regime panel |
-| `NEWS` | News — financial feed + Polymarket column |
-| `GMOV` | Market Movers — indices table + heatmap |
-| `CLIP` | Clippings — Obsidian notes + Ollama AI |
-| `MACRO` | Macro Economics — 7 tabs |
-| `CRDT` | Credit / Stress — 4 tabs |
-| `PORT` | Portfolio — 8 tabs |
-| `CRYP` | Crypto — 20 coins + chart |
-| `FX` | FX / Forex — 20 pairs + chart |
+| `MKT` | Market view — watchlist, chart, regime panel, TICK DATA |
+| `NEWS` | News — watchlist news, feed, social, data board + Polymarket column |
+| `BOND` | Bond Monitor — MARKET (price vs supply) · CONDITIONS (ex-CRDT) |
+| `PORT` | Portfolio — PORTFOLIO · ANALYTICS · RISK · TOOLS · PAPER |
+| `HEATMAP(market?, period?)` | HMAP sector treemap, e.g. `heatmap(TH)`, `heatmap(US, 52w)` |
 
-Keyboard equivalents: `1`–`6`, `P`, `C`, `E` (same views, no overlay needed).
+Removed 2026-09-25: `GMOV` (→ HMAP), `CLIP`, `CRDT` (→ BOND → CONDITIONS); earlier `MACRO`, `CRYP`, `FX`. TAIL has no command — use `5` or `t`.
+
+Keyboard equivalents: `1` MKT · `2` NEWS · `3`/`b` BOND · `4`/`p` PORT · `5`/`t` TAIL · `h` HMAP (no overlay needed).
 
 ---
 

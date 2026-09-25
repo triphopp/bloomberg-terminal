@@ -45,6 +45,7 @@ class _SuppressReloadShutdownRace(logging.Filter):
 
 logging.getLogger("uvicorn.error").addFilter(_SuppressReloadShutdownRace())
 
+import dev_status  # noqa: F401 — snapshots source mtimes; must load before routers
 from config import CORS_ORIGINS
 import upstream_health  # noqa: F401 — observes every outbound call; must load before routers
 import yahoo_gate  # noqa: F401 — caps concurrent Yahoo requests app-wide; must load before routers
@@ -59,6 +60,8 @@ from db import (
     init_graphs_schema,
     init_series_schema,
     init_etf_aum_schema,
+    init_bond_issuance_schema,
+    init_cot_schema,
     seed_symbol_lists,
     sync_symbol_lists,
 )
@@ -67,8 +70,9 @@ from analytics.regime_v2 import ensure_v2_fresh
 from contextlib import asynccontextmanager
 
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, graphs, series, ir_stress, market_state, dcf
+from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, bonds, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, graphs, series, ir_stress, market_state, dcf, discover, market_heatmap, cot
 from routers import health as upstream_health_router
+from routers import dev as dev_router
 import sync
 from sources.errors import UpstreamRateLimited, is_rate_limit
 from sync.gate import is_synced_write, should_gate
@@ -109,6 +113,8 @@ init_zettel_schema()   # same ordering reason as the thesis schema above
 init_graphs_schema()   # index for research/graphs; no sync triggers, order free
 init_series_schema()   # generic indicator series; must precede init_sync_layer()
 init_etf_aum_schema()  # self-built ETF AUM record; must precede init_sync_layer()
+init_bond_issuance_schema()  # BOND view EDGAR cache; not synced, order free
+init_cot_schema()      # CFTC COT cache; not synced, order free
 init_sync_layer()
 init_audit_layer()     # after sync layer: needs _sync_guard + final column set
 init_alerts_schema()
@@ -144,6 +150,7 @@ iv_scheduler.start_background_recorder()
 series_scheduler.start_background_recorder()
 
 # ── Mount routers ─────────────────────────────────────────────────────────────
+app.include_router(dev_router.router)
 app.include_router(market.router)
 app.include_router(stock.router)
 app.include_router(options.router)
@@ -155,6 +162,7 @@ app.include_router(social.router)
 app.include_router(macro.router)
 app.include_router(global_yields.router)
 app.include_router(rates.router, tags=["Rates"])
+app.include_router(bonds.router, tags=["Bonds"])
 app.include_router(crisis.router)
 app.include_router(sovereign.router)
 app.include_router(portfolio.router)
@@ -200,6 +208,9 @@ app.include_router(paper_trading.router, tags=["Paper Trading"])
 app.include_router(providers.router, tags=["Providers"])
 app.include_router(sync_router.router, tags=["Sync"])
 app.include_router(watchlist_signals.router)
+app.include_router(discover.router, tags=["Discover"])
+app.include_router(market_heatmap.router, tags=["Heatmap"])
+app.include_router(cot.router, tags=["COT"])
 
 
 # ── Sync gate ─────────────────────────────────────────────────────────────────

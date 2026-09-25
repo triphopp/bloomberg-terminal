@@ -382,6 +382,21 @@ def init_portfolio_v2() -> None:
         _ensure_column(conn, "trades", "market", "market TEXT")
         _ensure_column(conn, "trades", "exit_exchange_rate", "exit_exchange_rate REAL")
         _ensure_column(conn, "trades", "is_reinvest", "is_reinvest INTEGER NOT NULL DEFAULT 0")
+        # Broker fees in the instrument currency. Kept out of price_entry: the
+        # broker's own cost basis is qty x price (Dime shows it that way).
+        # fee_exit is already inside pnl_amount; fee_entry is charged to
+        # realized P&L on the buy date (see broker_fees.py).
+        _ensure_column(conn, "trades", "fee_entry", "fee_entry REAL")
+        _ensure_column(conn, "trades", "fee_exit", "fee_exit REAL")
+        _ensure_column(conn, "trades", "fee_detail", "fee_detail TEXT")
+        # In-kind transfer of a portfolio taken over for management (fund
+        # practice): price_entry/amount = fair value on the transfer date, so
+        # returns start there. Both per-unit memo prices stay fixed even when
+        # AVCO later rebases price_entry, so the pre-takeover loss is stable:
+        # inherited = (transfer_price_entry - original_price_entry) x volume.
+        _ensure_column(conn, "trades", "acquisition_type", "acquisition_type TEXT")
+        _ensure_column(conn, "trades", "original_price_entry", "original_price_entry REAL")
+        _ensure_column(conn, "trades", "transfer_price_entry", "transfer_price_entry REAL")
         _ensure_column(conn, "portfolio_accounts", "markets", "markets TEXT")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS cash_ledger (
@@ -414,11 +429,60 @@ def init_portfolio_v2() -> None:
                 currency       TEXT NOT NULL DEFAULT 'THB',
                 target_balance REAL,
                 derived_before REAL,
+                category       TEXT NOT NULL DEFAULT 'UNKNOWN',
                 note           TEXT DEFAULT '',
                 created_at     TEXT DEFAULT (datetime('now'))
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_cash_adj_account ON cash_adjustments(account_id)")
+        _ensure_column(conn, "cash_adjustments", "category", "category TEXT NOT NULL DEFAULT 'UNKNOWN'")
+        # Broker evidence is versioned by append, so a correction retains the
+        # original statement and points to it via supersedes_id. Currency is
+        # the account's native currency; positions are a complete day-end list.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS broker_statements (
+                id              TEXT PRIMARY KEY,
+                account_id      TEXT NOT NULL REFERENCES portfolio_accounts(id),
+                as_of           TEXT NOT NULL,
+                currency        TEXT NOT NULL,
+                cash            TEXT NOT NULL,
+                market_value    TEXT NOT NULL,
+                holdings_json   TEXT NOT NULL,
+                source_ref      TEXT NOT NULL,
+                source_note     TEXT NOT NULL DEFAULT '',
+                supersedes_id   TEXT REFERENCES broker_statements(id),
+                created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+                updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_broker_statement_day ON broker_statements(account_id, as_of)")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_broker_statement_revision ON broker_statements(supersedes_id) WHERE supersedes_id IS NOT NULL")
+        # A broker activity screenshot proves an execution, not its funding
+        # wallet, settlement cash or cost-lot allocation. Keep each fill as
+        # cited evidence until those facts can be reconciled with legacy lots.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS broker_executions (
+                id                TEXT PRIMARY KEY,
+                account_id        TEXT NOT NULL REFERENCES portfolio_accounts(id),
+                broker            TEXT NOT NULL,
+                symbol            TEXT NOT NULL,
+                side              TEXT NOT NULL CHECK(side IN ('BUY','SELL')),
+                executed_at_local TEXT NOT NULL,
+                display_timezone  TEXT NOT NULL,
+                quantity          TEXT NOT NULL,
+                unit_price        TEXT NOT NULL,
+                instrument_ccy    TEXT NOT NULL,
+                order_amount      TEXT,
+                order_ccy         TEXT,
+                source_image      TEXT NOT NULL,
+                source_sha256     TEXT NOT NULL,
+                source_note       TEXT NOT NULL DEFAULT '',
+                created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+                updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+                UNIQUE(account_id, symbol, side, executed_at_local, quantity, unit_price)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_broker_executions_date ON broker_executions(account_id, executed_at_local)")
         # Row-level change log for every money table, written by triggers (see
         # init_audit_layer) so no endpoint — present or future — can skip it.
         # Append-only; `event_id` is a uuid so the log syncs as a union.
@@ -757,6 +821,11 @@ def init_portfolio_v2() -> None:
             "CREATE INDEX IF NOT EXISTS idx_nav_account_date "
             "ON portfolio_nav_snapshots(account_id, snapshot_date)"
         )
+        # 'live' = captured on the day; 'backfill' = rebuilt later from closing
+        # prices (scripts/backfill_nav.py). The UI labels backfilled days as
+        # estimates — nobody looked at the book on those days.
+        _ensure_column(conn, "portfolio_nav_snapshots", "source",
+                       "source TEXT NOT NULL DEFAULT 'live'")
 
         # ── Paper Trading tables ─────────────────────────────────────────
         conn.execute("""
@@ -900,8 +969,79 @@ def init_portfolio_v2() -> None:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pco_account ON position_cost_overrides(account_id)")
 
+        _init_ledger_events(conn)
+
         # No default accounts — users create their own via the portfolio UI
         # (POST /api/v2/portfolio/accounts).
+
+
+LEDGER_EVENT_TYPES: tuple[str, ...] = (
+    "DEPOSIT", "WITHDRAW", "TRANSFER_IN", "TRANSFER_OUT",
+    "BUY", "SELL", "DIVIDEND", "WHT", "FEE", "INTEREST",
+    "FX_CONVERT", "SPLIT", "ADJUST", "REVERSAL",
+)
+
+
+def _init_ledger_events(conn: sqlite3.Connection) -> None:
+    """Append-only journal (plans/port-accounting-ledger.md).
+
+    One row per economic event, never edited: a mistake is corrected by a
+    REVERSAL row pointing at it plus a fresh row. Positions, average cost and
+    cash are all derived from this table, so it can be replayed at any time.
+    `net_cash` is signed (in +, out −) in the event's own `currency`.
+    `source_ref` lists the rows this event was built from (backfill trail).
+    """
+    types = ",".join(f"'{t}'" for t in LEDGER_EVENT_TYPES)
+    conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS ledger_events (
+            id          TEXT PRIMARY KEY,
+            account_id  TEXT NOT NULL,
+            trade_date  TEXT NOT NULL,
+            settle_date TEXT,
+            trade_time  TEXT,
+            type        TEXT NOT NULL CHECK(type IN ({types})),
+            symbol      TEXT,
+            qty         REAL,
+            price       REAL,
+            gross       REAL,
+            fee         REAL NOT NULL DEFAULT 0,
+            vat         REAL NOT NULL DEFAULT 0,
+            tax         REAL NOT NULL DEFAULT 0,
+            net_cash    REAL NOT NULL DEFAULT 0,
+            currency    TEXT NOT NULL DEFAULT 'THB',
+            fx_rate     REAL,
+            broker_ref  TEXT,
+            link_id     TEXT,
+            reverses_id TEXT,
+            source      TEXT NOT NULL DEFAULT 'MANUAL'
+                        CHECK(source IN ('MANUAL','IMPORT','BACKFILL','BACKFILL_ESTIMATE')),
+            source_ref  TEXT,
+            note        TEXT DEFAULT '',
+            created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now'))
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_le_pos ON ledger_events(account_id, symbol, trade_date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_le_date ON ledger_events(account_id, trade_date)")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_le_broker_ref "
+        "ON ledger_events(account_id, broker_ref) WHERE broker_ref IS NOT NULL"
+    )
+    # Immutability lives in the DB, not the API, so no future endpoint or
+    # script can quietly rewrite history. `_ledger_guard.active = 1` is the one
+    # maintenance escape hatch (backfill --replace), set and cleared inside a
+    # single transaction.
+    conn.execute("CREATE TABLE IF NOT EXISTS _ledger_guard (active INTEGER NOT NULL)")
+    if conn.execute("SELECT COUNT(*) FROM _ledger_guard").fetchone()[0] == 0:
+        conn.execute("INSERT INTO _ledger_guard (active) VALUES (0)")
+    for op in ("UPDATE", "DELETE"):
+        conn.execute(f"""
+            CREATE TRIGGER IF NOT EXISTS trg_ledger_events_no_{op.lower()}
+            BEFORE {op} ON ledger_events
+            WHEN (SELECT active FROM _ledger_guard LIMIT 1) = 0
+            BEGIN
+                SELECT RAISE(ABORT, 'ledger_events is append-only: post a REVERSAL instead');
+            END
+        """)
 
 
 def init_thesis_schema() -> None:
@@ -1205,6 +1345,8 @@ AUDITED_TABLES: tuple[str, ...] = (
     "trades",
     "cash_ledger",
     "cash_adjustments",
+    "broker_statements",
+    "broker_executions",
     "dividends",
     "position_cost_overrides",
     "allocation_targets",
@@ -1411,6 +1553,15 @@ def init_etf_aum_schema() -> None:
     one. Keyed on (as_of, symbol), which makes a cross-device merge a union.
     """
     with get_db() as conn:
+        # Symbols opened from a search box — MKT left panel FREQ tab
+        # (routers/discover.py). Local to this machine, not in SYNC_TABLES.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS search_hits (
+                symbol  TEXT PRIMARY KEY,
+                count   INTEGER NOT NULL DEFAULT 0,
+                last_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS etf_aum_snapshots (
                 as_of          TEXT NOT NULL,
@@ -1427,6 +1578,81 @@ def init_etf_aum_schema() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_etf_aum_symbol ON etf_aum_snapshots(symbol, as_of)"
         )
+
+
+def init_bond_issuance_schema() -> None:
+    """Corporate-bond prospectuses from SEC full-text search (BOND view).
+
+    A cache of a public, re-derivable source — not synced across devices: each
+    machine backfills its own year from EDGAR. Filings are keyed on accession
+    number because one deal is listed once per co-registrant; days carry a
+    `complete` flag because EDGAR keeps publishing a day's filings into the
+    evening, so the last two days are re-read until they settle.
+    """
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS bond_issuance_filings (
+                adsh        TEXT PRIMARY KEY,
+                file_date   TEXT NOT NULL,
+                form        TEXT NOT NULL DEFAULT '',
+                issuer      TEXT NOT NULL DEFAULT '',
+                cik         TEXT NOT NULL DEFAULT '',
+                sic         TEXT NOT NULL DEFAULT '',
+                category    TEXT NOT NULL,
+                captured_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bond_issuance_date ON bond_issuance_filings(file_date, category)"
+        )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS bond_issuance_days (
+                date        TEXT PRIMARY KEY,
+                filings     INTEGER NOT NULL DEFAULT 0,
+                complete    INTEGER NOT NULL DEFAULT 0,
+                fetched_at  TEXT NOT NULL
+            )
+        """)
+
+
+def init_cot_schema() -> None:
+    """CFTC Commitments of Traders, long-form (routers/cot.py).
+
+    A cache of a public, re-derivable source — not synced across devices; each
+    machine backfills its own history from CFTC. Keyed on the contract CODE
+    because CFTC renamed most markets on 2022-02-01 and the code survived.
+    """
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cot_reports (
+                dataset     TEXT NOT NULL,
+                code        TEXT NOT NULL,
+                report_date TEXT NOT NULL,
+                oi          REAL NOT NULL,
+                conc4_long  REAL,
+                conc4_short REAL,
+                conc8_long  REAL,
+                conc8_short REAL,
+                fetched_at  TEXT NOT NULL,
+                PRIMARY KEY (dataset, code, report_date)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cot_reports_code ON cot_reports(code, report_date)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cot_positions (
+                dataset       TEXT NOT NULL,
+                code          TEXT NOT NULL,
+                report_date   TEXT NOT NULL,
+                grp           TEXT NOT NULL,
+                long          REAL NOT NULL,
+                short         REAL NOT NULL,
+                spread        REAL,
+                traders_long  REAL,
+                traders_short REAL,
+                PRIMARY KEY (dataset, code, report_date, grp)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cot_positions_code ON cot_positions(code, report_date)")
 
 
 def init_alerts_schema() -> None:

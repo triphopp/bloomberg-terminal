@@ -38,6 +38,10 @@ export interface Trade {
   market_trend?: string;
   note?: string;
   is_reinvest?: number;
+  /** Broker commission + VAT on the buy, instrument currency. Not in the cost basis. */
+  fee_entry?: number | null;
+  /** Broker fees on the sale (commission, VAT, SEC, TAF). Already inside pnl_amount. */
+  fee_exit?: number | null;
   current_price?: number;
   unrealized_pnl?: number;
   unrealized_pct?: number;
@@ -69,6 +73,21 @@ export interface CashEntry {
   note: string;
   entry_type?: string;
   linked_id?: string;
+  /** Direction, derived server-side — legacy 'CASH' rows carry it only in the sign of `investment`. */
+  flow_type?: CashFlowType;
+}
+
+export type CashFlowType = "DEPOSIT" | "WITHDRAW" | "TRANSFER_IN" | "TRANSFER_OUT";
+
+/** What the CASH form posts. `amount` is always positive; the type gives the sign. */
+export interface CashFlowForm {
+  account_id: string;
+  date: string;
+  flow_type: "DEPOSIT" | "WITHDRAW";
+  amount: number;
+  note: string;
+  /** Kept on edit so a legacy row's Excel gross is not overwritten. */
+  income?: number;
 }
 
 export interface Dividend {
@@ -157,6 +176,7 @@ export interface CashAdjustment {
   target_balance: number | null;
   derived_before: number | null;
   note: string;
+  category?: string;
   created_at: string;
 }
 

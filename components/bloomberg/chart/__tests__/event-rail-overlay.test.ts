@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { clusterChips, eventChipStyle } from "../event-rail-overlay.ts";
+import { clusterChips, createEventRailOverlay, eventChipStyle } from "../event-rail-overlay.ts";
 import type { PositionedChip } from "../event-rail-overlay.ts";
 import type { ChartEventMarker } from "../types.ts";
 
@@ -58,6 +58,22 @@ test("a split with no ratio still gets a label", () => {
   assert.equal(eventChipStyle(marker({ type: "split" })).label, "SPL");
 });
 
+test("a filing deadline never reads as a scheduled report", () => {
+  // SET deadline = the latest the numbers can land, not a date the company set.
+  const style = eventChipStyle(marker({ surprise: null, deadline: true, upcoming: true }));
+  assert.equal(style.label, "E≤");
+  assert.notEqual(style.label, eventChipStyle(marker({ surprise: null })).label);
+});
+
+test("a macro release is labelled by its kind, with FOMC set apart", () => {
+  const fomc = eventChipStyle(marker({ type: "macro", macroKind: "FOMC" }));
+  const cpi = eventChipStyle(marker({ type: "macro", macroKind: "CPI" }));
+  assert.equal(fomc.icon, "flag");
+  assert.equal(fomc.label, "FOMC");
+  assert.equal(cpi.label, "CPI");
+  assert.notEqual(fomc.color, cpi.color);
+});
+
 // ── clusterChips ───────────────────────────────────────────────────────────
 
 const chip = (x: number, w = 12): PositionedChip => ({
@@ -107,4 +123,52 @@ test("clustering does not mutate the caller's array", () => {
 
 test("an empty rail produces no chips", () => {
   assert.deepEqual(clusterChips([]), []);
+});
+
+test("a future icon opens its own event even where there is no candle", () => {
+  const future = marker({ time: "2026-03-10", upcoming: true });
+  const overlay = createEventRailOverlay([
+    { marker: future, time: "2026-03-05", barIdx: 0, future: true },
+  ]);
+  const context = {
+    save() {},
+    restore() {},
+    beginPath() {},
+    moveTo() {},
+    arcTo() {},
+    closePath() {},
+    fill() {},
+    stroke() {},
+    setLineDash() {},
+    fillText() {},
+    translate() {},
+    scale() {},
+    measureText: () => ({ width: 20 }),
+  } as unknown as CanvasRenderingContext2D;
+  const chart = { timeScale: () => ({ timeToCoordinate: () => 100 }) } as unknown as Parameters<
+    typeof overlay.draw
+  >[1];
+  const series = {} as Parameters<typeof overlay.draw>[2];
+  const bars = [{ time: "2026-03-05", open: 1, high: 1, low: 1, close: 1 }];
+  const path2D = globalThis.Path2D;
+  (globalThis as unknown as { Path2D: unknown }).Path2D = class {};
+  try {
+    overlay.draw(context, chart, series, bars, true, { width: 300, height: 200 });
+  } finally {
+    (globalThis as unknown as { Path2D: unknown }).Path2D = path2D;
+  }
+
+  assert.deepEqual(overlay.hitTest({ x: 116, y: 188 }), [future]);
+  assert.equal(overlay.hitTest({ x: 100, y: 188 }), undefined);
+  assert.equal(overlay.hitTest({ x: 116, y: 150 }), undefined);
+});
+
+test("a cluster retains every event for its popover", () => {
+  const first = marker({ time: "2026-03-05" });
+  const second = marker({ time: "2026-03-06" });
+  const chips = clusterChips([
+    { ...chip(50), marker: first },
+    { ...chip(54), marker: second },
+  ]);
+  assert.deepEqual(chips[0].markers, [first, second]);
 });

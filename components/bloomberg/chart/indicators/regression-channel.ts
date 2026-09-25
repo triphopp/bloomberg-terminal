@@ -47,6 +47,16 @@ export interface RegressionChannelOptions {
   extend: boolean;
 }
 
+export interface StoredRegressionChannel extends RegressionSelection {
+  id: string;
+  symbol: string;
+  barInterval: string;
+  color: string;
+  options: RegressionChannelOptions;
+}
+
+export const REGRESSION_COLORS = ["#ffc107", "#00bcd4", "#ce93d8", "#80cbc4", "#ff8a65", "#9ccc65"];
+
 export const DEFAULT_REGRESSION_OPTIONS: RegressionChannelOptions = {
   mode: "stddev",
   stdDevMult: 2,
@@ -63,10 +73,11 @@ function timeKey(t: OhlcvBar["time"]): string {
 
 export function createRegressionChannelOverlay(
   selection: RegressionSelection | null,
-  options: RegressionChannelOptions = DEFAULT_REGRESSION_OPTIONS
+  options: RegressionChannelOptions = DEFAULT_REGRESSION_OPTIONS,
+  presentation?: { id: string; color: string; label: string; showLabel?: boolean }
 ): CanvasOverlay {
   return {
-    id: "regression-channel",
+    id: presentation?.id ?? "regression-channel",
     name: "Regression Channel",
     mode: "full",
     width: 0,
@@ -122,9 +133,13 @@ export function createRegressionChannelOverlay(
       const lastIdx = options.extend ? Math.min(data.length - 1, to + span) : to;
 
       const colors = isDark
-        ? { centre: "rgba(255,193,7,0.95)", rail: "rgba(120,144,156,0.85)", bg: "rgba(0,0,0,0.75)" }
+        ? {
+            centre: presentation?.color ?? "rgba(255,193,7,0.95)",
+            rail: "rgba(120,144,156,0.85)",
+            bg: "rgba(0,0,0,0.75)",
+          }
         : {
-            centre: "rgba(230,145,0,0.95)",
+            centre: presentation?.color ?? "rgba(230,145,0,0.95)",
             rail: "rgba(90,110,120,0.85)",
             bg: "rgba(255,255,255,0.85)",
           };
@@ -182,12 +197,12 @@ export function createRegressionChannelOverlay(
       // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts Time union
       const lx = timeScale.timeToCoordinate(data[from].time as any);
       const ly = mainSeries.priceToCoordinate(centreAt(0));
-      if (lx != null && ly != null) {
+      if (lx != null && ly != null && presentation?.showLabel !== false) {
         const railText =
           options.mode === "quantile"
             ? `q${options.tauPct}/${100 - options.tauPct}`
             : `${options.stdDevMult}σ`;
-        const label = `REG  r=${r.toFixed(3)}  slope=${centre.slope.toFixed(4)}/bar  ${railText}  n=${xs.length}`;
+        const label = `${presentation?.label ?? "REG"}  r=${r.toFixed(3)}  slope=${centre.slope.toFixed(4)}/bar  ${railText}  n=${xs.length}`;
         ctx.font = "8px monospace";
         const w = ctx.measureText(label).width;
         const bx = Math.min(Math.max(2, lx), Math.max(2, rect.width - w - 6));

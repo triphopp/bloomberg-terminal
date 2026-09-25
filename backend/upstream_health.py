@@ -64,6 +64,8 @@ SOURCES: dict[str, str] = {
     "cboe.com": "CBOE",
     "cnn.io": "CNN F&G",
     "sec.gov": "SEC",
+    "fiscaldata.treasury.gov": "Treasury",
+    "cftc.gov": "CFTC",
     "polymarket.com": "Polymarket",
     "alphavantage.co": "Alpha Vantage",
     "bot.or.th": "BOT",

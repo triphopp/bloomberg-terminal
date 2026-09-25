@@ -14,7 +14,7 @@
  * from its silhouette alone.
  */
 
-export type EventIconName = "cash" | "arrowUp" | "arrowDown" | "clock" | "split";
+export type EventIconName = "cash" | "arrowUp" | "arrowDown" | "clock" | "split" | "flag";
 
 /**
  * Path data per icon, on a 24×24 grid, stroked (never filled).
@@ -35,6 +35,8 @@ const ICON_PATHS: Record<EventIconName, string[]> = {
   // smudge, and the shape stops reading as a clock at all.
   clock: ["M12 3 A9 9 0 1 1 11.99 3 Z", "M12 7 V12 L16 14"],
   split: ["M16 3 H21 V8", "M8 3 H3 V8", "M12 22 V13.7 A4 4 0 0 0 10.83 10.83 L3 3", "M15 9 L21 3"],
+  // A pennant on a pole — a scheduled market-wide release, not a company event.
+  flag: ["M5 22 V3", "M5 4 H19 L15.5 8.5 L19 13 H5"],
 };
 
 /** Cached so the browser parses each path once, not on every frame. */

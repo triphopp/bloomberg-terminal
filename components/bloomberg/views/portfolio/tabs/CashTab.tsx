@@ -1,12 +1,35 @@
 "use client";
 import { Loader2, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { BLANK_CASH, BLANK_DIV } from "../constants";
 import { type Colors, fmtK, pnlColor } from "../helpers";
+import { BLANK_FILTER, type LedgerFilter, applyFilter, yearsOf } from "../ledger-filter";
 import { CashReconcileModal } from "../modals/CashReconcileModal";
 import { ConfirmDeleteModal } from "../modals/ConfirmDeleteModal";
-import type { CashEntry, Dividend, Summary, Trade } from "../types";
+import type { CashEntry, CashFlowForm, CashFlowType, Dividend, Summary, Trade } from "../types";
+import { LedgerFilterBar } from "../ui/LedgerFilterBar";
 import { SubPortSelect } from "../ui/SubPortSelect";
+
+type SubTab = "cash" | "dividends" | "reinvest";
+
+/** POST /api/v2/portfolio/dividends/check — see backend/dividend_check.py */
+interface DivCheckIssue {
+  level: "error" | "warn" | "info";
+  code: string;
+  message: string;
+  fix?: { currency?: string; amount_per_unit?: number; total_received?: number; label: string };
+  alt_fix?: { currency?: string; label: string };
+}
+interface DivCheck {
+  instrument_currency: string | null;
+  entered_currency: string;
+  expected_per_unit: number | null;
+  expected_ex_date: string | null;
+  held_units: number | null;
+  gross_expected: number | null;
+  issues: DivCheckIssue[];
+}
+const FILTER_KEY = "bloomberg_cash_filters";
 
 export function CashTab({
   accountId,
@@ -17,11 +40,37 @@ export function CashTab({
   const [dividends, setDivs] = useState<Dividend[]>([]);
   const [reinvestTrades, setReinvestTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(false);
-  const [subTab, setSubTab] = useState<"cash" | "dividends" | "reinvest">("cash");
+  const [subTab, setSubTab] = useState<SubTab>("cash");
+  // One filter per ledger, remembered across visits (read in the initializer,
+  // written by the effect below — CLAUDE.md localStorage pattern).
+  const [filters, setFilters] = useState<Record<SubTab, LedgerFilter>>(() => {
+    const blank = { cash: BLANK_FILTER, dividends: BLANK_FILTER, reinvest: BLANK_FILTER };
+    if (typeof window === "undefined") return blank;
+    try {
+      const saved = JSON.parse(localStorage.getItem(FILTER_KEY) || "{}");
+      return {
+        cash: { ...BLANK_FILTER, ...saved.cash },
+        dividends: { ...BLANK_FILTER, ...saved.dividends },
+        reinvest: { ...BLANK_FILTER, ...saved.reinvest },
+      };
+    } catch {
+      return blank;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(FILTER_KEY, JSON.stringify(filters));
+    } catch {
+      /* storage unavailable — filters just won't persist */
+    }
+  }, [filters]);
+  const updateFilter = (tab: SubTab) => (fn: (f: LedgerFilter) => LedgerFilter) =>
+    setFilters((all) => ({ ...all, [tab]: fn(all[tab]) }));
   const [showForm, setShowForm] = useState(false);
   const [showTransferForm, setShowTransferForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const [cashForm, setCashForm] = useState<Omit<CashEntry, "id">>(BLANK_CASH);
+  const [cashForm, setCashForm] = useState<CashFlowForm>(BLANK_CASH);
+  const [cashError, setCashError] = useState<string | null>(null);
   const [transferForm, setTransferForm] = useState({
     from_account_id: "finansia",
     to_account_id: "dime",
@@ -30,6 +79,11 @@ export function CashTab({
     note: "",
   });
   const [divForm, setDivForm] = useState<Omit<Dividend, "id">>(BLANK_DIV);
+  // Unit check of the dividend being typed. Until the user picks a currency
+  // themselves, it follows the asset's (the old silent server override).
+  const [divCheck, setDivCheck] = useState<DivCheck | null>(null);
+  const [currencyTouched, setCurrencyTouched] = useState(false);
+  const [divSaveError, setDivSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [cashEditOpen, setCashEditOpen] = useState(false);
   const [deleteCashTarget, setDeleteCashTarget] = useState<CashEntry | null>(null);
@@ -151,8 +205,39 @@ export function CashTab({
       : !!summary?.accounts.find((a) => a.account.id === accountId)?.cash_reconciled_at;
   const summaryCcy: "THB" | "USD" = summary?.base_currency === "USD" ? "USD" : "THB";
 
-  const totalIn = cash.reduce((a, c) => a + c.income, 0);
-  const totalInv = cash.reduce((a, c) => a + c.investment, 0);
+  const accountOptions = (summary?.accounts ?? []).map((a) => a.account);
+  const defaultAccount = accountId !== "all" ? accountId : (accountOptions[0]?.id ?? "");
+  const flowOf = (c: CashEntry): CashFlowType =>
+    c.flow_type ??
+    (c.entry_type === "TRANSFER"
+      ? c.investment < 0
+        ? "TRANSFER_OUT"
+        : "TRANSFER_IN"
+      : c.investment < 0
+        ? "WITHDRAW"
+        : "DEPOSIT");
+  // Capital in / out of the portfolio. Transfers move money between accounts,
+  // so they are counted apart — inside ALL they net to zero.
+  const totalDeposit = cash
+    .filter((c) => flowOf(c) === "DEPOSIT")
+    .reduce((a, c) => a + c.investment, 0);
+  const totalWithdraw = cash
+    .filter((c) => flowOf(c) === "WITHDRAW")
+    .reduce((a, c) => a - c.investment, 0);
+  const totalTransfer = cash
+    .filter((c) => c.entry_type === "TRANSFER")
+    .reduce((a, c) => a + c.investment, 0);
+  const netCapital = cash.reduce((a, c) => a + c.investment, 0);
+  // Running net capital, oldest first — the balance column of a ledger. The
+  // list arrives newest first, so walk it backwards.
+  const runningCapital = new Map<string, number>();
+  {
+    let bal = 0;
+    for (let i = cash.length - 1; i >= 0; i--) {
+      bal += cash[i].investment;
+      runningCapital.set(cash[i].id, bal);
+    }
+  }
   const totalDiv = dividends.reduce<Record<string, number>>((a, d) => {
     a[d.currency || "THB"] = (a[d.currency || "THB"] || 0) + d.total_received;
     return a;
@@ -206,6 +291,56 @@ export function CashTab({
     })),
   ].sort((a, b) => b.date.localeCompare(a.date));
 
+  const today = new Date().toISOString().slice(0, 10);
+  const filteredCash = applyFilter(
+    cash,
+    filters.cash,
+    {
+      date: (c) => c.date,
+      amount: (c) => c.investment,
+      account: (c) => c.account_id,
+      // IN and OUT legs share one chip: "show me the transfers".
+      type: (c) => (c.entry_type === "TRANSFER" ? "TRANSFER" : flowOf(c)),
+      text: (c) => [c.note, c.account_id, flowOf(c)],
+    },
+    today
+  );
+  const filteredDivs = useMemo(
+    () =>
+      applyFilter(
+        dividends,
+        filters.dividends,
+        {
+          date: (d) => d.pay_date || d.ex_date || "",
+          amount: (d) => d.total_received,
+          account: (d) => d.account_id,
+          type: (d) => d.currency || "THB",
+          text: (d) => [d.asset, d.account_id],
+        },
+        today
+      ),
+    [dividends, filters.dividends, today]
+  );
+  const filteredReinvest = applyFilter(
+    reinvestRows,
+    filters.reinvest,
+    {
+      date: (r) => r.date,
+      amount: (r) => r.reinvestAmount,
+      account: (r) => r.account_id,
+      type: (r) => (r.trade ? "TRADE" : "DIV"),
+      text: (r) => [r.source, r.asset, r.account_id],
+    },
+    today
+  );
+  const shownOf = (n: number, total: number) =>
+    n === total ? `${total} rows` : `${n} / ${total} rows`;
+  const sumBy = <T,>(rows: T[], ccy: (r: T) => string, amt: (r: T) => number) =>
+    rows.reduce<Record<string, number>>((a, r) => {
+      a[ccy(r)] = (a[ccy(r)] || 0) + amt(r);
+      return a;
+    }, {});
+
   const totalReinvest = reinvestRows.reduce<Record<string, number>>((a, r) => {
     a[r.currency] = (a[r.currency] || 0) + r.reinvestAmount;
     return a;
@@ -218,22 +353,37 @@ export function CashTab({
       .join(" / ") || "—";
 
   const saveCash = async () => {
-    if (!cashForm.date) return;
+    const account = cashForm.account_id || defaultAccount;
+    if (!cashForm.date || !account || cashForm.amount <= 0) return;
     setSaving(true);
+    setCashError(null);
     try {
       const url = editId ? `/api/v2/portfolio/cash/${editId}` : "/api/v2/portfolio/cash";
       const method = editId ? "PUT" : "POST";
-      await fetch(url, {
+      const r = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cashForm),
+        body: JSON.stringify({ ...cashForm, account_id: account, exchange_rate: 1 }),
       });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        setCashError(typeof d?.detail === "string" ? d.detail : `Save failed (${r.status})`);
+        return;
+      }
+      // A server that predates typed flows drops flow_type/amount and posts a
+      // zero row without complaint — its reply has no entry_type to echo.
+      const saved = await r.json().catch(() => ({}));
+      if (!saved?.entry_type) {
+        setCashError("Backend is running old code — restart it, then delete any ฿0 row");
+        load();
+        return;
+      }
       setShowForm(false);
       setEditId(null);
       setCashForm(BLANK_CASH);
       load();
     } catch {
-      /* ignore */
+      setCashError("Backend unavailable");
     } finally {
       setSaving(false);
     }
@@ -266,40 +416,93 @@ export function CashTab({
   };
 
   const editCash = (c: CashEntry) => {
+    const amount = Math.abs(c.investment);
     setCashForm({
       account_id: c.account_id,
       date: c.date,
-      income: c.income,
-      investment: c.investment,
-      exchange_rate: c.exchange_rate,
+      flow_type: c.investment < 0 ? "WITHDRAW" : "DEPOSIT",
+      amount,
       note: c.note,
+      // Excel-imported rows can carry a gross that differs from the capital
+      // flow; keep it rather than overwrite it with the amount.
+      ...(Math.abs(c.income) !== amount ? { income: c.income } : {}),
     });
+    setCashError(null);
     setEditId(c.id);
     setShowForm(true);
     setSubTab("cash");
   };
 
-  const saveDiv = async () => {
+  const saveDiv = async (force = false) => {
     if (!divForm.asset) return;
     setSaving(true);
+    setDivSaveError(null);
     try {
       const url = editId ? `/api/v2/portfolio/dividends/${editId}` : "/api/v2/portfolio/dividends";
       const method = editId ? "PUT" : "POST";
-      await fetch(url, {
+      const r = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(divForm),
+        body: JSON.stringify({ ...divForm, force }),
       });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        // 422 = a unit problem the check calls an error; the panel shows it
+        // with a fix, and SAVE ANYWAY re-sends with force.
+        if (r.status === 422 && d?.detail?.check) setDivCheck(d.detail.check);
+        setDivSaveError(
+          typeof d?.detail === "string"
+            ? d.detail
+            : (d?.detail?.message ?? `Save failed (${r.status})`)
+        );
+        return;
+      }
       setShowForm(false);
       setEditId(null);
       setDivForm(BLANK_DIV);
+      setDivCheck(null);
       load();
     } catch {
-      /* ignore */
+      setDivSaveError("Backend unavailable");
     } finally {
       setSaving(false);
     }
   };
+
+  // Live unit check while the dividend form is open (debounced).
+  const divFormOpen = showForm && (subTab === "dividends" || subTab === "reinvest");
+  useEffect(() => {
+    // Any edit makes the last save's rejection stale.
+    setDivSaveError(null);
+    if (!divFormOpen || !divForm.asset || !(divForm.ex_date || divForm.pay_date)) {
+      setDivCheck(null);
+      return;
+    }
+    const ac = new AbortController();
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch("/api/v2/portfolio/dividends/check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // Untouched currency → let the server say what the asset trades in.
+          body: JSON.stringify({ ...divForm, currency: currencyTouched ? divForm.currency : null }),
+          signal: ac.signal,
+        });
+        if (!r.ok) return;
+        const d: DivCheck = await r.json();
+        setDivCheck(d);
+        if (!currencyTouched && d.entered_currency && d.entered_currency !== divForm.currency) {
+          setDivForm((f) => ({ ...f, currency: d.entered_currency }));
+        }
+      } catch {
+        /* aborted or offline — no check shown */
+      }
+    }, 500);
+    return () => {
+      clearTimeout(t);
+      ac.abort();
+    };
+  }, [divFormOpen, divForm, currencyTouched]);
 
   const deleteDiv = async (id: string) => {
     await fetch(`/api/v2/portfolio/dividends/${id}`, { method: "DELETE" });
@@ -322,6 +525,8 @@ export function CashTab({
       currency: d.currency || "THB",
     });
     setEditId(d.id);
+    setCurrencyTouched(true);
+    setDivSaveError(null);
     setShowForm(true);
     setSubTab("dividends");
   };
@@ -368,8 +573,12 @@ export function CashTab({
             setShowForm(!showForm);
             setShowTransferForm(false);
             setEditId(null);
-            setCashForm(BLANK_CASH);
+            setCashForm({ ...BLANK_CASH, account_id: defaultAccount });
+            setCashError(null);
             setDivForm(BLANK_DIV);
+            setCurrencyTouched(false);
+            setDivCheck(null);
+            setDivSaveError(null);
           }}
           className="text-[9px] px-2 py-0.5 border font-bold"
           style={{ borderColor: colors.accent, color: "#000", background: colors.accent }}
@@ -403,7 +612,7 @@ export function CashTab({
               style={{ color: colors.textSecondary }}
               title={
                 "invested + realized P&L (equities and options) + dividends − open cost basis, " +
-                "plus any EDIT you made. It will NOT equal IN − INV below: that pair is what " +
+                "plus any EDIT you made. It will NOT equal NET below: that is what " +
                 "you typed into this ledger, while this also folds in every position you have " +
                 "closed. Click to set it to the broker balance."
               }
@@ -429,11 +638,28 @@ export function CashTab({
               onClose={() => setCashEditOpen(false)}
             />
           )}
-          <span style={{ color: colors.textSecondary }}>
-            IN: <span style={{ color: "#4ade80" }}>฿{fmtK(totalIn)}</span>
+          <span style={{ color: colors.textSecondary }} title="Capital deposited (ledger, THB)">
+            DEP: <span style={{ color: "#4ade80" }}>฿{fmtK(totalDeposit)}</span>
           </span>
-          <span style={{ color: colors.textSecondary }}>
-            INV: <span style={{ color: "#f87171" }}>฿{fmtK(totalInv)}</span>
+          <span style={{ color: colors.textSecondary }} title="Capital withdrawn (ledger, THB)">
+            WD: <span style={{ color: "#f87171" }}>฿{fmtK(totalWithdraw)}</span>
+          </span>
+          {totalTransfer !== 0 && (
+            <span style={{ color: colors.textSecondary }} title="Net transfers into this scope">
+              XFER:{" "}
+              <span style={{ color: "#60a5fa" }}>
+                {totalTransfer < 0 ? "-" : ""}฿{fmtK(Math.abs(totalTransfer))}
+              </span>
+            </span>
+          )}
+          <span
+            style={{ color: colors.textSecondary }}
+            title="DEP − WD ± transfers = invested capital. CASH above differs: it also folds in realized P&L, dividends and what is still deployed."
+          >
+            NET:{" "}
+            <span style={{ color: colors.text }}>
+              {netCapital < 0 ? "-" : ""}฿{fmtK(Math.abs(netCapital))}
+            </span>
           </span>
           <span style={{ color: colors.textSecondary }}>
             DIV: <span style={{ color: "#60a5fa" }}>{mixedMoney(totalDiv)}</span>
@@ -515,12 +741,14 @@ export function CashTab({
               <select
                 id="cash-account"
                 style={inputStyle}
-                value={cashForm.account_id}
+                value={cashForm.account_id || defaultAccount}
                 onChange={(e) => setCashForm((f) => ({ ...f, account_id: e.target.value }))}
               >
-                <option value="finansia">Finansia</option>
-                <option value="dime">Dime</option>
-                <option value="innovestx">InnovestX</option>
+                {accountOptions.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
@@ -540,38 +768,51 @@ export function CashTab({
               />
             </div>
             <div>
-              <label
-                htmlFor="cash-income"
-                className="text-[8px]"
-                style={{ color: colors.textSecondary }}
-              >
-                INCOME
-              </label>
-              <input
-                id="cash-income"
-                type="number"
-                style={inputStyle}
-                value={cashForm.income || ""}
-                onChange={(e) =>
-                  setCashForm((f) => ({ ...f, income: Number.parseFloat(e.target.value) || 0 }))
-                }
-              />
+              <span className="text-[8px]" style={{ color: colors.textSecondary }}>
+                TYPE
+              </span>
+              <div className="flex gap-1">
+                {(["DEPOSIT", "WITHDRAW"] as const).map((t) => {
+                  const on = cashForm.flow_type === t;
+                  const c = t === "DEPOSIT" ? "#4ade80" : "#f87171";
+                  return (
+                    <button
+                      type="button"
+                      key={t}
+                      data-frame
+                      onClick={() => setCashForm((f) => ({ ...f, flow_type: t }))}
+                      className="flex-1 text-[9px] py-[3px] font-bold border"
+                      style={{
+                        borderColor: on ? c : colors.border,
+                        color: on ? "#000" : c,
+                        background: on ? c : "transparent",
+                      }}
+                    >
+                      {t === "DEPOSIT" ? "+ DEPOSIT" : "− WITHDRAW"}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <div>
               <label
-                htmlFor="cash-investment"
+                htmlFor="cash-amount"
                 className="text-[8px]"
                 style={{ color: colors.textSecondary }}
               >
-                INVESTMENT
+                AMOUNT (THB)
               </label>
               <input
-                id="cash-investment"
+                id="cash-amount"
                 type="number"
+                min={0}
                 style={inputStyle}
-                value={cashForm.investment || ""}
+                value={cashForm.amount || ""}
                 onChange={(e) =>
-                  setCashForm((f) => ({ ...f, investment: Number.parseFloat(e.target.value) || 0 }))
+                  setCashForm((f) => ({
+                    ...f,
+                    amount: Math.abs(Number.parseFloat(e.target.value) || 0),
+                  }))
                 }
               />
             </div>
@@ -595,7 +836,7 @@ export function CashTab({
               <button
                 type="button"
                 onClick={saveCash}
-                disabled={saving || !cashForm.date}
+                disabled={saving || !cashForm.date || cashForm.amount <= 0}
                 className="text-[9px] px-3 py-1 font-bold"
                 style={{ background: colors.accent, color: "#000" }}
               >
@@ -614,6 +855,34 @@ export function CashTab({
               </button>
             </div>
           </div>
+          {cashForm.flow_type === "WITHDRAW" &&
+            !editId &&
+            summary &&
+            (() => {
+              const acct = summary.accounts.find(
+                (a) => a.account.id === (cashForm.account_id || defaultAccount)
+              );
+              const avail = acct?.cash_base;
+              if (avail == null || summaryCcy !== "THB") return null;
+              const after = avail - cashForm.amount;
+              return (
+                <div
+                  className="text-[8px] mt-1 font-mono"
+                  style={{ color: after < 0 ? "#f87171" : colors.textSecondary }}
+                >
+                  CASH{acct?.cash_reconciled_at ? "" : "~"} ฿{fmtK(avail)} → after ฿
+                  {after < 0 ? "-" : ""}
+                  {fmtK(Math.abs(after))}
+                  {after < 0 &&
+                    " — more than the cash this account shows; check for an unrecorded sale or deposit"}
+                </div>
+              );
+            })()}
+          {cashError && (
+            <div className="text-[8px] mt-1" style={{ color: "#f87171" }}>
+              {cashError}
+            </div>
+          )}
         </div>
       )}
 
@@ -643,9 +912,11 @@ export function CashTab({
                   setTransferForm((f) => ({ ...f, from_account_id: e.target.value }))
                 }
               >
-                <option value="finansia">Finansia</option>
-                <option value="dime">Dime</option>
-                <option value="innovestx">InnovestX</option>
+                {accountOptions.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
@@ -658,9 +929,11 @@ export function CashTab({
                 value={transferForm.to_account_id}
                 onChange={(e) => setTransferForm((f) => ({ ...f, to_account_id: e.target.value }))}
               >
-                <option value="finansia">Finansia</option>
-                <option value="dime">Dime</option>
-                <option value="innovestx">InnovestX</option>
+                {accountOptions.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
@@ -770,9 +1043,11 @@ export function CashTab({
                 value={divForm.account_id}
                 onChange={(e) => setDivForm((f) => ({ ...f, account_id: e.target.value }))}
               >
-                <option value="finansia">Finansia</option>
-                <option value="dime">Dime</option>
-                <option value="innovestx">InnovestX</option>
+                {accountOptions.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
@@ -803,7 +1078,10 @@ export function CashTab({
                 id="div-currency"
                 style={inputStyle}
                 value={divForm.currency}
-                onChange={(e) => setDivForm((f) => ({ ...f, currency: e.target.value }))}
+                onChange={(e) => {
+                  setCurrencyTouched(true);
+                  setDivForm((f) => ({ ...f, currency: e.target.value }));
+                }}
               >
                 <option value="THB">THB ฿</option>
                 <option value="USD">USD $</option>
@@ -971,7 +1249,7 @@ export function CashTab({
               </div>
               <button
                 type="button"
-                onClick={saveDiv}
+                onClick={() => saveDiv(false)}
                 disabled={saving || !divForm.asset}
                 className="text-[9px] px-3 py-1 font-bold"
                 style={{ background: colors.accent, color: "#000" }}
@@ -991,7 +1269,177 @@ export function CashTab({
               </button>
             </div>
           </div>
+          {divCheck && (
+            <div className="mt-1.5 text-[9px] font-mono flex flex-col gap-0.5">
+              <div style={{ color: colors.textSecondary }}>
+                {divCheck.expected_per_unit != null && (
+                  <>
+                    MARKET {divCheck.instrument_currency} {divCheck.expected_per_unit}/unit (ex{" "}
+                    {divCheck.expected_ex_date}) ·{" "}
+                  </>
+                )}
+                {divCheck.held_units != null && <>HELD {divCheck.held_units} units</>}
+                {divCheck.gross_expected != null && (
+                  <>
+                    {" "}
+                    → gross {divForm.currency} {fmtK(divCheck.gross_expected)}
+                  </>
+                )}
+                {divCheck.instrument_currency &&
+                  divCheck.instrument_currency !== divForm.currency && (
+                    <span style={{ color: "#facc15" }}>
+                      {" "}
+                      · entered in {divForm.currency}, asset trades in{" "}
+                      {divCheck.instrument_currency}
+                    </span>
+                  )}
+              </div>
+              {divCheck.issues.map((i) => (
+                <div
+                  key={i.code}
+                  style={{
+                    color:
+                      i.level === "error" ? "#f87171" : i.level === "warn" ? "#facc15" : "#777",
+                  }}
+                >
+                  {i.level === "error" ? "✕" : i.level === "warn" ? "!" : "·"} {i.message}
+                  {i.fix && (
+                    <button
+                      type="button"
+                      className="ml-2 underline font-bold"
+                      style={{ color: "#4ade80" }}
+                      onClick={() => {
+                        const { label: _l, ...fix } = i.fix ?? { label: "" };
+                        setCurrencyTouched(true);
+                        setDivForm((f) => ({ ...f, ...fix }));
+                      }}
+                    >
+                      {i.fix.label}
+                    </button>
+                  )}
+                  {i.alt_fix && (
+                    <button
+                      type="button"
+                      className="ml-2 underline"
+                      style={{ color: colors.textSecondary }}
+                      onClick={() => {
+                        setCurrencyTouched(true);
+                        setDivForm((f) => ({ ...f, currency: i.alt_fix?.currency ?? f.currency }));
+                      }}
+                    >
+                      {i.alt_fix.label}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {divSaveError && (
+            <div className="mt-1 text-[9px]" style={{ color: "#f87171" }}>
+              {divSaveError}
+              <button
+                type="button"
+                className="ml-2 underline font-bold"
+                style={{ color: "#f87171" }}
+                onClick={() => saveDiv(true)}
+                title="The numbers are right (special dividend, broker rounding…) — save as typed"
+              >
+                SAVE ANYWAY
+              </button>
+            </div>
+          )}
         </div>
+      )}
+
+      {/* FILTER — one strip per ledger */}
+      {subTab === "cash" && (
+        <LedgerFilterBar
+          filter={filters.cash}
+          onUpdate={updateFilter("cash")}
+          typeOptions={[
+            { key: "DEPOSIT", label: "DEPOSIT", color: "#4ade80" },
+            { key: "WITHDRAW", label: "WITHDRAW", color: "#f87171" },
+            { key: "TRANSFER", label: "TRANSFER", color: "#60a5fa" },
+          ]}
+          accounts={accountId === "all" ? accountOptions : []}
+          years={yearsOf(cash, (c) => c.date)}
+          placeholder="search note / account"
+          colors={colors}
+          summary={(() => {
+            const inflow = filteredCash
+              .filter((c) => c.investment > 0)
+              .reduce((a, c) => a + c.investment, 0);
+            const outflow = filteredCash
+              .filter((c) => c.investment < 0)
+              .reduce((a, c) => a - c.investment, 0);
+            return (
+              <>
+                {shownOf(filteredCash.length, cash.length)} · in{" "}
+                <span style={{ color: "#4ade80" }}>฿{fmtK(inflow)}</span> · out{" "}
+                <span style={{ color: "#f87171" }}>฿{fmtK(outflow)}</span> · net{" "}
+                <span style={{ color: colors.text }}>
+                  {inflow - outflow < 0 ? "-" : ""}฿{fmtK(Math.abs(inflow - outflow))}
+                </span>
+              </>
+            );
+          })()}
+        />
+      )}
+      {subTab === "dividends" && (
+        <LedgerFilterBar
+          filter={filters.dividends}
+          onUpdate={updateFilter("dividends")}
+          typeOptions={[
+            { key: "THB", label: "THB", color: colors.accent },
+            { key: "USD", label: "USD", color: colors.accent },
+          ]}
+          accounts={accountId === "all" ? accountOptions : []}
+          years={yearsOf(dividends, (d) => d.pay_date || d.ex_date || "")}
+          placeholder="search asset"
+          colors={colors}
+          summary={
+            <>
+              {shownOf(filteredDivs.length, dividends.length)} · received{" "}
+              <span style={{ color: "#4ade80" }}>
+                {mixedMoney(
+                  sumBy(
+                    filteredDivs,
+                    (d) => d.currency || "THB",
+                    (d) => d.total_received
+                  )
+                )}
+              </span>
+            </>
+          }
+        />
+      )}
+      {subTab === "reinvest" && (
+        <LedgerFilterBar
+          filter={filters.reinvest}
+          onUpdate={updateFilter("reinvest")}
+          typeOptions={[
+            { key: "DIV", label: "FROM DIV", color: colors.accent },
+            { key: "TRADE", label: "TRADE", color: "#c084fc" },
+          ]}
+          accounts={accountId === "all" ? accountOptions : []}
+          years={yearsOf(reinvestRows, (r) => r.date)}
+          placeholder="search asset / source"
+          colors={colors}
+          summary={
+            <>
+              {shownOf(filteredReinvest.length, reinvestRows.length)} · reinvested{" "}
+              <span style={{ color: "#c084fc" }}>
+                {mixedMoney(
+                  sumBy(
+                    filteredReinvest,
+                    (r) => r.currency,
+                    (r) => r.reinvestAmount
+                  )
+                )}
+              </span>
+            </>
+          }
+        />
       )}
 
       {/* CASH TABLE */}
@@ -1000,7 +1448,7 @@ export function CashTab({
           <table className="w-full text-[10px] font-mono" style={{ borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ background: "#0a0a0a", borderBottom: `1px solid ${colors.border}` }}>
-                {["DATE", "ACCOUNT", "SUB", "INCOME", "INVESTED", "NET FLOW", "FX", ""].map((h) => (
+                {["DATE", "ACCOUNT", "TYPE", "SUB / NOTE", "AMOUNT", "NET CAPITAL", ""].map((h) => (
                   <th
                     key={h}
                     className="px-2 py-1 text-left text-[9px] font-bold"
@@ -1015,7 +1463,7 @@ export function CashTab({
               {cash.length === 0 && !loading && (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={7}
                     className="px-3 py-4 text-center text-[9px]"
                     style={{ color: colors.textSecondary }}
                   >
@@ -1023,8 +1471,30 @@ export function CashTab({
                   </td>
                 </tr>
               )}
-              {cash.map((c) => {
-                const net = c.income - c.investment;
+              {cash.length > 0 && filteredCash.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={7}
+                    className="px-3 py-4 text-center text-[9px]"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    No entries match the filter
+                  </td>
+                </tr>
+              )}
+              {filteredCash.map((c) => {
+                const flow = flowOf(c);
+                const isTransfer = c.entry_type === "TRANSFER";
+                const flowColor = isTransfer ? "#60a5fa" : c.investment < 0 ? "#f87171" : "#4ade80";
+                const label =
+                  flow === "DEPOSIT"
+                    ? "DEPOSIT"
+                    : flow === "WITHDRAW"
+                      ? "WITHDRAW"
+                      : flow === "TRANSFER_OUT"
+                        ? "⇄ OUT"
+                        : "⇄ IN";
+                const bal = runningCapital.get(c.id) ?? 0;
                 return (
                   <tr
                     key={c.id}
@@ -1035,33 +1505,29 @@ export function CashTab({
                       {c.date}
                     </td>
                     <td className="px-2 py-1">{c.account_id}</td>
-                    <td
-                      className="px-2 py-1 text-[8px]"
-                      style={{ color: c.entry_type === "TRANSFER" ? "#60a5fa" : "#555" }}
-                    >
-                      {c.entry_type === "TRANSFER" ? `⇄ ${c.note || "TRANSFER"}` : c.note || "—"}
+                    <td className="px-2 py-1 text-[9px] font-bold" style={{ color: flowColor }}>
+                      {label}
                     </td>
-                    <td className="px-2 py-1" style={{ color: "#4ade80" }}>
-                      {c.income > 0 ? `฿${fmtK(c.income)}` : "—"}
+                    <td className="px-2 py-1 text-[8px]" style={{ color: "#555" }}>
+                      {c.note || "—"}
                     </td>
-                    <td className="px-2 py-1" style={{ color: "#f87171" }}>
-                      {c.investment > 0 ? `฿${fmtK(c.investment)}` : "—"}
+                    <td className="px-2 py-1 font-bold tabular-nums" style={{ color: flowColor }}>
+                      {c.investment < 0 ? "−" : "+"}฿{fmtK(Math.abs(c.investment))}
                     </td>
-                    <td className="px-2 py-1 font-bold" style={{ color: pnlColor(net) }}>
-                      {fmtK(Math.abs(net))} {net >= 0 ? "▲" : "▼"}
-                    </td>
-                    <td className="px-2 py-1" style={{ color: colors.textSecondary }}>
-                      {c.exchange_rate !== 1 ? c.exchange_rate.toFixed(3) : "—"}
+                    <td className="px-2 py-1 tabular-nums" style={{ color: colors.textSecondary }}>
+                      {bal < 0 ? "-" : ""}฿{fmtK(Math.abs(bal))}
                     </td>
                     <td className="px-2 py-1 whitespace-nowrap opacity-60 group-hover:opacity-100">
-                      <button
-                        type="button"
-                        onClick={() => editCash(c)}
-                        className="text-[8px] mr-1 hover:underline"
-                        style={{ color: colors.accent }}
-                      >
-                        EDIT
-                      </button>
+                      {!isTransfer && (
+                        <button
+                          type="button"
+                          onClick={() => editCash(c)}
+                          className="text-[8px] mr-1 hover:underline"
+                          style={{ color: colors.accent }}
+                        >
+                          EDIT
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => setDeleteCashTarget(c)}
@@ -1108,7 +1574,18 @@ export function CashTab({
                   </td>
                 </tr>
               )}
-              {dividends.map((d) => (
+              {dividends.length > 0 && filteredDivs.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={7}
+                    className="px-3 py-4 text-center text-[9px]"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    No dividends match the filter
+                  </td>
+                </tr>
+              )}
+              {filteredDivs.map((d) => (
                 <tr
                   key={d.id}
                   className="hover:bg-[#111] group"
@@ -1195,7 +1672,18 @@ export function CashTab({
                   </td>
                 </tr>
               )}
-              {reinvestRows.map((r) => (
+              {reinvestRows.length > 0 && filteredReinvest.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={9}
+                    className="px-3 py-4 text-center text-[9px]"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    No reinvestments match the filter
+                  </td>
+                </tr>
+              )}
+              {filteredReinvest.map((r) => (
                 <tr
                   key={r.key}
                   className="hover:bg-[#111] group"

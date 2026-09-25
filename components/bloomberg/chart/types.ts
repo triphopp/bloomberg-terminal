@@ -300,7 +300,7 @@ export interface ChartState {
 
 // ── Chart Event Markers (Dividends, Earnings, Splits) ───────────────────────
 
-export type ChartEventType = "dividend" | "earnings" | "split";
+export type ChartEventType = "dividend" | "earnings" | "split" | "macro";
 
 export interface ChartEventMarker {
   time: string | number;
@@ -341,6 +341,25 @@ export interface ChartEventMarker {
   estimated?: boolean;
   /** dividend — pay date, when it differs from the ex-date. */
   payDate?: string | null;
+
+  /**
+   * earnings — no report date is known; `time` is the SET filing deadline
+   * (45 days after a quarter, 60 after the year), the LATEST the numbers can
+   * arrive. Drawn apart from a scheduled report.
+   */
+  deadline?: boolean;
+  /** earnings — reporting period for a deadline, e.g. "Q3 2026" / "FY 2026". */
+  period?: string;
+  /** earnings — last day of an unconfirmed report window (Yahoo calendar). */
+  windowEnd?: string | null;
+  /** macro — release kind: FOMC / CPI / NFP / PCE / GDP. */
+  macroKind?: string;
+  /** macro — full release name, e.g. "Employment Situation". */
+  macroLabel?: string;
+  /** macro — FOMC meeting that publishes a Summary of Economic Projections. */
+  sep?: boolean;
+  /** Where the date came from (federalreserve.gov, FRED, yahoo_calendar, set_rule…). */
+  source?: string;
 }
 
 /** How a marker's price reaction played out, derived from the loaded OHLCV. */

@@ -35,7 +35,7 @@ import {
   type Time,
   createChart,
 } from "lightweight-charts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { chartPaneHeightsAtom, chartRsiScaleAtom } from "../atoms";
 import type { LogicalRange, TimeRange } from "../chartkit";
 import {
@@ -76,10 +76,8 @@ export interface ChartClickContext {
   /** Click position in viewport coordinates — anchor for a popover. */
   point?: { x: number; y: number };
   /**
-   * Event markers within `EVENT_HIT_BARS` of the clicked bar, nearest first.
-   * Lets the caller open a detail card without doing its own hit-testing —
-   * only the chart knows how bar times map to indices. More than one means the
-   * user clicked a cluster and should be offered the list.
+   * Event markers represented by the clicked rail icon. More than one means
+   * the user clicked a cluster and should be offered the list.
    */
   events?: ChartEventMarker[];
 }
@@ -189,14 +187,6 @@ function refillSeries(
 // ── Marker styling ──────────────────────────────────────────────────────────
 
 /**
- * How far from a marker a click still counts as hitting it, in bars.
- *
- * At 1Y daily inside the narrow MKT panel a bar is barely 2px wide, so demanding
- * an exact bar match would make the rail chips effectively unclickable.
- */
-const EVENT_HIT_BARS = 2;
-
-/**
  * Extra bottom margin on the price scale when the event rail is showing, as a
  * fraction of the pane. Keeps the candles from being drawn behind the chips —
  * the rail paints on top, so without this the lowest wicks disappear under it.
@@ -244,6 +234,9 @@ export function ModularChart({
   barClickRef.current = onBarClick;
   const logicalRangeRef = useRef(onLogicalRange);
   logicalRangeRef.current = onLogicalRange;
+  const viewportKeyRef = useRef(viewportKey);
+  viewportKeyRef.current = viewportKey;
+  const drawnViewportKeyRef = useRef(viewportKey);
   /**
    * The viewport as it stood at the last teardown, tagged with the view it
    * belonged to. Read on the next build to decide "restore" vs "fit".
@@ -260,11 +253,17 @@ export function ModularChart({
    */
   const dataRef = useRef(data);
   dataRef.current = data;
+  const eventMarkersRef = useRef(eventMarkers);
+  eventMarkersRef.current = eventMarkers;
+  const appliedEventMarkersRef = useRef(eventMarkers);
+  const updateEventRailRef = useRef<
+    ((markers: ChartEventMarker[], bars: OhlcvBar[]) => void) | null
+  >(null);
   /**
    * Push new bars into the live chart. Null when there is no chart, and returns
    * false when the change is structural (an indicator produced a different
-   * number of series, a heatmap pane is present, the event rail appeared or
-   * vanished) — the caller then falls back to a full rebuild.
+   * number of series or a heatmap pane is present) — the caller then falls
+   * back to a full rebuild.
    */
   const refillRef = useRef<((bars: OhlcvBar[]) => boolean) | null>(null);
   /** The bars the live chart was last drawn from — refills skip a no-op pass. */
@@ -274,6 +273,7 @@ export function ModularChart({
 
   // Height the parent actually grants us (0 until first measurement).
   const [availableHeight, setAvailableHeight] = useState(0);
+  const heightReady = availableHeight > 0;
   // Pane heights the user dragged, persisted across rebuilds and view switches.
   const [paneHeights, setPaneHeights] = useAtom(chartPaneHeightsAtom);
   const [rsiScale, setRsiScale] = useAtom(chartRsiScaleAtom);
@@ -286,7 +286,7 @@ export function ModularChart({
   // answer is already settled by the time Radix opens the menu.
   const [hoveredPaneKey, setHoveredPaneKey] = useState<string | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
     const measure = () => {
@@ -365,7 +365,9 @@ export function ModularChart({
   useEffect(() => {
     const container = containerRef.current;
     const data = dataRef.current;
-    if (!container || data.length === 0) return;
+    // Measure before building. Otherwise the fallback height creates a chart
+    // that is torn down as soon as ResizeObserver reports the real pane size.
+    if (!container || data.length === 0 || !heightReady) return;
 
     const gridColor = isDark ? "#2a2a2a" : "#dcdcdc";
 
@@ -378,20 +380,10 @@ export function ModularChart({
     const refills: ((bars: OhlcvBar[]) => boolean)[] = [];
 
     // ── Event markers (dividends, earnings, splits) ──
-    // Drawn by the event rail overlay further down, not as series markers. All
-    // that is needed here is a bar index per marker so a click can be matched
-    // back to it. Resolved before the chart exists because the price scale needs
-    // to know up front whether to reserve room for the rail.
-    const indexByTime = new Map<string, number>();
-    data.forEach((d, i) => indexByTime.set(String(d.time), i));
-
-    const placedEvents = placeEvents(eventMarkers, data);
-    const hasRail = placedEvents.length > 0;
-
-    // Both are bar-relative, so both are re-derived on every refill. The click
-    // handler reads these bindings rather than the originals.
-    let liveIndexByTime = indexByTime;
-    let livePlacedEvents = placedEvents;
+    // Resolved before the chart exists because the price scale needs to know up
+    // front whether to reserve room for the rail.
+    const placedEvents = placeEvents(eventMarkersRef.current, data);
+    let hasRail = placedEvents.length > 0;
 
     // ── Create chart ──
     const chart = createChart(container, {
@@ -673,13 +665,19 @@ export function ModularChart({
     // the user exactly where they were — fitting instead would zoom them out to
     // the whole new range on every extend, which is its own kind of jump. Any
     // other rebuild (new symbol, hand-picked timeframe) fits as before.
+    const currentViewportKey = viewportKeyRef.current;
+    const waitingForNewViewBars =
+      drawnViewportKeyRef.current !== currentViewportKey && appliedDataRef.current === data;
     const saved = savedViewportRef.current;
     const restored =
-      viewportKey !== undefined &&
+      currentViewportKey !== undefined &&
       saved !== null &&
-      saved.key === viewportKey &&
+      saved.key === currentViewportKey &&
       applyVisibleRange(chart, saved.range);
     if (!restored) chart.timeScale().fitContent();
+    // A resize can force a rebuild while the query still serves the old view
+    // as placeholder data. Keep its old identity so the real bars fit on arrival.
+    if (!waitingForNewViewBars) drawnViewportKeyRef.current = currentViewportKey;
 
     // ── Canvas overlays (Volume Profile, Footprint, Event Rail) ──
     // Attached to the candle series as primitives: lightweight-charts renders
@@ -696,9 +694,8 @@ export function ModularChart({
     // The grid is an overlay like the rest, and always first in the list so it
     // is the bottom-most thing in the pane.
     const gridOverlay = createPriceGridOverlay(gridColor);
-    const allOverlays = hasRail
-      ? [gridOverlay, ...overlays, createEventRailOverlay(placedEvents)]
-      : [gridOverlay, ...overlays];
+    let eventRail = createEventRailOverlay(placedEvents);
+    const allOverlays = [gridOverlay, ...overlays, eventRail];
 
     if (allOverlays.length > 0) {
       // Measured once per chart build: overlay colors follow the painted surface,
@@ -712,23 +709,39 @@ export function ModularChart({
 
       refills.push((bars) => {
         // The rail is derived from the bars (chips are placed by bar index), so
-        // it is rebuilt here; the rest of the overlays are bar-independent and
-        // only need to be handed the new array. A rail that appears or vanishes
-        // changes the price-scale margins, which only a rebuild can apply.
-        const placed = placeEvents(eventMarkers, bars);
-        if (placed.length > 0 !== hasRail) return false;
-        livePlacedEvents = placed;
-
+        // update it with the new array. Appearance changes the scale margin on
+        // this chart instance without rebuilding the candle series.
+        const placed = placeEvents(eventMarkersRef.current, bars);
+        if (placed.length > 0 !== hasRail) {
+          hasRail = placed.length > 0;
+          chart.priceScale("right").applyOptions({
+            scaleMargins: { top: 0.05, bottom: hasRail ? RAIL_SCALE_MARGIN : 0.05 },
+          });
+        }
         // Same order as `allOverlays`, grid first: `OverlayPrimitive` fixes its
         // z-order at construction, so swapping a "top" overlay into the slot
         // holding the "bottom" grid would put the grid over the candles.
-        const nextOverlays = hasRail
-          ? [gridOverlay, ...overlays, createEventRailOverlay(placed)]
-          : allOverlays;
-        if (nextOverlays.length !== primitives.length) return false;
+        eventRail = createEventRailOverlay(placed);
+        const nextOverlays = [gridOverlay, ...overlays, eventRail];
         primitives.forEach((p, i) => p.update(nextOverlays[i], bars));
         return true;
       });
+
+      // Event queries resolve independently of OHLCV. Repaint only their rail
+      // primitive instead of destroying the candle chart and every indicator.
+      updateEventRailRef.current = (markers, bars) => {
+        const placed = placeEvents(markers, bars);
+        if (placed.length > 0 !== hasRail) {
+          hasRail = placed.length > 0;
+          chart.priceScale("right").applyOptions({
+            scaleMargins: { top: 0.05, bottom: hasRail ? RAIL_SCALE_MARGIN : 0.05 },
+          });
+        }
+        eventRail = createEventRailOverlay(placed);
+        primitives[primitives.length - 1].update(eventRail, bars);
+        appliedEventMarkersRef.current = markers;
+      };
+      appliedEventMarkersRef.current = eventMarkersRef.current;
 
       overlayUnsubscribe = () => {
         for (const p of primitives) {
@@ -738,25 +751,12 @@ export function ModularChart({
     }
 
     // ── Bar clicks (Regression Channel range selection, event detail card) ──
-    // The chart reports the bar time; the events near it and the viewport
-    // position are resolved here because only this scope knows the bar index
-    // mapping and where the container sits on screen.
+    // Rail hit-testing uses the rectangles actually drawn on the pane. Future
+    // icons sit in whitespace and have no bar time, so test before that guard.
     const clickHandler = (param: { time?: unknown; point?: { x: number; y: number } }) => {
-      if (param.time === undefined) return; // click landed outside the data
-      const time = param.time as string | number;
-
-      // Every marker in range, nearest first — not just the closest one. Chips
-      // that collide on the rail are drawn as a single cluster, and opening only
-      // one of the events hidden behind it would misreport what was clicked.
-      let events: ChartEventMarker[] | undefined;
-      const clickedIdx = liveIndexByTime.get(String(time));
-      if (clickedIdx !== undefined && hasRail) {
-        const near = livePlacedEvents
-          .map((p) => ({ p, dist: Math.abs(p.barIdx - clickedIdx) }))
-          .filter((h) => h.dist <= EVENT_HIT_BARS)
-          .sort((a, b) => a.dist - b.dist);
-        if (near.length > 0) events = near.map((h) => h.p.marker);
-      }
+      const events = param.point ? eventRail?.hitTest(param.point) : undefined;
+      if (param.time === undefined && !events?.length) return;
+      const time = (param.time ?? events?.[0].time) as string | number;
 
       let point: { x: number; y: number } | undefined;
       if (param.point && container) {
@@ -803,14 +803,6 @@ export function ModularChart({
     });
     ro.observe(container);
 
-    // The bar-index map every click resolves against.
-    refills.push((bars) => {
-      const map = new Map<string, number>();
-      bars.forEach((d, i) => map.set(String(d.time), i));
-      liveIndexByTime = map;
-      return true;
-    });
-
     /**
      * One pass over every refill. Runs them ALL even after one reports a
      * structural change: the caller rebuilds on false, so a half-updated chart
@@ -852,12 +844,13 @@ export function ModularChart({
 
       // Captured before the chart is destroyed — and in TIME, not bar indices:
       // extending history prepends bars, so index 0 stops meaning the same bar.
-      if (viewportKey !== undefined) {
+      if (drawnViewportKeyRef.current !== undefined) {
         const range = captureVisibleRange(chart);
-        savedViewportRef.current = range ? { key: viewportKey, range } : null;
+        savedViewportRef.current = range ? { key: drawnViewportKeyRef.current, range } : null;
       }
 
       refillRef.current = null;
+      updateEventRailRef.current = null;
       unwatchRange();
       overlayUnsubscribe?.();
       chart.unsubscribeClick(clickHandler);
@@ -874,15 +867,23 @@ export function ModularChart({
     // below, which is the whole point of keeping the chart alive. So is
     // `rsiBasis`: it moves with every bar and is read through a ref instead.
     isDark,
+    heightReady,
     chartHeight,
     paneHeightSig,
     indicators,
     overlays,
-    eventMarkers,
     rsiScale,
-    viewportKey,
     rebuildTick,
   ]);
+
+  // Marker payloads arrive after price history and may refresh later. The
+  // build effect above reads the latest ref on construction; only subsequent
+  // changes need this in-place rail update.
+  useEffect(() => {
+    if (appliedEventMarkersRef.current !== eventMarkers) {
+      updateEventRailRef.current?.(eventMarkers, dataRef.current);
+    }
+  }, [eventMarkers]);
 
   const linePrice = referencePriceLine?.price ?? null;
   const lineColor = referencePriceLine?.color ?? null;
@@ -934,8 +935,18 @@ export function ModularChart({
   useEffect(() => {
     if (data.length === 0 || appliedDataRef.current === data) return;
     const refill = refillRef.current;
-    if (!refill || !refill(data)) setRebuildTick((t) => t + 1);
-  }, [data]);
+    if (!refill || !refill(data)) {
+      setRebuildTick((t) => t + 1);
+      return;
+    }
+    // A hand-picked period/interval can use the existing series. Fit only
+    // after its new bars land; fitting placeholder bars would flash the old
+    // range and then jump again when the request completes.
+    if (drawnViewportKeyRef.current !== viewportKey) {
+      chartRef.current?.timeScale().fitContent();
+      drawnViewportKeyRef.current = viewportKey;
+    }
+  }, [data, viewportKey]);
 
   /**
    * Which sub-pane sits under a viewport y. Pane 0 is the price pane; the rest

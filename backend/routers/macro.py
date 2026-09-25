@@ -11,10 +11,10 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from config import ALPHA_VANTAGE_KEY, FRED_API_KEY, MEM_CACHE_TTL
-from event_calendar import next_fomc
+from event_calendar import calendar_payload, next_fomc
 from sources import market_data
 
 router = APIRouter()
@@ -580,6 +580,29 @@ def get_macro():
     _macro_mem["data"] = result
     _macro_mem["ts"]   = time.time()
     return result
+
+
+@router.get("/api/macro/calendar")
+def get_macro_calendar(
+    back_days: int = Query(730, ge=0, le=3650),
+    ahead_days: int = Query(120, ge=0, le=400),
+):
+    """Past and upcoming FOMC / CPI / NFP / PCE / GDP dates, oldest first.
+
+    Same source as TAIL's event strip (event_calendar): FOMC from the Fed's
+    published calendar, releases from FRED. Used by the price chart's event
+    rail. Fail-soft — `releases_ok` false means FRED was down and only FOMC
+    dates are in the list.
+    """
+    today = datetime.now().date()
+    p = calendar_payload(today, ahead_days=ahead_days, back_days=back_days)
+    return {
+        "as_of": p["as_of"],
+        "events": p["past"] + p["upcoming"],
+        "releases_ok": p["releases_ok"],
+        "fomc_calendar_through": p["fomc_calendar_through"],
+        "fomc_calendar_stale": p["fomc_calendar_stale"],
+    }
 
 
 @router.delete("/api/macro/cache")

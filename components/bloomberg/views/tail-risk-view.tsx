@@ -45,6 +45,7 @@ import {
   MarketEventsPanel,
   type RiskBasis,
 } from "./tail/market-events";
+import { PositioningPanel } from "./tail/positioning";
 import { SectorRotationPanel } from "./tail/sector-rotation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -77,6 +78,8 @@ interface Signal {
   reason: string | null;
   validated: boolean;
   verdict: string;
+  /** false = shown in its card but never counted toward the dimension status */
+  counted?: boolean;
   stats: SignalStats | null;
 }
 
@@ -385,6 +388,7 @@ function SignalRow({ sig, eventTag }: { sig: Signal; eventTag?: string | null })
                 : ""
             }`
           : "UNVALIDATED — ไม่มี backtest",
+        sig.counted === false ? "CONTEXT — แสดงเป็นหลักฐาน ไม่นับในสถานะมิติ/risk level" : null,
         sig.reason ? `Unavailable: ${sig.reason}` : null,
       ]
         .filter(Boolean)
@@ -402,6 +406,15 @@ function SignalRow({ sig, eventTag }: { sig: Signal; eventTag?: string | null })
       <span className="truncate" style={{ color: labelColor, fontSize: 10.5 }}>
         {sig.label}
       </span>
+
+      {sig.counted === false && (
+        <span
+          style={{ color: "#6a6a6a", fontSize: 8.5, flexShrink: 0 }}
+          title="Context only — not counted toward the dimension status or the risk level"
+        >
+          CTX
+        </span>
+      )}
 
       {eventTag && (
         <span
@@ -789,6 +802,14 @@ export function TailRiskView() {
                 </span>
                 <HistoryChart history={data.history} events={chartEvents} />
               </div>
+            </div>
+
+            <SectionRule label="POSITIONING" note="CFTC รายสัปดาห์ · บริบท ไม่นับใน risk level" />
+            <div
+              className="grid gap-2 content-start items-start"
+              style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}
+            >
+              <PositioningPanel />
             </div>
 
             <SectionRule label="MACRO & ROTATION" note="บริบท ไม่นับใน risk level" />

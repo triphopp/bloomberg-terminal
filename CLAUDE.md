@@ -26,7 +26,10 @@ Details + flags: `tools/launcher/README.md`. Auto-start at log-on:
 `scripts\win\install-startup-task.ps1` (scheduled task, 30s delay, restarts the
 launcher if it dies) or the tray's "Run at Windows start-up" (`HKCU\...\Run`) —
 never a copy of the exe in `shell:startup`. The launcher also restarts a dead
-backend/frontend by itself (3 tries, budget resets when healthy). Icons (exe + browser favicon)
+backend/frontend by itself (3 tries, budget resets when healthy). **Backend runs with
+`--reload` by default** (`--no-reload` to opt out); in `next dev` a strip at the top says
+RUNNING OLD CODE (+ RESTART button) or BACKEND DOWN (→ `logs\backend.log`) — read it
+before debugging a "missing" route or field (`GET /api/dev/status`). Icons (exe + browser favicon)
 มาจาก `npm run icons` (`scripts/gen-icons.mjs`) แหล่งเดียว. Per-server debug windows live in
 `scripts\win\`.
 
@@ -132,7 +135,7 @@ be negative-cached, or "empty = expired" re-fires them on every request.
 4. `layout/terminal-header.tsx` — add nav button
 5. Update `memory/reference/frontend-structure.md` + `memory/project_summary.md` views table
 
-### Add a new tab inside a tabbed view (credit-view, portfolio, …)
+### Add a new tab inside a tabbed view (bonds, portfolio, …)
 1. Create `views/X-tab.tsx` — component with `h-full flex flex-col overflow-hidden` root
 2. Import + add to tab array in parent view
 3. Wire `Alt+N` shortcut in `terminal-layout.tsx` if needed
@@ -195,23 +198,25 @@ async def get_x():
     return data
 ```
 
-## Views (7 views, post-MACRO removal 2026-09-17)
+## Views (6 views — BOND added, CLIP removed, CRDT merged into BOND 2026-09-25)
 
 | Key | Button | View | Content |
 |-----|--------|------|---------|
-| `1` | MKT   | market-view    | Watchlist · Chart · TICK DATA board (indices · RATES·US · RATES·JP · VOLATILITY · FX) |
+| `1` | MKT   | market-view    | Watchlist · Chart · TICK DATA board (indices · RATES·US · RATES·JP · VOLATILITY · FX; ▼p/▲p CFTC crowding mark on flagged rows) · REGIME panel modes CORR/GEOM/ROT/IV/**COT** (positioning PC1) |
 | `2` | NEWS  | news-view → `views/news/` | WATCHLIST tab (ข่าวรายหุ้นจาก watchlist, 7 แหล่ง, แบ่งตาม SECTOR) · NEWSFEED (topic) · SOCIAL · Polymarket column (right 256px: watchlist markets + macro signals) |
-| `3` | GMOV  | market-movers  | Global indices table · Heatmap treemap |
-| `4` | CLIP  | clippings-view | Obsidian markdown notes · Ollama AI |
-| `T` | TAIL  | tail-risk-view | MARKET EVENTS (named: Rates Volatility Shock, Treasury Selloff — Bear Flattening … from z of 1d/5d changes; SEVERE raises composite; ribbon shows top 2) + 6 risk dimensions (composite) + MACRO CONTEXT (not in composite): event strip FOMC/SEP/CPI/NFP/PCE/GDP + EVENT WINDOW tag on VIX signals, Fed rate/stance, 10Y−2Y/10Y−3M, regime, latest prints, event markers on 90D chart · MACRO READ (inflation/growth/rates-vol) · SECTOR ROTATION (turnover tilt, ไม่ใช่ fund flow) |
-| `6` | CRDT  | credit-view    | 4 tabs: overview, spreads, stress, consumer |
-| `P` | PORT  | portfolio-view | 5 top-level: PORTFOLIO (sub: POSITIONS·OPTIONS·TRADES·CASH·ENTRY) · ANALYTICS (sub: P&L·BACKTEST) · RISK · TOOLS (sub: THESES·IMPORT) · PAPER (sub: DASHBOARD·TRADE·POSITIONS·OPTIONS·HISTORY) |
+| `h` / `heatmap(MKT)` | HMAP (no nav button) | `views/heatmap-view.tsx` | One equity market as a sector-grouped treemap sized by market cap (~275 names, 25/sector). Command `heatmap(TH)`, `heatmap(US, 52w)`, bare `HMAP` = last market; `h` reopens it. Metrics 1D · 52W · 50D · 200D · HIGH · RVOL switch with no request; sector strip = zoom; hover line = all metrics; click → equity, shift-click → chart window. `/api/market-heatmap` (`routers/market_heatmap.py`, Yahoo screener, 11 parallel sector calls, 90s cache + last-good) |
+| `5` / `t` | TAIL  | tail-risk-view | MARKET EVENTS (named: Rates Volatility Shock, Treasury Selloff — Bear Flattening … from z of 1d/5d changes; SEVERE raises composite; ribbon shows top 2) + 6 risk dimensions (composite) + MACRO CONTEXT (not in composite): event strip FOMC/SEP/CPI/NFP/PCE/GDP + EVENT WINDOW tag on VIX signals, Fed rate/stance, 10Y−2Y/10Y−3M, regime, latest prints, event markers on 90D chart · MACRO READ (inflation/growth/rates-vol) · SECTOR ROTATION (turnover tilt, ไม่ใช่ fund flow) · **POSITIONING** (CFTC COT crowding flags + table; `cot_crowding` signal shown with CTX tag, `counted: False`, backtest WEAK) |
+| `3` / `b` | BOND  | `views/bonds/` | 2 tabs (Alt+1/2). **MARKET** — price vs supply: KPI strip · TREASURY LEG (2/10/30Y, real, term premium) · CREDIT LEG (IG/HY OAS, Baa−Aaa, BBB yield) · CORPORATE ISSUANCE/WEEK = SEC EFTS 424B2/424B5 deals ex-bank (SIC-classified, 365d backfill into SQLite) + EVENT STUDY (heavy days vs rest, Δ10Y/ΔIG OAS t..t+3) + RECENT DEALS · TREASURY AUCTIONS (fiscaldata) · DEBT STOCK (Z.1, C&I, SLOOS). Counts deals, not $ — no free daily $ source. **CONDITIONS** (ex-CRDT, `/api/crisis`) — crisis level L0–3 (also in status bar) · STL FSI/NFCI · 5Y/10Y breakeven · 30Y mortgage · CC/mortgage delinquency. IG/HY trigger lines (2%/5%) on CREDIT LEG. **CFTC** (`/api/cot/basis`): TREASURY FUTURES POSITIONING · BASIS TRADE (MARKET, DV01 10Y-eq) + DEALER BALANCE SHEET (CONDITIONS) |
+| `4` / `p` | PORT  | portfolio-view | 5 top-level: PORTFOLIO (sub: POSITIONS·OPTIONS·TRADES·CASH·ENTRY) · ANALYTICS (sub: P&L·BACKTEST) · RISK · TOOLS (sub: THESES·IMPORT) · PAPER (sub: DASHBOARD·TRADE·POSITIONS·OPTIONS·HISTORY) |
 
 **TICK DATA board** (MKT right panel): 7 collapsible sections — AMERICAS · EMEA · ASIA PACIFIC (`/api/market-data`, 6 incl. KOSPI) · RATES·US (11 UST tenors, FRED daily) · RATES·JP (15 JGB tenors, MOF CSV) · VOLATILITY (19 VIX-family, `/api/volatility`, sub-grouped S&P TERM / VOL OF VOL / EQUITY / GLOBAL / COMMOD·RATES) · FX (`/api/fx`). Collapse state in `localStorage["bloomberg_tickdata_sections"]`. ▲/▼ tally counts indices + FX only — a green VIX is a bad day, and a rising yield is a falling bond, so neither belongs in it. แถบบนสุดของ board = `UsMarketClock` (นาฬิกา ET + phase PRE/OPEN/AFTER/CLOSED + timeline + นับถอยหลัง). **ตลาดสหรัฐไม่มีพักกลางวัน** — เทรดต่อเนื่อง 09:30–16:00 ET (ที่พักเที่ยงคือ SET 12:30–14:30, TSE 11:30–12:30, HKEX 12:00–13:00). Logic อยู่ใน `components/bloomberg/lib/us-market-session.ts` (pure, test ได้) — วันหยุด NYSE + half-day 13:00 ET hardcode ถึงปี 2027 เท่านั้น เกินนั้น widget ขึ้นเตือนตัวเอง. Yield rows show bp, not %chg, and only 4 tenors (`^IRX ^FVX ^TNX ^TYX`) can drive the chart.
 
+**GMOV `3` removed 2026-09-25** — replaced by HMAP (above). `views/market-movers-view.tsx` deleted; its global-indices table lives on in MKT TICK DATA. **Backend `/api/heatmap*` endpoints + `app/api/heatmap/*` proxies stay** (no UI consumer now).  
 **Removed:** GVOL (fake `Math.random()` data), EQTY (duplicates MKT search), RMI (removed 2026-05-24), CRYP `C` + FX `E` (2026-08-01 — FX folded into the TICK DATA board; crypto via global search `BTC-USD` → stock-view, which also has Order Footprint. **Backend `crypto.py`/`fx.py` routers stay** — `/api/crypto/footprint` powers that indicator). Keys `C` and `E` are now free.  
-**Stock analysis** (9 tabs: financials, options, etc.) still accessible from global search / heatmap click  
-**MACRO `5` removed 2026-09-17** — US macro (Fed, curve, indicators, regime) + FOMC/release calendar moved into TAIL as context; COUNTRY (World Bank) and SIGNALS (country rotation / sector selection / allocation) tabs were deleted with it. Backend routers remain (`/api/macro`, `/api/sovereign/*`, `/api/country-rotation`, `/api/sector`, `/api/allocation`) — TAIL reads `/api/macro` in-process. Key `5` is free.
+**Stock analysis** (9 tabs: financials, options, etc.) still accessible from global search / heatmap click — plus a **COT** tab when the symbol maps to a CFTC contract (ES=F/SPY, ^VIX, JPY=X, BTC-USD, CL=F, GC=F, ^TNX …). PORT → RISK shows FUTURES POSITIONING vs BOOK (`/api/cot/portfolio`). All COT surfaces are weekly context (as of Tue, released Fri) — `backend/routers/cot.py`  
+**CRDT `6` merged into BOND 2026-09-25** — `views/credit-view.tsx` deleted; overlap dropped (HY/IG OAS + curve = BOND MARKET, VIX = TAIL, TED spread = dead since 2022-01); the rest is BOND → CONDITIONS via `useCreditData(isActive)`. **Backend `crisis.py` stays** (TAIL + `/api/crisis/composite`). Key `6` is free.  
+**CLIP removed 2026-09-25** (was `4`). Keys renumbered 2026-09-26: `1` MKT · `2` NEWS · `3`/`b` BOND · `4`/`p` PORT · `5`/`t` TAIL · `h` HMAP. `views/clippings-view.tsx` + `app/api/clippings/*` deleted; **backend `clippings.py` router stays** (Obsidian/Ollama endpoints, no UI consumer).  
+**MACRO `5` removed 2026-09-17** — US macro (Fed, curve, indicators, regime) + FOMC/release calendar moved into TAIL as context; COUNTRY (World Bank) and SIGNALS (country rotation / sector selection / allocation) tabs were deleted with it. Backend routers remain (`/api/macro`, `/api/sovereign/*`, `/api/country-rotation`, `/api/sector`, `/api/allocation`) — TAIL reads `/api/macro` in-process. Key `5` now opens TAIL (renumbered 2026-09-26).
 
 ## 3 Mandatory Rules (ALL agents, every session)
 
@@ -236,9 +241,9 @@ async def get_x():
 memory/
 ├── INDEX.md               ← navigation map
 ├── AGENTS.md              ← format rules (อ่านก่อนเขียนไฟล์ใดๆ ใน memory/)
-├── project_summary.md     ← slim core: stack, env vars, 26 routers, DB schema, 9 views, known issues
+├── project_summary.md     ← slim core: run, tests, stack, env vars, 61 routers, DB schema, 6 views, known issues, plans
 ├── reference/
-│   ├── architecture.md         ← data flow, key files, 26 routers table
+│   ├── architecture.md         ← data flow, key files, accounting layer, views
 │   ├── api-endpoints.md        ← all endpoints + caching strategy + Next.js proxy routes
 │   ├── frontend-structure.md   ← full component tree + key exports + keyboard shortcuts
 │   ├── data-shapes.md          ← API response shapes (avoid reading router files)

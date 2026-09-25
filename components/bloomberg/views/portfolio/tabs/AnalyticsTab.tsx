@@ -120,9 +120,37 @@ interface NavIndexResponse {
   note?: string;
 }
 
+interface PeriodReturn {
+  period: string;
+  ytd: boolean;
+  start: string;
+  end: string;
+  days: number;
+  start_nav: number;
+  end_nav: number;
+  net_flow: number;
+  /** Annualised; null under 30 days. */
+  xirr_pct: number | null;
+  /** Return over the period itself (not annualised). */
+  period_pct: number | null;
+  flag: string | null;
+  /** Some days in the period were rebuilt from closing prices. */
+  estimated: boolean;
+}
+
 interface ReturnsRow {
   cagr_pct: number | null;
+  /** From trades: buys −, sells/dividends +, open lots marked to market. */
   xirr_pct: number | null;
+  /** Why xirr_pct is not a return (see XIRR_FLAG_TEXT), or null. */
+  xirr_flag?: string | null;
+  /** From capital: deposits −, withdrawals +, today's NAV +. */
+  xirr_capital_pct?: number | null;
+  xirr_capital_flag?: string | null;
+  net_deposited?: number;
+  nav_now?: number;
+  /** Money-weighted return per calendar year from NAV snapshots; ytd = this year. */
+  periods?: PeriodReturn[];
   simple_pct: number | null;
   invested: number;
   end_value: number;
@@ -489,6 +517,63 @@ function NavIndexChart({
 /** Signed percent with two decimals for KPI tiles; "—" when unknown. */
 const sgnPct = (n: number | null | undefined, digits = 1): string =>
   n == null ? "—" : `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(digits)}%`;
+
+// A flagged XIRR is still reported by the API, but it is not a return:
+// "hide" ones show — , "caveat" ones keep the number with a * and a tooltip.
+const XIRR_FLAG_TEXT: Record<string, { hide: boolean; text: string }> = {
+  inflow_before_outflow: {
+    hide: true,
+    text: "Money came back before any recorded outlay (e.g. dividends before the first recorded buy) — trade history is incomplete, so the rate is meaningless until the missing buys are entered.",
+  },
+  extreme: {
+    hide: true,
+    text: "Beyond ±100%/yr — a short span compounded or a missing cashflow, not a return.",
+  },
+  opening_balance_at_cost: {
+    hide: false,
+    text: "Includes an opening balance booked at COST: losses made before that date are counted as if they happened after it, so this understates the rate.",
+  },
+  no_ledger: { hide: true, text: "No deposits recorded in CASH for this scope." },
+  error: { hide: true, text: "Could not be computed." },
+};
+
+/** XIRR for display: "—" + reason when the flag says it is not a return. */
+function xirrView(pct: number | null | undefined, flag?: string | null, digits = 1) {
+  const f = flag ? XIRR_FLAG_TEXT[flag] : undefined;
+  if (pct == null || f?.hide) {
+    return { text: "—", color: "#555", title: f?.text ?? "Not enough cashflows to solve" };
+  }
+  return {
+    text: `${sgnPct(pct, digits)}${f ? "*" : ""}`,
+    color: pnlColor(pct),
+    title: f?.text,
+  };
+}
+
+/** This year's period, else the latest one. */
+const ytdPeriod = (r?: ReturnsRow | null): PeriodReturn | undefined =>
+  r?.periods?.find((p) => p.ytd) ?? r?.periods?.at(-1);
+
+/** "+30.0%" with "~" when part of the period is rebuilt from closes. */
+function periodView(p?: PeriodReturn, digits = 1) {
+  if (!p) return { text: "—", color: "#555", title: "No NAV snapshots for this period yet" };
+  const v = xirrView(p.xirr_pct, p.flag === "short_period" ? null : p.flag, digits);
+  const est = p.estimated ? "~" : "";
+  const title = [
+    `${p.period}${p.ytd ? " YTD" : ""}: ${p.start} → ${p.end} (${p.days}d)`,
+    `NAV ${fmtK(p.start_nav)} → ${fmtK(p.end_nav)}, net flows ${fmtK(p.net_flow)}`,
+    `Period return ${sgnPct(p.period_pct, 2)}${p.xirr_pct != null ? ` · annualised ${sgnPct(p.xirr_pct, 2)}` : " · too short to annualise"}`,
+    "Starts from the NAV already in the book, so history before the period cannot distort it.",
+    p.estimated ? "~ part of the period is rebuilt from closing prices (backfill)." : "",
+    v.title ?? "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  if (p.xirr_pct == null && p.period_pct != null) {
+    return { text: `${est}${sgnPct(p.period_pct, digits)}`, color: pnlColor(p.period_pct), title };
+  }
+  return { text: v.text === "—" ? "—" : `${est}${v.text}`, color: v.color, title };
+}
 
 const NAV_RANGES = [
   ["1M", 31],
@@ -1259,14 +1344,25 @@ export function AnalyticsTab({
             color="#4ade80"
             sub="received"
           />
-          <Kpi
-            colors={colors}
-            label="XIRR"
-            value={sgnPct(rets?.total?.xirr_pct)}
-            color={rets?.total?.xirr_pct == null ? "#555" : pnlColor(rets.total.xirr_pct)}
-            sub={`CAGR ${sgnPct(rets?.total?.cagr_pct)} · ${rets?.total?.holding_days ?? "—"}d`}
-            title="Money-weighted IRR from dated cashflows, annualized. CAGR = cost-based time growth of deployed capital."
-          />
+          {(() => {
+            const yp = ytdPeriod(rets?.total);
+            const pv = periodView(yp);
+            const tx = xirrView(rets?.total?.xirr_pct, rets?.total?.xirr_flag);
+            return (
+              <Kpi
+                colors={colors}
+                label={`XIRR ${yp?.period ?? ""}${yp?.ytd ? " YTD" : ""}`.trim()}
+                value={pv.text}
+                color={pv.color}
+                sub={`period ${sgnPct(yp?.period_pct)} · all-time ${tx.text}`}
+                title={[
+                  pv.title,
+                  "",
+                  `All-time XIRR (trades) ${tx.text}${tx.title ? ` — ${tx.title}` : ""}`,
+                ].join("\n")}
+              />
+            );
+          })()}
           <Kpi
             colors={colors}
             label="WIN RATE"
@@ -1501,14 +1597,42 @@ export function AnalyticsTab({
                 title={economicPnlTitle}
               />
             )}
+            {[...(rets?.total?.periods ?? [])].reverse().map((p) => {
+              const v = periodView(p, 2);
+              return (
+                <LedgerRow
+                  key={p.period}
+                  colors={colors}
+                  label={`XIRR ${p.period}${p.ytd ? " YTD" : ""}`}
+                  hint={`period ${sgnPct(p.period_pct, 2)} · ${p.start.slice(5)} → ${p.end.slice(5)}`}
+                  value={v.text}
+                  color={v.color}
+                  title={v.title}
+                />
+              );
+            })}
             {rets?.total && (
               <LedgerRow
                 colors={colors}
-                label="CAGR / XIRR"
+                label="CAGR / XIRR ALL"
                 hint={`${rets.total.holding_days}d since ${rets.total.first_date ?? "—"}`}
-                value={`${sgnPct(rets.total.cagr_pct, 2)} / ${sgnPct(rets.total.xirr_pct, 2)}`}
-                color={rets.total.xirr_pct == null ? "#555" : pnlColor(rets.total.xirr_pct)}
-                title="CAGR: time-weighted growth of deployed cost. XIRR: money-weighted IRR from dated cashflows. Both annualized."
+                value={`${sgnPct(rets.total.cagr_pct, 2)} / ${xirrView(rets.total.xirr_pct, rets.total.xirr_flag, 2).text}`}
+                color={xirrView(rets.total.xirr_pct, rets.total.xirr_flag).color}
+                title={`CAGR: time-weighted growth of deployed cost. XIRR: money-weighted IRR from dated trade cashflows. Both annualized.${xirrView(rets.total.xirr_pct, rets.total.xirr_flag).title ? `\n${xirrView(rets.total.xirr_pct, rets.total.xirr_flag).title}` : ""}`}
+              />
+            )}
+            {rets?.total && (
+              <LedgerRow
+                colors={colors}
+                label="XIRR CAPITAL ALL"
+                hint={
+                  rets.total.net_deposited != null
+                    ? `${money(rets.total.net_deposited)} net deposited → NAV ${money(rets.total.nav_now ?? 0)}`
+                    : "deposits → NAV"
+                }
+                value={xirrView(rets.total.xirr_capital_pct, rets.total.xirr_capital_flag, 2).text}
+                color={xirrView(rets.total.xirr_capital_pct, rets.total.xirr_capital_flag).color}
+                title={`IRR of the money put in: each deposit/withdrawal in CASH on its date, today's NAV as the final inflow. Blind to trade history.${xirrView(rets.total.xirr_capital_pct, rets.total.xirr_capital_flag).title ? `\n${xirrView(rets.total.xirr_capital_pct, rets.total.xirr_capital_flag).title}` : ""}`}
               />
             )}
           </Card>
@@ -1538,7 +1662,16 @@ export function AnalyticsTab({
                   {th("REAL RET", "right", "Realized P&L ÷ invested — excludes unrealized")}
                   {th("YTD REAL", "right", "Realized trading P&L closed this year")}
                   {th("CAGR", "right", "Time-weighted growth of deployed cost, annualized")}
-                  {th("XIRR", "right", "Money-weighted IRR from dated cashflows, annualized")}
+                  {th(
+                    "XIRR YTD",
+                    "right",
+                    "This year, from the NAV at the start of the year: flows netted, annualised (period return in the tooltip). ~ = partly rebuilt NAV"
+                  )}
+                  {th(
+                    "XIRR ALL",
+                    "right",
+                    "Since the first recorded trade, from trade cashflows (capital-based figure in the tooltip)"
+                  )}
                   {th("σ D / ANN", "right", "Stdev of daily log returns, 252d lookback")}
                 </tr>
               </thead>
@@ -1609,12 +1742,28 @@ export function AnalyticsTab({
                       >
                         {sgnPct(rr?.cagr_pct)}
                       </td>
-                      <td
-                        className={td}
-                        style={{ color: rr?.xirr_pct == null ? "#555" : pnlColor(rr.xirr_pct) }}
-                      >
-                        {sgnPct(rr?.xirr_pct)}
-                      </td>
+                      {(() => {
+                        const pv = periodView(ytdPeriod(rr));
+                        const tx = xirrView(rr?.xirr_pct, rr?.xirr_flag);
+                        const cx = xirrView(rr?.xirr_capital_pct, rr?.xirr_capital_flag);
+                        return (
+                          <>
+                            <td className={td} style={{ color: pv.color }} title={pv.title}>
+                              {pv.text}
+                            </td>
+                            <td
+                              className={td}
+                              style={{ color: tx.color }}
+                              title={[
+                                `Trades ${tx.text}${tx.title ? ` — ${tx.title}` : ""}`,
+                                `Capital ${cx.text}${cx.title ? ` — ${cx.title}` : ""}`,
+                              ].join("\n")}
+                            >
+                              {tx.text}
+                            </td>
+                          </>
+                        );
+                      })()}
                       <td className={td} style={{ color: colors.text }}>
                         {av ? (
                           <>

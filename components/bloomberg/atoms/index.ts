@@ -1,5 +1,9 @@
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
+import type {
+  RegressionSelection,
+  StoredRegressionChannel,
+} from "../chart/indicators/regression-channel";
 import type { RsiScaleConfig } from "../chart/indicators/rsiScale";
 import { marketData as fallbackData } from "../lib/marketData";
 import type { FilterState, MarketData } from "../types";
@@ -71,8 +75,13 @@ export const tickerEnabledAtom = atom(true); // Bloomberg crawl strip
 
 // View state atoms
 export const currentViewAtom = atom<
-  "market" | "news" | "movers" | "stock" | "clippings" | "credit" | "portfolio" | "tail"
+  "market" | "news" | "heatmap" | "stock" | "portfolio" | "tail" | "bonds"
 >("market");
+
+/** Market shown by the HMAP view — set by the `heatmap(MARKET)` terminal command. */
+export const heatmapMarketAtom = atom<string>("US");
+/** Colour metric the HMAP view opens on: d1 | w52 | d50 | d200 | hi | rv */
+export const heatmapMetricAtom = atom<string>("d1");
 
 // Portfolio atoms
 export const portfolioHoldingsAtom = atom<Holding[]>([]);
@@ -170,15 +179,11 @@ export const chartWindowUnitAtom = atomWithStorage<"bars" | "days">(
   undefined,
   { getOnInit: true }
 );
-/**
- * Regression Channel selection, stored as the two clicked BAR TIMES rather than
- * indices so a data refresh or timeframe switch cannot silently slide it onto
- * different bars. Null when nothing is selected.
- */
-export const chartRegressionAtom = atomWithStorage<{
-  fromTime: string | number;
-  toTime: string | number;
-} | null>("chart:regression", null, undefined, { getOnInit: true });
+/** Multiple scoped REG channels. The old single-selection object is accepted
+ * so existing localStorage data can be migrated on the next edit. */
+export const chartRegressionAtom = atomWithStorage<
+  StoredRegressionChannel[] | RegressionSelection | null
+>("chart:regression", null, undefined, { getOnInit: true });
 
 /** Rail placement for the Regression Channel. */
 export const chartRegressionOptsAtom = atomWithStorage<{

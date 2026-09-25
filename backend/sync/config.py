@@ -37,6 +37,8 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     # Cash reconciliation offsets. uuid PK; rows are created and deleted, never
     # edited, so last-write-wins is a union.
     ("cash_adjustments",        ["id"]),
+    ("broker_statements",        ["id"]),  # cited, versioned broker evidence
+    ("broker_executions",         ["id"]),  # cited broker fills; no implied cash/wallet
     # Normalized option schema (2026-09-10). Contracts sync on their natural key
     # so the same contract entered on two devices merges into one row; trades
     # and matches carry uuid PKs.
@@ -163,7 +165,8 @@ TABLE_PK: dict[str, list[str]] = {t: pk for t, pk in SYNC_TABLES}
 # a conflict, because an unwanted row is visible and deletable while a wrongly
 # deleted trade is silent and gone. Everything else keeps delete-wins-on-tie.
 MONEY_TABLES: frozenset[str] = frozenset({
-    "transactions", "trades", "cash_ledger", "cash_adjustments", "dividends",
+    "transactions", "trades", "cash_ledger", "cash_adjustments", "broker_statements",
+    "broker_executions", "dividends",
     "option_trades", "option_trade_matches",
     "portfolio_accounts", "position_cost_overrides",
 })

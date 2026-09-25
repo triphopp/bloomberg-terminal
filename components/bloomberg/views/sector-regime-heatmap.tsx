@@ -2,9 +2,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Maximize2, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { useIvSmile } from "../hooks/useIvSmile";
 import type { bloombergColors } from "../lib/theme-config";
+import { CotFactorPanel } from "./cot-factor-panel";
 import { IvSmilePanel } from "./iv-smile-panel";
 import { RotationTable } from "./rotation-table";
 
@@ -17,10 +18,15 @@ const MODES = [
   { key: "geom", label: "GEOM", desc: "Geometric: Wedge Product / Gram Determinant" },
   { key: "rot", label: "ROT", desc: "Theme/Sector rotation table vs SPY (RRG quadrants)" },
   { key: "iv", label: "IV", desc: "IV smile for the symbol selected on the MKT chart" },
+  {
+    key: "cot",
+    label: "COT",
+    desc: "CFTC futures positioning — PC1 across contracts + extremes (weekly)",
+  },
 ] as const;
 
 type Period = (typeof PERIODS)[number];
-type Mode = "corr" | "geom" | "rot" | "iv";
+type Mode = "corr" | "geom" | "rot" | "iv" | "cot";
 type GeomView = "matrix" | "space";
 
 // One distinct vivid colour per sector (dark-background safe)
@@ -678,7 +684,10 @@ interface SectorRegimeHeatmapProps {
   isDark: boolean;
 }
 
-export function SectorRegimeHeatmap({ colors, symbol = null }: SectorRegimeHeatmapProps) {
+export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
+  colors,
+  symbol = null,
+}: SectorRegimeHeatmapProps) {
   // Start from the same view the server rendered. Reading localStorage in the
   // state initializer instead made the first client render disagree with the
   // server HTML (stored mode "rot" vs server "corr"), which React reports as a
@@ -709,6 +718,7 @@ export function SectorRegimeHeatmap({ colors, symbol = null }: SectorRegimeHeatm
 
   const isRot = mode === "rot";
   const isSmile = mode === "iv";
+  const isCot = mode === "cot";
   const isMatrix = mode === "corr" || mode === "geom";
   const smile = useIvSmile(symbol, isSmile);
 
@@ -932,6 +942,10 @@ export function SectorRegimeHeatmap({ colors, symbol = null }: SectorRegimeHeatm
         {isSmile ? (
           <div className="flex-1 min-h-0 overflow-hidden">
             <IvSmilePanel model={smile} colors={colors} compact />
+          </div>
+        ) : isCot ? (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <CotFactorPanel colors={colors} compact />
           </div>
         ) : isRot ? (
           <div className="flex-1 min-h-0 overflow-hidden">
@@ -1163,6 +1177,8 @@ export function SectorRegimeHeatmap({ colors, symbol = null }: SectorRegimeHeatm
               )}
               {isSmile ? (
                 <IvSmilePanel model={smile} colors={colors} />
+              ) : isCot ? (
+                <CotFactorPanel colors={colors} compact={false} />
               ) : isRot ? (
                 <RotationTable colors={colors} compact={false} />
               ) : showSpace ? (
@@ -1227,4 +1243,4 @@ export function SectorRegimeHeatmap({ colors, symbol = null }: SectorRegimeHeatm
       )}
     </>
   );
-}
+});

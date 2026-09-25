@@ -1,38 +1,47 @@
 # Bloomberg Terminal — Project Summary
 
-> **BBW study audit 2026-09-09:** ข้อสรุป study เดิมต้องอ่านคู่กับ [audit](reports/bbw-squeeze-2026-09-09-risk-report.md): พบ unknown labels, benchmark drift, final purge gap และการตีความ coefficient/survival median ผิด ผล E2 ranking ยังอยู่ในการคำนวณตรวจซ้ำ แต่ยังไม่มี trading validation
-
 **Repo:** `bloomberg-terminal` — macOS `~/bloomberg-terminal`, Windows `D:\Agents\Claude\bloomberg-terminal-main`
-**Last updated:** 2026-09-23 (latest daily candle recovery)
+**Last updated:** 2026-09-26 — full rewrite after the 2026-09-25/26 changes (BOND/HMAP views, COT, dev status, portfolio takeover, TWR start-of-day flows, 2024-25 history review)
 
 > Slim core reference. Navigate via [memory/INDEX.md](INDEX.md).
-> - [reference/api-endpoints.md](reference/api-endpoints.md) — all endpoints, caching table, Next.js proxy routes
-> - [reference/frontend-structure.md](reference/frontend-structure.md) — component tree + exports + keyboard shortcuts
-> - [reference/data-shapes.md](reference/data-shapes.md) — API response JSON shapes + TypeScript interfaces
-> - [reference/architecture.md](reference/architecture.md) — stack, data flow, routers, analytics folder, key files
-> - [reference/gotchas.md](reference/gotchas.md) — error dict + anti-patterns + "Where is X?" + env var map
+> - [reference/architecture.md](reference/architecture.md) — data flow, routers, key files, accounting layer
+> - [reference/api-endpoints.md](reference/api-endpoints.md) — every endpoint, caching table, Next.js proxy routes
+> - [reference/frontend-structure.md](reference/frontend-structure.md) — component tree, exports, keyboard shortcuts
+> - [reference/data-shapes.md](reference/data-shapes.md) — API response shapes + TypeScript interfaces
+> - [reference/gotchas.md](reference/gotchas.md) — error dictionary, anti-patterns, "Where is X?", env var map
+> - [reference/terminal-commands.md](reference/terminal-commands.md) — command mode (`heatmap(US)`, ALERT …)
+> - [reference/data-catalog.md](reference/data-catalog.md) — data categories available for analysis
 
 ---
 
-## How to Run (2 terminals)
+## How to Run
 
-```powershell
-# Terminal 1 — Python backend
-cd backend
-# Set env vars in backend/.env (copy from .env.example)
-python -m uvicorn main:app --port 9317 --reload
+| Way | Command | Notes |
+|-----|---------|-------|
+| Windows tray launcher | `BloombergTerminal.exe` (repo root) | starts both servers hidden, logs to `logs\`, restarts a dead server (3 tries), backend `--reload` by default (`--no-reload`, `--prod`). Build: `tools\launcher\build.bat`; details `tools/launcher/README.md`. Log-on start: `scripts\win\install-startup-task.ps1` |
+| One command | `npm run dev:all` / `npm run dev:no-ollama` | `BACKEND_PORT` / `FRONTEND_PORT` override |
+| Two terminals | `cd backend && python -m uvicorn main:app --port 9317 --reload` + `npm run dev` | |
 
-# Terminal 2 — Next.js frontend
-npm run dev  # → http://localhost:9318
-```
+- Ports: backend **9317**, frontend **9318**, UI at `http://bloomberg.localhost:9318`. Changing them touches `.env.local` (`PYTHON_API_URL`), `backend/.env` (`CORS_ORIGINS`) and whatever starts the servers — see `CLAUDE.md` → Ports.
+- **Dev status strip** (2026-09-25): in `next dev` the top of the page says RUNNING OLD CODE (+ RESTART) or BACKEND DOWN. `GET /api/dev/status` = files changed since the backend started; `POST /api/dev/restart` asks the supervisor to restart (`backend/dev_status.py`, `routers/dev.py`, `core/backend-status-banner.tsx`).
+- **env-doctor**: `npm run doctor` / `doctor:fix` / `doctor:ci` — gitignored env files drift between machines; runs as `predev` and from `.husky/post-merge` / `post-checkout`.
+- **Upstream log**: every outbound call → `logs/upstream.jsonl`; read it first when data is missing/stale (`python backend/scripts/upstream_report.py`, `GET /api/health/upstream`).
+
+## Tests (verified 2026-09-26)
 
 ```bash
-# Tests — verified 2026-08-01
-cd backend && python -m pytest tests/ -q   # 321 passed (greeks, alerts, sync, portfolio, SEC, DCC)
-npm run test:alerts                        # 44 passed (node:test)
-npm run test:chart                         # 13 passed (pane-layout)
-npx tsc --noEmit                           # TypeScript check
+cd backend && python -m pytest -q -p no:cacheprovider --basetemp=<scratch dir> tests/   # 1012 pass, 1 fail (test_iv_scheduler — see Known Issues)
+npm run typecheck      # tsc --noEmit — clean
+npm run test:chart     # 264 pass
+npm run test:session   # 73 pass
+npm run test:views     # 20 pass
+npm run test:alerts    # 44 pass
+npm run test:watchlist # 13 pass
+node --test components/bloomberg/core/__tests__/*.test.ts   # 3 pass (navigation + Thai-layout shortcuts)
+npm run lint           # biome
 ```
+
+This Windows box denies the system temp dir to pytest — pass `--basetemp` to a writable folder. `.husky/pre-commit` runs Biome `check --write` + `tsc` on staged TS/JS and then **re-adds the whole file** (partial staging of a TS file is not possible).
 
 ---
 
@@ -40,146 +49,147 @@ npx tsc --noEmit                           # TypeScript check
 
 | Layer | Tech |
 |-------|------|
-| Frontend | Next.js 14 App Router, React, TypeScript |
+| Frontend | Next.js 16 App Router, React 19, TypeScript |
 | State | Jotai (atoms) + TanStack React Query |
-| Charts | Recharts + custom CandlestickChart |
-| Styling | Tailwind CSS, bloombergColors theme |
-| Backend | Python FastAPI (port 9317) — modular routers |
-| Data | yfinance (market/stock/crypto/fx) |
-| Macro data | FRED API + Alpha Vantage fallback |
-| AI | Ollama (local, port 11434) + Claude API (Anthropic) |
-| Prediction markets | Polymarket Gamma API |
-| Crypto footprint | Binance aggTrades API |
-| Sovereign data | World Bank Development Indicators |
-| RSS | feedparser + rsshub.app (Facebook) |
-| Database | SQLite (`backend/portfolio.db`) |
-| Notes | Obsidian Vault on Google Drive (G:) |
-| Thailand data | Bank of Thailand (BOT) API |
-| Thailand capital market | SEC Thailand Open API (api.sec.or.th) |
-| Options Greeks | Black-Scholes + Gram-Charlier (backend/greeks.py) |
+| Charts | lightweight-charts v5 via our `chartkit/` + `chart/` (ModularChart, panes, event rail, regression channels), Recharts for dashboards |
+| Styling | Tailwind CSS, `bloombergColors` theme; text-only controls (`styles/globals.css`) |
+| Backend | Python FastAPI (port 9317) — 61 routers, `main.py` mounts them |
+| Data | yfinance through a provider registry (`sources/`) + app-wide Yahoo gate (`yahoo_gate.py`, 6 concurrent) + shared request coordinator (`market_requests.py`) |
+| Macro / rates | FRED (+ Alpha Vantage fallback), Japan MOF JGB CSV, CBOE vol CSVs, Treasury fiscaldata |
+| Filings / positioning | SEC EDGAR (submissions, 8-K EX-99.1, XBRL, EFTS 424B2/424B5), CFTC Socrata (TFF + Disaggregated) |
+| Other | Polymarket Gamma, Binance aggTrades, World Bank, BOT API, SEC Thailand, SDMX central banks, dramexchange |
+| AI | Claude API (portfolio AI), Ollama (optional, clippings endpoints only), MCP server `backend/mcp_server.py` |
+| Database | SQLite `backend/portfolio.db`; Google Drive JSON sync (`backend/sync/`) |
+| Options | Black-Scholes + Gram-Charlier (`greeks.py`), Raw SVI (`analytics/svi.py`), payoff (`analytics/option_payoff.py`) |
 
 ---
 
 ## Environment Variables
 
-### Python backend (`backend/.env`)
+### Python backend (`backend/.env`, template `backend/.env.example`)
 ```
-CLIPPINGS_DIR / THESES_DIR / SOURCES_DIR / OBSIDIAN_WIKI_DIR
-OLLAMA_URL          — default http://localhost:11434
-RSSHUB_URL          — default https://rsshub.app
-FACEBOOK_ACCESS_TOKEN
-FRED_API_KEY        — macro + crisis indicators
-YAHOO_MAX_CONCURRENT — default 6; app-wide cap on in-flight Yahoo requests (backend/yahoo_gate.py)
-ALPHA_VANTAGE_API_KEY
-ANTHROPIC_API_KEY   — Claude API for portfolio AI
-BINANCE_API_KEY     — order footprint (crypto)
-BOT_API_TOKEN       — BOT Bond Auction
-BOT_IR_TOKEN        — BOT Interest Rates
-BOT_FX_TOKEN        — BOT Exchange Rates
-BOT_STATS_TOKEN     — BOT Statistics
-PORTFOLIO_DB        — default portfolio.db
-
-# Portfolio Cloud Sync (PC ↔ MacOS via Google Drive) — backend/sync/
-SYNC_ENABLED        — "true" to activate (default off)
-SYNC_DIR            — shared cloud folder, e.g. G:\My Drive\Investment Portfolio (Win) / /Users/you/Google Drive/Investment Portfolio (Mac)
-                      ⚠️ NO quotes — a shell-exported value keeps them literally and the path never resolves (stripped since 2026-08-11)
-SYNC_DEVICE_ID      — blank → auto from hostname
-SYNC_PUSH_INTERVAL  — background push cadence sec (default 60)
-SYNC_PULL_INTERVAL  — manifest peer-change check sec (default 20) → auto-pull
-SYNC_PUSH_DEBOUNCE  — sec to coalesce writes before pushing (default 2)
-
-# ATM IV snapshot recorder — backend/iv_scheduler.py (feeds the SD heatmap)
-IV_SNAPSHOT_INTERVAL — pass cadence sec (default 10800 = 3h; 0 disables entirely).
-                       Sub-daily on purpose: a pass is free once the day is covered,
-                       and several chances a day is what lets the series survive a
-                       machine that is only on for part of it.
-IV_SNAPSHOT_SYMBOLS  — comma list overriding the universe. Default = pinned_assets
-                       ∪ symbols that already have iv_snapshots rows (a series must
-                       not stop just because a symbol left the watchlist — the gap
-                       cannot be back-filled).
-
-# SEC Thailand — OLD portal (expires 2026-06-30)
-SEC_COMMON_PRIMARY / SEC_FUND_FACTSHEET_PRIMARY / SEC_FUND_DAILY_PRIMARY
-SEC_BOND_PRIMARY (dead) / SEC_DIGITAL_ASSET_PRIMARY / SEC_ONE_REPORT_PRIMARY
-
-# SEC Thailand — NEW portal (secopendata.sec.or.th)
-SEC2_API_KEY        — single key: Fund v2 + Bond v2 + One Report v1
+FRED_API_KEY          — required: macro, rates, crisis, TAIL, BOND
+ALPHA_VANTAGE_API_KEY — macro fallback
+ANTHROPIC_API_KEY     — portfolio AI; CLAUDE_MODEL / CLAUDE_MAX_TOKENS optional
+BINANCE_API_KEY       — crypto order footprint
+THESES_DIR / SOURCES_DIR / OBSIDIAN_WIKI_DIR / GRAPHS_DIR — thesis md, sources, Zettelkasten export, analysis pages
+CLIPPINGS_DIR / OLLAMA_URL — backend clippings router (no UI since 2026-09-25)
+RSSHUB_URL / FACEBOOK_ACCESS_TOKEN — social feed
+BOT_API_TOKEN / BOT_IR_TOKEN / BOT_FX_TOKEN / BOT_STATS_TOKEN — Bank of Thailand
+SEC2_API_KEY          — SEC Thailand new portal (Fund v2, Bond v2, One Report v1)
+SEC_*_PRIMARY / SEC_BASE_URL — SEC Thailand old portal (legacy, closed 2026-06-30)
+PORTFOLIO_DB          — default portfolio.db (scripts honour it: e.g. run backfill_nav on a copy)
+CORS_ORIGINS          — must include the frontend origin (port 9318)
+YAHOO_MAX_CONCURRENT  — default 6
+QUOTE_PROVIDER_DEFAULT / QUOTE_AUTO_FAILOVER — quote registry
+IV_SNAPSHOT_INTERVAL (default 10800, 0 = off) / IV_SNAPSHOT_SYMBOLS — ATM IV recorder
+SERIES_REFRESH_INTERVAL — indicator series collectors
+ALERT_SCAN_INTERVAL   — alert rule scanner
+UPSTREAM_LOG          — override logs/upstream.jsonl
+ALLOW_DANGEROUS_OPS   — gate for destructive maintenance endpoints
+SYNC_ENABLED / SYNC_DIR (no quotes) / SYNC_DEVICE_ID / SYNC_FOLDER_NAME / SYNC_AUTODETECT
+SYNC_PUSH_INTERVAL (60) / SYNC_PULL_INTERVAL (20) / SYNC_PUSH_DEBOUNCE (2)
+MCP_AGENT_NAME / MCP_TRANSPORT / MCP_HOST / MCP_PORT — MCP server
+BT_BACKEND_RELOAD / BT_SUPERVISOR — set by the launcher (dev status + restart)
 ```
 
 ### Next.js (`.env.local`)
 ```
-PYTHON_API_URL=http://localhost:9317
-ALPHA_VANTAGE_API_KEY
-OPENAI_API_KEY      — optional
+PYTHON_API_URL=http://localhost:9317   — imported ONLY via lib/constants.ts (PYTHON_API)
 ```
 
 ---
 
 ## Backend Architecture — Modular Routers
 
-`main.py` = thin app init + CORS + router mounter. All logic in `backend/routers/`.
+`main.py` = app init + CORS + schema init + router mounting (61 routers). All logic in `backend/routers/`.
+Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo_gate` load before any router.
 
 | Router file | Prefix | Source |
 |-------------|--------|--------|
-| `market.py` | `/api/market-data`, `/api/heatmap` | yfinance |
-| `stock.py` | `/api/stock/*` | yfinance |
+| `dev.py` | `/api/dev/{status,restart}` — dev-only stale-backend check | `dev_status.py` mtimes + launcher supervisor |
+| `health.py` | `/api/health/upstream` — live upstream state (no outbound call) | `upstream_health.py` |
+| `market.py` | `/api/market-data`, `/api/heatmap*` (no UI consumer since GMOV removal) | yfinance |
+| `stock.py` | `/api/stock/*` — quote, history, financials, earnings (+ `Ticker.calendar`, SET filing deadlines via `earnings_deadlines.py`) | yfinance |
 | `dcf.py` | `/api/dcf/*` (adaptive valuation + sensitivity + audit lineage) | yfinance + `analytics/dcf.py` |
-| `options.py` | `/api/options/*`, positions + Greeks + `POST smile-fit` | yfinance + greeks.py + SciPy Raw SVI |
-| `pins.py` | `/api/pins/*` (groups, assets, tags CRUD) | SQLite |
-| `clippings.py` | `/api/clippings/*` | filesystem + Ollama |
-| `news.py` | `/api/news/facebook`, `/api/news/feed` | RSSHub / Graph API + yfinance + RSS |
-| `news_watchlist.py` | `/api/news/watchlist`, `/api/news/sources` | 7 free news sources + sector DB + Polymarket pool |
-| `polymarket_stock.py` | `/api/polymarket/stock/{symbol}`, `/api/polymarket/stocks` | Gamma `/public-search` + `/events` (single-name price ladders) |
-| `company_filings.py` | `/api/company/filings|outlook|xbrl/{symbol}` | SEC EDGAR (submissions + 8-K EX-99.1 + XBRL companyconcept) — US only |
-| `social.py` | `/api/social/feed` | RSSHub / Graph API |
-| `macro.py` | `/api/macro` | FRED + Alpha Vantage (2-layer cache). Read in-process by `/api/tail-risk/macro-context`; `next_fomc` from `event_calendar.py` |
-| `crisis.py` | `/api/crisis` | FRED |
-| `sovereign.py` | `/api/sovereign/*` | World Bank |
-| `portfolio.py` | `/api/portfolio/*` (research — thesis from DB, transactions, backtest) | filesystem + SQLite |
-| `portfolio_v2.py` | `/api/v2/portfolio/*` (accounts, trades CRUD, open-positions, sell, dividends, import) | SQLite |
-| `risk.py` | `/api/v2/portfolio/risk/*` (VaR/CVaR/Parity/Stress/Position-size) | Ledoit-Wolf |
-| `backtest_v2.py` | `/api/v2/portfolio/backtest/*` (equity, holdings-timeline, distribution) | SQLite trades + yfinance |
-| `fx.py` | `/api/fx/*` | yfinance |
-| `rates.py` | `/api/rates/curve` (UST 11 tenors + JGB 15 tenors, tick-row shape) | FRED daily + MOF CSV |
-| `global_yields.py` | `/api/macro/global-yields` (was MACRO YIELD tab — no UI consumer since 2026-09-17) | FRED (US daily + OECD monthly) |
-| `crypto.py` | `/api/crypto/*` | yfinance |
-| `etf.py` | `/api/etf/{symbol}` | yfinance |
-| `footprint.py` | `/api/crypto/footprint` | Binance aggTrades |
-| `central_banks.py` | `/api/central-banks/*` | SDMX/REST (no key) |
-| `polymarket.py` | `/api/polymarket/*` (signals, search, MCP endpoint) | Gamma API |
-| `bot.py` | `/api/bot/*` (auctions, rates, fx, statistics) | BOT API |
-| `sectors.py` | `/api/sectors/*` (classification, search, override) | Wikipedia + yfinance + SQLite |
-| `screener.py` | `/api/screener/sp500*` (by sector) | yfinance |
-| `config_router.py` | `/api/config/symbols/*` (symbol_lists CRUD) | SQLite |
-| `circuit_breaker.py` | `/api/circuit-breaker/{check,market,margin}` | yfinance |
-| `listing_gate.py` | `/api/listing-gate/screen` (IPO quality gate: hard filters + weighted score) | yfinance |
-| `sec.py` | `/api/sec/*` (legacy, expires 2026-06-30) | api.sec.or.th (old portal) |
-| `sec_v2.py` | `/api/sec/v2/*` (52 routes: Bond v2 + Fund v2 + One Report v1) | api.sec.or.th (new portal) |
-| `allocation.py` | `/api/allocation/*` (signal, layers, history) | FRED + ETF data |
-| `country_rotation.py` | `/api/country-rotation/*` (scores, history, universe) | yfinance + World Bank |
-| `sector.py` (sector selection) | `/api/sector/*` (signal, factors, history) | FRED + yfinance |
-| `regime.py` | `/api/regime/correlation` | yfinance (5min cache) |
-| `market_state.py` | `/api/market-state/{sym}` (dashboard, 1h) · `/{sym}/validation` (walk-forward, 24h) | yfinance + hmmlearn |
-| `rotation.py` | `/api/rotation/table` (theme/sector momentum + RRG quadrant vs SPY) | yfinance batch (15min cache) |
-| `fear_greed.py` | `/api/fear-greed`, `/api/fear-greed/history` | yfinance ^VIX/SPY/TLT/HYG/LQD/RSP (5min/60min cache) |
-| `alerts.py` | `/api/alerts` | regime + SQLite (60s cache) |
-| `alert_rules.py` | `/api/alerts/rules*` (CRUD, preview, scan, events) | SQLite + boolean-AST engine |
-| `ticker.py` | `/api/ticker` (crawl-strip items + alerts) | reuses existing caches, TTL 60s |
-| `tail_risk.py` | `/api/tail-risk/{signals,vix-term}` | **v2 (2026-08-16)**: `vol_indices.py` (CBOE CSV) + yfinance SPY/AGG/DCC + in-process calls to crisis/fear_greed/ticker. 6 risk dimensions, tri-state signals. **+ MARKET EVENTS (2026-09-24)**: `backend/tail_events.py` ตั้งชื่อเหตุการณ์ทางการ (Rates Volatility Shock, Treasury Selloff — Bear Flattening, Stock–Bond Joint Drawdown, Flight to Quality, Yen Carry-Trade Unwind …) จาก z ของ *การเปลี่ยนแปลง* 1d/5d บน cross-asset panel; SEVERE ยก `risk_level` ได้ (`risk_basis`) |
-| `analytics.py` | `/api/analytics/{corr,beta,vol,return,drawdown,sharpe,zscore,rsi,compare,rank}` | yfinance + TTLCache 300s |
-| `paper_trading.py` | `/api/paper/*` (accounts, orders, positions, fills, equity-curve) | yfinance + SQLite |
-| `providers.py` | `/api/providers` (list+health), `/api/providers/active` (switch), `/api/providers/auto-failover` | quote registry |
-| `zettel.py` | `/api/v2/zettel/*` (Zettelkasten: atomic notes + typed edges + sources + FTS5 trigram + Obsidian export) | SQLite + `OBSIDIAN_WIKI_DIR` |
-| `graphs.py` | `/api/v2/graphs/*` (rendered analysis pages: index in SQLite, HTML on disk, `/render` under a strict CSP) | SQLite + `GRAPHS_DIR` |
-| `series.py` | `/api/v2/series/*` (generic indicator series: any published number over time that is not an instrument; collectors in `series_sources/`, first one = dramexchange DRAM/NAND) | SQLite |
-| `theses.py` | `/api/v2/theses/*` (CRUD + append-only event log + trade links + md import/export; `X-Thesis-Actor` → `payload.actor`) | SQLite + `THESES_DIR` |
-| `sync_router.py` | `/api/sync/status`, `/api/sync/pull`, `/api/sync/push` | cloud-sync (`backend/sync/`) |
-| `watchlist_signals.py` | `/api/watchlist/{quotes,signals,sparklines}` (bounded batches with per-symbol status) | shared `market_snapshots.py`/`market_requests.py`; quotes60s, scans900s |
+| `ir_stress.py` | `/api/ir-stress/{curve,scenarios,{symbol}/exposure|duration|scenario,screen/rank}` (CIRST, stock RATE STRESS tab) | XBRL + FRED |
+| `market_heatmap.py` | `/api/market-heatmap?market=US&per=25` (HMAP view) | yfinance `screen()` × 11 sectors in parallel; 90s, fail 60s, last-good 6h |
+| `cot.py` | `/api/cot/{snapshot,history,basis,factor,portfolio,status}` | CFTC Socrata, 17 contracts, background refresh → `cot_*` tables; endpoints read SQLite only |
+| `discover.py` | `/api/search-stats/{hit,top,{symbol}}`, `/api/most-active` (MKT FREQ / ACTIVE) | SQLite `search_hits` + yfinance `screen("most_actives")` |
+| `bonds.py` | `/api/bonds/{overview,supply,issuance}` (BOND view) | FRED + Treasury fiscaldata + SEC EFTS |
+| `rates.py` | `/api/rates/curve` (UST 11 + JGB 15 tenors, tick-row shape) | FRED daily + MOF CSV |
+| `crisis.py` | `/api/crisis`, `/api/crisis/composite` (BOND → CONDITIONS, TAIL) | FRED |
+| `macro.py` | `/api/macro`, `/api/macro/calendar` (event rail: FOMC/CPI/NFP/PCE/GDP, back 3y) | FRED + AV; `event_calendar.py` |
+| `global_yields.py` | `/api/macro/global-yields` (no UI consumer) | FRED |
+| `tail_risk.py` | `/api/tail-risk/*` — events, 6 dimensions, macro context, rotation, `cot_crowding` (context only) | CBOE CSV + yfinance + in-process crisis/fear_greed/ticker/cot |
+| `options.py` | `/api/options/*` — chains, positions + Greeks, `POST smile-fit`, `POST payoff`, IV snapshots / SD bands | yfinance + greeks.py + SciPy SVI |
+| `pins.py` | `/api/pins/*` (watchlist groups, assets, tags) | SQLite |
+| `watchlist_signals.py` | `/api/watchlist/{quotes,signals,sparklines}` | shared `market_snapshots.py` / `market_requests.py` |
+| `news.py` / `news_watchlist.py` / `social.py` | `/api/news/*`, `/api/social/feed` | 7 news sources, RSS, RSSHub/Graph API |
+| `polymarket.py` / `polymarket_stock.py` | `/api/polymarket/*` | Gamma API (client-side filtering, see gotchas) |
+| `company_filings.py` | `/api/company/{filings,outlook,xbrl}/{symbol}` | SEC EDGAR (US only) |
+| `series.py` | `/api/v2/series/*` (generic indicator series; dramexchange DRAM/NAND) | SQLite + `series_sources/` |
+| `portfolio_v2.py` | `/api/v2/portfolio/*` — accounts, trades, sell (AVCO), cash/transfer/reconcile, dividends, fees, open-positions, summary, returns, nav-history, **nav-index** (TWR, start-of-day for capital dated before the snapshot day), **takeover**, **history-review**, ledger check/stock-card/statements/evidence, import | SQLite |
+| `risk.py` | `/api/v2/portfolio/risk/*` (VaR/CVaR/Parity/Stress/Sizing) | Ledoit-Wolf |
+| `backtest_v2.py` | `/api/v2/portfolio/backtest/*` | SQLite trades + yfinance |
+| `portfolio.py` | `/api/portfolio/*` (legacy research: thesis files, transactions, backtest) | filesystem + SQLite |
+| `theses.py` / `zettel.py` / `graphs.py` | `/api/v2/theses/*`, `/api/v2/zettel/*`, `/api/v2/graphs/*` | SQLite + `THESES_DIR` / `OBSIDIAN_WIKI_DIR` / `GRAPHS_DIR` |
+| `paper_trading.py` | `/api/paper/*` | yfinance + SQLite |
+| `alerts.py` / `alert_rules.py` / `ticker.py` | `/api/alerts*`, `/api/ticker` | regime + SQLite rule engine |
+| `regime.py` / `market_state.py` / `rotation.py` / `analytics.py` / `fear_greed.py` | regime correlation, per-symbol HMM state, RRG rotation (`/api/rotation/{table,map,tilt}`), analytics, F&G | yfinance |
+| `allocation.py` / `country_rotation.py` / `sector.py` / `sectors.py` / `screener.py` | signal engines + sector classification + S&P screener (no MACRO view; kept for TAIL/API) | FRED + yfinance + SQLite |
+| `fx.py` / `crypto.py` / `footprint.py` / `etf.py` | FX, crypto (footprint powers Order Footprint), ETF | yfinance / Binance |
+| `central_banks.py` / `sovereign.py` / `bot.py` / `sec.py` / `sec_v2.py` | central banks, World Bank, BOT, SEC Thailand | SDMX, World Bank, BOT, SEC TH |
+| `circuit_breaker.py` / `listing_gate.py` / `config_router.py` / `providers.py` / `sync_router.py` | market circuit breaker, IPO gate, symbol lists, quote providers, cloud sync | mixed |
+| `clippings.py` | `/api/clippings/*` — kept, **no UI** since CLIP removal 2026-09-25 | filesystem + Ollama |
 
 ### Quote Provider Registry (live-quote path)
-`market_data` singleton = `FailoverSource` facade. Quote path (`download_quotes`/`get_fast_info`/`download`/`get_history`) → `ProviderRegistry` (manual switch + auto-failover, capability-scoped). Batch quote/download use **gap-fill merge** — per-symbol routing across providers so mixed portfolios (TH `.BK` + US) get priced by whichever provider supports each symbol. Heavy methods (options/financials/etf/news) → primary yfinance. Providers: `YFQuoteProvider` only (Stooq fallback removed 2026-09-24 — it timed out on every call and was never able to fill a gap). Add provider: implement `QuoteProvider` + `registry.register()` in `sources/__init__.py`. Env: `QUOTE_PROVIDER_DEFAULT`, `QUOTE_AUTO_FAILOVER`. FE seam: `useLiveQuery` (cadence) + header `ProviderSwitch`. Scaling roadmap: `plans/scaling/`.
+`market_data` singleton = `FailoverSource` facade. Quote path (`download_quotes`/`get_fast_info`/`download`/`get_history`) → `ProviderRegistry` (manual switch + auto-failover, capability-scoped, gap-fill merge per symbol). Only `YFQuoteProvider` is registered (Stooq removed 2026-09-24). Add a vendor: implement `QuoteProvider` + `registry.register()` in `sources/__init__.py`. FE seam: `useLiveQuery` + header `ProviderSwitch`. Roadmap: `plans/scaling/`.
 
-### SQLite Database Schema (`portfolio.db`)
+---
+
+### SQLite Database Schema (`portfolio.db`, 66 tables + 2 views, 2026-09-26)
+
+Core portfolio tables first; the full per-table notes follow.
+
+```sql
+portfolio_accounts  (id, name, broker, country, currency, account_type, is_active, markets JSON, created_at, updated_at)
+                    -- finansia (THB, sub-accounts 0153717 / 6065151 / 6065157 live in trades.note), dime (USD), innovestx (THB crypto)
+trades              (id, account_id, symbol, sector, date_entry, date_exit, price_entry, price_exit,
+                     price_stoploss, price_target, volume, amount, pnl_amount, win_loss W|L|P, pnl_percent,
+                     currency, exchange_rate, exit_exchange_rate, resolved_symbol, market, is_reinvest,
+                     fee_entry, fee_exit, fee_detail JSON,
+                     acquisition_type, original_price_entry, transfer_price_entry,
+                     strategy_name, entry_trigger, exit_trigger, market_trend, news_sentiment,
+                     expectation_based, factor_based, fear_greed_index, vix_index, note, created_at, updated_at)
+-- one row per lot; win_loss='P' = open. AVCO: a sell rebases every open lot of the symbol (_rebase_open_lots_to_avco);
+--   a partial sell splits the lot (SELL_PARTIAL / SELL_PARTIAL_CREATED in trade_audit_log).
+-- 2026-09-26 fees: fee_entry / fee_exit in instrument ccy, never inside price_entry (broker cost = qty × price);
+--   fee_exit is inside pnl_amount, fee_entry is charged to realized on the buy date.
+-- 2026-09-26 takeover: acquisition_type='TRANSFER_IN' = lot received in kind when a portfolio was taken over for
+--   management. price_entry/amount/date_entry = fair value on the transfer date; original_price_entry = previous
+--   owner's cost (memo); transfer_price_entry = the fair value. Both memo prices are copied on splits and never
+--   rebased → inherited P&L = (transfer − original) × volume is fixed. GET /api/v2/portfolio/takeover.
+trade_audit_log     (id, trade_id, action PATCH|SELL_FULL|SELL_PARTIAL|SELL_PARTIAL_CREATED|AVCO_REPAIR|DELETE|OPTION_EDIT,
+                     fields_changed, reason, snapshot, created_at, event_id, updated_at)
+position_cost_overrides (account_id, symbol, avg_cost, reason, updated_at)  -- display override of broker avg cost
+portfolio_nav_snapshots (account_id all|<id>, snapshot_date, total_value, open_cost_basis, unrealized_pnl,
+                     realized_pnl, invested_capital, dividends, source live|backfill, created_at)
+-- live rows = captured when PORT is viewed (first 2026-07-03); backfill rows = scripts/backfill_nav.py rebuild
+--   (2026-01-01 → day before first live). /nav-history re-derives invested_capital + dividends by date from TODAY's
+--   ledgers and adds cash_balance / nav_with_cash / invested_before_day; cash = invested + realized + dividends
+--   − open_cost_basis(stored) + adjustments → changing lot cost basis requires re-basing stored snapshots.
+ledger_events       (id, account_id, trade_date, settle_date, trade_time, type, symbol, qty, price, gross, fee, vat, tax,
+                     net_cash, currency, fx_rate, broker_ref, link_id, reverses_id, source, source_ref, note, created_at)
+                     -- append-only journal (plans/port-accounting-ledger.md); 0 posted rows yet; _ledger_guard blocks UPDATE/DELETE
+risk_snapshots      (account_id, snapshot_date, portfolio_value, breach_count, ensemble_signal, vol_regime, risk_score, ews, regime_label, …)
+alert_rules / alert_rule_state / alert_events   -- boolean-AST alert engine (routers/alert_rules.py)
+pm_slug_registry    -- Polymarket slug cache
+paper_option_positions -- paper trading options
+symbol_lists        -- indices / FX / crypto lists seeded from config.py
+```
+
+#### All tables (notes)
 ```sql
 transactions        (id, symbol, type buy/sell, shares, price, date, commission, notes, created_at)
 -- 2026-07-04 (port-redesign Step 1): trades += resolved_symbol TEXT, market TEXT (canonical provider ticker,
@@ -191,9 +201,29 @@ transactions        (id, symbol, type buy/sell, shares, price, date, commission,
 cash_ledger         (id, account_id, date, income, investment, exchange_rate, note, entry_type CASH|TRANSFER, linked_id)
 -- 2026-07-14 (cash-transfer-feature): entry_type/linked_id additive; TRANSFER rows come in linked
 --   pairs (same linked_id, opposite investment sign) via POST /cash/transfer; DELETE cascades pair
-cash_adjustments    (id, account_id, date, amount, currency, target_balance, derived_before, note, created_at)
+cash_adjustments    (id, account_id, date, amount, currency, target_balance, derived_before, category, note, created_at)
 -- 2026-09-16: cash EDIT offsets. cash_base = derived + Σamount. Not capital (no XIRR/invested effect).
 --   Synced (SYNC_TABLES + MONEY_TABLES). Deleted with its account.
+-- 2026-09-25: category defaults UNKNOWN for old/API legacy rows; CASH EDIT UI requires selecting a reason.
+broker_statements   (id uuid, account_id FK, as_of, currency, cash TEXT, market_value TEXT,
+                     holdings_json, source_ref, source_note, supersedes_id FK, created_at, updated_at)
+-- 2026-09-25: cited broker evidence, append revisions (API), sync + audit; R3 compares cash before EDIT and day-end quantities.
+--   Source reference is user supplied, not verified file; no real statement loaded yet.
+broker_executions   (id uuid, account_id FK, broker, symbol, side, executed_at_local, display_timezone,
+                     quantity TEXT, unit_price TEXT, instrument_ccy, order_amount TEXT?, order_ccy?,
+                     source_image, source_sha256, source_note, created_at, updated_at)
+-- 2026-09-25: 29 Dime Activity fills from 10 hash-verified user images; sync + audit.
+--   Evidence only: no trades/cash/lot/ledger posting. Screen time zone and sale settlement remain unknown.
+portfolio_history_review (id uuid, source_sha256, record_type TRADE|CASH, source_sheet, source_row,
+                          account_id, recorded_date, recorded_exit_date, symbol, source values,
+                          market date/low/high, price checks, review_status, matched_cash_id,
+                          lot_match_status, matched_source_rows, unmatched_quantity, source_weighted_cost,
+                          review_decision, review_note, created_at)
+-- 2026-09-26: local Excel evidence staging, 303 trade rows + 43 cash rows for 2024-25.
+--   Review rows remain local evidence; GET /api/v2/portfolio/history-review reads them.
+-- 2026-09-26: 20 independently checked closed trades posted to `trades` from a second
+--   reconciliation workbook; 145 proposals marked REVIEW_REQUIRED. Two DATA_FIX offsets
+--   release historical P&L from prior cash reconciliation, preserving current broker cash.
 audit_events        (event_id uuid PK, table_name, row_id, account_id, action INSERT|UPDATE|DELETE, old_data JSON, new_data JSON, reason, created_at ms)
 -- 2026-09-16: written ONLY by SQLite triggers (db.init_audit_layer, rebuilt every start) on db.AUDITED_TABLES.
 --   Sync-guarded (peer imports not re-logged; the log itself syncs as a union). updated_at-only UPDATEs skipped.
@@ -244,6 +274,13 @@ iv_snapshots        (symbol, snapshot_date, expiry, dte, spot, atm_strike, iv_ca
 --   IV of a chain, so this can never be back-filled — only ACCUMULATED. Written as a
 --   side effect of GET /api/options/{symbol} (and by POST .../iv-snapshot for a cron).
 --   One row per (symbol, day, expiry); /sd-bands picks MIN(dte) per day.
+bond_issuance_filings (adsh PK, file_date, form, issuer, cik, sic, category BANK|ABS|SOV|FIN|CORP, captured_at)
+bond_issuance_days    (date PK, filings, complete, fetched_at)
+cot_reports           (dataset, code, report_date PK; oi, conc4_long/short, conc8_long/short, fetched_at)
+cot_positions         (dataset, code, report_date, grp PK; long, short, spread, traders_long, traders_short)
+search_hits           (symbol PK, count, last_at)  -- symbols opened from a search box; local, NOT in SYNC_TABLES
+-- 2026-09-25 (COT): cache ของ CFTC long-form, key = contract CODE (ชื่อตลาดเปลี่ยน 2022-02-01), ไม่ sync
+-- 2026-09-25 (BOND view): cache ของ SEC EFTS 424B2/424B5 — re-derivable, ไม่ sync. วันจะ complete เมื่อเก่า ≥2 วัน
 etf_aum_snapshots   (as_of, symbol, total_assets, nav, close, implied_shares, source,
                      captured_at) PK(as_of, symbol)
 -- 2026-09-23 (sector rotation in TAIL): AUM ของ 11 SPDR sector ETF เก็บเอง วันละครั้ง.
@@ -315,46 +352,101 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 
 ---
 
-## Frontend Views — 7 views (post-CRYP/FX removal 2026-08-01)
+## Frontend Views — 6 views (since 2026-09-26)
 
 | Key | Button | View | Component |
 |-----|--------|------|-----------|
-| `1` | MKT | Market View (default) | `market-view.tsx` — watchlist + chart + Regime Detection + TICK DATA board (7 collapsible, user-reorderable sections with local persistence: AMERICAS/EMEA/ASIA PACIFIC + RATES·US + RATES·JP + VOLATILITY + FX) |
-| `2` | NEWS | News | `news-view.tsx` → barrel for `views/news/` — WATCHLIST (default, sector rail + per-ticker stream; HEADLINES/RATE STRESS/DCF/REGIME panels) / NEWSFEED / SOCIAL tabs + Polymarket right column |
-| `3` | GMOV | Market Movers | `market-movers-view.tsx` — indices table + heatmap treemap |
-| `4` | CLIP | Clippings + AI | `clippings-view.tsx` |
-| `T` | TAIL | Tail Risk Monitor | `tail-risk-view.tsx` — **MARKET EVENTS** (2026-09-24, top: ชื่อเหตุการณ์ EN + คำอธิบายไทย + evidence trigger/confirm/checked + earlier sessions; ribbon โชว์ 2 ชื่อแรก) + 6 risk dimensions + **MACRO CONTEXT** (not in composite, 2026-09-17): event strip FOMC/SEP/CPI/NFP/PCE/GDP, EVENT tag on VIX signals inside ±1 bday window, Fed/curve/regime/latest prints panel (+ CPI CORE · PCE · PCE CORE · ISM PROXY), **MACRO READ** 3 แกนจาก core PCE / ISM proxy / MOVE, **SECTOR ROTATION** (2026-09-23 — turnover share tilt ของ 11 SPDR + AUM record ที่เก็บเอง), event markers on 90D chart |
-| `6` | CRDT | Credit / Stress | `credit-view.tsx` — 4 tabs: overview, spreads, stress, consumer |
-| `P` | PORT | Portfolio | `portfolio-view.tsx` (barrel → `portfolio/`) — 5 top-level tabs: PORTFOLIO (sub: POSITIONS\|OPTIONS\|TRADES\|CASH\|ENTRY=manual trade form; POSITIONS + OPTIONS show `% PORT` of NAV incl. cash, options also `Δ % NAV`) · ANALYTICS (sub: P&L incl. Total Return per port + CAPM β/α table\|BACKTEST) · RISK (standalone) · TOOLS (sub: THESES — sub-tabs THESIS\|NOTES\|KB (Zettelkasten: notes·conflicts·graph)\|HISTORY\|LINKED TRADES\|AI\|IMPORT) · PAPER (sub: DASHBOARD\|TRADE\|POSITIONS\|OPTIONS\|HISTORY) |
+| `1` | MKT | Market (default, eager-loaded) | `market-view.tsx` — left panel WATCH / FREQ / ACTIVE (`discover-lists.tsx`, watchlist `pinned-assets.tsx` compact/table/cards) · main chart (`chart/ModularChart`, indicators, multiple regression channels, event rail: dividends/earnings/SET deadlines/FOMC/CPI/NFP/PCE/GDP) · REGIME panel CORR / GEOM / ROT (table + RRG map) / IV (smile, SVI, OI, 25Δ) / COT (PC1 + extremes) · TICK DATA board — 7 foldable, drag-reorderable sections (AMERICAS / EMEA / ASIA PACIFIC / RATES·US / RATES·JP / VOLATILITY / FX) in 4 columns NAME · LAST · CHG · YTD, ▼p/▲p CFTC crowding marks, `UsMarketClock` on top |
+| `2` | NEWS | News | `views/news/` — WATCHLIST (per-ticker, 7 sources, by sector; HEADLINES / RATE STRESS / DCF / REGIME panels) · NEWSFEED · SOCIAL · DATA (indicator series board) + Polymarket column |
+| `3` / `b` | BOND | Bond Monitor | `views/bonds/` — MARKET: KPI strip, TREASURY LEG, CREDIT LEG (IG/HY trigger lines 2%/5%), CORPORATE ISSUANCE/WEEK (SEC 424B2/424B5 ex-bank) + EVENT STUDY + RECENT DEALS, TREASURY AUCTIONS, DEBT STOCK, CFTC Treasury futures + basis trade · CONDITIONS (ex-CRDT, `useCreditData(isActive)` → `/api/crisis`): crisis level L0–3 (also in the status bar), STL FSI / NFCI, breakevens, 30Y mortgage, delinquencies, dealer balance sheet. `Alt+1/2` tabs |
+| `4` / `p` | PORT | Portfolio | `portfolio-view.tsx` → `views/portfolio/` — PORTFOLIO (POSITIONS incl. TAKEOVER strip · OPTIONS · TRADES · CASH · ENTRY) · ANALYTICS (P&L dashboard: KPI strip, flagged XIRR, period returns, PORTFOLIO GROWTH (TWR, deposit ▲ / withdrawal ▼ / EDIT ◆, estimated span shaded, monthly table) · ROTATION · BACKTEST) · RISK (VaR/CVaR/stress/parity/sizing + FUTURES POSITIONING vs BOOK) · TOOLS (THESES: THESIS / NOTES / KB Zettelkasten / GRAPHS / HISTORY / LINKED TRADES / AI · IMPORT · AUDIT incl. ACCOUNTING CHECK) · PAPER (DASHBOARD / TRADE / POSITIONS / OPTIONS / HISTORY) |
+| `5` / `t` | TAIL | Tail Risk Monitor | `tail-risk-view.tsx` + `views/tail/` — MARKET EVENTS (named cross-asset shocks; SEVERE raises the composite) · 6 risk dimensions → composite · MACRO CONTEXT (not in composite: event strip, Fed, curve, regime, latest prints, MACRO READ) · SECTOR ROTATION (turnover tilt + self-recorded ETF AUM) · POSITIONING (CFTC crowding flags; `cot_crowding` shown with CTX tag, `counted: False`) |
+| `h` | — | HMAP (no nav button) | `heatmap-view.tsx` — one market as a sector treemap (~275 names); command `heatmap(TH)`, `heatmap(US, 52w)`; metrics 1D · 52W · 50D · 200D · HIGH · RVOL switch without a request; click → stock view, shift-click → floating chart |
 
-Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as context; COUNTRY + SIGNALS tabs deleted with it, backend routers kept; key `5` free), GVOL (fake data), EQTY (dup), RMI (2026-05-24), CRYP `C` + FX `E` (2026-08-01 — FX merged into the MKT TICK DATA board; crypto via global search `BTC-USD` → stock-view). Backend `crypto.py`/`fx.py` routers kept: `/api/crypto/footprint` feeds the Order Footprint indicator. Keys `C`/`E` are free. Stock analysis (9 tabs) accessible via global search / heatmap click.
+- **Stock view** (not a nav button): global search `/` / `Ctrl+K`, heatmap or watchlist click → `stock-view.tsx`, 15 tabs (FINANCIALS, OUTLOOK, KEY METRICS, ANALYST, ESTIMATES, OWNERSHIP, CALENDAR, QUANTITATIVE, OPTIONS, EARNINGS QUALITY, GRID TRADING, STRATEGY FIT, DCF, RATE STRESS, REGIME) + COT when the symbol maps to a CFTC contract.
+- **Floating chart windows** (`chart/ChartWindowLayer`) float over every view, cap 10, persisted.
+- **URL = view**: header and mobile nav are `<a href="?view=…">` (`layout/view-navigation.ts`); new tab and Back/Forward restore the view. Shortcuts match the physical key (`core/shortcut-key-match.ts`), so they work on a Thai layout; IME composition, dead keys and Meta combos are ignored.
+
+**Removed views** (backend routers kept unless noted): CLIP `4` (2026-09-25 — `clippings-view.tsx` + `app/api/clippings/*` deleted, `clippings.py` stays), CRDT `6` (2026-09-25 — merged into BOND → CONDITIONS; `crisis.py` stays), GMOV `3` (2026-09-25 — replaced by HMAP; `/api/heatmap*` stays without UI), MACRO `5` (2026-09-17 — folded into TAIL; `/api/macro`, `/api/sovereign/*`, `/api/country-rotation`, `/api/sector`, `/api/allocation` stay), CRYP `C` + FX `E` (2026-08-01 — FX in TICK DATA, crypto via search; `crypto.py`/`fx.py` stay), GVOL, EQTY, RMI. `views/volatility-view.tsx` is still exported from `views/index.ts` but not routed.
+
+### Global keyboard shortcuts (`layout/bloomberg-terminal.tsx`)
+
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| `1`–`5` | MKT · NEWS · BOND · PORT · TAIL | `b` `p` `t` `h` | BOND · PORT · TAIL · HMAP |
+| `/`, `Ctrl+K` | global search | `i` | focus MKT symbol search |
+| `y` | %Chg YTD ↔ daily (THB ↔ USD in PORT) | `Ctrl+R` | refresh data |
+| `Esc` | back / close overlay | `?` | shortcut help |
+| `Ctrl+Shift+T` | toggle chart type | `Alt+1…9` | tab inside the view (`useTabShortcuts`) |
+
+---
 
 ---
 
 ## Known Issues / Limitations
 
-1. **RSSHub + Facebook**: Public instance may be rate-limited.
-2. **FRED API key**: Without it, macro and crisis views fail silently.
-3. **Ollama models**: llama3.1:8b or gemma2:9b recommended for Thai translation.
-4. **Polymarket**: Gamma API ignores `tag_slug`/`q`/`order` params — all filtering client-side on 3,000-market pool. Cold start ~15s. Δ24h null until backend runs ≥24h.
-5. **BOT FX (Stat-ExchangeRate)**: Returns 403 — subscription must be activated in BOT portal.
-6. **BOT max date range**: All time-series endpoints have 31-day max per request.
-7. **SEC Fund legacy expiry**: `/FundFactsheet/fund/*` and `/FundDailyInfo/*` expire **2026-06-30** — migrate to `/api/sec/v2/fund/*`.
-8. **SEC Bond v1 dead**: Shutdown 2026-04-30. Use `/api/sec/v2/bond/*`.
-9. **SEC Digital Asset**: Under maintenance — paths registered, API not responding.
-10. **SEC One Report**: `report_year` must be Gregorian (2023 not 2566); `language` must be `T`/`E` not `1`/`2`. Returns 204 when no data for section.
-11. **Options DataFreshness**: Yahoo Finance ~15min delay — yellow `⏱` badge shown on all delayed values.
-12. **Options Greeks Q3 bug**: Fixed 2026-06-03 — was using d₂ instead of d₁, overestimating ~50-100%.
-13. **`npm run dev:all` Ctrl+C traceback**: Fixed 2026-08-01 — cosmetic only (every process always exited 0 and freed its port). `uvicorn --reload`'s supervisor SIGTERMs the worker mid-shutdown; `main.py` now filters that one benign `KeyboardInterrupt`/`CancelledError` record. Details in `reference/gotchas.md`.
-14. **Pane indicator heights don't persist** 🔴 open — dragging an RSI/MACD pane is lost on reload and panes can collapse to 0px on rebuild. Root-caused 2026-08-01 (lightweight-charts v5 converts `setHeight` px → stretch factor against a stale total). Plan: `plans/pane-height-persistence-fix.md`.
-15. **TAIL Layer-A z-score has a units mismatch** 🟡 open — `layer_a_bearish` compares a **20-day cumulative** SPY−AGG return against the mean/std of **daily** SPY−AGG returns, inflating |z| by roughly √20 (live reading 6.39). Threshold −0.5 is therefore far looser than it looks, which matches the backtest verdict SENSITIVE (fires 49% of days IS). Left as-is deliberately in tail-risk v2: changing the formula would invalidate the 2026-06-07 backtest it was measured with. Fix = rescale + re-backtest together.
-16. **AVCO was never written back on a sell** — fixed 2026-09-22. `/api/v2/portfolio/sell` priced the sale off the pooled average but left every row's `price_entry` alone, so selling a cheap lot re-priced the remainder upward (SNDK ENTRY 1616.2403 → 1648.8074) and `SellModal`'s lot-by-lot loop booked one sale at three different costs. Sells now rebase every open lot; historical rows repaired with `backend/scripts/repair_avco_history.py` (SNDK applied, realized +81.27, DB backed up). The script SKIPS positions whose buy history is incomplete — `VT (dime)` sells 3.8755 against an empty pool, so its cost basis is still unknown. Details in `reference/gotchas.md`.
-17. **Volume Profile unavailable on rates/FX/VIX**: `^TNX`, `*=X`, `^VIX`, `^OVX` report `volume: 0` from Yahoo (calculated indices and yields have nothing trading behind them), so the VP button renders disabled with a tooltip. Cash indices (`^GSPC`/`^DJI`) DO carry volume — the gate is data-driven, not symbol-class-driven.
+### Portfolio data (2026-09-26)
+1. **Finansia 0153717 cash gap ≈ −฿33,360** — replaying the 2024-25 workbook (deposits + trades + 0.1678% commission) leaves the account ~฿33K short between 2025-01-20 and 2025-05-13; most likely an unrecorded deposit or a reconstructed re-buy that did not happen. Needs the broker statement. Workbooks: `Downloads/Portfolio Reconciliation 2024-2025 v2.xlsx`.
+2. **2024-25 history mostly not in `trades`** — 20 of 165 reconciled closed trades were imported (`backend/scripts/apply_portfolio_reconciliation_2024_2025.py`); 145 are `REVIEW_REQUIRED` in `portfolio_history_review`. Until more are imported, a NAV backfill before 2026 would be a near-flat line, so `portfolio_nav_snapshots` starts 2026-01-01 and GROWTH shows 2026 only.
+3. **Takeover cash is derived** — the 2026-02-08 takeover booked ฿585,453 in-kind (closes of 2026-02-06) + ฿426,112.06 cash = recorded ฿1,883,714.06 − previous owner's cost ฿1,457,602. Replace with the statement figure when available. Finansia statements still show the previous owner's average cost for those lots.
+4. **Ledger check** (`/api/v2/portfolio/ledger/check`): H2 negative pre-offset cash remains (Finansia −฿37,185 on 2025-01-20 = item 1; Dime −$5,078), I4 reconstructed cash ≠ recorded broker cash for both accounts, C1/N1 not evaluated. No posted journal, no broker statements → read switch blocked.
+5. **Dime row typos in the source workbook** — EXEL buy 22 @373.118 (2025-10-09, traded 38.27–39.47) and a duplicate of the 2025-10-08 EXEL sale; InnovestX alt-coins bought 2024-12-08 never sold while the account ends holding BTC only.
+
+### Code / data sources
+6. **`test_iv_scheduler::test_run_once_skips_without_touching_the_network`** fails (`KeyError: 'skipped'`); untouched by the 2026-09-25/26 work, looks date-dependent — not yet investigated.
+7. **Pane indicator heights don't persist** 🔴 — lightweight-charts v5 converts `setHeight` px → stretch factor against a stale total (`plans/pane-height-persistence-fix.md`).
+8. **TAIL Layer-A z-score units mismatch** 🟡 — 20-day cumulative return vs daily std inflates |z| ≈ √20; left as-is because the 2026-06-07 backtest used it. Fix = rescale + re-backtest together.
+9. **VT (dime) cost basis unknown** — sells 3.8755 against an empty pool; `repair_avco_history.py` skips it.
+10. **FRED key**: without it macro, crisis, BOND and TAIL fail. **Polymarket** Gamma ignores `tag_slug`/`q`/`order` — filter client-side on the 3,000-market pool; Δ24h null until the backend has run 24h. **RSSHub** public instance may rate-limit.
+11. **BOT**: Stat-ExchangeRate returns 403 until activated in the portal; every series has a 31-day max per request.
+12. **SEC Thailand**: old portal closed 2026-06-30 (`sec.py` legacy); use `sec_v2.py`. Digital Asset API under maintenance. One Report needs Gregorian `report_year` and `language` T/E.
+13. **Options** data is ~15 min delayed (⏱ badge). **Volume Profile** is disabled for zero-volume symbols (yields, FX, VIX) — data-driven gate.
+14. **Heatmap/GMOV leftovers**: `/api/heatmap*` endpoints and `app/api/heatmap/*` proxies have no UI consumer; `clippings.py` has no UI.
+15. **Doc drift fixed 2026-09-26**: `CLAUDE.md` Views table had `3` = HMAP and `4` = BOND; code is `3` BOND · `4` PORT · `5` TAIL · `h` HMAP.
 
 ---
 
 ## What Could Be Built Next
 
+Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished plan becomes `- [x] … done YYYY-MM-DD` only with a Completion Evidence section.
+
+### Open
+
+- [ ] **PORT Evidence Match** — broker fills ↔ reconstructed trades, AUDIT → EVIDENCE (`plans/port-evidence-match.md`)
+- [ ] **THESES readability + GRAPHS format + graph sync** — 7/7 steps coded 2026-09-19 (counts บนแท็บมากับ payload, markdown renderer เต็ม, rail พับได้, ปุ่ม READ โหมดเอกสาร, GRAPHS render shell + เทมเพลต + lint, `graphs` เข้า SYNC_TABLES + ไฟล์ HTML ไป Drive); เหลือฝังไฟล์ฟอนต์ Laksaman (`plans/theses-readability-and-sync.md`)
+- [ ] **PORT Accounting Subsystems (S0–S7)** — audit + AVCO/FIFO preview + preflight + statement revisions/R3 + cash EDIT categories/R1/R2 + 29 image-cited Dime fills staged separately. 11 offsets เก่ายัง UNKNOWN; ไม่ migrate/activate, C1/H2/N1 ค้าง (`plans/port-accounting-subsystems.md`, `sessions/2026-09-25-dime-broker-execution-evidence.md`)
+- [ ] **PORT Accounting Ledger** — Step 1 done; Step 2 verified SQLite backup + apply gate; Step 3 stock-card AVCO/FIFO + CHECK UI/API reconstructed; Step 6 statement intake/diff code prepared. ยังไม่มี posted events, dual-write/read switch (`plans/port-accounting-ledger.md`)
+- [ ] **Mobile Responsive** — shell bottom nav + MKT single-panel switcher first; PORT, NEWS, rest follow (`plans/mobile-responsive.md`)
+- [ ] **Migrate Fund legacy → v2** — ⚠️ overdue: the SEC old portal closed 2026-06-30; `/api/sec/*` legacy fund endpoints are dead
+- [ ] Seed sector data: POST /api/sectors/fetch for TH/KR/HK/EU/US
+- [ ] **Corporate Interest Rate Stress Testing (CIRST)** — วัดผลกระทบ shock ดอกเบี้ยระดับบริษัท (QERM): repricing ladder + fixed/float จาก XBRL → Earnings-at-Risk + breaking-point bp → Merton PD → spread → ΔWACC/ΔEV/equity duration → ES + Euler contribution → IR-Stress Score 0–100; tab ใหม่ใน stock-view + screener ใน BOND → CONDITIONS (CRDT merged 2026-09-25) (`plans/corporate-ir-stress-testing.md`)
+- [ ] **CIRST Validation Harness** — backtest 5 ปี point-in-time (20 as-of, XBRL first-filed revision + FRED daily curve), เทียบ predicted vs realized 5 tier, บังคับชนะ null models (persist / full-reprice / debt×Δy) ด้วย Diebold-Mariano ก่อนเปิด Score; ได้ implied float-share ต่อบริษัทเป็นผลพลอยได้ (`plans/cirst-validation-harness.md`)
+- [ ] **CIRST RATE STRESS tab** — แท็บที่ 13 ใน stock-view (เข้าจาก NEWS → คลิกหุ้น) 5 sub-tab: EXPOSURE (ladder+refi gap) · SCENARIO (ตาราง ΔI bound / ICR / DDM vs empirical) · DURATION (Gordon inverted + θ) · HISTORY (20 as-of ย้อน 5 ปี + error summary + attribution) · DIAGNOSTICS; 4 แท็บแรก ship ได้ทันที HISTORY รอ harness (`plans/cirst-stock-rate-tab.md`)
+- [ ] **Floating Chart Windows** — เปิดกราฟหลายตัวพร้อมกันเป็น popup ลอยอิสระ (ลาก/ย่อขยาย/ย่อเก็บ/z-order, cap 10, persist localStorage, ลอยข้ามทุก view) — เฟส 1 done 2026-08-24; เหลือเฟส 2: TILE + edge snap, indicator แยกต่อหน้าต่าง (`plans/floating-chart-windows.md`)
+- [ ] **IV SD Heatmap** — BS lognormal σ-band pane (5 buckets −2σ…+2σ) จาก `σ_mid=(IV_call+IV_put)/2`; 2 โหมด occupancy/cheapness, ตาราง `iv_snapshots` สะสม IV เอง, `/api/options/{sym}/sd-bands`; ยัง verify pixel ไม่ได้ (`plans/iv-sd-heatmap.md`)
+- [ ] **System Audit 2026-07 — Bug Fixes & Refactor** — 9 fix items + 6 refactor items; F01 done 2026-07-03, F06 done 2026-07-04 (via port-redesign resolver); เหลือ F02 AVCO drift 🔴, F03 async blocking 🔴, F04/F05/F07/F08/F09 + R01–R06 (`plans/system-audit-2026-07/README.md`)
+- [ ] **Port Redesign** — symbol resolver (resolve-at-write), sub_portfolios table จริง, currency module, ลบ `_get_yf_symbol`/ปิด F06 (`plans/port-redesign.md`)
+- [ ] **VP Indicator Upgrade** — แก้ session timezone bug (B1 🔴) + visible-range VP + delta profile + naked POC + HVN/LVN + config UI; audit: `reports/vp-indicator-risk-report.md` (`plans/vp-indicator-upgrade.md`)
+- [ ] **P/E History Pane + EPS Surprise Labels** — endpoint `/api/stock/pe-history` (TTM EPS × weekly close, 13–20yr), `PEPane.tsx` recharts sub-pane + valuation percentile bands, earnings marker สี beat/miss; code-complete, backend HTTP verified, frontend visual pending (`plans/pe-earnings-visualization.md`)
+- [ ] **Pane Height Persistence Fix** — pane indicator ยุบเป็น 0 ตอน rebuild (lw v5 setHeight→stretch แปลงบนฐานว่าง) + drag จับเฉพาะ teardown ทำให้ reload แล้วหาย + wrapper h=0; แผนแก้ 3 ชั้น: defer setHeight 2-frame, capturePaneDrags 4 จุดเรียก, ซ่อม height chain (`plans/pane-height-persistence-fix.md`)
+- [ ] **RSI Scale Modes** — คลิกขวาบน RSI pane เลือกสเกล 6 แบบ (standard / autofit / price projection / distance % / distance in avg moves / log RS) + modal ตั้งค่า; Step 1–2 done 2026-08-05 (`calcRSIState` export Wilder state + แก้ seed divergence 99.0099→100, `rsiInverse.ts`), Step 1–5 done 2026-08-05 — คลิกขวาบน RSI pane → เมนู 6 โหมด + เส้น projection บน price pane (Step 6 modal ยกเลิก ยุบลง context menu แทน) ยังไม่ verify ตัวเลขบนแกนด้วยตาเพราะ ModularChart ไม่วาด price series ในโปรไฟล์ที่ทดสอบ; audit: `sessions/reports/rsi-seed-divergence-risk-report.md` (`plans/rsi-scale-modes.md`)
+- [ ] Polymarket: dashboard view in frontend
+- [ ] BOT: frontend view for Bond Auction + yield trend chart
+- [ ] BOT: activate Stat-ExchangeRate → add THB FX view
+- [ ] Central banks: comparison chart across banks
+- [ ] Clippings: auto-reload (file watcher)
+- [ ] Alerts: price alert when stock hits threshold (price target, separate from stop loss)
+- [ ] Sovereign: map visualization
+- [ ] Bloomberg CLI + MCP server (`plans/bloomberg-cli-mcp.md`) — **MCP part started 2026-09-18**: `backend/mcp_server.py` (theses workspace + portfolio/market research, 15 tools; Claude Code via `.mcp.json`, Claude Desktop via `claude_desktop_config.json` — setup in `docs/mcp-server.md`); CLI still not built
+- [ ] SEC One Report: frontend view (data available 2021–2023)
+
+### Done (newest first)
+
+- [x] **Portfolio takeover as in-kind transfer** — done 2026-09-26 (no plan file): Finansia 6065151/6065157 lots re-booked at fair value on 2026-02-08 (`acquisition_type='TRANSFER_IN'`, previous owner's cost as memo, `/api/v2/portfolio/takeover`, TAKEOVER strip in POSITIONS); script `backend/scripts/apply_portfolio_takeover.py`; commit `20b4294`
+- [x] **NAV index start-of-day flows** — done 2026-09-26 (no plan file): capital dated before the snapshot day counts in that day's base (`invested_before_day`); commit `840ecaa`
+- [x] **2024-25 history reconciliation** — done 2026-09-26 (partial import by design): workbook v2 with price-checked dates, AVCO replay, missing buys, cash books; 20/165 trades imported, 145 `REVIEW_REQUIRED` (`sessions/2026-09-26-portfolio-history-db-backfill.md`)
+- [x] **Terminal Navigation Accessibility** — done 2026-09-26: เรียงคีย์เมนู, รองรับผังแป้นพิมพ์ไทย, เปิดเมนูด้วย Ctrl+click (`plans/completed/terminal-navigation-accessibility.md`)
+- [x] **BOND view** — done 2026-09-25; key `B`: yields/spreads/term premium vs SEC corporate-deal proxy + Treasury auctions + Z.1, event study (`plans/completed/bond-view.md`)
 - [x] **Sector Rotation Map (RRG)** — done 2026-09-25; ROT tab MAP view, `/api/rotation/map`, TH bench fallback TDEX.BK (`plans/completed/sector-rotation-map.md`)
 - [x] **PORT ANALYTICS redesign** — done 2026-09-25; dashboard grid, KPI strip, GROWTH view (signals-style TWR + monthly table), PORTFOLIO ROTATION card, ledger, accounts table (`plans/completed/port-analytics-redesign.md`)
 - [x] **Upstream event log (no UI)** — done 2026-09-24; alert bar ลบ → `logs/upstream.jsonl` + `backend/scripts/upstream_report.py` + ขั้นตอนใน CLAUDE.md; ลบ EM HY OAS (FRED ลบ series) (`plans/completed/upstream-event-log.md`)
@@ -365,54 +457,30 @@ Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as 
 - [x] **TAIL Market Event Classifier** — done 2026-09-24; ตั้งชื่อเหตุการณ์ทางการจากช็อกข้ามสินทรัพย์ + SEVERE ยก composite + fix MOVE ถูกทิ้งเพราะ align เข้าปฏิทิน VIX (`plans/completed/tail-event-classifier.md`)
 - [x] **Latest Daily Candle Recovery** — done 2026-09-23; กู้แท่งวันล่าสุดเมื่อ Yahoo daily close ว่างแต่ quote ปิดวันเดียวกันพร้อม raw OHLC ใช้ได้ (`plans/completed/latest-daily-candle-recovery.md`)
 - [x] **Extended-Hours Candle Price Line** — done 2026-09-23; PRE/AH quote เป็นเส้นแนวนอนบนกราฟแท่งเทียนใน MKT, stock-view และ floating chart (`plans/completed/extended-hours-candle-price-line.md`)
-
 - [x] **TICK DATA Section Order** — done 2026-09-23: drag/ปุ่มขึ้นลงจัดลำดับหมวดทั้งเจ็ดและจำไว้หลัง reload (`plans/completed/tickdata-section-order.md`, `sessions/2026-09-23-tickdata-section-order.md`)
-
 - [x] **WATCHLIST Shared Data Optimization** — done 2026-09-23: shared Yahoo/Gamma API coordination, full-list batching/statuses, retained query cache and paged rendering;1000-symbol browserfixture verified (`plans/completed/watchlist-shared-data-optimization.md`, `sessions/2026-09-23-watchlist-shared-data-optimization.md`)
-
 - [x] **WATCHLIST API Management Study** — done 2026-09-23: study only; list เดียวขนาดใหญ่, signals, shared market-data service/queues/retry; mockยืนยัน Retry-Afterหายที่proxy, registryไม่มีcooldownในquote path, PM503กลายเป็นnegativecache และ historyซ้ำระหว่างscan/alerts (`plans/completed/watchlist-api-management-study.md`, `reports/watchlist-api-management-study-2026-09-23.md`)
-
 - [x] **WATCHLIST Optimization Study** — done 2026-09-23: ศึกษาเสร็จ (ยังไม่ implement); eager history + `3mo`→1y, per-symbol fan-out/remount cache, silent 60/30 caps; roadmap รองรับหุ้นจำนวนมากและหลาย lists พร้อม API/mock evidence (`plans/completed/watchlist-optimization-study.md`, `reports/watchlist-optimization-study-2026-09-23.md`)
-
 - [x] **Neocloud three-year accounting review** — done 2026-09-19; รายงานไทย 34 โปรไฟล์พร้อมช่องว่างหลักฐานและ MCP readback (`plans/completed/neocloud-three-year-accounting-review.md`)
-
 - [x] **Zettelkasten Knowledge Base (THESES)** — คลังความรู้อะตอมที่ใช้ซ้ำข้าม thesis: `zettel`/`zettel_edges`/`zettel_sources`/`zettel_refs` + FTS5, edge ชนิด SUPPORTS/CONTRADICTS/REFINES/SUPERSEDES, พาเนล OPEN CONFLICTS, MCP 11 tools, export ทางเดียว → Obsidian `[[wikilink]]` — done 2026-09-18 (`plans/completed/zettelkasten-knowledge-base.md`)
-- [ ] **THESES readability + GRAPHS format + graph sync** — 7/7 steps coded 2026-09-19 (counts บนแท็บมากับ payload, markdown renderer เต็ม, rail พับได้, ปุ่ม READ โหมดเอกสาร, GRAPHS render shell + เทมเพลต + lint, `graphs` เข้า SYNC_TABLES + ไฟล์ HTML ไป Drive); เหลือฝังไฟล์ฟอนต์ Laksaman (`plans/theses-readability-and-sync.md`)
 - [x] **Indicator Series Board** — done 2026-09-19 — generic series store (`series_meta`/`series_points`) + collector registry `series_sources/`; dramexchange = ชุดแรก (31 series: DRAM/NAND/module/memcard spot + DRAM/NAND/SSD contract), แท็บ DATA ใน NEWS, scheduler วันละจุด, เข้า cloud sync (`plans/completed/indicator-series-board.md`)
-- [ ] **Mobile Responsive** — shell bottom nav + MKT single-panel switcher first; PORT, NEWS, rest follow (`plans/mobile-responsive.md`)
-
+- [x] **CFTC COT Positioning** — done 2026-09-25 — `routers/cot.py` (`/api/cot/{snapshot,history,basis,factor,portfolio,status}`, 17 contracts, SQLite `cot_*`) → TAIL POSITIONING (`cot_crowding` counted=False, backtest WEAK) · BOND basis trade + dealer · MKT chips + REGIME COT · stock COT tab · PORT RISK crowding (`plans/completed/cot-positioning.md`, backtest `D:/Agents/Claude/backtest-idea/06_cot_crowding/results/2026-09-25/report.md`)
+- [x] **MKT Compact Chart Toolbar** — done 2026-09-25: รวมช่วงเวลาและ indicator controls ในแถบเดียวเมื่อแผงกว้าง; แผงแคบจัดสองแถวและเลื่อนรายการ indicator ได้ (`plans/completed/mkt-compact-chart-toolbar.md`)
+- [x] **Multiple Regression Channels** — done 2026-09-25: REG หลายชุดพร้อมกัน แยกตาม symbol/interval เลือก ปรับ mode และลบรายชุด (`plans/completed/multi-regression-channels.md`)
 - [x] **TAIL Macro Read (MOVE + core inflation + ISM proxy)** — MOVE เข้า `vol_indices` (yfinance-only) + สัญญาณ `move_spike` ใน CROSS-ASSET VOL; `/api/macro` เพิ่ม `cpi_core` `pce` `pce_core` `ism_proxy` (regional Fed composite — FRED ถอด ISM ออกปี 2022); บล็อก MACRO READ 3 แกน (INFLATION / GROWTH / RATES VOL) พร้อมกฎที่ใช้ตัดสิน — done 2026-09-20 (`plans/completed/tail-macro-read.md`)
 - [x] **TAIL Macro Context** — FOMC/CPI/NFP/PCE/GDP calendar + Fed/curve/regime context in TAIL; MACRO view removed; FOMC off-by-one fixed — done 2026-09-17 (`plans/completed/tail-macro-context.md`)
-
 - [x] **Windows NEWS API recovery** — done 2026-09-13 — restarted stale Windows backend; DCF/REGIME/SVI live HTTP checks OK, 61 tests passed (`plans/completed/windows-news-api-reload.md`)
-
 - [x] **MKT IV Open Interest** — done 2026-09-13 — optional Call/Put OI bars on IV/SVI, separate contracts axis, one selected actual expiry, range totals/P-C and source availability (`plans/completed/mkt-iv-open-interest.md`)
-
 - [x] **MKT SVI Fit and Tenors** — done 2026-09-13 — optional Raw SVI, observed points/RMSE/parameters, actual expiries near1/3/5/7/9 months and Call/Put/OTM selection (`plans/completed/mkt-svi-fit-tenors.md`)
-
 - [x] **MKT IV Smile** — done 2026-09-13 — Yahoo chain smile in REGIME IV tab, numeric K vs IV%, follows main chart symbol with expiry and quote filters (`plans/completed/mkt-iv-smile.md`)
-
 - [x] **MKT IV 25Δ metrics** — done 2026-09-23 — observed skew and curvature/butterfly under the smile, per expiry, using filtered quotes and no wing extrapolation (`sessions/2026-09-23-iv-smile-wing-metrics.md`)
-
 - [x] **ATR Accumulation Pane** — done 2026-09-13 — optional Wilder ATR/ATR% pane with low-volatility + rising EMA green/red filter and persistent settings (`plans/completed/atr-accumulation-pane.md`)
-
 - [x] **Bollinger Sharpe Fit** — done 2026-09-13 — optional Breakout %B grid search (209 n/k pairs), max net per-bar Sharpe, separate holdout and preserved Manual settings (`plans/completed/bollinger-sharpe-fit.md`)
-
-### Urgent
-- [ ] **Migrate Fund legacy → v2** before **2026-06-30** (SEC old portal closes)
-- [ ] Seed sector data: POST /api/sectors/fetch for TH/KR/HK/EU/US
-
-### Features
 - [x] **Adaptive DCF Valuation Lab** — done 2026-09-13 — multi-model valuation engine (3-stage FCFF default; growth/FCFE/excess-return/AFFO/normalized-cycle adapters), quant assumptions+sensitivity+audit UI, shared NEWS/stock panel (`plans/completed/dcf-valuation-lab.md`)
 - [x] **BBW Squeeze Hazard Study** — done 2026-09-09 — ตอบว่า BB Width ต้องบีบเท่าไหร่ถึงยก P(volatility expansion ภายใน h วัน) เหนือ base rate และโมเดล rank+duration+RV-term ชนะกฎ `BBW ≤ 1.05×min125` เดิมหรือไม่; S&P500 500 ตัว, purged walk-forward, holdout แตะครั้งเดียว (`plans/completed/bbw-squeeze-hazard.md`, ผล: `D:/Agents/Claude/backtest-idea/05_bbw_squeeze/results/2026-09-09/report.md`)
 - [x] **Quant Market State (per-symbol REGIME)** — done 2026-09-13 — latent-state framework ต่อหุ้น: OHLCV → feature + redundancy check → Gaussian HMM → `MarketState_t = [RegimeProbability, Trend, Momentum, Volatility]` + ประโยคสรุป + strategy compatibility ที่คำนวณจากสถิติ conditional ของ symbol เอง; panel REGIME ใน NEWS (ข้าง RATE STRESS) + tab ใน stock-view; แยก market interpretation ออกจาก trading decision และแยก dashboard mode (fit in-sample, label causal) ออกจาก validation mode (walk-forward) (`plans/completed/market-state-regime.md`)
 - [x] **Volume Z-Score + Volume Event Classifier** — done 2026-09-13 — volume ดิบไม่ให้ข้อมูลเพราะเป็น level ที่ไม่มีสเกลอ้างอิงและไม่มีผลลัพธ์ติดมา; แก้ baseline RVOL จาก mean → median/MAD บน ln(V) (spike เดิมไม่ดัน baseline ค้าง 20 แท่ง) + cumulative-session mode แก้แท่งที่ยังเปิดอ่านเป็น quiet + classifier 6 event types (climax/absorption/vacuum/breakout/noDemand/dryUp) เป็น chip บน price pane + ตาราง event ที่มีคอลัมน์ forward return (`plans/completed/volume-zscore-events.md`)
-- [ ] **Corporate Interest Rate Stress Testing (CIRST)** — วัดผลกระทบ shock ดอกเบี้ยระดับบริษัท (QERM): repricing ladder + fixed/float จาก XBRL → Earnings-at-Risk + breaking-point bp → Merton PD → spread → ΔWACC/ΔEV/equity duration → ES + Euler contribution → IR-Stress Score 0–100; tab ใหม่ใน stock-view + screener ใน CRDT (`plans/corporate-ir-stress-testing.md`)
-- [ ] **CIRST Validation Harness** — backtest 5 ปี point-in-time (20 as-of, XBRL first-filed revision + FRED daily curve), เทียบ predicted vs realized 5 tier, บังคับชนะ null models (persist / full-reprice / debt×Δy) ด้วย Diebold-Mariano ก่อนเปิด Score; ได้ implied float-share ต่อบริษัทเป็นผลพลอยได้ (`plans/cirst-validation-harness.md`)
-- [ ] **CIRST RATE STRESS tab** — แท็บที่ 13 ใน stock-view (เข้าจาก NEWS → คลิกหุ้น) 5 sub-tab: EXPOSURE (ladder+refi gap) · SCENARIO (ตาราง ΔI bound / ICR / DDM vs empirical) · DURATION (Gordon inverted + θ) · HISTORY (20 as-of ย้อน 5 ปี + error summary + attribution) · DIAGNOSTICS; 4 แท็บแรก ship ได้ทันที HISTORY รอ harness (`plans/cirst-stock-rate-tab.md`)
 - [x] **Dynamic Chart History** — ซูมออกจนสุดข้อมูลแล้วกราฟโหลดช่วงถัดไปเอง (3M→YTD→1Y→5Y→MAX) โดยไม่เสียมุมมอง; lib ของเราเอง `components/bloomberg/chartkit/` (pure core + engine adapter) เตรียมไว้เขียน candle engine เอง — done 2026-08-25 (`plans/completed/dynamic-chart-history.md`)
-- [ ] **Floating Chart Windows** — เปิดกราฟหลายตัวพร้อมกันเป็น popup ลอยอิสระ (ลาก/ย่อขยาย/ย่อเก็บ/z-order, cap 10, persist localStorage, ลอยข้ามทุก view) — เฟส 1 done 2026-08-24; เหลือเฟส 2: TILE + edge snap, indicator แยกต่อหน้าต่าง (`plans/floating-chart-windows.md`)
-- [ ] **IV SD Heatmap** — BS lognormal σ-band pane (5 buckets −2σ…+2σ) จาก `σ_mid=(IV_call+IV_put)/2`; 2 โหมด occupancy/cheapness, ตาราง `iv_snapshots` สะสม IV เอง, `/api/options/{sym}/sd-bands`; ยัง verify pixel ไม่ได้ (`plans/iv-sd-heatmap.md`)
 - [x] **TAIL Risk Monitor v2** — CBOE vol data (VIX/VIX9D/VIX3M/VIX6M/VVIX/SKEW/OVX/GVZ/VXN) แทน yfinance ที่ค้าง 28 วัน, tri-state signals, 6 risk dimensions, composite นับมิติไม่ใช่นับ signal — done 2026-08-16 (`plans/completed/tail-risk-v2.md`)
 - [x] **Company OUTLOOK (SEC EDGAR)** — guidance ที่บริษัทยื่นใน 8-K EX-99.1 + คำพูด CEO + MD&A forward-looking + งบ as-reported จาก XBRL; แท็บ OUTLOOK ใน stock-view + แถบใน NEWS — done 2026-08-15 (`plans/completed/company-outlook-edgar.md`)
 - [x] **Thesis Notes** — sub-tab NOTES ในหน้า THESES: standing scenario/risk/catalyst/question ที่แก้ในที่ได้ (kind, impact bull/bear, likelihood×severity, watch date, pin, resolve/reopen) + `thesis_notes` table + sync + `/notes/due` cross-thesis feed — done 2026-08-31 (`plans/completed/thesis-notes.md`)
@@ -420,7 +488,6 @@ Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as 
 - [x] **NEWS watchlist redesign** — ข่าวรายหุ้นจาก 7 แหล่ง (Yahoo/yfinance/Google/Bing/Seeking Alpha/Nasdaq/SEC), แบ่งกลุ่มตาม SECTOR อัตโนมัติ, ticker badge ทุกหัวข้อ, Polymarket จับคู่รายหุ้น — done 2026-08-15 (`plans/completed/news-watchlist-redesign.md`)
 - [x] **Analytics Cash Card** — CASH tile + MARKET VALUE split (excl./incl. idle cash) in ANALYTICS Capital Breakdown — done 2026-07-14 (`plans/completed/analytics-cash-card.md`)
 - [x] **Cash Transfer** — linked-pair TRANSFER entry_type in `cash_ledger` so inter-account cash moves (e.g. FINANSIA→DIME) fix per-account `invested_capital` bookkeeping with atomic insert + cascade delete — done 2026-07-14 (`plans/completed/cash-transfer-feature.md`)
-- [ ] **System Audit 2026-07 — Bug Fixes & Refactor** — 9 fix items + 6 refactor items; F01 done 2026-07-03, F06 done 2026-07-04 (via port-redesign resolver); เหลือ F02 AVCO drift 🔴, F03 async blocking 🔴, F04/F05/F07/F08/F09 + R01–R06 (`plans/system-audit-2026-07/README.md`)
 - [x] **Portfolio Cloud Sync** — PC↔Mac sync via Google Drive JSON snapshots, startup pull, row-LWW merge + tombstones, no login done 2026-06-26 (`plans/completed/portfolio-cloud-sync.md`)
 - [x] **Option Payoff Simulator** — done 2026-09-10: `backend/analytics/option_payoff.py` (payoff at expiry = เลขคณิต, T+0 = BS ผ่าน greeks.py, POP = lognormal risk-neutral) + `POST /api/options/payoff`; พรีวิวสดในฟอร์ม ADD (expiry คำนวณที่ client, T+0/POP debounce 400ms) + ปุ่ม PAYOFF ในแถว lot รวมทุก lot ของ underlying; breakeven จาก sign change + bisection, max P/L จาก slope ที่ปลายไม่ใช่ขอบกริด (`plans/completed/option-payoff-simulator.md`)
 - [x] **Audit log for every money edit** — done 2026-09-16: trigger-written `audit_events` on trades/options/cash/cash_adjustments/dividends/avg-cost/accounts/targets; `GET /api/v2/portfolio/audit-events`; PORT → TOOLS → AUDIT tab. Evidence: `backend/tests/test_audit_events.py` 6 pass, full backend suite 699 pass, 30 triggers live on real DB
@@ -429,27 +496,13 @@ Removed: MACRO `5` (2026-09-17 — US macro + FOMC calendar folded into TAIL as 
 - [x] **Option Schema Normalization** — done 2026-09-10: `option_contracts` (instrument, dedupe ด้วย occ_symbol) + `option_trades` (execution, immutable, ทิศทางอยู่ที่ action+side) + `option_trade_greeks` (5 greeks + spot/IV ณ จุดเทรด, 1:1) + `option_trade_matches` (FIFO partial close, realized materialized); lot = OPEN trade ที่ยัง match ไม่ครบ → `v_option_open_lots` ไม่ใช่ตาราง; หมดอายุ/ใช้สิทธิ์ = CLOSE trade; migrate + DROP `option_positions` (`plans/completed/option-schema-normalization.md`)
 - [x] **Option Greeks + PnL Attribution** — done 2026-09-09: PORT · OPTIONS แสดง Δ/Γ/Θ ต่อสัญญา + dollar greeks (DELTA/GAMMA-1%/THETA-day/VEGA-1pp) หน่วย USD, ตาราง derivatives เป็น USD ล้วน; ตาราง `option_greeks_snapshots` เก็บ spot/IV/greeks รายวัน (accumulate เท่านั้น back-fill ไม่ได้); `/api/v2/portfolio/options/attribution` แยก Δ/Γ/Θ/ν/residual ด้วย greeks ต้นงวด; ANALYTICS section DERIVATIVES ทั้งพอร์ต + ราย option + stacked bar รายวัน (`plans/completed/option-greeks-and-attribution.md`)
 - [x] **Options in Portfolio** — done 2026-09-09: `backend/portfolio_options.py` เป็นจุดเดียวที่ ตีราคา option lot; premium MV เข้า NAV/unrealized/realized ของ `/summary` `/open-positions` `/returns` `/nav-history` `/analytics`, delta-adjusted notional ถ่วงน้ำหนัก `/allocation-detail`; schema +`exit_price`/`exit_date`/`currency`/`multiplier`/`sector`; close endpoint รับราคาปิด; รวม fix greeks spot bug 🔴 (`plans/completed/options-in-portfolio.md`)
-- [ ] **Port Redesign** — symbol resolver (resolve-at-write), sub_portfolios table จริง, currency module, ลบ `_get_yf_symbol`/ปิด F06 (`plans/port-redesign.md`)
 - [x] **Multi-Currency Sub-Portfolio** — done 2026-07-14: `trades.currency` เป็น instrument ccy authoritative, rollup ต่อ trade, mixed-ccy account, realized trading P&L ใช้ exit-date FX (ไม่รวม principal FX attribution), แสดง `ECON` FX-inclusive attribution แยก, live MTM และ daily `fx_rates` (`plans/completed/multi-currency-portfolio.md`)
-- [ ] **VP Indicator Upgrade** — แก้ session timezone bug (B1 🔴) + visible-range VP + delta profile + naked POC + HVN/LVN + config UI; audit: `reports/vp-indicator-risk-report.md` (`plans/vp-indicator-upgrade.md`)
-- [ ] **P/E History Pane + EPS Surprise Labels** — endpoint `/api/stock/pe-history` (TTM EPS × weekly close, 13–20yr), `PEPane.tsx` recharts sub-pane + valuation percentile bands, earnings marker สี beat/miss; code-complete, backend HTTP verified, frontend visual pending (`plans/pe-earnings-visualization.md`)
 - [x] **TICK DATA Consolidation** done 2026-08-01 — เพิ่ม RATES·US (UST 11 tenor, FRED daily) + RATES·JP (JGB 1Y–40Y, MOF CSV) + FX เข้า TICK DATA panel ใน MKT, section ยุบได้; ลบ CRYP [C] + FX [E] views (backend crypto/fx router คงไว้) (`plans/completed/tickdata-rates-fx-consolidation.md`)
-- [ ] **Pane Height Persistence Fix** — pane indicator ยุบเป็น 0 ตอน rebuild (lw v5 setHeight→stretch แปลงบนฐานว่าง) + drag จับเฉพาะ teardown ทำให้ reload แล้วหาย + wrapper h=0; แผนแก้ 3 ชั้น: defer setHeight 2-frame, capturePaneDrags 4 จุดเรียก, ซ่อม height chain (`plans/pane-height-persistence-fix.md`)
-- [ ] **RSI Scale Modes** — คลิกขวาบน RSI pane เลือกสเกล 6 แบบ (standard / autofit / price projection / distance % / distance in avg moves / log RS) + modal ตั้งค่า; Step 1–2 done 2026-08-05 (`calcRSIState` export Wilder state + แก้ seed divergence 99.0099→100, `rsiInverse.ts`), Step 1–5 done 2026-08-05 — คลิกขวาบน RSI pane → เมนู 6 โหมด + เส้น projection บน price pane (Step 6 modal ยกเลิก ยุบลง context menu แทน) ยังไม่ verify ตัวเลขบนแกนด้วยตาเพราะ ModularChart ไม่วาด price series ในโปรไฟล์ที่ทดสอบ; audit: `sessions/reports/rsi-seed-divergence-risk-report.md` (`plans/rsi-scale-modes.md`)
 - [x] **Thesis System (DB) + Allocation Basis** — theses/thesis_events/thesis_links ใน SQLite + sync ผ่าน Google Drive, edit/soft-delete/restore, event log เก็บ diff, import/export .md; ALLOCATION (OPEN) ใหม่: cost vs market value, growth%, drift, share of gain, rebalance sizing (หุ้น + กำไรที่จะรับรู้) — done 2026-08-15 (`plans/completed/thesis-db-and-allocation-basis.md`)
-- [ ] Polymarket: dashboard view in frontend
-- [ ] BOT: frontend view for Bond Auction + yield trend chart
-- [ ] BOT: activate Stat-ExchangeRate → add THB FX view
-- [ ] Central banks: comparison chart across banks
-- [ ] Clippings: auto-reload (file watcher)
 - [x] **Alert Ticker** — Bloomberg-style scrolling bar: regime change (15-min event) done 2026-06-05 (`plans/completed/alert-ticker.md`); the stop-loss breach pill was removed with the stop engine 2026-09-15
 - [x] **Fear & Greed Index** — chart pane indicator + FEAR-GREED searchable symbol + F&G/VIX prominent pills in alert ticker done 2026-06-06 (`plans/completed/fear-greed-index.md`)
-- [ ] Alerts: price alert when stock hits threshold (price target, separate from stop loss)
-- [ ] Sovereign: map visualization
 - [x] **Analysis Graphs** — หน้าวิเคราะห์ HTML ที่ agent สร้างผ่าน MCP `graph_create` เก็บใน `research/graphs/<slug>/` + ตาราง `graphs`, เปิดจาก PORT → TOOLS → THESES → GRAPHS หรือลิงก์ `/api/v2/graphs/<slug>/render`; render ใต้ CSP เข้ม + iframe sandbox ไม่มี allow-same-origin — done 2026-09-18 (`plans/completed/analysis-graphs.md`)
-- [ ] Bloomberg CLI + MCP server (`plans/bloomberg-cli-mcp.md`) — **MCP part started 2026-09-18**: `backend/mcp_server.py` (theses workspace + portfolio/market research, 15 tools; Claude Code via `.mcp.json`, Claude Desktop via `claude_desktop_config.json` — setup in `docs/mcp-server.md`); CLI still not built
 - [x] PORT Analytics: Allocation stacked bar + Dividend M/Q/Y + currency fix (done 2026-06-05, `plans/completed/analytics-charts-enhancement.md`)
-- [ ] SEC One Report: frontend view (data available 2021–2023)
 - [x] Polymarket: Δ24h + MCP endpoint (2026-06-05)
 - [x] Portfolio Risk System: VaR/CVaR/Stress/Parity/Sizing (2026-06-02)
 - [x] Options: position tracking + BS+GC Greeks (2026-06-03)

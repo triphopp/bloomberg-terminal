@@ -1,5 +1,5 @@
 import { atomWithStorage } from "jotai/utils";
-import type { CashEntry, Dividend } from "./types";
+import type { CashFlowForm, Dividend } from "./types";
 
 // ── Column definitions ──────────────────────────────────────────────────────
 
@@ -146,12 +146,11 @@ export const STRATEGIES = [
 
 // ── Blank form states ─────────────────────────────────────────────────────────
 
-export const BLANK_CASH: Omit<CashEntry, "id"> = {
-  account_id: "finansia",
+export const BLANK_CASH: CashFlowForm = {
+  account_id: "",
   date: "",
-  income: 0,
-  investment: 0,
-  exchange_rate: 1,
+  flow_type: "DEPOSIT",
+  amount: 0,
   note: "",
 };
 
@@ -191,7 +190,9 @@ export const BLANK_FORM = {
   is_reinvest: false,
   option_type: "Call",
   option_direction: "Long",
-  vat_amount: "",
+  // Blank = the broker fee estimate (Dime); a typed number is kept as is.
+  fee_entry: "",
+  fee_exit: "",
 };
 
 // ── Sub-accounts ──────────────────────────────────────────────────────────────

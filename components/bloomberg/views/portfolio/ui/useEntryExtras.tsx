@@ -14,7 +14,7 @@ export const EXTRA_FIELDS = [
   { id: "stop_loss", label: "STOP LOSS", hint: "" },
   { id: "target", label: "TARGET", hint: "" },
   { id: "entry_trigger", label: "ENTRY TRIGGER", hint: "" },
-  { id: "vat", label: "VAT", hint: "" },
+  { id: "vat", label: "FEES", hint: "commission + VAT; blank = broker estimate" },
   { id: "sub_port", label: "SUB-PORT", hint: "" },
   { id: "note", label: "NOTE", hint: "" },
 ] as const;

@@ -22,20 +22,8 @@ export function useTerminalUI() {
     setCurrentView("news");
   }, [setCurrentView]);
 
-  const handleMoversView = useCallback(() => {
-    setCurrentView("movers");
-  }, [setCurrentView]);
-
   const handleStockView = useCallback(() => {
     setCurrentView("stock");
-  }, [setCurrentView]);
-
-  const handleClippingsView = useCallback(() => {
-    setCurrentView("clippings");
-  }, [setCurrentView]);
-
-  const handleCreditView = useCallback(() => {
-    setCurrentView("credit");
   }, [setCurrentView]);
 
   const handlePortfolioView = useCallback(() => {
@@ -44,6 +32,10 @@ export function useTerminalUI() {
 
   const handleTailView = useCallback(() => {
     setCurrentView("tail");
+  }, [setCurrentView]);
+
+  const handleBondView = useCallback(() => {
+    setCurrentView("bonds");
   }, [setCurrentView]);
 
   // Other UI handlers
@@ -87,12 +79,10 @@ export function useTerminalUI() {
     handleThemeToggle,
     handleMarketView,
     handleNewsView,
-    handleMoversView,
     handleStockView,
-    handleClippingsView,
-    handleCreditView,
     handlePortfolioView,
     handleTailView,
+    handleBondView,
     handleCancelClick,
     handleNewClick,
     handleBlancClick,

@@ -4,7 +4,7 @@ Extracted from main.py as part of the FastAPI router refactoring.
 """
 import math
 import re
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 import pandas as pd
@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from cache import TTLCache
 from config import STOCK_CACHE_TTL, MAX_HISTORY_CACHE_TTL, PERIOD_TO_YF, HISTORY_PERIOD_MAP, VALID_INTERVALS
+from earnings_deadlines import set_filing_deadline
 from market_session import is_today_at, local_date_of
 from market_snapshots import get_quote, get_history
 from sector_map import classify
@@ -1077,6 +1078,31 @@ def stock_ownership(symbol: str):
 
 # ── Calendar: Earnings Dates ─────────────────────────────────────────────────
 
+def _calendar_next_earnings(ticker, today: date) -> dict | None:
+    """Next report from ``Ticker.calendar``. Two dates = an unconfirmed window."""
+    try:
+        cal = ticker.calendar or {}
+    except Exception:
+        return None
+    days = sorted(
+        d for d in (cal.get("Earnings Date") or [])
+        if isinstance(d, date) and d >= today
+    )
+    if not days:
+        return None
+    return {
+        "date": days[0].isoformat(),
+        "epsEstimate": _safe_float(cal.get("Earnings Average")),
+        "reportedEPS": None,
+        "surprise": None,
+        "eventType": "Earnings",
+        "source": "yahoo_calendar",
+        # Yahoo gives a from/to pair until the company confirms the date.
+        "estimated": len(days) > 1,
+        "windowEnd": days[-1].isoformat() if len(days) > 1 else None,
+    }
+
+
 @router.get("/api/stock/earnings-calendar/{symbol}")
 def stock_earnings_calendar(symbol: str):
     """Earnings dates with EPS estimates and surprises."""
@@ -1097,6 +1123,21 @@ def stock_earnings_calendar(symbol: str):
                     "surprise":    _safe_float(row.get("Surprise(%)")),
                     "eventType":   row.get("Event Type", ""),
                 })
+        # `earnings_dates` often has no future row even when a report is known
+        # (COST, most SET names). Fill the NEXT report only, in order of trust:
+        # Yahoo's calendar (a scheduled date, or a window when unconfirmed),
+        # then — SET listings only — the exchange's filing deadline.
+        today = date.today()
+        if not any(d["date"][:10] >= today.isoformat() for d in dates):
+            nxt = _calendar_next_earnings(ticker, today)
+            if nxt is None and symbol.upper().endswith(".BK"):
+                reported = [
+                    datetime.strptime(d["date"][:10], "%Y-%m-%d").date()
+                    for d in dates if d["date"][:10] < today.isoformat()
+                ]
+                nxt = set_filing_deadline(today, reported)
+            if nxt is not None:
+                dates.append(nxt)
         data = {"earningsDates": dates}
         _stock_cache.set(cache_key, data)
         return data

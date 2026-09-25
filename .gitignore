@@ -105,3 +105,7 @@ tools/launcher/*.res
 # pytest scratch — backend/tests use a repo-local temp root because this box
 # denies access to the system temp directory (tests/test_iv_snapshots_sync.py)
 backend/tests/_tmp/
+backend/backups/
+# ad-hoc pytest roots / temp files some runs leave in backend/
+backend/.pytest-temp-*/
+backend/tmp*.tmp

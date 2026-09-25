@@ -3,6 +3,7 @@
 import { X } from "lucide-react";
 import { useCallback, useEffect } from "react";
 import { bloombergColors } from "../lib/theme-config";
+import { shortcutKeyMatches } from "./shortcut-key-match";
 
 interface KeyboardShortcut {
   key: string;
@@ -21,10 +22,13 @@ interface KeyboardShortcutsProps {
 export function KeyboardShortcuts({ shortcuts, isEnabled = true }: KeyboardShortcutsProps) {
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
-      if (!isEnabled) return;
+      if (!isEnabled || event.isComposing || event.key === "Process" || event.key === "Dead")
+        return;
+      // Meta combinations belong to the browser/OS (new tab, address bar, etc.).
+      if (event.metaKey) return;
 
       // Block plain-key shortcuts while typing, but always allow:
-      // - Modifier shortcuts (Ctrl / Alt / Meta) — mirrors native-app behaviour.
+      // - Modifier shortcuts (Ctrl / Alt) — mirrors native-app behaviour.
       // - Escape — always acts as back/cancel regardless of focus context.
       const target = event.target as HTMLElement;
       const isTyping =
@@ -45,7 +49,7 @@ export function KeyboardShortcuts({ shortcuts, isEnabled = true }: KeyboardShort
       }
 
       for (const shortcut of shortcuts) {
-        const keyMatch = event.key.toLowerCase() === shortcut.key.toLowerCase();
+        const keyMatch = shortcutKeyMatches(event, shortcut.key);
         const ctrlMatch = !!shortcut.ctrlKey === event.ctrlKey;
         const altMatch = !!shortcut.altKey === event.altKey;
         const shiftMatch = !!shortcut.shiftKey === event.shiftKey;

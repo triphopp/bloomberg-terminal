@@ -59,6 +59,7 @@ import {
   MarketSessionBadge,
   extendedHoursPriceLine,
 } from "../core/market-session";
+import { cotKeyFor } from "../hooks/useCot";
 import { useStockQuality } from "../hooks/useMarketQuality";
 import {
   useStockFinancials,
@@ -71,6 +72,7 @@ import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import { displayName, displaySymbol } from "../lib/symbol-display";
 import { bloombergColors } from "../lib/theme-config";
 import { OptionsTab } from "./options-tab";
+import { CotTab } from "./stock/cot";
 import { DcfTab } from "./stock/dcf";
 import { MarketStateTab } from "./stock/market-state";
 import { RateStressTab } from "./stock/rate-stress";
@@ -169,7 +171,8 @@ type AnalysisTab =
   | "strategy-fit"
   | "dcf"
   | "rate-stress"
-  | "market-state";
+  | "market-state"
+  | "cot";
 
 type FinancialBar = { label: string; value: number | null };
 
@@ -5275,6 +5278,8 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                 { id: "dcf", label: "DCF" },
                 { id: "rate-stress", label: "RATE STRESS" },
                 { id: "market-state", label: "REGIME" },
+                // Futures positioning — only where the symbol maps to a CFTC contract
+                ...(cotKeyFor(activeSymbol) ? [{ id: "cot", label: "COT" }] : []),
               ] as { id: AnalysisTab; label: string }[]
             ).map(({ id, label }) => (
               <button
@@ -5310,6 +5315,9 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
           )}
           {analysisTab === "market-state" && activeSymbol && (
             <MarketStateTab symbol={activeSymbol} colors={colors} />
+          )}
+          {analysisTab === "cot" && activeSymbol && (
+            <CotTab symbol={activeSymbol} colors={colors} />
           )}
           {analysisTab === "outlook" && activeSymbol && (
             <CompanyOutlookPanel symbol={activeSymbol} colors={colors} />

@@ -6,17 +6,14 @@ const prefetchLoaders: Record<string, () => void> = {
   news: () => {
     import("../views/news-view");
   },
-  movers: () => {
-    import("../views/market-movers-view");
+  heatmap: () => {
+    import("../views/heatmap-view");
   },
   stock: () => {
     import("../views/stock-view");
   },
-  clippings: () => {
-    import("../views/clippings-view");
-  },
-  credit: () => {
-    import("../views/credit-view");
+  bonds: () => {
+    import("../views/bonds");
   },
   portfolio: () => {
     import("../views/portfolio-view");

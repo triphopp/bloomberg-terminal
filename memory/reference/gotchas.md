@@ -7,6 +7,39 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### Historical portfolio Excel import (2026-09-26)
+| Symptom | Root cause | Fix / status |
+|---|---|---|
+| Legacy Excel import turns historical price marks into trades | `Income&expenses` cash rows mostly match DB, but trade sheets use `PnL_Amount` formulas even when `Date (Exit)` is blank and `Price_Exit` is a later mark. The `/import/excel` route inserts every row as a trade without broker execution evidence. | Do not bulk-import `Portfolio Performance.xlsx` through that route. Query `/api/v2/portfolio/history-review` for staged 2024-25 source rows and price checks; resolve buys/sales against order history or broker statements before posting. See [risk report](../reports/portfolio-excel-import-risk-report.md). |
+
+### Terminal view shortcuts under Thai layout and Ctrl+click (fixed 2026-09-26)
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| Pressing 1–5/P/T/B/H with Thai keyboard layout does not switch views | `KeyboardEvent.key` is the Thai character, not the Latin shortcut label | Match letter/digit shortcuts using physical `KeyboardEvent.code` as fallback; skip IME composition and inputs. |
+| Ctrl+click on a view tab does not open a new browser tab | View tabs were `<button>` elements without a URL | Render real anchors with `/?view=...`; intercept only unmodified primary click, and restore the view from URL on load/popstate. |
+
+
+### Review copies under `backend/backups` enter TypeScript scope (2026-09-25)
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| `npx tsc --noEmit` reports missing relative imports in copied PORT files under `backend/backups/` | Root `tsconfig.json` includes `**/*.ts` and `**/*.tsx`, so source review copies were treated as application files | Exclude `backend/backups/**` in `tsconfig.json`. Keep review folders there ignored by Git; run `tsc` on the real source tree after building a staging bundle. |
+
+### Accounting validation must use independent evidence (2026-09-25)
+
+| Symptom | Root cause | Fix / status |
+|---|---|---|
+| NAV backfill validation shows a reassuring zero median | Comparison includes the script's own `source='backfill'` snapshots | Filter `source='live'` on both overlap start and sample selection; no valid overlap is unavailable evidence. Fixed and regression tested. |
+| SQLite backup loses recent committed transactions | Copying only `.db` excludes pending WAL | Use `sqlite3.Connection.backup()` and `integrity_check`; fixed in ledger migration script and tested with uncheckpointed committed WAL. |
+| Cash looks reconciled while reconstructed history drops below zero | EDIT offsets mask gaps; imported opening holdings may be modelled as dated cash BUYs; Dime BUY currency does not identify whether Save THB, Dime! USD or FCD funded the order | H1/H2 inspect source rows and pre-offset daily balances. H2 is a model diagnostic, not a claim the broker account overdrew. Finansia/Dime still need opening and payment-wallet evidence; see [cash-gap session](../sessions/2026-09-25-accounting-cash-gap.md). |
+| Summary realized/cash differs from latest NAV history | Saved snapshots retain historical inputs after source edits | C1 detects the difference; do not rewrite history automatically. Dime/all difference ≈฿540.89 in this run; see [risk/evidence](../reports/accounting-validation-risk-report.md). |
+| D1 says a Finansia subaccount dividend is missing although both rows exist | The check evaluated each dividend row against holdings across both subaccounts, ignoring the matching sibling payout on the same XD | Include sibling rows with the same account/asset/XD/currency/per-unit before claiming missing. Existing OR/TASCO/DCON pairs now clear in local audit; test a truly missing sibling still warns. Original acquisition dates of inherited positions remain unknown. |
+
+Preview `/ledger/check` explicitly labels skipped C1/N1 and partial D1; these are not audit passes. Stock-card preview is reconstructed legacy, not a posted journal. `ledger_events` must not enter sync's UPDATE/restamp path before append-only sync is implemented.
+
+`broker_statements` is now a synced, versioned evidence table: a typed `source_ref` is a pointer supplied by the user, not proof a broker file was independently verified. `matched` compares reconstructed pre-offset cash and quantities; it does not certify historical market prices. Two peers may independently post a current statement for the same date; R3 reports `R3_CONFLICT` and blocks a new revision until reviewed. Legacy cash EDITs migrate to `category='UNKNOWN'` and R2 reports them; classifying an offset is not proof of the underlying transaction.
+
 ### SNDK daily candle one day behind quote (fixed 2026-09-23)
 
 | Symptom | Root Cause | Fix |
@@ -144,6 +177,8 @@ HTTP 200 / `status: ok`; live SNDK 2026-10-16 SVI returned `ok` for 56 call and
 
 | Symptom | Root Cause | Fix |
 |---|---|---|
+| Signal with NEGATIVE edge labelled STRONG/SENSITIVE (2026-09-25) | suite 01 `_verdict()` checks `precision ≥ 50%` before edge; at long lookahead the base rate is high (L1 × 20d ≈ 75%), so an always-on signal clears it | Test `edge < 5pp → WEAK` first (done in `06_cot_crowding/run.py`; suite 01 still open — [report](../reports/cot-session-risk-report.md) B) |
+| Weekly data (COT) leaks the future in a daily backtest | positions are as of Tuesday but published Friday 15:30 ET | Date by `released`, shift one trading day, causal rolling stats (`06_cot_crowding/run.py` `to_daily`) |
 | Last h outcomes counted as failures despite unknown future; parity test passes | Numeric NaN compared with threshold becomes boolean False; test checks intermediate excursion only | Never let a threshold comparison be the label. `(m >= k).where(m.notna())` keeps it float64 1.0/0.0/NaN so `.dropna()` can still find the unknowns; assert on the *label* column per horizon, not on the float measure beside it. **FIXED 2026-09-09** — `D:/Agents/Claude/backtest-idea/05_bbw_squeeze/features.py::_label` + `test_parity.py` check 5. Found by [BBW audit](../reports/bbw-squeeze-2026-09-09-risk-report.md) |
 | Model claims to beat production but budget/benchmark changes after parameter search | Benchmark flag is rebuilt from selected model feature config; final evaluation lacks CV purge and common eligibility | Benchmark against the rule production actually runs, rebuilt from its own frozen params, and score both on the same `.dropna()` row set at the same alert rate. **FIXED 2026-09-09** — `D:/Agents/Claude/backtest-idea/05_bbw_squeeze/run.py::stage_d`. Found by [BBW audit](../reports/bbw-squeeze-2026-09-09-risk-report.md) |
 | Reported median wait is shorter than time where half the population experienced event | Median calculated only among observed hits, excluding right-censored cases | Give never-crossed rows `inf`, not NaN, so they stay in the cohort and push the median right; give `NaN` only to rows whose future was never observable, and drop those. **FIXED 2026-09-09** — report §9.2 (medians moved 7→9 / 8→10 days). Found by [BBW audit](../reports/bbw-squeeze-2026-09-09-risk-report.md) |
@@ -168,6 +203,10 @@ HTTP 200 / `status: ok`; live SNDK 2026-10-16 SVI returned `ok` for 56 call and
 
 | Symptom | Root Cause | Fix |
 |---------|-----------|-----|
+| Script outside `backend/` creates an empty `portfolio.db` / "no such table" (2026-09-25) | `config.DB_PATH` defaults to RELATIVE `portfolio.db`; `sqlite3.connect()` on a missing path silently creates an empty file in the cwd | Resolve against the backend dir and open read-only: `sqlite3.connect(f"file:{path}?mode=ro", uri=True)` (see `backtest-idea/06_cot_crowding/run.py`) |
+| pandas bool mask turns "missing" into True (2026-09-25) | `pd.concat(parts, axis=1)` of series with different start dates leaves NaN; `.astype(bool)` makes NaN → **True** (COT backtest firing jumped 44% → 52%) | `.astype("boolean").fillna(False)` before `.any()`; never `astype(bool)` on data that can hold NaN |
+| A TAIL signal that should be shown but not counted (2026-09-25) | Dimension status counts every `on` member | Set `"counted": False` in `SIGNAL_META` — scoring filters on `s["counted"]`; UI shows a `CTX` tag. Used by `cot_crowding` |
+| CFTC COT series breaks / half the history missing (2026-09-25) | CFTC renamed markets on 2022-02-01 (`3-MONTH SOFR` → `SOFR-3M`, `CRUDE OIL, LIGHT SWEET` → `WTI-PHYSICAL`); Disaggregated field names contain typos (`swap__positions_short_all`) | Key on `cftc_contract_market_code`, never the name; copy field names from the live payload (`routers/cot.py` `_FIELDS`). Date signals by `released` (Fri), not `as_of` (Tue) |
 | Whole server freezes during one request | `async def` endpoint calls blocking `requests`/yfinance → blocks event loop | Use plain `def` (FastAPI runs in threadpool). Fixed: tail_risk, sectors 2026-06-10. ⚠️ options.py/paper_trading.py still mix `await`+blocking → need `run_in_executor` |
 | N concurrent requests all hit yfinance on cache miss (stampede) | router does `get`→compute→`set` (no coalescing) | Use `_cache.get_or_set(key, fn)` from `cache.py` (per-key Event coalescing, already built) |
 | สัญญาณเทียบ 2 series แล้วยิงผิด (เช่น VIX backwardation) | `s.dropna().iloc[-1]` หยิบค่าล่าสุด**ที่ไม่ใช่ NaN** — ถ้า series นั้นค้าง (yfinance `^VIX9D`/`^VIX3M` หยุดที่ 2026-07-17 ขณะ `^VIX` ถึง 08-14) จะเอาค่าคนละวันมาเทียบกัน | เช็ค staleness ก่อนเทียบ: ถ้า last bar เก่ากว่า reference series > 1-2 วัน ให้คืน `None` และ **ไม่ตัดสิน** signal นั้น ดู `reports/tail-risk-debt-report.md` A1 |
@@ -807,7 +846,7 @@ KOSPI อยู่ใน `config.INDICES` มานานแต่ไม่เ�
 
 ## chart rebuild ทำให้ canvas เดิมหลุด DOM — event ที่ยิงใส่ element เก่าเงียบหาย
 
-`ModularChart` สร้าง chart ใหม่ทั้งก้อนเมื่อ `data` เปลี่ยน (canvas ชุดเก่าถูกทิ้ง)
+`ModularChart` อาจสร้าง chart ใหม่ทั้งก้อนเมื่อโครงสร้าง series/pane เปลี่ยนหรือ refill ไม่ได้ (canvas ชุดเก่าถูกทิ้ง)
 โค้ดทดสอบ/automation ที่เก็บ `canvas` ไว้ในตัวแปรแล้วยิง wheel/pointer ซ้ำหลัง data เปลี่ยน จะยิงใส่ element ที่ detach แล้ว — ดูเหมือนฟีเจอร์พัง ทั้งที่ปกติ
 **ต้อง query element ใหม่ทุกครั้งหลังข้อมูลเปลี่ยน**
 
@@ -854,7 +893,7 @@ MKT layout เดิมให้ทุก panel ที่เปิดอยู�
 
 ## ส่ง `array.filter(...)` เป็น prop ให้ ModularChart = rebuild ทั้ง chart ทุก render
 
-`ModularChart` อ่าน identity ของ `indicators` / `overlays` / `eventMarkers` เป็น **โครงสร้าง** (อยู่ใน deps ของ build effect)
+`ModularChart` อ่าน identity ของ `indicators` / `overlays` เป็น **โครงสร้าง** (อยู่ใน deps ของ build effect). `eventMarkers` อัปเดตเฉพาะ rail ตั้งแต่ 2026-09-25.
 `indicators={list.filter(i => i.id !== "fear-greed")}` สร้าง array ใหม่ทุก render → teardown + `createChart` + สร้าง series/pane ใหม่ทั้งหมด
 ทุกครั้งที่ view re-render (พิมพ์ในช่อง search ก็นับ)
 
@@ -867,6 +906,17 @@ React Query ให้ `isLoading` = ไม่มีข้อมูลใน cach
 
 **แก้:** `placeholderData: (prev, prevQuery) => prevQuery?.queryKey[2] === symbol ? prev : undefined` ใน `useStockHistory`
 คงบาร์ชุดเดิมไว้จนของใหม่มา (เช็ค symbol ด้วย ไม่งั้นจะเอาราคาหุ้นตัวเก่าไปแสดงใต้ชื่อหุ้นตัวใหม่)
+
+## กราฟแท่งเทียนสะดุดตอนข้อมูล event เข้า/เปลี่ยน timeframe (fixed 2026-09-25)
+
+`eventMarkers` เข้ามาได้ 3 รอบหลัง OHLCV (dividends, earnings, macro) แต่เคยอยู่ใน deps ของ build effect →
+แต่ละรอบ `chart.remove()` + `createChart()` + คำนวณ indicator ใหม่. `viewportKey` ทำแบบเดียวกันทุกครั้งที่ผู้ใช้เลือก
+ช่วงเวลา แม้ series เดิมรับ bars ใหม่ผ่าน refill ได้. ตอน mount ยังสร้างด้วย fallback height ก่อน `ResizeObserver`
+บอกความสูงจริง แล้วรื้อสร้างอีกรอบ.
+
+**แก้:** วัดความสูงด้วย `useLayoutEffect` ก่อน build; event rail มี primitive ประจำที่อัปเดตตัวเองและปรับ
+scale margin โดยไม่รื้อกราฟ; เปลี่ยน timeframe ให้ refill bars บน chart เดิมแล้ว `fitContent()` หลัง bars ใหม่มาถึง.
+กรณี series/pane เปลี่ยนจริงยัง rebuild ตาม fallback เดิม. Rail คัดชิปนอก viewport ก่อน sort/draw.
 
 ## dev มี React StrictMode — effect/refill รันซ้ำ 2 ครั้ง
 
@@ -1718,3 +1768,181 @@ On 2026-07-28 14:13 every dividend row was updated (USD dividends re-tagged) →
 table (`dividends_stored` keeps the old number). Same class as the Dime backfill: any restated
 money field read from a snapshot turns an edit into performance. realized_pnl / open_cost are still
 read from snapshots — a restatement there (e.g. the Dime exit-date fix) is not re-derived.
+
+## Upcoming event chips queue right of the last bar until the pane is full (2026-09-25)
+
+**Click target (fixed 2026-09-25):** `ModularChart` previously rejected clicks with no bar time before
+checking events, so future chips painted in whitespace could not open their card. Its fallback matched
+all events within 2 bars of a candle, which could open the wrong future event. The rail now records
+the exact rectangles painted for each icon/cluster and returns only the marker(s) under the click.
+Test with a future icon to the right of the last candle and a bare click on the candle.
+
+**MKT card click latency (fixed 2026-09-25):** `market-view.tsx` filtered `historyQuery.data.quotes`
+inline, creating `rawChartData` anew on every render. Opening/closing an event card changes local
+state, so the new array invalidated `chartData` and `heatmapOhlcv`, triggering `ModularChart`'s
+full refill of chart series/overlays despite unchanged prices. Memoize the filtered quotes by the
+query's `quotes` identity; keep derived chart arrays dependent on that stable result.
+
+`event-rail-overlay` draws upcoming events in date order from the last candle and `break`s when the
+next chip would pass the pane edge — anything later is silently dropped. Adding macro releases put
+NFP/CPI/FOMC ahead of a stock's own report, so earnings fell off. `useStockEvents` now keeps only the
+next upcoming release of each macro kind within 45 days. Anything else added to the rail must respect
+the same budget. Also: the Nov 2024 FOMC decision was a THURSDAY (11-07, post-election) — the test that
+all decisions are Wednesdays carries it as the one exception.
+
+## ถอนเงินมีอยู่แล้วแต่มองไม่เห็น — CASH ซ่อน `investment` ติดลบ (fixed 2026-09-25)
+
+`cash_ledger.investment` คือ capital flow แบบมีเครื่องหมาย (ฝาก +, ถอน −) และเป็นตัวเดียวที่ summary /
+NAV / nav-index อ่าน (`SUM(investment)`). แถว "Case Out" จาก Excel เป็น `income=+X, investment=−X`
+แต่ตาราง CASH เขียน `c.investment > 0 ? … : "—"` → **เงินถอน ฿320K ทั้งหมดแสดงเป็นขีด** และฟอร์มมีแค่
+INCOME/INVESTMENT ไม่มีทางบอกว่าเป็นการถอน. ตอนนี้ฟอร์มส่ง `flow_type` + `amount` (บวกเสมอ) และ
+backend ใส่เครื่องหมายเอง. `income` เป็น display-only (gross จาก Excel) ไม่มีสูตรไหนอ่าน.
+
+**กฎ:** จำนวนเงินที่มีทิศทาง ห้ามให้ผู้ใช้พิมพ์เครื่องหมายเอง — ให้เลือก type แล้ว server ใส่เครื่องหมาย และ
+ตารางต้องแสดงค่าติดลบ ไม่ใช่กรอง `> 0`
+ข้อมูลเก่าที่น่าสงสัย: 2025-08-28 / 2025-10-10 มีคู่ finansia WITHDRAW + dime DEPOSIT ยอดเท่ากันวันเดียวกัน
+(dime `income` ติดลบ) = น่าจะเป็น transfer ที่ลงเป็น CASH สองแถว — NET รวมถูก แต่ DEP/WD พองทั้งคู่
+
+## ราคาซื้อจริงอยู่ใน `trade_audit_log` ไม่ใช่ใน `trades` (2026-09-25)
+
+หลังขาย `price_entry` ของทุก lot = avg และ partial sell ลด `volume` ของแถวซื้อ → อ่าน `trades` ตรงๆ
+ไม่รู้ว่าซื้อจริงกี่หุ้นที่ราคาเท่าไร. กู้ได้จาก log: ราคา = `fields_changed.price_entry.old` ที่เก่าสุดของ
+root lot (action ระบบ) หรือ `SELL_PARTIAL_CREATED` ของลูก (snapshot ราคา parent) — **ห้ามใช้**
+`AVCO_REPAIR` ของแถวลูก (นั่นคือ avg ตอนขาย). จำนวน = volume root + ลูกทั้งหมด. ทำไว้แล้วใน
+`backend/ledger_backfill.py`. ยืนยันด้วย SNDK: replay ได้ avg 1616.2403 ตรง broker
+
+**ซื้อ-ขายวันเดียวกัน:** ใต้ AVCO ลำดับในวันเปลี่ยน avg/P&L — วันที่อย่างเดียวไม่พอ ต้องมีเวลา
+(`ledger_events.trade_time`). backfill ใช้ `created_at` ของแถว/audit = เวลาที่กรอก ไม่ใช่เวลาที่ match จริง
+
+**เงินสดบัญชี USD:** อย่ารวมเป็น THB ด้วย FX คนละวันแล้วเทียบ broker — ส่วนต่างค่าเงินดูเหมือนเงินหาย
+(Dime −฿98K ปลอม). คิดในสกุลบัญชี: เงินฝาก THB แปลงเป็น USD ณ วันฝาก
+
+## launcher รัน backend แบบไม่มี `--reload` — แก้ router แล้วต้อง restart (2026-09-25) — FIXED
+
+อาการ: frontend ใหม่คุยกับ backend เก่า → pydantic ทิ้ง field ที่ไม่รู้จัก → CASH บันทึก `+฿0` สำเร็จแบบเงียบ.
+**แก้แล้ว (วันเดียวกัน):** launcher เปิด `--reload` เป็นค่าเริ่มต้น + `GET /api/dev/status` + แถบเตือนบนสุด
+(OLD CODE / DOWN) — ดู `tools/launcher/README.md`. กันซ้ำใน CASH: backend 400 แถวไม่มียอด, `CashTab` error ถ้า
+response ไม่มี `entry_type`.
+**กับดักระหว่างแก้:** `uvicorn --reload-exclude tests` (relative) ไม่มีผล — uvicorn เก็บ dir แบบ relative แต่เทียบกับ
+path absolute → ต้องส่ง path เต็ม. แถบ DOWN หลังแก้ `.py` = code import ไม่ผ่าน (ดู `logs\backend.log`) ไม่ใช่ backend ค้าง
+
+## GROWTH ไม่เห็นเงินฝาก/ถอน — snapshot freeze `invested_capital` (fixed 2026-09-25)
+
+`portfolio_nav_snapshots` จับ NAV วันละครั้งตอนเปิดหน้า และเก็บ `invested_capital` = `SUM(cash_ledger.investment)`
+ณ ตอนนั้น. ถอนเงินหลัง capture ของวันนั้น (เคสจริง: Dime −6,500/−2,000 วันที่ 09-25) → ไม่ขึ้นเลย; ฝากย้อนหลัง
+(07-09) → ไปขึ้นวันที่ snapshot ถัดไปจับได้ (07-15). **แก้:** `get_nav_history` คำนวณ `invested_capital` ใหม่จาก
+`cash_ledger` ตามวันที่ทุกครั้ง (`invested_stored` = ค่าเดิม) — แบบเดียวกับ dividends. `realized_pnl`/`open_cost_basis`
+ยังอ่านจาก snapshot (ยังเสี่ยงแบบเดิมถ้าแก้ trade ย้อนหลัง).
+**ตัวที่สอง:** nav-index รวม cash EDIT offset เข้า `flow` → GROWTH วาดยอดปรับ ฿72.6K เป็น "Deposit". ตอนนี้แยก
+`capital_flow` (▲▼) กับ `adjustment_flow` (◆ เทา, "Cash adj."). TWR ยังหักทั้งคู่เหมือนเดิม
+
+## NAV ก่อน 2026-07-03 = backfill จากราคาปิด (2026-09-25)
+
+snapshot เก็บแบบ capture-on-view เริ่ม 07-03 → GROWTH เห็นแค่ ก.ค.–ก.ย. ทั้งที่ ม.ค.–มิ.ย. มีซื้อ 35/ขาย 33.
+`scripts/backfill_nav.py` (เขียนใหม่ — เดิมติดป้าย DO NOT RUN) สร้าง 2026-01-01→07-02 ใส่ `source='backfill'`
+(column ใหม่, default `'live'`), nav-index คืน `estimated` + `estimated_until`, GROWTH แรเงา "EST.".
+**ก่อน apply ต้องแก้วันที่ก่อน** (ทำแล้ว, backup `portfolio.db.bak-20260925-121919-pre-2026-date-fix`):
+- Finansia 15 lot วันที่ `2025-01-01` = ถือจริงก่อน มิ.ย. 2024 (ราคาซื้อไม่เคยเทรดตั้งแต่นั้น) → คงไว้;
+  "เงินฝาก" ฿1,883,714 วันที่ 2026-02-08 = **ยอดยกมาของหุ้นเหล่านั้น** → ย้ายเป็น 2025-12-31 (ไม่งั้น 02-08 ขาดทุนปลอม)
+- Dime 6 lot `2025-01-01` ถูกกรอกเป็นยอดคงเหลือเมื่อ 2026-05-22 ด้วยราคาเฉลี่ย broker → วันที่ประมาณจาก price-match
+  (ผู้ใช้ยืนยัน): GOOGL 05-06 / 04-30, GRID 05-07, MSFT 05-07, NFLX 04-20, SGOV 05-01 — PATCH พร้อม `adjustment_reason`
+**Validation:** rebuild ช่วง live 44 วันเทียบของจริง: ALL median |Δ| 0.43%, p90 1.47% (Dime ก.ย. สูงกว่าเพราะ option
+ไม่อยู่ใน backfill). รอยต่อ 07-02→07-03 ไม่กระโดด. apply: 524 แถว (131 วัน), backup `…-pre-nav-backfill`
+ลบย้อนได้: `DELETE FROM portfolio_nav_snapshots WHERE source='backfill'`
+**อย่าสับสน:** GROWTH +19.6% (TWR ตั้งแต่ 2026-01-01) ≠ TOTAL RETURN −18% (ต้นทุนรวมตั้งแต่เริ่ม รวมหุ้นเก่า Finansia −45%)
+
+## XIRR +276% (Dime) — เงินเข้าก่อนการซื้อครั้งแรก + ปันผลบาทติดป้าย USD (fixed 2026-09-25)
+
+XIRR ของ `/returns` คิดจาก trade: ซื้อ −, ขาย/ปันผล +, open lot mark-to-market +. Dime มีปันผลปี 2025 (JEPQ/UNH/META/ABBV)
+แต่ไม่มีการซื้อปี 2025 ในระบบ → solver เห็นเงินเข้าฟรีตอนต้น → IRR ระเบิด. เดิม lot วันที่หลอก 2025-01-01 บังไว้ —
+พอแก้วันที่ (เช้าวันเดียวกัน) ก็โผล่. **แก้:** `xirr_flag` (`inflow_before_outflow` / `extreme` >±100%) → UI แสดง "—" + เหตุผล;
+เพิ่ม `xirr_capital_pct` (เงินฝาก/ถอน − กับ NAV วันนี้ +) พร้อม `xirr_capital_flag` (`opening_balance_at_cost` เมื่อ
+cash_ledger มี note "opening balance"/"ยอดยกมา" — Finansia −40.7% ต่ำเกินจริงเพราะยอดยกมาลงที่ราคาทุน)
+**ตัวที่สอง:** ปันผล 7 แถวเป็นยอดบาทติดป้าย USD (×33) — ดู `reports/dividend-currency-override-risk-report.md`.
+แปลงเป็น USD แล้ว; DIVIDENDS ฿155.6K → ฿48.7K, TOTAL RETURN −18.3% → −23.3%.
+**⚠️ ผลต่อ cash reconcile:** offset ของ EDIT cash คำนวณตอนปันผลยังเกิน → หลังแก้ CASH Dime ต่ำกว่า broker ฿106,895.36
+พอดี → ลง offset คืนเท่านั้นที่ 2026-09-16 (reconcile แรก) ด้วย `/cash/reconcile`. **กฎ:** แก้ยอดเงินย้อนหลังในบัญชีที่
+reconcile แล้ว ต้องลง offset ชดเชยเท่ากับ Δ ไม่งั้น CASH ที่เคยตรง broker จะเพี้ยนเงียบๆ
+
+## ปันผล: หน่วย/สกุลเงิน — ระบบตรวจแล้ว (2026-09-25)
+
+Dime แสดงปันผลหุ้น US เป็น**บาท**. กรอกยอดบาทแต่ป้าย USD = ×USD/THB ซ้ำ (×33). เดิม API ทับ currency ด้วยสกุลของหุ้นเสมอ
+→ เลือก THB ก็ไม่ได้ และแก้แล้วถูกย้อนตอน EDIT ครั้งถัดไป. ตอนนี้: สกุลที่ต่างจากสกุลบัญชีถือเป็นการเลือก, `dividend_check`
+บล็อก (422) ค่าที่สเกลห่างจากปันผลจริง ≈ อัตราแลกเปลี่ยน, ฟอร์มมีปุ่มแก้. **ต่อหน่วย = ต่อหุ้น gross** ตามที่ตลาดประกาศ;
+**ยอดรวม = ที่ได้รับจริง** (หลังภาษี 10%/15% ได้). ตรวจยอดรวม: หุ้นที่ถือ ณ ex-date × ต่อหน่วย, ช่วงที่ยอมรับ 0.5–1.1×.
+Finansia มีสองบัญชีย่อย (note `Finansia (6065151)` / `(6065157)`) — ปันผลที่เท่ากับ lot เดียวพอดี = อีกบัญชีย่อยยังไม่ได้ลง
+(`matches_one_lot`). ตรวจทั้งหมด: `python backend/scripts/audit_dividends.py`
+
+## XIRR หลัก = รายปี (YTD) ไม่ใช่สะสม (2026-09-25)
+
+XIRR สะสม (ตั้งแต่ trade แรก) ติดธงถาวรถ้าประวัติต้นๆ ไม่ครบ — ขึ้นปีใหม่ก็ไม่หาย. ตัวเลขหลักจึงเป็น `periods` ของ `/returns`:
+เริ่มจาก NAV ต้นปี (เงินที่อยู่ในพอร์ตแล้ว) + flow เดียวกับ GROWTH → ไม่เห็นประวัติก่อนช่วง. ตรวจ: ALL 2026 period +21.15% ≈ GROWTH TWR +21.12%.
+**ต้องนับ cash EDIT offset เป็น flow** — ไม่นับ NAV ปลายช่วงจะมี +฿266K ที่ไม่ใช่กำไร (ได้ +37.7% ผิด). `~` = ช่วงมีวัน backfill;
+ตั้งแต่ 2027 NAV 1 ม.ค. จะเป็น live. ปีที่ยังไม่จบ: อ่าน period % ก่อน annualised
+
+## ยอดปรับ EDIT cash กลบความผิดพลาดได้ — อย่าใช้แทนการหาที่มา (2026-09-25)
+
+EDIT cash (reconcile) บังคับ CASH = broker โดยเก็บ "ส่วนต่าง" — ตัวเลขข้างบนจึงดูถูกเสมอ แม้ ledger ผิด. เคสจริง: ถอน ฿84,015
+ถูกลงซ้ำใน Dime (ยอดเดียวกับ Finansia Case Out 03-27/28) แล้ว EDIT +84,015 กลบ → Withdrawals/Cash adj. พองคู่กันเงียบๆ.
+รวม offset ณ วันนี้ ฿266K ≈ 12% ของ NAV. **กฎ:** offset ต้องมี note บอกที่มา; offset ใหญ่ = ไปหารายการที่ขาด/ซ้ำก่อน.
+**ทุกสูตรผลตอบแทนนับ offset เป็น flow** (GROWTH, XIRR รายปี, XIRR เงินทุน — แก้ให้ตรงกัน 2026-09-25).
+ตรวจเร็ว: ยอดเงินสดคงเหลือรายวันตาม ledger ห้ามติดลบ (Dime ติดลบ พ.ค.–ส.ค. = ประวัติก่อน 05-22 ไม่ครบ).
+รายงานเต็ม: `reports/accounting-audit-2026-09-25.md`
+
+## EDGAR: one deal = many rows; EFTS 5xx is routine (BOND view, 2026-09-25)
+
+- **Co-registrants:** the daily form index and EFTS list a filing once per registrant — Sysco's
+  2026-09-24 notes came with ~60 guarantor subsidiaries, each its own row. Count on the
+  accession number (`adsh`), never on rows. A multi-tranche deal also files one prospectus per
+  tranche (Sysco: 4 `adsh` the same day) → a "deal" is **distinct issuer per day**.
+- **Banks drown the signal:** ~80–90% of 424B2 are bank/broker structured notes (Morgan Stanley,
+  BofA, Citi, JPM, GS, Barclays …). Filter by SIC (6021/6022/6029/6035/6036/6199/6211), not by
+  name; name only when a vehicle has no SIC.
+- **EFTS returns 5xx in bursts** under steady paging (6 in two minutes on the first backfill).
+  `bonds._efts_get` retries 5xx/connection errors 2× with backoff; 4xx is raised at once.
+- Daily form index (`/Archives/edgar/daily-index/…/form.YYYYMMDD.idx`, ~700 KB) has no SIC — use
+  EFTS (`efts.sec.gov/LATEST/search-index`), whose hits carry `sics`, `adsh`, `display_names`.
+
+## Deleting a file under `app/` → `globals.css` ENOENT that survives restarts (2026-09-25)
+
+**Symptom:** after `rm -r app/api/clippings`, every page 500s with
+`./styles/globals.css … ENOENT … stat 'app\api\clippings\route.ts'` from Tailwind 3
+`resolveChangedFiles`. Restarting `next dev` does NOT fix it; touching `globals.css` or
+`tailwind.config.ts` does not either. A fresh `fast-glob` over the same patterns returns no such file.
+**Cause:** Turbopack's persistent disk cache (`.next/dev`, ~650 MB) replays the failed PostCSS
+evaluation with the old file list.
+**Fix:** stop the frontend, move/delete `.next/dev` (regenerable), start again — under the launcher,
+kill the `next dev` pair on port 9318 and it respawns by itself. First load then recompiles (~30 s).
+
+## MKT lag = MarketView re-renders everything (2026-09-25)
+
+**Symptom:** MKT feels sluggish; one keystroke in `SYMBOL <GO>` took 40–330 ms (dev build).
+**Cause:** `MarketView` is one ~3,000-line component — every state change (search input, chart
+state, event card) re-rendered the whole WATCHLIST column (`PinnedAssets` + `SectorRegimeHeatmap`,
+~35 ms) and ~70 TICK DATA rows. Attributed by folding panels and timing a synthetic input event.
+**Fix:** `PinnedAssets`, `SectorRegimeHeatmap`, `TickRow`/`RateRow`/`FxRow` are `memo`; their
+callbacks are `useCallback` (`handleWatchlistPick`, `handleTickSelect`, …). Keystroke median → ~11 ms.
+**Rule:** anything heavy rendered inside `MarketView` must be memoised AND get stable props — an
+inline `(sym) => …` or a fresh `.filter()` array silently defeats `memo`.
+
+## I4 cash check counted trades typed after the broker target (2026-09-25)
+
+**Symptom:** ACCOUNTING CHECK I4 Dime 2026-09-25 "unexplained" $8,554.59 — a day earlier it was $3,418.
+**Cause:** `ledger_backfill.check` summed every event with `trade_date <= adj.date`. The day's cash
+EDIT (target ฿409,217.78) was typed 05:41 UTC; COST×2 + SNDK were recorded 13:49–13:50 UTC the same
+day, so their −$5.1K was charged against a balance that never contained them.
+**Fix:** on the adjustment's own date, skip events whose `trade_time` > `cash_adjustments.created_at`
+(both UTC `datetime('now')`); count them in `after_target`. Now $3,407.41.
+**Rule:** a typed broker balance is a point in time, not a day-end — compare only what existed when it was typed.
+
+## Dime Activity times are Thai local (2026-09-26)
+`broker_executions.executed_at_local` is what the Dime screen shows — Asia/Bangkok. A fill at 00:22 on 28 เม.ย. traded on **27 Apr** in New York. `evidence_match.us_trade_date()` converts; never compare the raw date with `trades.date_entry`. The legacy book also merges fills (GRID: 3 buys → 1 lot at VWAP) and keeps only the unsold remainder (NFLX: buys − sells at buy VWAP, the round-trip P&L never booked) — match on Σqty + VWAP, not row-by-row.
+
+## Dime USD cash drifts with the live USD/THB rate (2026-09-26)
+`/summary?base_currency=USD` builds Dime cash from THB-stored rows (cash_ledger, THB cash EDITs) × `live_usd_thb()`. A rate refresh moved it $14.55 in 6 minutes with no trade. Before posting a cash reconcile, read the cash again right before the call and label any move without a trade as FX_REVALUATION. Root fix = native USD wallet (plans/port-accounting-ledger.md S2).
+
+## Broker fees: never in the cost basis (2026-09-26)
+Dime shows cost = qty × price (GOOGL/COST/UNH broker cost = DB lots exactly), so fees live in `trades.fee_entry` / `fee_exit`. `fee_exit` is inside `pnl_amount`; `fee_entry` is charged to realized P&L on the buy date via `portfolio_currency.entry_fee_in_report` in all four cash paths (summary, NAV snapshot, `/returns`, `scripts/backfill_nav.py`) — add it to any new cash/realized aggregate or cash identity checks (C1) break. Ledger rebuild posts buy fees as separate `FEE` events. Dime schedule fitted to confirmations: 0.15% + VAT 7% of the *unrounded* commission; sells + SEC (≈$21.1/M, ceil) + TAF ($0.000166/sh, min 0.01). Estimates can be ±$0.01 — type the confirmation value to override.
+
+## A portfolio taken over is a transfer in kind, not a buy (2026-09-26)
+Finansia 6065151/6065157 (AJ, DCON×2, DMT, LOXLEY, OR×2, TASCO×2, XPG) were handed over for management on 2026-02-08, but were booked as 2025-01-01 buys at the previous owner's cost (฿1,457,602) with the ฿1.88M funding moved to 2025-12-31 → NAV negative through 2025 and the owner's −฿872K pre-takeover loss counted as ours. Fund practice (GIPS): `acquisition_type='TRANSFER_IN'`, `price_entry` = close on/before the transfer date, capital in = fair value (+ cash brought in), prior cost kept in `original_price_entry` (memo, `/takeover`). Applied by `backend/scripts/apply_portfolio_takeover.py` (also re-bases live NAV snapshots' `open_cost_basis` by the same delta and deletes `source='backfill'` rows → rebuild with `scripts/backfill_nav.py`). A same-day TWR with a weekend/in-kind flow must put that flow in the base (`before` in `/nav-index`) or the first Monday shows +10% on a ฿106K base. TTW/ICHI/BH on 6065151 were real buys after takeover (2026-02-20 / 03-05) — not transfer lots. Broker statements still show the previous owner's average cost for the transfer lots.

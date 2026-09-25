@@ -23,7 +23,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertBellCell } from "../alerts/AlertBellCell";
 import { SymbolContextMenu } from "../alerts/SymbolContextMenu";
 import { WatchlistAlertsBadge } from "../alerts/WatchlistAlertsBadge";
@@ -52,6 +52,7 @@ import {
   useWatchlistSignals,
 } from "../hooks/useWatchlistSignals";
 import { bloombergColors } from "../lib/theme-config";
+import { ExtCells, ExtHead, extLabelOf } from "./discover-lists";
 
 type ThemeColors = typeof bloombergColors.dark;
 
@@ -62,6 +63,19 @@ const LS_PINS = "bloomberg_pinned_assets";
 const LS_TAGS = "bloomberg_pin_tags";
 const LS_PIN_ORDER = "bloomberg_pin_order";
 const LS_SORT_KEY = "bloomberg_pin_sort_key";
+const LS_VIEW_MODE = "bloomberg_watchlist_view";
+const LS_FOLDED_GROUPS = "bloomberg_watchlist_folded_groups";
+
+/** compact = TICK DATA-style one-line rows (default) · table = full signal grid · cards */
+type WatchlistViewMode = "compact" | "table" | "cards";
+const VIEW_MODES: WatchlistViewMode[] = ["compact", "table", "cards"];
+const VIEW_MODE_LABEL: Record<WatchlistViewMode, string> = {
+  compact: "LIST",
+  table: "TABLE",
+  cards: "CARDS",
+};
+const nextViewMode = (m: WatchlistViewMode) =>
+  VIEW_MODES[(VIEW_MODES.indexOf(m) + 1) % VIEW_MODES.length];
 
 const PALETTE = [
   { label: "Gold", hex: "#f59e0b" },
@@ -1118,9 +1132,163 @@ function EditCardForm({
   );
 }
 
+// ── Compact (TICK DATA-style) row ─────────────────────────────────────────────
+//
+// Same grammar as the MKT TICK DATA board: one 13px line, four columns —
+// SYM · LAST · CHG · SIG. Company name, pin return, targets and comment move
+// into the tooltip, so a squeezed panel shows ~3x the rows the table view does.
+
+const COMPACT_COLS = 4;
+const COMPACT_CELL = "pl-1 pr-0.5 py-0 text-right whitespace-nowrap tabular-nums";
+
+function scoreColor(score: number) {
+  return score >= 3
+    ? "#22c55e"
+    : score >= 1
+      ? "#4ade80"
+      : score <= -3
+        ? "#ef4444"
+        : score <= -1
+          ? "#f87171"
+          : "#888";
+}
+
+const CompactWatchRow = memo(function CompactWatchRow({
+  pin,
+  quote: q,
+  score,
+  quoteError,
+  colors,
+  onOpen,
+  onEdit,
+  onRemove,
+  index,
+  isDragging,
+  isDragOver,
+  onDragStartRow,
+  onDragOverRow,
+  onDropRow,
+  onDragEndRow,
+  showExt,
+}: {
+  pin: PinnedAsset;
+  quote: Quote | undefined;
+  score: number | undefined;
+  quoteError: string | undefined;
+  colors: ThemeColors;
+  onOpen: (symbol: string, e?: { shiftKey?: boolean }) => void;
+  onEdit: (id: string) => void;
+  onRemove: (id: string) => void;
+  /** position in the sorted list — what handleReorder indexes */
+  index: number;
+  isDragging: boolean;
+  isDragOver: boolean;
+  onDragStartRow: (index: number) => void;
+  onDragOverRow: (index: number) => void;
+  onDropRow: (index: number) => void;
+  onDragEndRow: () => void;
+  /** render the two extended-hours columns (the list is in PRE/AH) */
+  showExt: boolean;
+}) {
+  const price = q?.regularMarketPrice;
+  const pct = q?.regularMarketChangePercent;
+  const buyAlert = price != null && pin.buyTarget != null && price <= pin.buyTarget;
+  const sellAlert = price != null && pin.sellTarget != null && price >= pin.sellTarget;
+  const sincePin =
+    price != null && pin.priceAtPin != null && pin.priceAtPin > 0
+      ? ((price - pin.priceAtPin) / pin.priceAtPin) * 100
+      : null;
+  // A move from a session that has already ended is dimmed, never read as today's.
+  const stale = q ? staleMoveStyle(q) : null;
+  const title = [
+    q?.shortName ?? pin.symbol,
+    sincePin != null && pin.priceAtPin != null
+      ? `since pin ${fmtPct(sincePin)} @${fmtPrice(pin.priceAtPin)}`
+      : null,
+    pin.buyTarget != null ? `buy ${fmtPrice(pin.buyTarget)}` : null,
+    pin.sellTarget != null ? `sell ${fmtPrice(pin.sellTarget)}` : null,
+    pin.comment || null,
+    stale?.title ?? null,
+    quoteError ? `price delayed: ${quoteError}` : null,
+    "drag to reorder · double-click to edit",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return (
+    <SymbolContextMenu
+      symbol={pin.symbol}
+      colors={colors}
+      onOpen={onOpen}
+      onRemove={() => onRemove(pin.id)}
+    >
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: row click is a shortcut; the symbol opens from the keyboard via the context menu and the TABLE view */}
+      <tr
+        className="cursor-pointer hover:bg-[#111]"
+        style={{
+          borderBottom: "1px solid #111",
+          boxShadow: isDragOver ? "inset 0 2px #00FFFF" : undefined,
+          opacity: isDragging ? 0.4 : 1,
+          background: sellAlert ? "#ef444414" : buyAlert ? "#22c55e14" : undefined,
+        }}
+        title={title}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.effectAllowed = "move";
+          onDragStartRow(index);
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          onDragOverRow(index);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          onDropRow(index);
+        }}
+        onDragEnd={onDragEndRow}
+        onClick={(e) => onOpen(pin.symbol, e)}
+        onDoubleClick={() => onEdit(pin.id)}
+      >
+        <td
+          className="px-1 py-0 text-left font-bold truncate max-w-0 w-full"
+          style={{ color: sellAlert ? "#ef4444" : buyAlert ? "#4ade80" : colors.accent }}
+        >
+          {pin.symbol}
+          {quoteError && <span className="text-amber-400">!</span>}
+        </td>
+        <td className={COMPACT_CELL} style={{ color: colors.text }}>
+          {price != null ? fmtPrice(price) : "—"}
+        </td>
+        <td
+          className={COMPACT_CELL}
+          style={{
+            color: pct == null ? colors.textSecondary : pct >= 0 ? "#00FF00" : "#FF0000",
+            opacity: stale?.opacity,
+          }}
+        >
+          {pct != null ? fmtPct(pct) : "—"}
+        </td>
+        {showExt && <ExtCells quote={q} colors={colors} />}
+        <td
+          className={`${COMPACT_CELL} font-bold`}
+          style={{ color: score == null ? colors.textSecondary : scoreColor(score) }}
+        >
+          {score == null ? "·" : score > 0 ? `+${score}` : score}
+        </td>
+      </tr>
+    </SymbolContextMenu>
+  );
+});
+
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: string) => void } = {}) {
+/**
+ * Memoised: MKT re-renders on every keystroke / chart state change, and this
+ * table (quotes × signals × PM per row) is the most expensive thing in it.
+ * Callers must pass a stable `onSymbolClick`.
+ */
+export const PinnedAssets = memo(function PinnedAssets({
+  onSymbolClick,
+}: { onSymbolClick?: (symbol: string) => void } = {}) {
   const [isDarkMode] = useAtom(isDarkModeAtom);
   const colors = isDarkMode ? bloombergColors.dark : bloombergColors.light;
 
@@ -1149,7 +1317,36 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
 
   const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "ok" | "error">("idle");
   const [syncError, setSyncError] = useState<string>("");
-  const [viewMode, setViewMode] = useState<"table" | "cards">("table");
+  const [viewMode, setViewMode] = useState<WatchlistViewMode>("compact");
+  const [foldedGroups, setFoldedGroups] = useState<string[]>([]);
+  // Restored after mount, not in the initializer: the server renders the
+  // default, and a different first client render is a hydration mismatch.
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(LS_VIEW_MODE);
+      if (v === "compact" || v === "table" || v === "cards") setViewMode(v);
+      const g = JSON.parse(localStorage.getItem(LS_FOLDED_GROUPS) ?? "[]");
+      if (Array.isArray(g)) setFoldedGroups(g.filter((x) => typeof x === "string"));
+    } catch {
+      /* private mode — keep defaults */
+    }
+  }, []);
+  const cycleViewMode = () => {
+    const next = nextViewMode(viewMode);
+    setViewMode(next);
+    try {
+      localStorage.setItem(LS_VIEW_MODE, next);
+    } catch {}
+  };
+  const toggleGroupFold = (id: string) => {
+    setFoldedGroups((prev) => {
+      const next = prev.includes(id) ? prev.filter((g) => g !== id) : [...prev, id];
+      try {
+        localStorage.setItem(LS_FOLDED_GROUPS, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
 
   // Drag-to-reorder state
   const [dragIdx, setDragIdx] = useState<number | null>(null);
@@ -1561,6 +1758,16 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
     }
   };
 
+  // Stable handles for the memoised compact rows — the handlers above are
+  // re-created every render, which would re-render every row on each quote tick.
+  const handlersRef = useRef({ open: handleSymbolClick, remove: handleDeletePin });
+  handlersRef.current = { open: handleSymbolClick, remove: handleDeletePin };
+  const stableOpen = useCallback(
+    (symbol: string, e?: { shiftKey?: boolean }) => handlersRef.current.open(symbol, e),
+    []
+  );
+  const stableRemove = useCallback((id: string) => handlersRef.current.remove(id), []);
+
   // ── Sorting ─────────────────────────────────────────────────────────────
 
   const handleSort = (key: string) => {
@@ -1642,8 +1849,8 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
   // ── Drag-to-reorder ─────────────────────────────────────────────────────
 
   const handleReorder = useCallback(
-    async (fromIdx: number, toIdx: number) => {
-      if (fromIdx === toIdx) return;
+    async (fromIdx: number, toIdx: number, patch?: Partial<PinnedAsset>) => {
+      if (fromIdx === toIdx && !patch) return;
       const displayed =
         sortKey === "manual"
           ? filteredPins
@@ -1657,7 +1864,9 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
               return sortDir === "asc" ? cmp : -cmp;
             });
       const reordered = [...displayed];
-      const [moved] = reordered.splice(fromIdx, 1);
+      const [picked] = reordered.splice(fromIdx, 1);
+      // A LIST-view drop onto a row of another group also moves it into that group.
+      const moved = patch ? { ...picked, ...patch } : picked;
       reordered.splice(toIdx, 0, moved);
       const reorderedIds = new Set(reordered.map((p) => p.id));
       const remaining = pins.filter((p) => !reorderedIds.has(p.id));
@@ -1671,6 +1880,16 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
         await apiPatch("/api/pins/assets/reorder", { order: orderPayload });
       } catch {
         /* backend may not support this endpoint yet */
+      }
+      if (patch?.groupId !== undefined) {
+        try {
+          await apiPatch(`/api/pins/assets/${encodeURIComponent(moved.id)}`, {
+            group_id: patch.groupId,
+          });
+        } catch (err) {
+          console.error("[handleReorder] group move", err);
+          setMutError(`Move ${moved.symbol} to group failed`);
+        }
       }
     },
     [pins, filteredPins, sortKey, sortDir, groups, tags, saveToLS, setPins, getSortValue]
@@ -1696,6 +1915,40 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
   const currentPage = Math.min(page, pageCount - 1);
   const pageOffset = currentPage * pageSize;
   const displayedPins = sortedPins.slice(pageOffset, pageOffset + pageSize);
+  // LIST-view drag-to-reorder. Callbacks are stable (ref-backed) so the
+  // memoised rows only re-render when their own drag highlight changes.
+  const dragFromRef = useRef<number | null>(null);
+  const reorderCtx = useRef({ reorder: handleReorder, list: sortedPins, grouped: false });
+  reorderCtx.current = {
+    reorder: handleReorder,
+    list: sortedPins,
+    grouped: groups.length > 1 && filterGroup === "all",
+  };
+  const rowDragStart = useCallback((idx: number) => {
+    dragFromRef.current = idx;
+    setDragIdx(idx);
+  }, []);
+  const rowDragOver = useCallback((idx: number) => setDragOverIdx(idx), []);
+  const rowDragEnd = useCallback(() => {
+    dragFromRef.current = null;
+    setDragIdx(null);
+    setDragOverIdx(null);
+  }, []);
+  const rowDrop = useCallback(
+    (toIdx: number) => {
+      const from = dragFromRef.current;
+      rowDragEnd();
+      if (from == null) return;
+      const { reorder, list, grouped } = reorderCtx.current;
+      const src = list[from];
+      const dst = list[toIdx];
+      if (!src || !dst) return;
+      const patch = grouped && src.groupId !== dst.groupId ? { groupId: dst.groupId } : undefined;
+      reorder(from, toIdx, patch);
+    },
+    [rowDragEnd]
+  );
+
   const sparklines = useWatchlistSparklines(
     viewMode === "cards" ? displayedPins.map((p) => p.symbol) : [],
     !collapsed && viewMode === "cards"
@@ -1743,7 +1996,7 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
     <div className="border" style={{ borderColor: colors.border, background: "#000" }}>
       {/* ── Section header ── */}
       <div
-        className="flex items-center gap-1.5 px-2 py-1 border-b"
+        className="flex flex-wrap items-center gap-1 px-1 py-0.5 border-b"
         style={{ borderColor: colors.border, background: "#111" }}
       >
         {/* No "WATCHLIST" caption here: the panel this sits inside already
@@ -1753,98 +2006,51 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
           ({pins.length})
         </span>
 
-        {totalAlerts > 0 && (
-          <span
-            className="text-[9px] px-1.5 py-0 font-bold animate-pulse flex items-center gap-0.5"
-            style={{ background: "#ef444420", color: "#ef4444", border: "1px solid #ef444440" }}
-            title={`${totalAlerts} price target${totalAlerts === 1 ? "" : "s"} hit`}
-          >
-            <AlertTriangle className="h-2.5 w-2.5" />
-            {totalAlerts}
-          </span>
-        )}
-
-        <WatchlistAlertsBadge colors={colors} />
-
-        {/* Signal summary — what the daily scan flagged across the whole list */}
-        {pins.length > 0 && (
-          <div
-            className="flex items-center gap-2 ml-2 text-[9px] font-mono"
-            style={{ color: colors.textSecondary }}
-          >
-            {signalsLoading ? (
-              <span className="flex items-center gap-0.5">
-                <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                SCAN
-              </span>
-            ) : (
-              <>
-                <span>
-                  TREND:<span style={{ color: "#4ade80" }}>▲{signalCounts.up}</span>
-                  <span>/</span>
-                  <span style={{ color: "#f87171" }}>▼{signalCounts.down}</span>
-                </span>
-                {signalCounts.breakouts > 0 && (
-                  <span style={{ color: "#4ade80" }}>BRK {signalCounts.breakouts}</span>
-                )}
-                {signalCounts.breakdowns > 0 && (
-                  <span style={{ color: "#f87171" }}>BRKDN {signalCounts.breakdowns}</span>
-                )}
-                {signalCounts.freshCross > 0 && (
-                  <span style={{ color: colors.accent }}>MACD× {signalCounts.freshCross}</span>
-                )}
-                {signalCounts.overbought > 0 && (
-                  <span style={{ color: "#ff9900" }}>OB {signalCounts.overbought}</span>
-                )}
-                {signalCounts.oversold > 0 && (
-                  <span style={{ color: "#4ade80" }}>OS {signalCounts.oversold}</span>
-                )}
-                {signalCounts.volSpike > 0 && (
-                  <span style={{ color: "#ff9900" }}>VOL⇧ {signalCounts.volSpike}</span>
-                )}
-              </>
-            )}
-          </div>
-        )}
-
-        {syncStatus === "syncing" && (
-          <span
-            className="flex items-center gap-0.5 text-[8px]"
-            style={{ color: colors.textSecondary }}
-          >
-            <Loader2 className="h-2.5 w-2.5 animate-spin" />
-            SYNC
-          </span>
-        )}
-        {syncStatus === "ok" && (
-          <span className="text-[8px]" style={{ color: "#4ade8066" }}>
-            DB
-          </span>
-        )}
-        {syncStatus === "error" && (
-          <span className="text-[8px]" title={syncError} style={{ color: "#f8717166" }}>
-            LOCAL
-          </span>
-        )}
-        {mutError && (
+        {/* Actions sit first: the panel is used squeezed, and when they lived
+            after the signal summary ADD/GRP were clipped off the right edge. */}
+        <div className="flex items-center gap-1 shrink-0">
           <button
             type="button"
-            title={`${mutError} — change was rolled back. Click to dismiss.`}
-            className="flex items-center gap-0.5 text-[8px] px-1 border"
-            style={{ color: "#f87171", borderColor: "#f8717166" }}
-            onClick={() => setMutError("")}
+            title="Add symbol"
+            className="flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 border font-bold hover:opacity-80"
+            style={{ borderColor: `${colors.accent}44`, color: colors.accent }}
+            onClick={() => setShowAddRow((v) => !v)}
           >
-            <AlertTriangle className="h-2.5 w-2.5" />
-            {mutError.toUpperCase()}
-            <X className="h-2 w-2" />
+            <Plus className="h-2.5 w-2.5" />
+            ADD
           </button>
-        )}
 
-        <div className="ml-auto flex items-center gap-1">
+          <div className="relative">
+            <button
+              type="button"
+              title="Groups — create, rename, recolour, delete"
+              className="flex items-center gap-0.5 text-[9px] px-1 py-0.5 border font-bold hover:opacity-80"
+              style={{
+                borderColor: showGroupMgr ? colors.accent : colors.border,
+                color: showGroupMgr ? colors.accent : colors.textSecondary,
+              }}
+              onClick={() => setShowGroupMgr((v) => !v)}
+            >
+              <Layers className="h-2.5 w-2.5" />
+              GRP
+            </button>
+            {showGroupMgr && (
+              <GroupManagerPanel
+                groups={groups}
+                pins={pins}
+                colors={colors}
+                onCreateGroup={handleAddGroup}
+                onRenameGroup={handleRenameGroup}
+                onDeleteGroup={handleDeleteGroup}
+                onClose={() => setShowGroupMgr(false)}
+              />
+            )}
+          </div>
+
           {/* Group filter */}
           {groups.length > 1 && (
             <select
-              className="text-[9px] px-1 py-0.5 border font-mono"
+              className="text-[9px] px-1 py-0.5 border font-mono max-w-[72px]"
               style={{
                 background: colors.background,
                 color: colors.text,
@@ -1864,18 +2070,96 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
               ))}
             </select>
           )}
+        </div>
+        <div className="flex-1 basis-0 min-w-0 flex items-center gap-1.5 overflow-hidden whitespace-nowrap">
+          {totalAlerts > 0 && (
+            <span
+              className="text-[9px] px-1.5 py-0 font-bold animate-pulse flex items-center gap-0.5"
+              style={{ background: "#ef444420", color: "#ef4444", border: "1px solid #ef444440" }}
+              title={`${totalAlerts} price target${totalAlerts === 1 ? "" : "s"} hit`}
+            >
+              <AlertTriangle className="h-2.5 w-2.5" />
+              {totalAlerts}
+            </span>
+          )}
 
-          <button
-            type="button"
-            title="Add symbol"
-            className="flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 border font-bold hover:opacity-80"
-            style={{ borderColor: `${colors.accent}44`, color: colors.accent }}
-            onClick={() => setShowAddRow((v) => !v)}
-          >
-            <Plus className="h-2.5 w-2.5" />
-            ADD
-          </button>
+          <WatchlistAlertsBadge colors={colors} />
 
+          {/* Signal summary — what the daily scan flagged across the whole list */}
+          {pins.length > 0 && (
+            <div
+              className="flex items-center gap-2 text-[9px] font-mono"
+              style={{ color: colors.textSecondary }}
+            >
+              {signalsLoading ? (
+                <span className="flex items-center gap-0.5">
+                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                  SCAN
+                </span>
+              ) : (
+                <>
+                  <span>
+                    TREND:<span style={{ color: "#4ade80" }}>▲{signalCounts.up}</span>
+                    <span>/</span>
+                    <span style={{ color: "#f87171" }}>▼{signalCounts.down}</span>
+                  </span>
+                  {signalCounts.breakouts > 0 && (
+                    <span style={{ color: "#4ade80" }}>BRK {signalCounts.breakouts}</span>
+                  )}
+                  {signalCounts.breakdowns > 0 && (
+                    <span style={{ color: "#f87171" }}>BRKDN {signalCounts.breakdowns}</span>
+                  )}
+                  {signalCounts.freshCross > 0 && (
+                    <span style={{ color: colors.accent }}>MACD× {signalCounts.freshCross}</span>
+                  )}
+                  {signalCounts.overbought > 0 && (
+                    <span style={{ color: "#ff9900" }}>OB {signalCounts.overbought}</span>
+                  )}
+                  {signalCounts.oversold > 0 && (
+                    <span style={{ color: "#4ade80" }}>OS {signalCounts.oversold}</span>
+                  )}
+                  {signalCounts.volSpike > 0 && (
+                    <span style={{ color: "#ff9900" }}>VOL⇧ {signalCounts.volSpike}</span>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {syncStatus === "syncing" && (
+            <span
+              className="flex items-center gap-0.5 text-[8px]"
+              style={{ color: colors.textSecondary }}
+            >
+              <Loader2 className="h-2.5 w-2.5 animate-spin" />
+              SYNC
+            </span>
+          )}
+          {syncStatus === "ok" && (
+            <span className="text-[8px]" style={{ color: "#4ade8066" }}>
+              DB
+            </span>
+          )}
+          {syncStatus === "error" && (
+            <span className="text-[8px]" title={syncError} style={{ color: "#f8717166" }}>
+              LOCAL
+            </span>
+          )}
+          {mutError && (
+            <button
+              type="button"
+              title={`${mutError} — change was rolled back. Click to dismiss.`}
+              className="flex items-center gap-0.5 text-[8px] px-1 border"
+              style={{ color: "#f87171", borderColor: "#f8717166" }}
+              onClick={() => setMutError("")}
+            >
+              <AlertTriangle className="h-2.5 w-2.5" />
+              {mutError.toUpperCase()}
+              <X className="h-2 w-2" />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
           <button
             type="button"
             title="Refresh"
@@ -1911,44 +2195,14 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
             )}
           </div>
 
-          <div className="relative">
-            <button
-              type="button"
-              title="Groups — create, rename, recolour, delete"
-              className="flex items-center gap-0.5 text-[9px] px-1 py-0.5 border font-bold hover:opacity-80"
-              style={{
-                borderColor: showGroupMgr ? colors.accent : colors.border,
-                color: showGroupMgr ? colors.accent : colors.textSecondary,
-              }}
-              onClick={() => setShowGroupMgr((v) => !v)}
-            >
-              <Layers className="h-2.5 w-2.5" />
-              GRP
-            </button>
-            {showGroupMgr && (
-              <GroupManagerPanel
-                groups={groups}
-                pins={pins}
-                colors={colors}
-                onCreateGroup={handleAddGroup}
-                onRenameGroup={handleRenameGroup}
-                onDeleteGroup={handleDeleteGroup}
-                onClose={() => setShowGroupMgr(false)}
-              />
-            )}
-          </div>
-
           <button
             type="button"
-            title={viewMode === "table" ? "Switch to card view" : "Switch to table view"}
-            className="p-0.5 hover:opacity-80"
-            onClick={() => setViewMode((v) => (v === "table" ? "cards" : "table"))}
+            title={`View: ${VIEW_MODE_LABEL[viewMode]} — click for ${VIEW_MODE_LABEL[nextViewMode(viewMode)]}`}
+            className="text-[8px] font-bold tracking-wider px-0.5 hover:opacity-80"
+            style={{ color: colors.textSecondary }}
+            onClick={cycleViewMode}
           >
-            {viewMode === "table" ? (
-              <LayoutGrid className="h-3 w-3" style={{ color: colors.textSecondary }} />
-            ) : (
-              <LayoutList className="h-3 w-3" style={{ color: colors.accent }} />
-            )}
+            {VIEW_MODE_LABEL[viewMode]}
           </button>
 
           <button
@@ -2003,32 +2257,38 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
             </div>
           )}
 
-          {quoteTotal > 0 && (
-            <output
-              className="px-2 py-1 text-[9px] flex flex-wrap gap-x-3"
-              style={{ color: colors.textSecondary }}
-            >
-              <span>
-                PRICES {quotesLoaded}/{quoteTotal}
-                {loadingQuotes ? " · updating" : ""}
-              </span>
-              <span>
-                SIGNALS {Object.keys(signals).length}/{quoteTotal}
-                {signalsLoading ? " · updating" : ""}
-              </span>
-              {(Object.keys(quoteErrors).length > 0 ||
-                signalErrors.length > 0 ||
-                pmErrors.length > 0) && (
-                <span
-                  style={{ color: "#f59e0b" }}
-                  title={[...Object.values(quoteErrors), ...signalErrors, ...pmErrors].join("\n")}
-                >
-                  UPDATE DELAYED · {Object.keys(quoteErrors).length} prices / {signalErrors.length}{" "}
-                  signals / {pmErrors.length} PM — previous values retained
+          {/* Progress line only until everything has loaded, or while an update is delayed — a
+              permanent "PRICES 17/17 · SIGNALS 17/17" cost a row for nothing. */}
+          {quoteTotal > 0 &&
+            (quotesLoaded < quoteTotal ||
+              Object.keys(quoteErrors).length > 0 ||
+              signalErrors.length > 0 ||
+              pmErrors.length > 0) && (
+              <output
+                className="px-2 py-1 text-[9px] flex flex-wrap gap-x-3"
+                style={{ color: colors.textSecondary }}
+              >
+                <span>
+                  PRICES {quotesLoaded}/{quoteTotal}
+                  {loadingQuotes ? " · updating" : ""}
                 </span>
-              )}
-            </output>
-          )}
+                <span>
+                  SIGNALS {Object.keys(signals).length}/{quoteTotal}
+                  {signalsLoading ? " · updating" : ""}
+                </span>
+                {(Object.keys(quoteErrors).length > 0 ||
+                  signalErrors.length > 0 ||
+                  pmErrors.length > 0) && (
+                  <span
+                    style={{ color: "#f59e0b" }}
+                    title={[...Object.values(quoteErrors), ...signalErrors, ...pmErrors].join("\n")}
+                  >
+                    UPDATE DELAYED · {Object.keys(quoteErrors).length} prices /{" "}
+                    {signalErrors.length} signals / {pmErrors.length} PM — previous values retained
+                  </span>
+                )}
+              </output>
+            )}
           {pageCount > 1 && (
             <div
               className="px-2 py-1 flex items-center justify-between text-[10px]"
@@ -2316,7 +2576,105 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
             </div>
           )}
 
-          {/* ── TABLE VIEW (default) ───────────────────────────────────────── */}
+          {/* ── COMPACT VIEW (default) — TICK DATA grammar ─────────────────── */}
+          {pins.length > 0 &&
+            viewMode === "compact" &&
+            (() => {
+              const sortHead = (label: string, key: string, left = false) => (
+                // biome-ignore lint/a11y/useKeyWithClickEvents: sort header in a dense board; the same sorts are keyboard-reachable in the TABLE view
+                <th
+                  className={`px-1 py-0 cursor-pointer select-none hover:opacity-80 ${left ? "text-left" : "text-right"}`}
+                  style={{ color: sortKey === key ? "#00FFFF" : undefined }}
+                  onClick={() => handleSort(key)}
+                >
+                  {label}
+                  {sortKey === key ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                </th>
+              );
+              // More than one group and no filter → groups become foldable
+              // sections like TICK DATA's regions; sort order holds inside each.
+              const sections =
+                groups.length > 1 && filterGroup === "all"
+                  ? groups
+                      .map((g) => ({
+                        group: g as PinGroup | null,
+                        rows: displayedPins.filter((p) => p.groupId === g.id),
+                      }))
+                      .filter((sec) => sec.rows.length > 0)
+                  : [{ group: null as PinGroup | null, rows: displayedPins }];
+              const extLabel = extLabelOf(displayedPins.map((p) => quotes[p.symbol]));
+              const cols = COMPACT_COLS + (extLabel ? 2 : 0);
+              const rowFor = (pin: PinnedAsset) => {
+                const idx = pageOffset + displayedPins.indexOf(pin);
+                return (
+                  <CompactWatchRow
+                    key={pin.id}
+                    pin={pin}
+                    quote={quotes[pin.symbol]}
+                    score={signals[pin.symbol]?.score}
+                    quoteError={quoteErrors[pin.symbol]}
+                    colors={colors}
+                    onOpen={stableOpen}
+                    onEdit={setEditingId}
+                    onRemove={stableRemove}
+                    index={idx}
+                    isDragging={dragIdx === idx}
+                    isDragOver={dragOverIdx === idx && dragIdx !== idx}
+                    onDragStartRow={rowDragStart}
+                    onDragOverRow={rowDragOver}
+                    onDropRow={rowDrop}
+                    onDragEndRow={rowDragEnd}
+                    showExt={extLabel != null}
+                  />
+                );
+              };
+              return (
+                <table
+                  className="w-full text-[9px] leading-[13px] font-mono"
+                  style={{ borderCollapse: "collapse" }}
+                >
+                  <thead>
+                    <tr
+                      className="text-[7px] font-bold tracking-wider leading-[12px]"
+                      style={{ background: "#050505", color: colors.textSecondary }}
+                    >
+                      {sortHead("SYM", "symbol", true)}
+                      {sortHead("LAST", "price")}
+                      {sortHead("CHG", "pctChange")}
+                      {extLabel && <ExtHead label={extLabel} />}
+                      {sortHead("SIG", "score")}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sections.map(({ group, rows }) => {
+                      if (!group) return rows.map(rowFor);
+                      const folded = foldedGroups.includes(group.id);
+                      return [
+                        <tr key={`g-${group.id}`}>
+                          {/* biome-ignore lint/a11y/useKeyWithClickEvents: the fold header mirrors TICK DATA's RegionHeader; the SYM/LAST sort and the table view stay keyboard-reachable */}
+                          <td
+                            colSpan={cols}
+                            className="px-1 py-0 text-[8px] font-bold tracking-widest cursor-pointer hover:bg-[#141414] leading-[14px]"
+                            style={{
+                              background: "#0a0a0a",
+                              color: group.color,
+                              borderBottom: `1px solid ${colors.border}`,
+                            }}
+                            onClick={() => toggleGroupFold(group.id)}
+                          >
+                            {folded ? "▸" : "▾"} {group.name.toUpperCase()}{" "}
+                            <span style={{ color: colors.textSecondary }}>{rows.length}</span>
+                          </td>
+                        </tr>,
+                        ...(folded ? [] : rows.map(rowFor)),
+                      ];
+                    })}
+                  </tbody>
+                </table>
+              );
+            })()}
+
+          {/* ── TABLE VIEW ───────────────────────────────────────── */}
           {(pins.length > 0 || showAddRow) &&
             viewMode === "table" &&
             (() => {
@@ -2923,4 +3281,4 @@ export function PinnedAssets({ onSymbolClick }: { onSymbolClick?: (symbol: strin
       )}
     </div>
   );
-}
+});

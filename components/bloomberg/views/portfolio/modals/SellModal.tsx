@@ -1,6 +1,7 @@
 "use client";
 import { X } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { type FeeEstimate, feeBreakdown, fetchFeeEstimate } from "../accounting-types";
 import { type Colors, fmt, fmtK } from "../helpers";
 import type { Trade } from "../types";
 
@@ -26,8 +27,55 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
   const [sellDate, setSellDate] = useState(new Date().toISOString().slice(0, 10));
   const [sellPartial, setSellPartial] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Blank = the broker estimate; a typed number (from the confirmation) wins.
+  const [feeInput, setFeeInput] = useState("");
+  const [feeEst, setFeeEst] = useState<FeeEstimate | null>(null);
+  const soldVolume = sellPartial ? Number.parseFloat(sellVolume) || 0 : positionVolume;
+  useEffect(() => {
+    const price = Number.parseFloat(sellPrice);
+    if (!(price > 0) || !(soldVolume > 0)) {
+      setFeeEst(null);
+      return;
+    }
+    const ctl = new AbortController();
+    const t = setTimeout(async () => {
+      const est = await fetchFeeEstimate(
+        {
+          account_id: target.account_id,
+          symbol: target.symbol,
+          side: "SELL",
+          qty: soldVolume,
+          price,
+          ...(target.pos_currency || target.currency
+            ? { currency: target.pos_currency || target.currency || "" }
+            : {}),
+        },
+        ctl.signal
+      );
+      if (!ctl.signal.aborted) setFeeEst(est);
+    }, 300);
+    return () => {
+      clearTimeout(t);
+      ctl.abort();
+    };
+  }, [
+    target.account_id,
+    target.symbol,
+    target.pos_currency,
+    target.currency,
+    sellPrice,
+    soldVolume,
+  ]);
+  const totalFee: number | null =
+    feeInput !== "" ? Number.parseFloat(feeInput) || 0 : (feeEst?.total ?? null);
 
   const handleSell = useCallback(async () => {
+    // One order, one fee: each lot's call carries its share by volume. Omitted
+    // when there is no schedule and nothing typed (the backend then charges none).
+    const feeShare = (vol: number) =>
+      totalFee != null && soldVolume > 0
+        ? { commission: Math.round(((totalFee * vol) / soldVolume) * 1e6) / 1e6 }
+        : {};
     if (!sellDate) return;
     const price = Number.parseFloat(sellPrice);
     if (!price || price <= 0) return;
@@ -49,6 +97,7 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
               sell_volume: 0,
               sell_price: price,
               sell_date: sellDate,
+              ...feeShare(lot.volume),
             }),
           });
           if (!r.ok) throw new Error(await r.text());
@@ -69,6 +118,7 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
               sell_volume: fullyConsumesLot ? 0 : consume,
               sell_price: price,
               sell_date: sellDate,
+              ...feeShare(consume),
             }),
           });
           if (!r.ok) throw new Error(await r.text());
@@ -84,6 +134,7 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
             sell_volume: vol,
             sell_price: price,
             sell_date: sellDate,
+            ...feeShare(soldVolume),
           }),
         });
         if (!r.ok) throw new Error(await r.text());
@@ -103,6 +154,8 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
     sellVolume,
     sellDate,
     sellPartial,
+    soldVolume,
+    totalFee,
     onSold,
     onClose,
   ]);
@@ -270,6 +323,33 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
           />
         </div>
 
+        {/* Broker fees */}
+        <div className="mb-3">
+          <label
+            htmlFor="sell-fee"
+            className="text-[8px] font-mono"
+            style={{ color: colors.textSecondary }}
+            title={feeBreakdown(feeEst)}
+          >
+            Fees (commission + VAT + SEC + TAF)
+          </label>
+          <input
+            id="sell-fee"
+            type="number"
+            step="any"
+            className="w-full px-2 py-1 text-[10px] font-mono border mt-0.5 outline-none"
+            style={{ background: "#050505", borderColor: colors.border, color: "#facc15" }}
+            value={feeInput}
+            onChange={(e) => setFeeInput(e.target.value)}
+            placeholder={feeEst?.total != null ? `auto ${feeEst.total.toFixed(2)}` : "0.00"}
+          />
+          {feeEst?.total != null && feeInput === "" && (
+            <div className="text-[8px] font-mono mt-0.5" style={{ color: colors.textSecondary }}>
+              {feeEst.basis} · {feeBreakdown(feeEst)}
+            </div>
+          )}
+        </div>
+
         {/* P&L preview */}
         {sellPrice && (
           <div
@@ -277,11 +357,13 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
             style={{ borderColor: colors.border, background: "#050505" }}
           >
             <div className="flex justify-between">
-              <span style={{ color: colors.textSecondary }}>Est. P&L</span>
+              <span style={{ color: colors.textSecondary }}>
+                Est. P&L{totalFee ? " (after fees)" : ""}
+              </span>
               {(() => {
                 const ep = Number.parseFloat(sellPrice) || 0;
                 const vol = sellPartial ? Number.parseFloat(sellVolume) || 0 : positionVolume;
-                const pnl = (ep - effectiveAvgEntry) * vol;
+                const pnl = (ep - effectiveAvgEntry) * vol - (totalFee ?? 0);
                 return (
                   <span className="font-bold" style={{ color: pnl >= 0 ? "#4ade80" : "#f87171" }}>
                     {pnl >= 0 ? "+" : ""}

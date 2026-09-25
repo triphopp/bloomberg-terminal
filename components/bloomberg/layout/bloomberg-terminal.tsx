@@ -3,7 +3,7 @@
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAtom } from "jotai";
 import dynamic from "next/dynamic";
-import { Suspense, memo, useCallback, useEffect } from "react";
+import { Suspense, memo, useCallback, useEffect, useState } from "react";
 import {
   chartTypeAtom,
   focusHeatmapSearchAtom,
@@ -23,6 +23,7 @@ import {
 } from "../atoms/terminal-ui";
 import { resetFiltersAtom } from "../atoms/terminal-ui";
 import { ChartWindowLayer } from "../chart/ChartWindowLayer";
+import { BackendStatusBanner } from "../core/backend-status-banner";
 import { ConfirmationModal } from "../core/confirmation-modal";
 import { ShortcutsHelp } from "../core/keyboard-shortcuts";
 import { ViewSkeleton } from "../core/view-skeleton";
@@ -35,6 +36,7 @@ import { TailRiskRibbon } from "../layout/tail-risk-ribbon";
 import { TerminalHeader } from "../layout/terminal-header";
 import type { NavItem } from "../layout/terminal-header";
 import { TerminalLayout } from "../layout/terminal-layout";
+import { viewFromSearch, viewHref } from "../layout/view-navigation";
 import { bloombergColors } from "../lib/theme-config";
 import type { MarketItem } from "../types";
 
@@ -42,16 +44,11 @@ import type { MarketItem } from "../types";
 import { KeyIndicatorsBar, MarketView } from "../views/market-view";
 
 // ── Lazy: loaded only when user navigates to that view ─────────────
-const MarketMoversView = dynamic(() => import("../views/market-movers-view"), {
-  loading: () => <ViewSkeleton />,
-});
-const CreditView = dynamic(() => import("../views/credit-view").then((m) => m.CreditView), {
+// HMAP — reached through the `heatmap(MARKET)` command (replaced GMOV 2026-09-25)
+const HeatmapView = dynamic(() => import("../views/heatmap-view").then((m) => m.HeatmapView), {
   loading: () => <ViewSkeleton />,
 });
 const NewsView = dynamic(() => import("../views/news-view"), { loading: () => <ViewSkeleton /> });
-const ClippingsView = dynamic(() => import("../views/clippings-view"), {
-  loading: () => <ViewSkeleton />,
-});
 const StockView = dynamic(() => import("../views/stock-view"), { loading: () => <ViewSkeleton /> });
 const PortfolioView = dynamic(
   () => import("../views/portfolio-view").then((m) => m.PortfolioView),
@@ -60,14 +57,16 @@ const PortfolioView = dynamic(
 const TailRiskView = dynamic(() => import("../views/tail-risk-view").then((m) => m.TailRiskView), {
   loading: () => <ViewSkeleton />,
 });
+const BondView = dynamic(() => import("../views/bonds").then((m) => m.BondView), {
+  loading: () => <ViewSkeleton />,
+});
 
-const MemoMarketMovers = memo(MarketMoversView);
-const MemoCredit = memo(CreditView);
+const MemoHeatmap = memo(HeatmapView);
 const MemoNews = memo(NewsView);
-const MemoClippings = memo(ClippingsView);
 const MemoStock = memo(StockView);
 const MemoPortfolio = memo(PortfolioView);
 const MemoTailRisk = memo(TailRiskView);
+const MemoBond = memo(BondView);
 
 function BloombergTerminal() {
   const {
@@ -78,14 +77,31 @@ function BloombergTerminal() {
     setIsShortcutsHelpOpen,
     handleMarketView,
     handleNewsView,
-    handleMoversView,
     handleStockView,
-    handleClippingsView,
-    handleCreditView,
     handlePortfolioView,
     handleTailView,
+    handleBondView,
     handleHelpClick,
   } = useTerminalUI();
+  const [urlReady, setUrlReady] = useState(false);
+
+  // A new tab and browser Back/Forward must restore the same view as the URL.
+  useEffect(() => {
+    const readLocation = () => setCurrentView(viewFromSearch(window.location.search) ?? "market");
+    readLocation();
+    setUrlReady(true);
+    window.addEventListener("popstate", readLocation);
+    return () => window.removeEventListener("popstate", readLocation);
+  }, [setCurrentView]);
+
+  // Shortcuts, search, and terminal commands also change views without clicking a link.
+  useEffect(() => {
+    if (!urlReady) return;
+    const url = new URL(window.location.href);
+    if (viewFromSearch(url.search) === currentView) return;
+    url.searchParams.set("view", currentView);
+    window.history.replaceState(null, "", url.href);
+  }, [currentView, urlReady]);
 
   const { prefetchTier1 } = useViewPrefetch();
 
@@ -142,13 +158,23 @@ function BloombergTerminal() {
 
   // ── Navigation items with shortcut keys ──────────────────────────────────
   const navItems: NavItem[] = [
-    { id: "market", label: "MKT", shortcut: "1", onClick: handleMarketView },
-    { id: "news", label: "NEWS", shortcut: "2", onClick: handleNewsView },
-    { id: "movers", label: "GMOV", shortcut: "3", onClick: handleMoversView },
-    { id: "clippings", label: "CLIP", shortcut: "4", onClick: handleClippingsView },
-    { id: "credit", label: "CRDT", shortcut: "6", onClick: handleCreditView },
-    { id: "portfolio", label: "PORT", shortcut: "P", onClick: handlePortfolioView },
-    { id: "tail", label: "TAIL", shortcut: "T", onClick: handleTailView },
+    {
+      id: "market",
+      label: "MKT",
+      shortcut: "1",
+      href: viewHref("market"),
+      onClick: handleMarketView,
+    },
+    { id: "news", label: "NEWS", shortcut: "2", href: viewHref("news"), onClick: handleNewsView },
+    { id: "bonds", label: "BOND", shortcut: "3", href: viewHref("bonds"), onClick: handleBondView },
+    {
+      id: "portfolio",
+      label: "PORT",
+      shortcut: "4",
+      href: viewHref("portfolio"),
+      onClick: handlePortfolioView,
+    },
+    { id: "tail", label: "TAIL", shortcut: "5", href: viewHref("tail"), onClick: handleTailView },
   ];
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
@@ -177,9 +203,10 @@ function BloombergTerminal() {
     // View shortcuts (number keys)
     { key: "1", action: handleMarketView, description: "Market overview" },
     { key: "2", action: handleNewsView, description: "News" },
-    { key: "3", action: handleMoversView, description: "Market movers" },
-    { key: "4", action: handleClippingsView, description: "Clippings" },
-    { key: "6", action: handleCreditView, description: "Credit" },
+    { key: "3", action: handleBondView, description: "Bond Monitor (price vs supply)" },
+    { key: "4", action: handlePortfolioView, description: "Portfolio" },
+    { key: "5", action: handleTailView, description: "Tail Risk Monitor" },
+    { key: "h", action: () => setCurrentView("heatmap"), description: "Heatmap (last market)" },
     { key: "p", action: handlePortfolioView, description: "Portfolio" },
     {
       key: "i",
@@ -190,6 +217,7 @@ function BloombergTerminal() {
       description: "Focus symbol search (MKT)",
     },
     { key: "t", action: handleTailView, description: "Tail Risk Monitor" },
+    { key: "b", action: handleBondView, description: "Bond Monitor (price vs supply)" },
     // Help
     { key: "?", shiftKey: true, action: handleHelpClick, description: "Show keyboard shortcuts" },
     // Toggle chart type
@@ -219,11 +247,10 @@ function BloombergTerminal() {
   const VIEW_SUBTITLES: Record<string, string> = {
     news: "NEWS & SOCIAL",
     movers: "GLOBAL MARKET MOVERS",
-    clippings: "CLIPPINGS · OLLAMA AI",
-    credit: "CREDIT RISK & STRESS",
     portfolio: "PORTFOLIO",
     stock: "STOCK ANALYSIS",
     tail: "TAIL RISK MONITOR",
+    bonds: "BOND MONITOR · PRICE · SUPPLY · CREDIT CONDITIONS",
   };
 
   // ── Shared header (filter bar + key indicators merged in) ─────────────────
@@ -291,26 +318,16 @@ function BloombergTerminal() {
     switch (currentView) {
       case "news":
         return <MemoNews isDarkMode={isDarkMode} onBack={handleBack} />;
-      case "movers":
-        return (
-          <MemoMarketMovers
-            isDarkMode={isDarkMode}
-            onBack={handleBack}
-            marketData={data}
-            onRefresh={refreshData}
-            isLoading={isLoading}
-          />
-        );
+      case "heatmap":
+        return <MemoHeatmap />;
       case "stock":
         return <MemoStock onBack={handleBack} defaultSymbol={stockSymbol || undefined} />;
-      case "clippings":
-        return <MemoClippings onBack={handleBack} />;
-      case "credit":
-        return <MemoCredit onBack={handleBack} />;
       case "portfolio":
         return <MemoPortfolio />;
       case "tail":
         return <MemoTailRisk />;
+      case "bonds":
+        return <MemoBond />;
       default:
         return <MarketView isDarkMode={isDarkMode} />;
     }
@@ -318,6 +335,9 @@ function BloombergTerminal() {
 
   return (
     <TerminalLayout shortcuts={shortcuts}>
+      {/* Dev only: says when the backend is not the code on disk, so a stale
+          server is never mistaken for a bug. Stripped from production builds. */}
+      {process.env.NODE_ENV === "development" && <BackendStatusBanner />}
       {headerBlock}
       <div className="flex-1 min-h-0 overflow-hidden">
         <Suspense fallback={<ViewSkeleton />}>{renderView()}</Suspense>

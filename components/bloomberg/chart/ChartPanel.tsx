@@ -24,6 +24,7 @@ import { FearGreedPane } from "./FearGreedPane";
 import { IndicatorPicker } from "./IndicatorPicker";
 import { ModularChart } from "./ModularChart";
 import { PEPane } from "./PEPane";
+import { RegressionControls } from "./RegressionControls";
 import { TimeframeRow } from "./TimeframeRow";
 import { VolumeEventPanel } from "./VolumeEventPanel";
 import type { BarInterval, OhlcvBar, TimePeriod } from "./types";
@@ -142,11 +143,14 @@ export function ChartPanel({
     toggleVolumeProfile,
     showVolumeEvents,
     toggleVolumeEvents,
-    regressionSel,
+    regressionChannels,
+    activeRegressionId,
     regressionArmed,
     regressionPending,
     regressionOpts,
     toggleRegression,
+    removeRegression,
+    selectRegression,
     setRegressionMode,
     handleChartClick,
     supportsEvents,
@@ -349,39 +353,19 @@ export function ChartPanel({
             >
               VEVT
             </button>
-            <button
-              type="button"
-              className="text-[8px] px-1 py-0 font-bold border"
-              title={
-                regressionSel
-                  ? "Clear regression channel"
-                  : regressionArmed
-                    ? "Click two bars on the chart to set the range (click again to cancel)"
-                    : "Regression Channel: click two bars to fit a trend + channel"
-              }
-              style={{
-                borderColor: regressionArmed || regressionSel ? "#ffc107" : colors.border,
-                color: regressionArmed || regressionSel ? "#ffc107" : colors.textSecondary,
-                background: regressionArmed || regressionSel ? "#ffc10715" : "transparent",
-              }}
-              onClick={toggleRegression}
-            >
-              {regressionArmed ? (regressionPending ? "REG 2/2" : "REG 1/2") : "REG"}
-            </button>
-            {regressionSel && (
-              <button
-                type="button"
-                className="text-[8px] px-1 py-0 font-bold border"
-                style={{ borderColor: "#ffc107", color: "#ffc107", background: "#ffc10708" }}
-                onClick={() =>
-                  setRegressionMode(regressionOpts.mode === "stddev" ? "quantile" : "stddev")
-                }
-              >
-                {regressionOpts.mode === "stddev"
-                  ? `${regressionOpts.stdDevMult}σ`
-                  : `q${regressionOpts.tauPct}`}
-              </button>
-            )}
+            <RegressionControls
+              channels={regressionChannels}
+              activeId={activeRegressionId}
+              armed={regressionArmed}
+              pending={regressionPending}
+              options={regressionOpts}
+              onToggle={toggleRegression}
+              onSelect={selectRegression}
+              onRemove={removeRegression}
+              onModeChange={setRegressionMode}
+              border={colors.border}
+              muted={colors.textSecondary}
+            />
             {supportsEvents && (
               <button
                 type="button"

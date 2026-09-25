@@ -31,8 +31,7 @@ const VIEW_LABELS: Record<string, string> = {
   movers: "MOVERS",
   volatility: "VOLATILITY",
   stock: "EQUITY",
-  clippings: "CLIPPINGS",
-  credit: "CREDIT",
+  bonds: "BONDS",
   portfolio: "PORTFOLIO",
 };
 
