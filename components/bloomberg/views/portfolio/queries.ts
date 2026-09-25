@@ -33,6 +33,35 @@ export type OpenPositionsPayload = {
   thb_per_usd: number;
 };
 
+/** GET /api/v2/portfolio/takeover — see `get_takeover` in routers/portfolio_v2.py. */
+export type TakeoverLot = {
+  id: string;
+  account_id: string;
+  symbol: string;
+  date_transfer: string;
+  date_exit: string | null;
+  open: boolean;
+  volume: number;
+  currency: string;
+  original_price_entry: number | null;
+  transfer_price_entry: number | null;
+  original_cost_base: number;
+  transfer_value_base: number;
+  inherited_pnl_base: number;
+  realized_since_base: number | null;
+};
+export type TakeoverPayload = {
+  base_currency: string;
+  transfer_dates: string[];
+  lots: TakeoverLot[];
+  totals: {
+    original_cost: number;
+    transfer_value: number;
+    inherited_pnl: number;
+    realized_since: number;
+  };
+};
+
 export const portfolioQueries = {
   summary: (currency: string) => ({
     queryKey: ["portfolio", "summary", currency] as const,
@@ -67,6 +96,17 @@ export const portfolioQueries = {
         signal
       ),
     staleTime: 30_000,
+  }),
+
+  /** Lots received in kind at a portfolio takeover (fair value basis + previous owner's cost memo). */
+  takeover: (currency: string, accountId: string) => ({
+    queryKey: ["portfolio", "takeover", currency, accountId] as const,
+    queryFn: ({ signal }: { signal?: AbortSignal }) =>
+      getJson<TakeoverPayload>(
+        `/api/v2/portfolio/takeover?base_currency=${currency}${accountId !== "all" ? `&account_id=${encodeURIComponent(accountId)}` : ""}`,
+        signal
+      ),
+    staleTime: 5 * 60_000,
   }),
 
   costOverrides: (accountId: string) => ({

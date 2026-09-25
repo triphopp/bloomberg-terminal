@@ -1363,6 +1363,58 @@ def get_cost_overrides(account_id: Optional[str] = Query(None)):
             rows = conn.execute("SELECT * FROM position_cost_overrides").fetchall()
     return [dict(r) for r in rows]
 
+@router.get("/takeover")
+def get_takeover(account_id: Optional[str] = Query(None), base_currency: str = Query("THB")):
+    """Lots received in kind when a portfolio was taken over for management.
+
+    Fund practice: the book carries them at fair value on the transfer date,
+    so every return figure starts there. The previous owner's cost is memo:
+    inherited_pnl = (transfer - original) x volume is the loss/gain that
+    happened before takeover and never moves afterwards. What happened since
+    is the ordinary P&L of these lots (realized here, unrealized on the
+    open-positions payload, matched by id).
+    """
+    base_currency = report_currency(base_currency)
+    where, params = ["acquisition_type = 'TRANSFER_IN'"], []
+    if account_id and account_id != "all":
+        where.append("account_id = ?")
+        params.append(account_id)
+    with get_db() as conn:
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT * FROM trades WHERE {' AND '.join(where)} ORDER BY date_entry, symbol", params
+        ).fetchall()]
+    lots, totals = [], {"original_cost": 0.0, "transfer_value": 0.0, "inherited_pnl": 0.0,
+                        "realized_since": 0.0}
+    for t in rows:
+        vol = _to_float_or_zero(t["volume"])
+        orig = _to_float_or_zero(t["original_price_entry"]) * vol
+        xfer = _to_float_or_zero(t["transfer_price_entry"]) * vol
+        ccy = _position_currency(t)
+        conv = lambda v: round(convert_amount(v, ccy, base_currency, date=t["date_entry"]), 2)
+        closed = t["win_loss"] != "P"
+        lot = {
+            "id": t["id"], "account_id": t["account_id"], "symbol": t["symbol"],
+            "date_transfer": t["date_entry"], "date_exit": t["date_exit"], "open": not closed,
+            "volume": vol, "currency": ccy,
+            "original_price_entry": t["original_price_entry"],
+            "transfer_price_entry": t["transfer_price_entry"],
+            "original_cost_base": conv(orig), "transfer_value_base": conv(xfer),
+            "inherited_pnl_base": conv(xfer - orig),
+            "realized_since_base": round(realized_pnl_in_report(t, base_currency), 2) if closed else None,
+        }
+        lots.append(lot)
+        totals["original_cost"] += lot["original_cost_base"]
+        totals["transfer_value"] += lot["transfer_value_base"]
+        totals["inherited_pnl"] += lot["inherited_pnl_base"]
+        totals["realized_since"] += lot["realized_since_base"] or 0.0
+    return {
+        "base_currency": base_currency,
+        "transfer_dates": sorted({l["date_transfer"] for l in lots}),
+        "lots": lots,
+        "totals": {k: round(v, 2) for k, v in totals.items()},
+    }
+
+
 @router.post("/cost-overrides")
 def set_cost_override(body: CostOverrideIn):
     with get_db() as conn:
@@ -1565,11 +1617,13 @@ def sell_position(body: SellIn):
                 """INSERT INTO trades (id, account_id, symbol, resolved_symbol, market,
                    sector, date_entry, date_exit,
                    price_entry, price_exit, volume, pnl_amount, win_loss, pnl_percent,
-                   currency, exchange_rate, exit_exchange_rate, strategy_name, note, fee_exit)
+                   currency, exchange_rate, exit_exchange_rate, strategy_name, note, fee_exit,
+                   acquisition_type, original_price_entry, transfer_price_entry)
                    SELECT ?, account_id, symbol, resolved_symbol, market,
                    sector, date_entry, ?,
                    ?, ?, ?, ?, ?, ?,
-                   currency, exchange_rate, ?, strategy_name, ?, ?
+                   currency, exchange_rate, ?, strategy_name, ?, ?,
+                   acquisition_type, original_price_entry, transfer_price_entry
                    FROM trades WHERE id = ?""",
                 (sold_id, body.sell_date, avg_cost, exit_price, sold_volume,
                   sold_pnl_net, sold_wl, sold_pnl_pct, exit_fx,

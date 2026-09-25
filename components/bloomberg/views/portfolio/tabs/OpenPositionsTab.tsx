@@ -498,6 +498,25 @@ export function OpenPositionsTab({
   const { breakdown: navParts, pct: navPct } = usePortfolioNav(accountId, currency);
   const csym = currency === "THB" ? "฿" : "$";
 
+  // Portfolio taken over for management: returns start at the transfer-date
+  // fair value; the previous owner's loss before that is memo, shown apart.
+  const { data: takeover } = useQuery(portfolioQueries.takeover(currency, accountId));
+  const takeoverMemo = useMemo(() => {
+    if (!takeover?.lots.length) return null;
+    const byId = new Map(positions.map((p) => [p.id, p]));
+    const unrealSince = takeover.lots.reduce(
+      (s, l) => s + (l.open ? (byId.get(l.id)?.unrealized_pnl_base ?? 0) : 0),
+      0
+    );
+    const since = unrealSince + takeover.totals.realized_since;
+    return {
+      ...takeover.totals,
+      since,
+      total: takeover.totals.inherited_pnl + since,
+      dates: takeover.transfer_dates,
+    };
+  }, [takeover, positions]);
+
   // Auto PRE/POST column: appears only while ≥1 position is in a live pre- or
   // post-market session, collapses on its own once the session ends. Not a
   // user-toggled col — never enters showCols / the COLS picker.
@@ -733,6 +752,65 @@ export function OpenPositionsTab({
             ))}
           </div>
         </div>
+
+        {takeoverMemo && (
+          <div
+            className="flex items-center gap-4 px-3 py-1 border-b text-[9px] font-mono"
+            style={{ borderColor: colors.border }}
+            title="Fund practice: lots received in kind are carried at fair value on the transfer date, so every return in PORT starts there. The previous owner's cost is memo only."
+          >
+            <span className="font-bold tracking-widest" style={{ color: colors.textSecondary }}>
+              TAKEOVER {takeoverMemo.dates.join(", ")}
+            </span>
+            <span style={{ color: colors.textSecondary }}>
+              Prior cost{" "}
+              <span style={{ color: colors.text }}>
+                {csym}
+                {fmtK(takeoverMemo.original_cost)}
+              </span>
+            </span>
+            <span style={{ color: colors.textSecondary }}>
+              Value at transfer{" "}
+              <span style={{ color: colors.text }}>
+                {csym}
+                {fmtK(takeoverMemo.transfer_value)}
+              </span>
+            </span>
+            <span
+              style={{ color: colors.textSecondary }}
+              title="Loss/gain before the takeover. Fixed; not part of your returns."
+            >
+              Before takeover{" "}
+              <span className="font-bold" style={{ color: pnlColor(takeoverMemo.inherited_pnl) }}>
+                {takeoverMemo.inherited_pnl >= 0 ? "+" : "-"}
+                {csym}
+                {fmtK(Math.abs(takeoverMemo.inherited_pnl))}
+              </span>
+            </span>
+            <span
+              style={{ color: colors.textSecondary }}
+              title="Realized + unrealized P&L of the transferred lots since the transfer date — your result on them."
+            >
+              Since takeover{" "}
+              <span className="font-bold" style={{ color: pnlColor(takeoverMemo.since) }}>
+                {takeoverMemo.since >= 0 ? "+" : "-"}
+                {csym}
+                {fmtK(Math.abs(takeoverMemo.since))}
+              </span>
+            </span>
+            <span
+              style={{ color: colors.textSecondary }}
+              title="Before + since = result against the previous owner's cost."
+            >
+              vs prior cost{" "}
+              <span className="font-bold" style={{ color: pnlColor(takeoverMemo.total) }}>
+                {takeoverMemo.total >= 0 ? "+" : "-"}
+                {csym}
+                {fmtK(Math.abs(takeoverMemo.total))}
+              </span>
+            </span>
+          </div>
+        )}
 
         {/* Controls row */}
         <div className="flex items-center gap-2 px-3 py-1">

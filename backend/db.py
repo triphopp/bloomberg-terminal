@@ -389,6 +389,14 @@ def init_portfolio_v2() -> None:
         _ensure_column(conn, "trades", "fee_entry", "fee_entry REAL")
         _ensure_column(conn, "trades", "fee_exit", "fee_exit REAL")
         _ensure_column(conn, "trades", "fee_detail", "fee_detail TEXT")
+        # In-kind transfer of a portfolio taken over for management (fund
+        # practice): price_entry/amount = fair value on the transfer date, so
+        # returns start there. Both per-unit memo prices stay fixed even when
+        # AVCO later rebases price_entry, so the pre-takeover loss is stable:
+        # inherited = (transfer_price_entry - original_price_entry) x volume.
+        _ensure_column(conn, "trades", "acquisition_type", "acquisition_type TEXT")
+        _ensure_column(conn, "trades", "original_price_entry", "original_price_entry REAL")
+        _ensure_column(conn, "trades", "transfer_price_entry", "transfer_price_entry REAL")
         _ensure_column(conn, "portfolio_accounts", "markets", "markets TEXT")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS cash_ledger (
