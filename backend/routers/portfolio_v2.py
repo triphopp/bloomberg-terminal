@@ -4420,6 +4420,50 @@ def get_allocation_history(
 
 # ── Import from Excel ─────────────────────────────────────────────────────────
 
+@router.get("/history-review")
+async def get_history_review(
+    account_id: Optional[str] = None,
+    review_status: Optional[str] = None,
+    review_decision: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    """Read staged Excel evidence; this does not enter cash, trades or NAV."""
+    with get_db() as conn:
+        table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='portfolio_history_review'"
+        ).fetchone()
+        if table is None:
+            return {"total": 0, "summary": [], "rows": []}
+        where = []
+        params: list[object] = []
+        if account_id:
+            where.append("account_id = ?")
+            params.append(account_id)
+        if review_status:
+            where.append("review_status = ?")
+            params.append(review_status)
+        if review_decision:
+            where.append("review_decision = ?")
+            params.append(review_decision)
+        clause = " WHERE " + " AND ".join(where) if where else ""
+        total = conn.execute(
+            "SELECT COUNT(*) FROM portfolio_history_review" + clause, params
+        ).fetchone()[0]
+        summary = [dict(row) for row in conn.execute(
+            "SELECT account_id, record_type, review_status, COUNT(*) AS count "
+            "FROM portfolio_history_review" + clause +
+            " GROUP BY account_id, record_type, review_status ORDER BY account_id, review_status",
+            params,
+        ).fetchall()]
+        rows = [dict(row) for row in conn.execute(
+            "SELECT * FROM portfolio_history_review" + clause +
+            " ORDER BY recorded_date, account_id, source_sheet, source_row LIMIT ? OFFSET ?",
+            [*params, limit, offset],
+        ).fetchall()]
+    return {"total": total, "summary": summary, "rows": rows}
+
+
 @router.post("/import/excel")
 async def import_excel(file: UploadFile = File(...)):
     """
