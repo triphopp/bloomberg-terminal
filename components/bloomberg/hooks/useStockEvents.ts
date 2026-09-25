@@ -30,6 +30,38 @@ interface EarningsEntry {
   reportedEPS: number | null;
   surprise: number | null;
   eventType?: string;
+  /** yahoo_calendar = next report from Ticker.calendar; set_rule = SET deadline */
+  source?: string;
+  estimated?: boolean;
+  windowEnd?: string | null;
+  deadline?: boolean;
+  period?: string;
+}
+interface MacroEvent {
+  date: string;
+  kind: string;
+  label: string;
+  sep: boolean;
+  impact: string;
+  source: string;
+}
+
+/**
+ * Macro releases worth a chip on a single stock's chart. FOMC moves every
+ * market; CPI and NFP are US prints, so a SET listing gets the rate decision
+ * only. PCE and GDP stay off — at a monthly cadence they would crowd the rail
+ * without often moving a single name.
+ */
+const MACRO_KINDS_US = new Set(["FOMC", "CPI", "NFP"]);
+const MACRO_KINDS_OTHER = new Set(["FOMC"]);
+/** How far ahead an upcoming macro release earns a chip. */
+const MACRO_AHEAD_DAYS = 45;
+
+function addDaysIso(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 const EMPTY: ChartEventMarker[] = [];
@@ -56,15 +88,28 @@ export function useStockEvents(symbol: string | null, enabled = true) {
     staleTime: 3_600_000,
   });
 
+  // One calendar for every symbol — cached far longer than the per-symbol
+  // queries because the dates only change when FRED publishes a new schedule.
+  const macroQuery = useQuery({
+    queryKey: ["macro", "calendar"],
+    queryFn: async () => {
+      const res = await fetch("/api/macro/calendar?back_days=1095&ahead_days=120");
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!symbol && enabled,
+    staleTime: 6 * 3_600_000,
+  });
+
   const divData = divQuery.data;
   const earningsData = earningsQuery.data;
+  const macroData = macroQuery.data;
 
   // Memoized on the query payloads. Built fresh on every render this array would
-  // change identity each time, and <ModularChart> keys its rebuild effect on the
-  // marker array — an unmemoized list tore the whole chart down and recreated it
-  // on every parent render for as long as EVT was switched on.
+  // change identity each time and needlessly redraw the event rail on every
+  // parent render. The chart instance now survives marker updates.
   const markers: ChartEventMarker[] = useMemo(() => {
-    if (!divData && !earningsData) return EMPTY;
+    if (!divData && !earningsData && !macroData) return EMPTY;
     const out: ChartEventMarker[] = [];
     const today = todayIso();
 
@@ -137,16 +182,54 @@ export function useStockEvents(symbol: string | null, enabled = true) {
         surprise,
         eventType: e.eventType,
         reportedAt: e.date,
-        // A scheduled report: dated ahead of today with nothing reported yet.
-        upcoming: e.date.slice(0, 10) > today && e.reportedEPS == null,
+        // A scheduled report: dated today or later with nothing reported yet —
+        // a report due today has no reaction bar until the session prints one.
+        upcoming: e.date.slice(0, 10) >= today && e.reportedEPS == null,
+        estimated: e.estimated,
+        windowEnd: e.windowEnd,
+        deadline: e.deadline,
+        period: e.period,
+        source: e.source,
+        ...(e.deadline ? { detail: `SET filing deadline · ${e.period ?? ""}`.trim() } : {}),
+      });
+    }
+
+    // Macro releases. Past ones all go on the rail (their reaction is the
+    // point); upcoming ones only the NEXT of each kind within MACRO_AHEAD_DAYS.
+    // Upcoming chips queue right of the last bar in date order until the pane
+    // runs out, so a month of scheduled prints would push this stock's own
+    // earnings off the edge.
+    const macroKinds = symbol?.toUpperCase().endsWith(".BK") ? MACRO_KINDS_OTHER : MACRO_KINDS_US;
+    const macroEvents: MacroEvent[] = macroData?.events ?? [];
+    const horizon = addDaysIso(today, MACRO_AHEAD_DAYS);
+    const nextShown = new Set<string>();
+    for (const m of macroEvents) {
+      if (!macroKinds.has(m.kind)) continue;
+      const day = m.date.slice(0, 10);
+      const upcoming = day >= today;
+      if (upcoming) {
+        if (day > horizon || nextShown.has(m.kind)) continue;
+        nextShown.add(m.kind);
+      }
+      out.push({
+        time: day,
+        type: "macro",
+        label: m.kind,
+        // The backend label already says "+ SEP" for projection meetings.
+        detail: m.label,
+        macroKind: m.kind,
+        macroLabel: m.label,
+        sep: m.sep,
+        source: m.source,
+        upcoming,
       });
     }
 
     return out.length > 0 ? out : EMPTY;
-  }, [divData, earningsData]);
+  }, [divData, earningsData, macroData, symbol]);
 
   return {
     markers,
-    isLoading: divQuery.isLoading || earningsQuery.isLoading,
+    isLoading: divQuery.isLoading || earningsQuery.isLoading || macroQuery.isLoading,
   };
 }

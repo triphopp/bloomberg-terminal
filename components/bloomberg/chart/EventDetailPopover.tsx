@@ -12,7 +12,16 @@
  * hide the rest. With more than one, the card opens on the list.
  */
 
-import { Banknote, ChevronLeft, Clock, Split, TrendingDown, TrendingUp, X } from "lucide-react";
+import {
+  Banknote,
+  ChevronLeft,
+  Clock,
+  Flag,
+  Split,
+  TrendingDown,
+  TrendingUp,
+  X,
+} from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { EventIconName } from "./event-icons.ts";
 import { eventChipStyle } from "./event-rail-overlay";
@@ -50,12 +59,14 @@ const ICON: Record<EventIconName, typeof Banknote> = {
   arrowDown: TrendingDown,
   clock: Clock,
   split: Split,
+  flag: Flag,
 };
 
 const TYPE_TITLE: Record<ChartEventMarker["type"], string> = {
   dividend: "DIVIDEND",
   earnings: "EARNINGS",
   split: "SPLIT",
+  macro: "MACRO",
 };
 
 function fmtPct(v: number | null, colors: ChartColors) {
@@ -197,7 +208,7 @@ export function EventDetailPopover({
             const Icon = ICON[chip.icon];
             return (
               <button
-                key={`${m.type}-${String(m.time)}`}
+                key={`${m.type}-${m.macroKind ?? ""}-${String(m.time)}`}
                 type="button"
                 className="flex w-full items-center gap-2 px-1.5 py-0.5 text-left hover:bg-white/5"
                 onClick={() => setPicked(i)}
@@ -231,16 +242,20 @@ export function EventDetailPopover({
   const beat = marker.surprise != null && marker.surprise >= 0;
   // Mirrors the marker palette in ModularChart: an upcoming report is neutral
   // orange, not the split purple a plain type check would fall through to.
+  // Macro releases and filing deadlines take the rail's own colour — neither
+  // has a beat/miss to colour by.
   const accent =
-    marker.type === "dividend"
-      ? "#4fc3f7"
-      : marker.type === "split"
-        ? "#ce93d8"
-        : marker.surprise == null
-          ? "#ffb74d"
-          : beat
-            ? colors.positive
-            : colors.negative;
+    marker.type === "macro" || marker.deadline
+      ? eventChipStyle(marker).color
+      : marker.type === "dividend"
+        ? "#4fc3f7"
+        : marker.type === "split"
+          ? "#ce93d8"
+          : marker.surprise == null
+            ? "#ffb74d"
+            : beat
+              ? colors.positive
+              : colors.negative;
 
   // An after-close report moves the following bar, so say which bar the numbers
   // below are actually measuring rather than silently shifting the window.
@@ -285,7 +300,11 @@ export function EventDetailPopover({
               <ChevronLeft className="h-2.5 w-2.5" />
             </button>
           )}
-          {TYPE_TITLE[marker.type]}
+          {marker.type === "macro"
+            ? (marker.macroKind ?? TYPE_TITLE.macro)
+            : marker.deadline
+              ? "EARNINGS DEADLINE"
+              : TYPE_TITLE[marker.type]}
           {marker.upcoming ? <span style={{ color: colors.textSecondary }}>· UPCOMING</span> : null}
           {symbol ? <span style={{ color: colors.textSecondary }}> · {symbol}</span> : null}
         </span>
@@ -309,7 +328,29 @@ export function EventDetailPopover({
           <Row label="PAY DATE" value={marker.payDate} colors={colors} />
         ) : null}
 
-        {marker.type === "earnings" && (
+        {marker.type === "earnings" && marker.deadline && (
+          <>
+            <Row label="PERIOD" value={marker.period ?? "—"} colors={colors} />
+            <Row label="RULE" value="SET: Q ≤45d · FY ≤60d" colors={colors} />
+          </>
+        )}
+
+        {marker.type === "earnings" && marker.windowEnd && (
+          <Row label="WINDOW" value={`${dateStr} → ${marker.windowEnd}`} colors={colors} />
+        )}
+
+        {marker.type === "macro" && (
+          <>
+            <Row
+              label="EVENT"
+              value={marker.macroLabel ?? marker.macroKind ?? "—"}
+              colors={colors}
+            />
+            <Row label="SOURCE" value={marker.source ?? "—"} colors={colors} />
+          </>
+        )}
+
+        {marker.type === "earnings" && !marker.deadline && (
           <>
             <Row
               label="EST"
@@ -366,8 +407,14 @@ export function EventDetailPopover({
           // reaction figure would be an em dash. Say why instead of showing four
           // blanks that read like missing data.
           <div style={{ color: colors.textSecondary }}>
-            Scheduled — no price reaction yet
-            {marker.estimated ? "; amount carried from the last payment" : ""}
+            {marker.deadline
+              ? "Latest date the numbers may be filed — the company has not announced the day and often files earlier"
+              : marker.type === "earnings" && marker.estimated
+                ? "Date not confirmed by the company yet — no price reaction yet"
+                : "Scheduled — no price reaction yet"}
+            {marker.type === "dividend" && marker.estimated
+              ? "; amount carried from the last payment"
+              : ""}
           </div>
         ) : (
           <>

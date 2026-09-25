@@ -3,15 +3,15 @@
 /**
  * TimeframeRow — the MKT chart's period + bar-interval control, shared.
  *
- * Period and interval are the same "what timeframe" decision, so they share one
- * row that never wraps; the interval collapses into a dropdown because nine
- * spelled-out buttons were what forced this row onto a second line.
+ * Period and interval share one row. An optional middle slot can carry chart
+ * tools on wide panels and moves below the timeframe on narrow panels.
  *
  * This is the control the MKT panel uses, extracted so a popped-out chart gets
  * the identical one instead of a second, differently-shaped timeframe bar.
  */
 
 import { Check, ChevronDown } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { bloombergColors } from "../lib/theme-config";
 import type { BarInterval, TimePeriod } from "./types";
 import { INTERVAL_DEFAULT_RANGE, INTERVAL_VALID_RANGES } from "./types";
@@ -116,6 +116,8 @@ export interface TimeframeRowProps {
   chartType?: "area" | "candle";
   onPeriodChange: (p: TimePeriod) => void;
   onIntervalChange: (iv: BarInterval) => void;
+  /** Controls sharing the spare width between timeframe and chart actions. */
+  middle?: React.ReactNode;
   /** Rendered at the right end of the row (chart-type toggle, window buttons…). */
   trailing?: React.ReactNode;
 }
@@ -127,13 +129,29 @@ export function TimeframeRow({
   chartType = "candle",
   onPeriodChange,
   onIntervalChange,
+  middle,
   trailing,
 }: TimeframeRowProps) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [stacked, setStacked] = useState(false);
+  // Only whether a middle slot exists matters here, not its element identity
+  // (a new node every render would re-attach the observer each time).
+  const hasMiddle = middle != null && middle !== false;
+
+  useEffect(() => {
+    if (!hasMiddle || !rowRef.current) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setStacked(entry.contentRect.width < 950);
+    });
+    observer.observe(rowRef.current);
+    return () => observer.disconnect();
+  }, [hasMiddle]);
+
   return (
-    // Scrollbar hidden rather than thin: a classic scrollbar adds ~13px of
-    // height, which would re-create the very second row this merge removed.
+    // Hide horizontal scrollbars: a classic scrollbar would waste chart height.
     <div
-      className="flex flex-nowrap items-center gap-0 px-1 py-0.5 shrink-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      ref={rowRef}
+      className={`flex items-center gap-0 px-1 py-0.5 shrink-0 ${middle ? "min-w-0 flex-wrap" : "flex-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"}`}
       style={{ background: "#050505", borderBottom: `1px solid ${colors.border}` }}
     >
       {TIME_PERIODS.map((p) => {
@@ -169,7 +187,21 @@ export function TimeframeRow({
           onChange={onIntervalChange}
         />
       )}
-      {trailing && <div className="ml-auto shrink-0 flex items-center gap-1">{trailing}</div>}
+      {middle && (
+        <div
+          className={`${stacked ? "order-last basis-full mt-0.5 pt-0.5 border-t" : "ml-2 pl-2 flex-1 border-l"} min-w-0 flex items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
+          style={{ borderColor: colors.border }}
+        >
+          {middle}
+        </div>
+      )}
+      {trailing && (
+        <div
+          className={`shrink-0 flex items-center gap-1 ${stacked ? "ml-auto" : middle ? "" : "ml-auto"}`}
+        >
+          {trailing}
+        </div>
+      )}
     </div>
   );
 }
