@@ -2355,13 +2355,6 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 )}
               </>
             )}
-            <button
-              className="ml-auto shrink-0 text-[8px] px-1 py-0 border hover:opacity-70"
-              style={{ borderColor: "#00FFFF44", color: "#00FFFF" }}
-              onClick={handleGoToEquity}
-            >
-              FULL EQTY →
-            </button>
           </>
         ) : (
           <span className="text-[10px]" style={{ color: colors.textSecondary }}>
