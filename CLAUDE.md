@@ -126,6 +126,13 @@ re-loop the last k bars per bar), no `Math.max(...arr)`, no `shift()` in loops, 
 closed-bar content (not array identity). Exceptions need `// perf-ok: <reason>`. Same rules for
 `lib/volume-stats.ts`, `lib/volume-events.ts`, `lib/bb-volume.ts`.
 
+## Fundamental analysis — "วิเคราะห์พื้นฐาน [ticker]" (2026-09-27)
+
+When the user asks for a fundamental analysis (วิเคราะห์พื้นฐาน) of a stock, follow
+**[`memory/reference/fundamental-analysis.md`](memory/reference/fundamental-analysis.md)** exactly:
+which data to pull (MCP `get_stock_data` kinds, `get_filings` 10-K/20-F, earnings call, `get_news`),
+the 12-section Thai beginner report, and the rules — facts only, say "ไม่ชัด" when unclear, latest numbers first.
+
 ## Memory Maintenance — What to Update After Each Change
 
 | Changed | อัปเดตไฟล์เหล่านี้ |

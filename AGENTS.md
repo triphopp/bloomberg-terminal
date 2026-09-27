@@ -26,6 +26,13 @@ npm run dev   # → http://localhost:3000
 - State lives in Jotai atoms (`components/bloomberg/atoms/index.ts`) + React Query for server data
 - Native `<select>` menus must use the app-wide popup palette in `styles/globals.css` (`color-scheme` plus explicit `<option>` foreground/background, with light/forced-colors variants). Do not style only the closed select with light text on a transparent background: Windows can render its popup with a light system background. Verify new selectors in DCF/IV-style panels on Windows and Mac when available.
 
+## Fundamental analysis — "วิเคราะห์พื้นฐาน [ticker]" (2026-09-27)
+
+When the user asks for a fundamental analysis (วิเคราะห์พื้นฐาน) of a stock, follow
+**[`memory/reference/fundamental-analysis.md`](memory/reference/fundamental-analysis.md)** exactly:
+which data to pull (MCP `get_stock_data` kinds, `get_filings` 10-K/20-F, earnings call, `get_news`),
+the 12-section Thai beginner report, and the rules — facts only, say "ไม่ชัด" when unclear, latest numbers first.
+
 ## Memory Maintenance — What to Update After Each Change
 
 | Changed | อัปเดตไฟล์เหล่านี้ |
