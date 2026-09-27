@@ -64,7 +64,9 @@ memory/
 
 Full list with one-line status: `project_summary.md` → "What Could Be Built Next".
 
-## งานล่าสุด (2026-09-23 → 26)
+## งานล่าสุด (2026-09-23 → 27)
+
+- [PORT symbol to MKT chart](sessions/2026-09-27-port-to-mkt-symbol.md) — fixed 2026-09-27; MKT uses the requested quote symbol instead of the default instrument.
 
 - [Chart Compare and Price Scaling](plans/completed/chart-compare-and-scaling.md) — ✅ done 2026-09-26; COMPARE icon, `compare(...)` ≤10, `<unit>_scaling` and reset control
 - [BB Volume Overlay](plans/completed/bb-volume-overlay.md) — ✅ done 2026-09-26; volume ในกรอบ BB: spike/delta/vol/rvol/events/profile, เส้นประ = σ ของ volume

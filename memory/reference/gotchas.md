@@ -7,6 +7,12 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### PORT symbol opens MKT but charts the default instrument (fixed 2026-09-27)
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| Clicking a PORT position opens MKT but shows a pinned/default symbol; Thai shares may show no data | MKT's default-selection effect ran on the same mount as the pending portfolio symbol and overwrote it. PORT also sent the display symbol (`PTT`) instead of the quote symbol (`PTT.BK`). | Skip default selection while a cross-view symbol is pending; send `yf_symbol` from PORT when available and open the chart panel on mobile. |
+
 ### Native select popup text disappears on Windows (IV / DCF; fixed 2026-09-26)
 
 | Symptom | Root cause | Fix |
