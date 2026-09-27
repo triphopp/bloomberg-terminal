@@ -14,6 +14,25 @@ export interface SyncStatus {
   last_pull: string | null;
   last_push: string | null;
   last_conflicts: number;
+  /** op-log engine only (OPLOG_ENABLED) */
+  mode?: "oplog";
+  open_conflicts?: number;
+  pending?: number;
+  diverged?: boolean;
+  last_error?: string | null;
+  peers?: { device: string; at: string; state: "in_sync" | "catching_up" | "DIVERGED" }[];
+}
+
+export interface SyncConflict {
+  id: string;
+  table_name: string;
+  row_key: string;
+  kept_device: string;
+  kept_row: Record<string, unknown> | null;
+  other_device: string;
+  other_row: Record<string, unknown> | null;
+  reason: string;
+  detected_at: string;
 }
 
 async function fetchSyncStatus(): Promise<SyncStatus> {

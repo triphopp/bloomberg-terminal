@@ -269,6 +269,10 @@ def enabled() -> bool:
     """Sync is on when SYNC_ENABLED=true, OR auto-detect is allowed and a Google
     Drive folder was found (and not explicitly disabled)."""
     flag = os.getenv("SYNC_ENABLED", "").lower()
+    # Op-log mode replaces the snapshot merge; running both would merge the
+    # same rows twice by two different rules.
+    if os.getenv("OPLOG_ENABLED", "").strip().lower() == "true":
+        return False
     if flag == "false":
         return False
     if flag == "true":

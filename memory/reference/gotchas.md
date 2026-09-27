@@ -2046,3 +2046,15 @@ pulls the real cloud into the current temp DB and pushes it as this machine's de
 reached the Mac. `tests/conftest.py` now sets `SYNC_ENABLED=false`, `SYNC_AUTODETECT=false` and `SYNC_DIR=""` —
 **empty, not unset**: `load_dotenv()` only fills variables that are missing. `sync_dir()` honours `SYNC_AUTODETECT`.
 Sync tests opt in with a temp `SYNC_DIR` via monkeypatch. Guard: `tests/test_sync_never_real_cloud.py`.
+
+## Takeover columns wiped by a sync pull — TAKEOVER strip vanished (found 2026-09-27)
+All 10 TRANSFER_IN lots had `acquisition_type` / `original_price_entry` / `transfer_price_entry` = NULL while `price_entry` and the TAKEOVER note were still re-booked, so `/api/v2/portfolio/takeover` returned `lots: []` and PORT showed only the fair-value basis (looked like "numbers don't match the broker sheet"). Drive snapshots carried NULLs at the takeover `updated_at`; restore runs under `_sync_guard`, so no audit row. Repaired from the note text (`previous owner's cost X` / `at close … Y`), backup `backend/backups/portfolio-pre-takeover-repair-*.db`. Check: `curl -s localhost:9317/api/v2/portfolio/takeover` must list 10 lots, inherited −872,149.
+
+## Op-log sync: switching it on needs identical DBs (2026-09-27)
+The op log (`sync/oplog.py`) carries CHANGES made after it is enabled — it never reconciles data that already differed.
+Enable on a second machine only right after `adopt_db_copy.py adopt` from the first; `state.json` flags DIVERGED if the
+same ops give different money-table fingerprints. A conflict (same row edited on two devices before either saw the
+other) resolves the same way everywhere — later HLC wins — and the losing version waits in REVIEW; it is never
+silently dropped. Never write synced tables with `_sync_guard.active=1` outside the sync code: the row changes without
+an op and the devices diverge (the divergence check will catch it). Test connections need `PRAGMA foreign_keys=ON`
+like `get_db()`, or cascades silently differ from the app.

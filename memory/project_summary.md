@@ -90,6 +90,7 @@ ALERT_SCAN_INTERVAL   — alert rule scanner
 UPSTREAM_LOG          — override logs/upstream.jsonl
 ALLOW_DANGEROUS_OPS   — gate for destructive maintenance endpoints
 SYNC_ENABLED / SYNC_DIR (no quotes) / SYNC_DEVICE_ID / SYNC_FOLDER_NAME / SYNC_AUTODETECT
+OPLOG_ENABLED (true = op-log sync, turns the snapshot merge off) / OPLOG_DEVICE_ID (else `.oplog_device_<db>` beside the DB) / OPLOG_INTERVAL (s, default 15)
 SYNC_PUSH_INTERVAL (60) / SYNC_PULL_INTERVAL (20) / SYNC_PUSH_DEBOUNCE (2)
 MCP_AGENT_NAME / MCP_TRANSPORT / MCP_HOST / MCP_PORT — MCP server
 BT_BACKEND_RELOAD / BT_SUPERVISOR — set by the launcher (dev status + restart)
@@ -365,6 +366,8 @@ series_meta         (id TEXT PK 'dx.spot.dram.<item>', group_key ('memory' — t
 series_points       (series_id, date, value, high, low, change_pct, captured_at,
                      PK(series_id, date))   ← one published number on one day; merge = union.
                      `date` is the PUBLISHER's stamp, never the reader's clock
+
+**Op-log sync (`backend/sync/oplog.py`, `OPLOG_ENABLED=true`, 2026-09-27) — replaces the snapshot merge below.** Triggers (`init_oplog_layer()`, last at startup) note changed rows in `sync_pending`; each becomes an op (full row or delete, HLC stamp, `parent` = the op this device last saw for that row) in `sync_oplog`. A device appends only its own ops to `<SYNC_DIR>/oplog/<device>/<from>-<to>.jsonl` (never rewritten) and applies peers' ops sorted by (hlc, device, seq): parent == head → fast-forward; otherwise both devices keep the higher (hlc, device, op_id) and log the loser in `sync_conflicts` (header chip → REVIEW). Each device publishes `state.json` (applied-op vector + money-table fingerprint); same vector + different fingerprint = DIVERGED. Genesis: both DBs must be identical when switched on (`adopt_db_copy.py`).
 
 **Cloud sync (`backend/sync/`):** `init_sync_layer()` adds `updated_at` (millisecond stamps) + AFTER INSERT/UPDATE/DELETE triggers to synced tables (tombstones, all gated by `_sync_guard`). Local `.db` stays working copy; JSON snapshots (user tables only — excludes sector/risk/regime caches) exchanged via `SYNC_DIR`. **Never put `.db` on the cloud drive** (Drive byte-sync + WAL → corruption).
 

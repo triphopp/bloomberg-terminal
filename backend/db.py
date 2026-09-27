@@ -1892,6 +1892,14 @@ def init_sync_layer() -> None:
             """)
 
 
+def init_oplog_layer() -> None:
+    """Op-log sync capture (sync/oplog.py): change-log tables + per-table
+    triggers. Runs LAST at startup so every synced table already exists."""
+    from sync.oplog import install
+    with get_db() as conn:
+        install(conn)
+
+
 def get_sectors_by_country(country: str) -> list[str]:
     """Return distinct sector_display names for a country, ordered alphabetically."""
     with get_db() as conn:

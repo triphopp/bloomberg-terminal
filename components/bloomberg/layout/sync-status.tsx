@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { useSync } from "../hooks/useSync";
 import { bloombergColors } from "../lib/theme-config";
+import { SyncConflicts } from "./sync-conflicts";
 
 function ago(iso: string | null): string {
   if (!iso) return "never";
@@ -23,13 +24,22 @@ export function SyncStatus({ isDarkMode }: { isDarkMode: boolean }) {
   const colors = isDarkMode ? bloombergColors.dark : bloombergColors.light;
   const sep = `1px solid ${colors.border}33`;
   const [open, setOpen] = useState(false);
+  const [review, setReview] = useState(false);
   const { status, pull, push, pulling, pushing } = useSync();
 
   if (!status?.enabled) return null; // hide chip entirely when sync is off
 
+  const oplog = status.mode === "oplog";
   const conflict = (status.last_conflicts ?? 0) > 0;
-  const dot = !status.reachable ? "#FF4444" : conflict ? "#F5A623" : colors.positive;
-  const label = !status.reachable ? "OFFLINE" : conflict ? "CONFLICT" : "SYNCED";
+  const diverged = !!status.diverged;
+  const dot = !status.reachable || diverged ? "#FF4444" : conflict ? "#F5A623" : colors.positive;
+  const label = diverged
+    ? "DIVERGED"
+    : !status.reachable
+      ? "OFFLINE"
+      : conflict
+        ? "CONFLICT"
+        : "SYNCED";
 
   return (
     <div className="relative h-full">
@@ -87,10 +97,54 @@ export function SyncStatus({ isDarkMode }: { isDarkMode: boolean }) {
               <span style={{ opacity: 0.6 }}>Last push</span>
               <span>{ago(status.last_push)} ago</span>
             </div>
-            {conflict && (
+            {oplog &&
+              (status.peers ?? []).map((p) => (
+                <div
+                  key={p.device}
+                  className="px-1 py-0.5 text-[9px] flex justify-between"
+                  style={{ color: colors.text }}
+                >
+                  <span style={{ opacity: 0.6 }}>{p.device}</span>
+                  <span
+                    style={{
+                      color:
+                        p.state === "DIVERGED"
+                          ? "#FF4444"
+                          : p.state === "in_sync"
+                            ? colors.positive
+                            : colors.textSecondary,
+                    }}
+                  >
+                    {p.state === "in_sync"
+                      ? "IN SYNC"
+                      : p.state === "DIVERGED"
+                        ? "DIVERGED"
+                        : "CATCHING UP"}
+                  </span>
+                </div>
+              ))}
+            {oplog && status.last_error && (
+              <div className="px-1 py-0.5 text-[8px] break-all" style={{ color: "#FF4444" }}>
+                {status.last_error}
+              </div>
+            )}
+            {conflict && !oplog && (
               <div className="px-1 py-0.5 text-[8px]" style={{ color: "#F5A623" }}>
                 {status.last_conflicts} conflict row(s) preserved in conflicts/
               </div>
+            )}
+            {conflict && oplog && (
+              <button
+                type="button"
+                onClick={() => {
+                  setReview(true);
+                  setOpen(false);
+                }}
+                className="px-1 py-0.5 text-[9px] font-bold text-left hover:opacity-80"
+                style={{ color: "#F5A623" }}
+              >
+                REVIEW {status.last_conflicts} CONFLICT{status.last_conflicts === 1 ? "" : "S"}
+              </button>
             )}
             {status.sync_dir && (
               <div
@@ -102,28 +156,43 @@ export function SyncStatus({ isDarkMode }: { isDarkMode: boolean }) {
             )}
 
             <div className="flex gap-1 mt-1 pt-1" style={{ borderTop: sep }}>
-              <button
-                type="button"
-                disabled={pulling}
-                onClick={() => pull()}
-                className="flex-1 px-1.5 py-1 text-[9px] font-bold hover:opacity-80"
-                style={{ color: colors.accent, background: `${colors.accent}18` }}
-              >
-                {pulling ? "PULLING…" : "PULL NOW"}
-              </button>
-              <button
-                type="button"
-                disabled={pushing}
-                onClick={() => push()}
-                className="flex-1 px-1.5 py-1 text-[9px] font-bold hover:opacity-80"
-                style={{ color: colors.accent, background: `${colors.accent}18` }}
-              >
-                {pushing ? "PUSHING…" : "PUSH NOW"}
-              </button>
+              {oplog ? (
+                <button
+                  type="button"
+                  disabled={pulling}
+                  onClick={() => pull()}
+                  className="flex-1 px-1.5 py-1 text-[9px] font-bold hover:opacity-80"
+                  style={{ color: colors.accent, background: `${colors.accent}18` }}
+                >
+                  {pulling ? "SYNCING…" : "SYNC NOW"}
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={pulling}
+                    onClick={() => pull()}
+                    className="flex-1 px-1.5 py-1 text-[9px] font-bold hover:opacity-80"
+                    style={{ color: colors.accent, background: `${colors.accent}18` }}
+                  >
+                    {pulling ? "PULLING…" : "PULL NOW"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={pushing}
+                    onClick={() => push()}
+                    className="flex-1 px-1.5 py-1 text-[9px] font-bold hover:opacity-80"
+                    style={{ color: colors.accent, background: `${colors.accent}18` }}
+                  >
+                    {pushing ? "PUSHING…" : "PUSH NOW"}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </>
       )}
+      {review && <SyncConflicts isDarkMode={isDarkMode} onClose={() => setReview(false)} />}
     </div>
   );
 }
