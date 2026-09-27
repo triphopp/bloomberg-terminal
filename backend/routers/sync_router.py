@@ -52,7 +52,7 @@ def _sync_now():
         raise HTTPException(status_code=503, detail="cloud folder not found")
     conn = connect()
     try:
-        return {"status": "ok", **oplog.sync_once(conn, oplog.device_id(), root)}
+        return {"status": "ok", **oplog.run_round(conn, oplog.device_id(), root)}
     finally:
         conn.close()
 

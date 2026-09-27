@@ -19,6 +19,13 @@ Design, and why:
   is skipped and reported — the row-level merge already decided which row wins,
   and silently overwriting a page the user just wrote on this machine is the one
   outcome that loses work. The skipped pair is surfaced in the push/pull result.
+* **"Changed" is judged per device.** Each manifest entry keeps `seen`, the sha
+  every device last pushed or pulled for that slug. A local copy equal to what
+  THIS device last saw is unchanged and takes a newer cloud page; the shared
+  `sha` alone could not tell that (it is whoever pushed last), so before
+  2026-09-27 an edit made on one machine was refused on the other as "local
+  page also changed" and never arrived. Entries without `seen` (written before
+  that) fall back to the old rule until a round records this device.
 * **A slug is a path segment.** It is validated the same way the router does,
   because a snapshot arrives from another machine and a '..' in it would let a
   peer write anywhere on disk.
@@ -88,6 +95,7 @@ def push_files(root: Path, slugs: list[str], device: str) -> dict:
     manifest = _read_manifest(root)
     entries: dict = manifest.get("pages") if isinstance(manifest.get("pages"), dict) else {}
     sent, skipped = [], []
+    marked = False
 
     for slug in slugs:
         if not _safe_slug(slug):
@@ -98,13 +106,23 @@ def push_files(root: Path, slugs: list[str], device: str) -> dict:
             continue
         local_sha = _sha(local)
         entry = entries.get(slug) or {}
+        seen = entry.get("seen") if isinstance(entry.get("seen"), dict) else {}
         if entry.get("sha") == local_sha:
+            if seen.get(device) != local_sha:  # in step — just record that we saw it
+                entries[slug] = {**entry, "seen": {**seen, device: local_sha}}
+                marked = True
             continue
         remote = root / SUBDIR / slug / PAGE
         # Another device published a different page under this slug and we have
         # not taken it yet: pull decides, not push.
         if remote.exists() and _sha(remote) != entry.get("sha") and entry.get("sha"):
             skipped.append({"slug": slug, "why": "remote changed too — pull first"})
+            continue
+        # The cloud moved past what we last saw AND our copy moved too (pull ran
+        # first and would have taken it otherwise): both edited — keep both.
+        mine = seen.get(device)
+        if entry.get("sha") and mine and entry["sha"] != mine:
+            skipped.append({"slug": slug, "why": "both devices changed the page"})
             continue
         remote.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(local, remote)
@@ -113,10 +131,13 @@ def push_files(root: Path, slugs: list[str], device: str) -> dict:
             "bytes": local.stat().st_size,
             "device": device,
             "updated_at": _now(),
+            "seen": {**seen, device: local_sha},
         }
         sent.append(slug)
 
-    if sent or entries != manifest.get("pages"):
+    # `entries` is manifest["pages"] itself, so comparing the two can never
+    # see a change — track it.
+    if sent or marked:
         manifest["pages"] = entries
         manifest["updated_at"] = _now()
         _write_manifest(root, manifest)
@@ -125,16 +146,18 @@ def push_files(root: Path, slugs: list[str], device: str) -> dict:
     return {"sent": sent, "skipped": skipped}
 
 
-def pull_files(root: Path, slugs: list[str]) -> dict:
+def pull_files(root: Path, slugs: list[str], device: str | None = None) -> dict:
     """Copy cloud pages down for slugs this device now has rows for.
 
     Called after the row merge, so `slugs` already reflects what the merged
     `graphs` table holds — a page nobody's row references is left in the cloud
-    rather than restored.
+    rather than restored. With `device`, what this device saw is recorded in the
+    manifest (`seen`) so its next edit check is per device (module note).
     """
     manifest = _read_manifest(root)
     entries = manifest.get("pages") if isinstance(manifest.get("pages"), dict) else {}
     taken, skipped = [], []
+    marked = False
 
     for slug in slugs:
         if not _safe_slug(slug):
@@ -144,20 +167,33 @@ def pull_files(root: Path, slugs: list[str]) -> dict:
         if not remote.exists():
             continue
         remote_sha = _sha(remote)
+        entry = entries.get(slug) or {}
+        seen = entry.get("seen") if isinstance(entry.get("seen"), dict) else {}
         local = _graphs_dir() / slug / PAGE
         if local.exists():
             local_sha = _sha(local)
-            if local_sha == remote_sha:
-                continue
-            # Both sides moved since the last exchange — see the module note.
-            known = (entries.get(slug) or {}).get("sha")
-            if known and local_sha != known:
-                skipped.append({"slug": slug, "why": "local page also changed"})
-                continue
-        local.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(remote, local)
-        taken.append(slug)
+            if local_sha != remote_sha:
+                # Both sides moved since the last exchange — see the module note.
+                known = seen.get(device) if device and device in seen else entry.get("sha")
+                if known and local_sha != known:
+                    skipped.append({"slug": slug, "why": "local page also changed"})
+                    continue
+                local.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(remote, local)
+                taken.append(slug)
+        else:
+            local.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(remote, local)
+            taken.append(slug)
+        # Record only a copy the manifest vouches for: a remote file Drive has
+        # not finished replacing must not become this device's baseline.
+        if device and entry and remote_sha == entry.get("sha") and seen.get(device) != remote_sha:
+            entries[slug] = {**entry, "seen": {**seen, device: remote_sha}}
+            marked = True
 
+    if marked:
+        manifest["pages"] = entries
+        _write_manifest(root, manifest)
     if skipped:
         logger.info("sync: %d graph page(s) skipped on pull", len(skipped))
     return {"taken": taken, "skipped": skipped}

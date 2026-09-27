@@ -2050,6 +2050,16 @@ Sync tests opt in with a temp `SYNC_DIR` via monkeypatch. Guard: `tests/test_syn
 ## Takeover columns wiped by a sync pull — TAKEOVER strip vanished (found 2026-09-27)
 All 10 TRANSFER_IN lots had `acquisition_type` / `original_price_entry` / `transfer_price_entry` = NULL while `price_entry` and the TAKEOVER note were still re-booked, so `/api/v2/portfolio/takeover` returned `lots: []` and PORT showed only the fair-value basis (looked like "numbers don't match the broker sheet"). Drive snapshots carried NULLs at the takeover `updated_at`; restore runs under `_sync_guard`, so no audit row. Repaired from the note text (`previous owner's cost X` / `at close … Y`), backup `backend/backups/portfolio-pre-takeover-repair-*.db`. Check: `curl -s localhost:9317/api/v2/portfolio/takeover` must list 10 lots, inherited −872,149.
 
+## GRAPH page listed on the other machine but renders 404 — op-log mode (fixed 2026-09-27)
+**Symptom:** a page made on one machine shows in GRAPHS elsewhere but `/render` is 404; `<SYNC_DIR>/graphs/` stops changing.
+**Cause:** the HTML file travels only via `sync/files.py` `push_files`/`pull_files`, which only the snapshot sync
+(`sync/manager.py`) calls. With `OPLOG_ENABLED=true` snapshot sync is off and `oplog.sync_once()` never moves files —
+the `graphs` ROW syncs, the FILE does not. Silent: sync status shows no error.
+**Fix:** `oplog.run_round()` = `sync_once()` + `sync_pages()` (root = `<SYNC_DIR>`, not `<SYNC_DIR>/oplog`); worker + `/api/sync/now` use it.
+Also fixed: an EDITED page never reached the other machine in either mode — the manifest held only the last pusher's sha, so an
+unchanged copy read as "local page also changed". Manifest entries now carry `seen{device: sha}`. Tests: `tests/test_oplog_pages.py`.
+Details: `memory/reports/oplog-graph-files-not-synced-risk-report.md`.
+
 ## Op-log sync: switching it on needs identical DBs (2026-09-27)
 The op log (`sync/oplog.py`) carries CHANGES made after it is enabled — it never reconciles data that already differed.
 Enable on a second machine only right after `adopt_db_copy.py adopt` from the first; `state.json` flags DIVERGED if the
