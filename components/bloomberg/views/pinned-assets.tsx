@@ -63,6 +63,9 @@ const LS_PINS = "bloomberg_pinned_assets";
 const LS_TAGS = "bloomberg_pin_tags";
 const LS_PIN_ORDER = "bloomberg_pin_order";
 const LS_SORT_KEY = "bloomberg_pin_sort_key";
+const LS_SORT_DIR = "bloomberg_pin_sort_dir";
+/** Columns whose first click sorts high → low (volume: most traded on top). */
+const DESC_FIRST_SORTS = new Set(["volume", "score", "pctChange", "price"]);
 const LS_VIEW_MODE = "bloomberg_watchlist_view";
 const LS_FOLDED_GROUPS = "bloomberg_watchlist_folded_groups";
 
@@ -1132,11 +1135,11 @@ function EditCardForm({
 
 // ── Compact (TICK DATA-style) row ─────────────────────────────────────────────
 //
-// Same grammar as the MKT TICK DATA board: one mono line (lib/tick-grammar), four columns —
-// SYM · LAST · CHG · SIG. Company name, pin return, targets and comment move
+// Same grammar as the MKT TICK DATA board: one mono line (lib/tick-grammar), five columns —
+// SYM · LAST · CHG · VOL (today's session volume) · SIG. Company name, pin return, targets and comment move
 // into the tooltip, so a squeezed panel shows ~3x the rows the table view does.
 
-const COMPACT_COLS = 4;
+const COMPACT_COLS = 5;
 const COMPACT_CELL = "pl-1 pr-0.5 py-0 text-right whitespace-nowrap tabular-nums";
 
 function scoreColor(score: number) {
@@ -1265,6 +1268,9 @@ const CompactWatchRow = memo(function CompactWatchRow({
         >
           {pct != null ? fmtPct(pct) : "—"}
         </td>
+        <td className={COMPACT_CELL} style={{ color: colors.textSecondary }}>
+          {q?.regularMarketVolume ? fmtVol(q.regularMarketVolume) : "—"}
+        </td>
         {showExt && <ExtCells quote={q} colors={colors} />}
         <td
           className={`${COMPACT_CELL} font-bold`}
@@ -1308,8 +1314,17 @@ export const PinnedAssets = memo(function PinnedAssets({
   const [mutError, setMutError] = useState<string>("");
   const [showAddRow, setShowAddRow] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<string>("symbol");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  // Default: today's volume, most traded first — inside each group, since the
+  // compact sections keep the sort order per group.
+  const [sortKey, setSortKey] = useState<string>("volume");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const restoreSort = (key: string) => {
+    setSortKey(key);
+    try {
+      const d = localStorage.getItem(LS_SORT_DIR);
+      setSortDir(d === "asc" || d === "desc" ? d : DESC_FIRST_SORTS.has(key) ? "desc" : "asc");
+    } catch {}
+  };
   const [filterGroup, setFilterGroup] = useState<string>("all");
   const [expandedComment, setExpandedComment] = useState<string | null>(null);
 
@@ -1451,7 +1466,7 @@ export const PinnedAssets = memo(function PinnedAssets({
                 setTags(dbTags);
                 saveToLS(migratedGroups, ordered, dbTags);
                 const savedSortKey = localStorage.getItem(LS_SORT_KEY);
-                if (savedSortKey) setSortKey(savedSortKey);
+                if (savedSortKey) restoreSort(savedSortKey);
                 setSyncStatus("ok");
                 return;
               }
@@ -1478,7 +1493,7 @@ export const PinnedAssets = memo(function PinnedAssets({
             setTags(dbTags);
             saveToLS(lsGroupsFallback, ordered, dbTags);
             const savedSortKey = localStorage.getItem(LS_SORT_KEY);
-            if (savedSortKey) setSortKey(savedSortKey);
+            if (savedSortKey) restoreSort(savedSortKey);
             setSyncStatus("ok");
             return;
           }
@@ -1490,7 +1505,7 @@ export const PinnedAssets = memo(function PinnedAssets({
         setTags(dbTags);
         saveToLS(dbGroups, orderedDbAssets, dbTags);
         const savedSortKey = localStorage.getItem(LS_SORT_KEY);
-        if (savedSortKey) setSortKey(savedSortKey);
+        if (savedSortKey) restoreSort(savedSortKey);
         setSyncStatus("ok");
       } catch (err) {
         console.warn("[PinnedAssets] Backend unavailable, using localStorage", err);
@@ -1505,7 +1520,7 @@ export const PinnedAssets = memo(function PinnedAssets({
           setPins(applySavedOrder(parsed));
           setTags(lsTags ? JSON.parse(lsTags) : []);
           const savedSortKey = localStorage.getItem(LS_SORT_KEY);
-          if (savedSortKey) setSortKey(savedSortKey);
+          if (savedSortKey) restoreSort(savedSortKey);
         } catch {
           setGroups([DEFAULT_GROUP]);
         }
@@ -1769,15 +1784,20 @@ export const PinnedAssets = memo(function PinnedAssets({
   // ── Sorting ─────────────────────────────────────────────────────────────
 
   const handleSort = (key: string) => {
-    if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir("asc");
-      try {
-        localStorage.setItem(LS_SORT_KEY, key);
-      } catch {}
-    }
+    const dir: "asc" | "desc" =
+      sortKey === key
+        ? sortDir === "asc"
+          ? "desc"
+          : "asc"
+        : DESC_FIRST_SORTS.has(key)
+          ? "desc"
+          : "asc";
+    setSortKey(key);
+    setSortDir(dir);
+    try {
+      localStorage.setItem(LS_SORT_KEY, key);
+      localStorage.setItem(LS_SORT_DIR, dir);
+    } catch {}
   };
 
   const getSortValue = useCallback(
@@ -2636,6 +2656,7 @@ export const PinnedAssets = memo(function PinnedAssets({
                       {sortHead("SYM", "symbol", true)}
                       {sortHead("LAST", "price")}
                       {sortHead("CHG", "pctChange")}
+                      {sortHead("VOL", "volume")}
                       {extLabel && <ExtHead label={extLabel} />}
                       {sortHead("SIG", "score")}
                     </tr>

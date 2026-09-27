@@ -432,8 +432,10 @@ LIST, FREQ and ACTIVE. Never a second line per row — the user reads this panel
 
 Header text chip cycles **LIST → TABLE → CARDS**; choice persists in
 `localStorage["bloomberg_watchlist_view"]` (restored after mount). **LIST is the default** and
-uses the TICK DATA grammar: `CompactWatchRow` (memo) — one 13px line, `SYM · LAST · CHG · SIG`,
-headers sort (`handleSort`). Name / pin return / targets / comment / stale-session note live in the
+uses the TICK DATA grammar: `CompactWatchRow` (memo) — one 13px line, `SYM · LAST · CHG · VOL · SIG`
+(VOL = today's `regularMarketVolume`, K/M/B), headers sort (`handleSort`; default + first click on
+VOL/SIG/CHG/LAST = desc; key + dir persisted in `bloomberg_pin_sort_key` / `bloomberg_pin_sort_dir`).
+Default sort = VOL desc, applied inside each group section. Name / pin return / targets / comment / stale-session note live in the
 row tooltip; buy/sell target hit = tinted row + coloured symbol. With >1 group and filter = ALL,
 groups render as foldable sections (`localStorage["bloomberg_watchlist_folded_groups"]`).
 Click = open in chart, shift-click = chart window, double-click = edit form, right-click = context
