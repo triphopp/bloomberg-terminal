@@ -46,6 +46,7 @@ memory/
 
 | Plan | สถานะ |
 |------|--------|
+| [Central DB — Postgres primary + local mirrors](plans/central-db-cloud-primary.md) | 🔄 P0 done (PR #71); mac adopt pending; next P1 version/outbox on SQLite |
 | [Chart render performance](plans/chart-render-perf.md) | 📋 planning — tick O(1), columns, chunked history, cache tiers |
 | [Unified Trade Entry](plans/unified-trade-entry.md) | 🔄 ENTRY รวมหุ้น + option, สลิป option OCR |
 | [PORT Accounting Ledger](plans/port-accounting-ledger.md) | 🔄 reconstructed preview + checks; no posted journal / read switch |

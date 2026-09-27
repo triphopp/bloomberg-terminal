@@ -62,13 +62,8 @@ def _d(v) -> str:
 
 
 def _connect(read_only: bool) -> sqlite3.Connection:
-    if read_only:
-        uri = "file:" + os.path.abspath(DB_PATH).replace("\\", "/") + "?mode=ro"
-        conn = sqlite3.connect(uri, uri=True)
-    else:
-        conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    from db import connect
+    return connect(readonly=read_only)
 
 
 def load(conn):
@@ -290,8 +285,8 @@ def main() -> int:
         new = [r for r in rows if r[1] <= end and (r[0], r[1]) not in live]
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         backup = f"{DB_PATH}.bak-{stamp}-pre-nav-backfill"
-        src = sqlite3.connect(DB_PATH)
-        dst = sqlite3.connect(backup)
+        src = _connect(read_only=True)
+        dst = sqlite3.connect(backup)  # db-ok: fresh backup file
         src.backup(dst)
         dst.close()
         src.close()

@@ -105,7 +105,7 @@ def main():
     a = ap.parse_args()
     if hasattr(sys.stdout, "buffer"):
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    conn = sqlite3.connect(a.db)
+    conn = sqlite3.connect(a.db)  # db-ok: one-off, target chosen by --db
     conn.row_factory = sqlite3.Row
     lots, px, prior, fair, cash_in = plan(conn)
     delta = round(prior - fair, 2)
@@ -128,7 +128,7 @@ def main():
 
     BACKUPS.mkdir(parents=True, exist_ok=True)
     backup = BACKUPS / f"portfolio-pre-takeover-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.db"
-    with sqlite3.connect(backup) as dest:
+    with sqlite3.connect(backup) as dest:  # db-ok: fresh backup file
         conn.backup(dest)
         if dest.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise SystemExit("backup integrity check failed")

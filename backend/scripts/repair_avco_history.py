@@ -198,8 +198,8 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="report only (default)")
     args = ap.parse_args()
 
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
+    from db import connect
+    conn = connect()
     skipped: list = []
     changes = plan(conn, args.symbol, skipped)
 

@@ -4,9 +4,12 @@ SQLite database connection and schema initialization.
 import json
 import sqlite3
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Optional
 
-from config import DB_PATH
+from config import DB_MODE, DB_PATH
+
+DB_MODES = ("local",)
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -31,10 +34,33 @@ def occ_symbol(underlying: str, expiry: str, strike: float, option_type: str) ->
     return f"{root}{ymd}{cp}{int(round(float(strike) * 1000)):08d}"
 
 
+def connect(path=None, *, readonly: bool = False) -> sqlite3.Connection:
+    """The one place a portfolio database is opened.
+
+    `path` defaults to DB_PATH; scripts pass another file (a backup, a copy under
+    review). Every opener going through here is what lets DB_MODE later swap the
+    local file for a cloud-primary replica without touching 76 callers
+    (memory/plans/central-db-cloud-primary.md). tests/test_db_single_opener.py
+    keeps raw sqlite3.connect() out of everything else.
+    """
+    if DB_MODE not in DB_MODES:
+        raise RuntimeError(
+            f"DB_MODE={DB_MODE!r} is not available yet (supported: {', '.join(DB_MODES)}) "
+            "— see memory/plans/central-db-cloud-primary.md"
+        )
+    target = Path(path) if path is not None else Path(DB_PATH)
+    if readonly:
+        conn = sqlite3.connect(target.resolve().as_uri() + "?mode=ro", uri=True)
+        conn.execute("PRAGMA query_only = ON")
+    else:
+        conn = sqlite3.connect(str(target))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
+    conn = connect()
     # foreign_keys is genuinely per-connection (SQLite resets it on every
     # new connection) so this has to run here. journal_mode is NOT — it's a
     # persistent property stored in the DB file header, so re-issuing
@@ -58,7 +84,7 @@ def _ensure_wal_mode() -> None:
     """Runs once at startup — see the comment in get_db() for why this isn't
     inline there. Safe to call even if the file is already WAL (no-op) or
     doesn't exist yet (creates it)."""
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = connect()
     conn.execute("PRAGMA journal_mode = WAL")
     conn.close()
 

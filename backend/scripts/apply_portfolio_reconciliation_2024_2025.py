@@ -156,7 +156,7 @@ def analyze(conn: sqlite3.Connection, recon_path: Path, original_path: Path):
 
 
 def run(recon_path: Path, original_path: Path, db_path: Path, apply: bool):
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path) as conn:  # db-ok: one-off, target chosen by caller
         conn.row_factory = sqlite3.Row
         decisions, pending, recon_hash, original_hash = analyze(conn, recon_path, original_path)
         workbook = openpyxl.load_workbook(recon_path, read_only=True, data_only=True)
@@ -181,7 +181,7 @@ def run(recon_path: Path, original_path: Path, db_path: Path, apply: bool):
             return result
         BACKUPS.mkdir(parents=True, exist_ok=True)
         backup = BACKUPS / f"portfolio-pre-reconcile-{datetime.now(timezone.utc):%Y%m%d-%H%M%S-%f}.db"
-        with sqlite3.connect(backup) as dest:
+        with sqlite3.connect(backup) as dest:  # db-ok: fresh backup file
             conn.backup(dest)
             if dest.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise RuntimeError("Backup integrity check failed")

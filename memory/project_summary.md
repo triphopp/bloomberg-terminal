@@ -79,6 +79,7 @@ BOT_API_TOKEN / BOT_IR_TOKEN / BOT_FX_TOKEN / BOT_STATS_TOKEN — Bank of Thaila
 SEC2_API_KEY          — SEC Thailand new portal (Fund v2, Bond v2, One Report v1)
 SEC_*_PRIMARY / SEC_BASE_URL — SEC Thailand old portal (legacy, closed 2026-06-30)
 PORTFOLIO_DB          — default portfolio.db (scripts honour it: e.g. run backfill_nav on a copy)
+DB_MODE               — default local; how db.connect() (the only DB opener) opens PORTFOLIO_DB. `replica` reserved for plans/central-db-cloud-primary.md and refuses until built
 CORS_ORIGINS          — must include the frontend origin (port 9318)
 YAHOO_MAX_CONCURRENT  — default 6
 QUOTE_PROVIDER_DEFAULT / QUOTE_AUTO_FAILOVER — quote registry
@@ -432,6 +433,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished plan becomes `- [x] … done YYYY-MM-DD` only with a Completion Evidence section.
 
 - [x] **Chart Compare and Price Scaling** — done 2026-09-26; COMPARE icon, `compare(A,B,...)` ≤10, `<unit>_scaling` chart units (`plans/completed/chart-compare-and-scaling.md`)
+- [ ] **Central DB (Postgres primary + local mirrors)** — Postgres orders every write (future multi-user), SQLite mirror per machine pulled by change_seq, offline outbox with version-checked replay + conflict review; replaces multi-writer Drive merge. P0 (`db.connect`, `adopt_db_copy.py`) done (`plans/central-db-cloud-primary.md`)
 - [ ] **Chart render performance** — tick path O(1) (series.update + incremental indicators), columnar Float64Array bars, chunked history by calendar block, cache tiers FE L1/L2 (React Query + IndexedDB) · BE L1/L2 (bytes LRU + SQLite `price_bars`), LOD decimation (`plans/chart-render-perf.md`)
 - [ ] **Quote stream visibility budget** — global symbol budget + priority by what's on screen (focus/visible/mounted, LRU, lazy eviction), coverage event, REST gated by viewport (`plans/quote-stream-visibility-budget.md`)
 - [x] **Quote stream sharding** — done 2026-09-26; Yahoo WS 100-symbol/conn cap → async shards ≤90 each + direct proto decode (6× less CPU/tick) (`plans/completed/quote-stream-sharding.md`)

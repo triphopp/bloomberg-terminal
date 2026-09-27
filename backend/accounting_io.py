@@ -4,12 +4,12 @@ from datetime import datetime
 from pathlib import Path
 import sqlite3
 
+from db import connect
+
 
 @contextmanager
 def read_book(path):
-    conn = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA query_only = ON")
+    conn = connect(path, readonly=True)
     conn.execute("BEGIN")  # all checks see a consistent book
     try:
         yield conn
@@ -26,7 +26,7 @@ def backup_book(path, label="accounting") -> Path:
     # Reserve a fresh path; never overwrite a prior backup.
     with target.open("xb"):
         pass
-    with read_book(source) as src, sqlite3.connect(target) as dst:
+    with read_book(source) as src, sqlite3.connect(target) as dst:  # db-ok: fresh backup file, not the book
         src.backup(dst)
         if dst.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise RuntimeError(f"Backup integrity check failed: {target}")

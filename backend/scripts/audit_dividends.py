@@ -26,9 +26,8 @@ def main() -> int:
     args = ap.parse_args()
     if hasattr(sys.stdout, "buffer"):
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    uri = "file:" + os.path.abspath(DB_PATH).replace("\\", "/") + "?mode=ro"
-    conn = sqlite3.connect(uri, uri=True)
-    conn.row_factory = sqlite3.Row
+    from db import connect
+    conn = connect(readonly=True)
     sql = "SELECT * FROM dividends"
     params: list = []
     if args.account:
