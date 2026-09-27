@@ -5,9 +5,16 @@
 
 ---
 
-## REG channels (client storage, 2026-09-25)
-
-No backend response change. `localStorage["chart:regression"]` stores `StoredRegressionChannel[]`: `{id, symbol, barInterval, fromTime, toTime, color, options:{mode:"stddev"|"quantile",stdDevMult,tauPct,extend}}`. `fromTime` and `toTime` are bar times, not array indices. The previous single `{fromTime,toTime}` value is accepted and migrated on the next edit. Only channels for the current symbol and bar interval render; mode changes and removal affect the selected channel.
+## Chart drawings (`GET /api/v2/chart-drawings`) — 2026-09-27
+Replaces `localStorage["chart:regression"]` / `["chart:trend-lines"]` (imported once by `useChartDrawings`, then removed).
+```json
+{"drawings": [{"id": "uuid", "kind": "trend|regression", "symbol": "^DJI", "barInterval": "1d",
+  "data": {...}, "createdAt": "2026-09-27 15:07:24.295"}]}
+```
+`data` by kind — times are bar times (not indices), prices raw floats:
+- `trend`: `{a:{time,price}, b:{time,price}, color}` — `a.price == b.price` ⇒ horizontal (Shift)
+- `regression`: `{fromTime, toTime, color, options:{mode:"stddev"|"quantile", stdDevMult, tauPct, extend}}`
+Only drawings for the current symbol + bar interval render.
 
 ## Accounting previews (2026-09-25)
 
@@ -1556,3 +1563,4 @@ SQLite: `search_hits(symbol TEXT PK, count INTEGER, last_at TEXT)` — local onl
 ### trades takeover columns + `GET /api/v2/portfolio/takeover` (2026-09-26)
 `acquisition_type TEXT` (`'TRANSFER_IN'` = lot received in kind at a portfolio takeover; NULL = normal buy), `original_price_entry REAL` (previous owner's cost/unit, memo), `transfer_price_entry REAL` (fair value/unit on the transfer date). For these lots `price_entry`/`amount`/`date_entry` = fair value on the transfer date, so every return starts there. Both memo prices are copied on partial-sell splits and never AVCO-rebased.
 `/takeover?account_id&base_currency` → `{ base_currency, transfer_dates[], lots[{id, account_id, symbol, date_transfer, date_exit, open, volume, currency, original_price_entry, transfer_price_entry, original_cost_base, transfer_value_base, inherited_pnl_base, realized_since_base}], totals{original_cost, transfer_value, inherited_pnl, realized_since} }`. `inherited_pnl = (transfer − original) × volume` (pre-takeover, fixed). Unrealized since takeover = open-positions `unrealized_pnl_base` matched by `id`. Types `TakeoverPayload`/`TakeoverLot` in `views/portfolio/queries.ts`.
+`scopes[{account_id, sub_port, transfer_date, inherited_pnl, realized_since}]` (2026-09-27) = **takeover debt** per sub-portfolio (sub-port parsed from the note, `_sub_port` ↔ `subPortLabel`): `realized_since` sums EVERY trade closed in that account+sub-port on/after the transfer date, not just the transferred lots. PORT group header shows `TAKEOVER DEBT = inherited + realized_since + open unrealized of the scope` while < 0 (live; reappears if the book falls back). Closed rows with an empty note have no sub-port and are not counted. Type `TakeoverScope`.

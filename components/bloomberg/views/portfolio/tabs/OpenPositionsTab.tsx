@@ -1,7 +1,9 @@
 "use client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSetAtom } from "jotai";
 import { AlertTriangle, ChevronDown, ChevronRight, Clock, Loader2, RefreshCw } from "lucide-react";
 import React, { useState, useCallback, useEffect, useMemo } from "react";
+import { currentViewAtom, marketSearchSymbolAtom } from "../../../atoms";
 import { useLiveQuery } from "../../../hooks/useLiveQuery";
 import { type QuoteTick, useQuoteStream } from "../../../hooks/useQuoteStream";
 import {
@@ -443,6 +445,8 @@ export function OpenPositionsTab({
   /** Jump to TOOLS → THESES for this symbol (existing thesis, or a new one). */
   onOpenThesis?: (symbol: string) => void;
 }) {
+  const setCurrentView = useSetAtom(currentViewAtom);
+  const setMarketSearchSymbol = useSetAtom(marketSearchSymbolAtom);
   const {
     data = null,
     isFetching: loading,
@@ -457,6 +461,15 @@ export function OpenPositionsTab({
   const load = useCallback(() => {
     void reloadPositions();
   }, [reloadPositions]);
+  const openInMarket = useCallback(
+    (symbol: string) => {
+      const sym = symbol.trim().toUpperCase();
+      if (!sym) return;
+      setMarketSearchSymbol(sym);
+      setCurrentView("market");
+    },
+    [setCurrentView, setMarketSearchSymbol]
+  );
 
   // Live prices between polls: each tick moves the cached payload by its price
   // delta, so this table, NAV (usePortfolioNav) and anything else reading the
@@ -575,6 +588,43 @@ export function OpenPositionsTab({
       total: takeover.totals.inherited_pnl + since,
       dates: takeover.transfer_dates,
     };
+  }, [takeover, positions]);
+
+  // Takeover debt: a sub-portfolio taken over at a loss carries that loss as
+  // debt until its own P&L since the transfer (realized on every trade closed
+  // there + unrealized on what it holds now) pays it back. Live — if the book
+  // falls back under water, the debt shows again. Keyed by account_id.
+  const takeoverDebt = useMemo(() => {
+    const out = new Map<
+      string,
+      { debt: number; inherited: number; recovered: number; subs: string[]; date: string }
+    >();
+    for (const s of takeover?.scopes ?? []) {
+      if (s.inherited_pnl >= 0) continue;
+      const unreal = positions.reduce(
+        (a, p) =>
+          p.account_id === s.account_id && (subPortLabel(p) ?? "") === s.sub_port
+            ? a + (p.unrealized_pnl_base ?? 0)
+            : a,
+        0
+      );
+      const recovered = s.realized_since + unreal;
+      const cur = out.get(s.account_id) ?? {
+        debt: 0,
+        inherited: 0,
+        recovered: 0,
+        subs: [],
+        date: s.transfer_date,
+      };
+      cur.inherited += s.inherited_pnl;
+      cur.recovered += recovered;
+      cur.debt = cur.inherited + cur.recovered;
+      cur.subs.push(s.sub_port);
+      if (s.transfer_date < cur.date) cur.date = s.transfer_date;
+      out.set(s.account_id, cur);
+    }
+    for (const [k, v] of out) if (v.debt >= 0) out.delete(k);
+    return out;
   }, [takeover, positions]);
 
   // Auto PRE/POST column: appears only while ≥1 position is in a live pre- or
@@ -982,6 +1032,7 @@ export function OpenPositionsTab({
                 (a: number, p: MergedPosition) => a + marketValueOf(p),
                 0
               );
+              const groupDebt = takeoverDebt.get(groupPositions[0]?.account_id ?? "");
 
               return (
                 <tbody key={gk}>
@@ -1041,6 +1092,25 @@ export function OpenPositionsTab({
                           cost {csym}
                           {fmtAmt(groupCost)}
                         </span>
+                        {groupDebt && (
+                          <span
+                            style={{ color: colors.textSecondary }}
+                            title={`Taken over ${groupDebt.date} at a loss (${groupDebt.subs.join(", ")}). The loss before takeover (${csym}${fmtAmt(groupDebt.inherited)}) is this book's debt until its own P&L since then pays it back: realized on every trade closed there + unrealized on what it holds now. Recovered so far ${groupDebt.recovered >= 0 ? "+" : "-"}${csym}${fmtAmt(Math.abs(groupDebt.recovered))}. Disappears at zero; comes back if the book falls under water again.`}
+                          >
+                            TAKEOVER DEBT{" "}
+                            <span className="font-bold" style={{ color: pnlColor(groupDebt.debt) }}>
+                              -{csym}
+                              {fmtAmt(Math.abs(groupDebt.debt))}
+                            </span>
+                            <span className="ml-1">
+                              {fmtWeight(
+                                (Math.max(0, groupDebt.recovered) / Math.abs(groupDebt.inherited)) *
+                                  100
+                              )}{" "}
+                              repaid
+                            </span>
+                          </span>
+                        )}
                         <span
                           className="ml-auto font-bold"
                           style={{ color: pnlColor(groupPnl) }}
@@ -1117,13 +1187,18 @@ export function OpenPositionsTab({
                                 )}
                               </button>
                             )}
-                            <span
-                              className="font-bold"
+                            <button
+                              type="button"
+                              className="font-bold focus:outline-none"
                               style={{ color: groupColor }}
-                              title={`${p.symbol} · priced in ${acc}${thesis ? ` · ${thesis.count} thesis (${thesis.status})` : ""}`}
+                              title={`Open ${p.symbol} in MKT chart · priced in ${acc}${thesis ? ` · ${thesis.count} thesis (${thesis.status})` : ""}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openInMarket(p.yf_symbol || p.symbol);
+                              }}
                             >
                               {p.symbol}
-                            </span>
+                            </button>
                             {hasMultiLots && (
                               <span className="text-[8px]" style={{ color: colors.textSecondary }}>
                                 ×{p.lots.length}

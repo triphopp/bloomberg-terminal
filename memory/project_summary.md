@@ -53,7 +53,7 @@ This Windows box denies the system temp dir to pytest — pass `--basetemp` to a
 | State | Jotai (atoms) + TanStack React Query |
 | Charts | lightweight-charts v5 via our `chartkit/` + `chart/` (ModularChart, panes, event rail, regression channels), Recharts for dashboards |
 | Styling | Tailwind CSS, `bloombergColors` theme; text-only controls (`styles/globals.css`) |
-| Backend | Python FastAPI (port 9317) — 62 routers, `main.py` mounts them |
+| Backend | Python FastAPI (port 9317) — 63 routers, `main.py` mounts them |
 | Data | yfinance through a provider registry (`sources/`) + app-wide Yahoo gate (`yahoo_gate.py`, 6 concurrent) + shared request coordinator (`market_requests.py`) |
 | Macro / rates | FRED (+ Alpha Vantage fallback), Japan MOF JGB CSV, CBOE vol CSVs, Treasury fiscaldata |
 | Filings / positioning | SEC EDGAR (submissions, 8-K EX-99.1, XBRL, EFTS 424B2/424B5), CFTC Socrata (TFF + Disaggregated) |
@@ -105,7 +105,7 @@ PYTHON_API_URL=http://localhost:9317   — imported ONLY via lib/constants.ts (P
 
 ## Backend Architecture — Modular Routers
 
-`main.py` = app init + CORS + schema init + router mounting (62 routers). All logic in `backend/routers/`.
+`main.py` = app init + CORS + schema init + router mounting (63 routers). All logic in `backend/routers/`.
 Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo_gate` load before any router.
 
 | Router file | Prefix | Source |
@@ -133,6 +133,7 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `polymarket.py` / `polymarket_stock.py` | `/api/polymarket/*` | Gamma API (client-side filtering, see gotchas) |
 | `company_filings.py` | `/api/company/{filings,outlook,xbrl}/{symbol}` | SEC EDGAR (US only) |
 | `series.py` | `/api/v2/series/*` (generic indicator series; dramexchange DRAM/NAND) | SQLite + `series_sources/` |
+| `chart_drawings.py` | `/api/v2/chart-drawings/*` (trend lines + REG channels drawn on charts; synced) | SQLite `chart_drawings` |
 | `portfolio_v2.py` | `/api/v2/portfolio/*` — accounts, trades, sell (AVCO), cash/transfer/reconcile, dividends, fees, open-positions, summary, returns, nav-history, **nav-index** (TWR, start-of-day for capital dated before the snapshot day), **takeover**, **history-review**, ledger check/stock-card/statements/evidence, import | SQLite |
 | `slip_ocr.py` | `/api/v2/portfolio/slip/{read,status}` — broker slip screenshot → ENTRY fields (engine `backend/slip_ocr/`, easyocr in a spawned worker); read-only | — |
 | `risk.py` | `/api/v2/portfolio/risk/*` (VaR/CVaR/Parity/Stress/Sizing) | Ledoit-Wolf |
@@ -304,6 +305,8 @@ cot_positions         (dataset, code, report_date, grp PK; long, short, spread, 
 search_hits           (symbol PK, count, last_at)  -- symbols opened from a search box; local, NOT in SYNC_TABLES
 -- 2026-09-25 (COT): cache ของ CFTC long-form, key = contract CODE (ชื่อตลาดเปลี่ยน 2022-02-01), ไม่ sync
 -- 2026-09-25 (BOND view): cache ของ SEC EFTS 424B2/424B5 — re-derivable, ไม่ sync. วันจะ complete เมื่อเก่า ≥2 วัน
+chart_drawings      (id uuid PK, kind trend|regression, symbol, bar_interval, data JSON, created_at,
+                     updated_at) -- chart trend lines + REG channels; in SYNC_TABLES (routers/chart_drawings.py)
 etf_aum_snapshots   (as_of, symbol, total_assets, nav, close, implied_shares, source,
                      captured_at) PK(as_of, symbol)
 -- 2026-09-23 (sector rotation in TAIL): AUM ของ 11 SPDR sector ETF เก็บเอง วันละครั้ง.
@@ -434,6 +437,11 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 ## What Could Be Built Next
 
 Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished plan becomes `- [x] … done YYYY-MM-DD` only with a Completion Evidence section.
+
+- [x] **Analytics INDEX underwater fill** — done 2026-09-27: blue portfolio drawdown area anchored at zero, SPY yellow line retained (`plans/completed/analytics-index-underwater-fill.md`)
+- [x] **Analytics INDEX drawdown pane** — done 2026-09-27: portfolio and benchmark underwater paths beneath the unchanged equity curve (`plans/completed/analytics-index-drawdown-pane.md`)
+
+- [x] **Analytics INDEX risk metrics** — done 2026-09-27: max drawdown and annualized return standard deviation for portfolio and benchmark; chart style unchanged (`plans/completed/analytics-index-risk-metrics.md`)
 
 - [x] **Chart Compare and Price Scaling** — done 2026-09-26; COMPARE icon, `compare(A,B,...)` ≤10, `<unit>_scaling` chart units (`plans/completed/chart-compare-and-scaling.md`)
 - [ ] **Central DB (Postgres primary + local mirrors)** — Postgres orders every write (future multi-user), SQLite mirror per machine pulled by change_seq, offline outbox with version-checked replay + conflict review; replaces multi-writer Drive merge. P0 (`db.connect`, `adopt_db_copy.py`) done (`plans/central-db-cloud-primary.md`)

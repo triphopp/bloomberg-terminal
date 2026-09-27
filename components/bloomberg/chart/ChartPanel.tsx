@@ -27,6 +27,7 @@ import { ModularChart } from "./ModularChart";
 import { PEPane } from "./PEPane";
 import { RegressionControls } from "./RegressionControls";
 import { TimeframeRow } from "./TimeframeRow";
+import { TrendLineControls } from "./TrendLineControls";
 import { VolumeEventPanel } from "./VolumeEventPanel";
 import type { BarInterval, OhlcvBar, TimePeriod } from "./types";
 import { useAutoExtendRange } from "./useAutoExtendRange";
@@ -129,6 +130,7 @@ export function ChartPanel({
   const {
     indicators,
     overlays,
+    drawingOverlay,
     eventMarkers,
     addIndicator,
     removeIndicator,
@@ -147,6 +149,13 @@ export function ChartPanel({
     removeRegression,
     selectRegression,
     setRegressionMode,
+    trendLines,
+    trendArmed,
+    trendPending,
+    toggleTrendLine,
+    removeLastTrendLine,
+    clearTrendLines,
+    drawingArmed,
     handleChartClick,
     supportsEvents,
     selectedEvent,
@@ -364,6 +373,16 @@ export function ChartPanel({
               border={colors.border}
               muted={colors.textSecondary}
             />
+            <TrendLineControls
+              count={trendLines.length}
+              armed={trendArmed}
+              pending={trendPending}
+              onToggle={toggleTrendLine}
+              onUndo={removeLastTrendLine}
+              onClear={clearTrendLines}
+              border={colors.border}
+              muted={colors.textSecondary}
+            />
             {supportsEvents && (
               <button
                 type="button"
@@ -432,10 +451,11 @@ export function ChartPanel({
                       height={160}
                       indicators={chartIndicators}
                       overlays={overlays}
+                      drawingOverlay={drawingOverlay}
                       eventMarkers={eventMarkers}
                       referencePriceLine={extendedHoursPriceLine(quote)}
                       onBarClick={handleChartClick}
-                      crosshairCursor={regressionArmed}
+                      crosshairCursor={drawingArmed}
                       onLogicalRange={onLogicalRange}
                       viewportKey={viewportKey}
                     />

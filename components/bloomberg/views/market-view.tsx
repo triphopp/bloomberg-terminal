@@ -53,6 +53,7 @@ import {
   currentViewAtom,
   focusHeatmapSearchAtom,
   isDarkModeAtom,
+  marketSearchSymbolAtom,
   pinGroupsAtom,
   pinnedAssetsAtom,
   showHeatmapSettingsAtom,
@@ -83,6 +84,7 @@ import { CompareChart } from "../chart/CompareChart";
 import { FearGreedPane } from "../chart/FearGreedPane";
 import { PEPane } from "../chart/PEPane";
 import { RegressionControls } from "../chart/RegressionControls";
+import { TrendLineControls } from "../chart/TrendLineControls";
 import { VolumeEventPanel } from "../chart/VolumeEventPanel";
 import { scaleBars, usdPriceSymbol } from "../chart/price-scaling";
 import { useAutoExtendRange } from "../chart/useAutoExtendRange";
@@ -1290,6 +1292,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
   const [dropdownIdx, setDropdownIdx] = useState(-1);
+  const [pendingMarketSymbol, setPendingMarketSymbol] = useAtom(marketSearchSymbolAtom);
   const [showVolume, setShowVolume] = useState(true);
   const [showMACD, setShowMACD] = useState(false);
   const [heatmapChartType, setHeatmapChartType] = useAtom(chartTypeAtom);
@@ -1323,6 +1326,19 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    const sym = pendingMarketSymbol.trim().toUpperCase();
+    if (!sym) return;
+    const label = displaySymbol({ symbol: sym });
+    setSelectedSymbol(sym);
+    setCompareSymbols([]);
+    setSelectedLabel(label);
+    setSelectedTickId(null);
+    setMobilePanel("chart");
+    addToRecent(sym, label);
+    setPendingMarketSymbol("");
+  }, [pendingMarketSymbol, setCompareSymbols, addToRecent, setPendingMarketSymbol]);
 
   // Vertical resize for watchlist panel
   const watchlistContentRef = useRef<HTMLDivElement>(null);
@@ -1376,6 +1392,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   const {
     indicators: heatmapIndicators,
     overlays: heatmapOverlays,
+    drawingOverlay: heatmapDrawingOverlay,
     eventMarkers: heatmapEventMarkers,
     showVolumeProfile: heatmapShowVP,
     addIndicator: addHeatmapIndicator,
@@ -1392,6 +1409,13 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     selectRegression: selectMktRegression,
     setRegressionMode: setMktRegressionMode,
     handleChartClick: handleMktChartClick,
+    trendLines: mktTrendLines,
+    trendArmed: mktTrendArmed,
+    trendPending: mktTrendPending,
+    toggleTrendLine: toggleMktTrendLine,
+    removeLastTrendLine: removeLastMktTrendLine,
+    clearTrendLines: clearMktTrendLines,
+    drawingArmed: mktDrawingArmed,
     toggleVolumeProfile: toggleHeatmapVP,
     showVolumeEvents: heatmapShowVolumeEvents,
     toggleVolumeEvents: toggleHeatmapVolumeEvents,
@@ -1784,7 +1808,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   }, [handleGoToEquity]);
 
   useEffect(() => {
-    if (!selectedSymbol) {
+    if (!selectedSymbol && !pendingMarketSymbol.trim()) {
       if (pins.length > 0) {
         setSelectedSymbol(pins[0].symbol);
         setSelectedLabel(pins[0].symbol);
@@ -1795,7 +1819,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
         setSelectedTickId(first.id); // light the default row in the board too
       }
     }
-  }, [pins, marketData, selectedSymbol, indexToSymbol]);
+  }, [pins, marketData, selectedSymbol, pendingMarketSymbol, indexToSymbol]);
 
   const allMarketItems = [
     ...(marketData?.americas ?? []),
@@ -2675,6 +2699,16 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 border={colors.border}
                 muted={colors.textSecondary}
               />
+              <TrendLineControls
+                count={mktTrendLines.length}
+                armed={mktTrendArmed}
+                pending={mktTrendPending}
+                onToggle={toggleMktTrendLine}
+                onUndo={removeLastMktTrendLine}
+                onClear={clearMktTrendLines}
+                border={colors.border}
+                muted={colors.textSecondary}
+              />
               {heatmapSupportsEvents && (
                 <button
                   className="text-[8px] px-1 py-0 font-normal border"
@@ -2875,6 +2909,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 height={240}
                 indicators={scalingUnit === "NATIVE" ? chartIndicators : NO_INDICATORS}
                 overlays={scalingUnit === "NATIVE" ? heatmapOverlays : NO_OVERLAYS}
+                drawingOverlay={scalingUnit === "NATIVE" ? heatmapDrawingOverlay : null}
                 eventMarkers={scalingUnit === "NATIVE" ? heatmapEventMarkers : NO_EVENT_MARKERS}
                 referencePriceLine={scalingUnit === "NATIVE" ? extendedHoursPriceLine(quote) : null}
                 pricePrecision={
@@ -2890,7 +2925,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                       )
                 }
                 onBarClick={handleMktChartClick}
-                crosshairCursor={mktRegressionArmed}
+                crosshairCursor={mktDrawingArmed}
                 onLogicalRange={onChartLogicalRange}
                 viewportKey={chartViewportKey}
               />

@@ -1,4 +1,5 @@
 "use client";
+import { Loader2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Colors } from "../helpers";
 
@@ -89,6 +90,8 @@ export function SlipReader({
   const [error, setError] = useState("");
   const [over, setOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
   const onFillRef = useRef(onFill);
   onFillRef.current = onFill;
 
@@ -156,6 +159,37 @@ export function SlipReader({
   const readRef = useRef(read);
   readRef.current = read;
 
+  // ENTRY is the drop target while this reader is mounted. The full-screen
+  // hint appears only during a file drag; the resting control stays compact.
+  useEffect(() => {
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = busyRef.current ? "none" : "copy";
+      setOver(true);
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (!e.relatedTarget) setOver(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      setOver(false);
+      if (busyRef.current) return;
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (files.length) void readRef.current(files, files.length > 1 ? "new" : "auto");
+    };
+    document.addEventListener("dragover", onDragOver);
+    document.addEventListener("dragleave", onDragLeave);
+    document.addEventListener("drop", onDrop);
+    return () => {
+      document.removeEventListener("dragover", onDragOver);
+      document.removeEventListener("dragleave", onDragLeave);
+      document.removeEventListener("drop", onDrop);
+    };
+  }, []);
+
   // Ctrl+V a screenshot anywhere on the tab — unless the caret is in a field.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
@@ -179,35 +213,37 @@ export function SlipReader({
 
   return (
     <div className="space-y-1.5">
-      {/* biome-ignore lint/a11y/useSemanticElements: drop zone, not a control */}
-      <div
-        role="button"
-        tabIndex={0}
-        className="border border-dashed px-3 py-2 cursor-pointer flex items-center gap-3"
-        style={{ borderColor: over ? colors.accent : colors.border }}
-        onClick={() => !busy && fileRef.current?.click()}
-        onKeyDown={(e) => e.key === "Enter" && !busy && fileRef.current?.click()}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setOver(true);
-        }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setOver(false);
-          const fs = Array.from(e.dataTransfer.files);
-          if (fs.length && !busy) read(fs, fs.length > 1 ? "new" : "auto");
-        }}
-      >
-        <span className="text-[10px] font-bold tracking-widest" style={{ color: colors.accent }}>
-          SLIP → FILL
-        </span>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <span className="text-[9px]" style={{ color: colors.textSecondary }}>
-          {busy
-            ? `อ่านสลิป… ${elapsed}s${warm === false ? " (ครั้งแรกโหลดโมเดล OCR)" : ""}`
-            : "วางภาพ (Ctrl+V) · ลากไฟล์มาวาง · คลิกเลือก — Dime order detail หุ้น / ออปชัน · สลิปยาวส่งได้ 2 ภาพ (บน+ล่าง) · OCR ในเครื่อง"}
+          กรอกข้อมูล trade ทีละรายการ — P&amp;L คำนวณอัตโนมัติเมื่อกรอก Entry/Exit/Volume
         </span>
+        <button
+          type="button"
+          disabled={busy}
+          className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 text-[9px] font-bold hover:opacity-75 disabled:cursor-not-allowed disabled:opacity-60"
+          style={{ color: colors.accent }}
+          title="ลากภาพสลิปมาวางที่หน้า ENTRY หรือคลิกเลือกไฟล์; Ctrl+V เพื่อวางภาพ รองรับหลายภาพของคำสั่งเดียวกัน"
+          onClick={() => fileRef.current?.click()}
+        >
+          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+          <span>{busy ? `อ่านสลิป… ${elapsed}s` : "SLIP · ลากวาง / คลิกเลือก"}</span>
+        </button>
       </div>
+      {busy && warm === false && (
+        <div className="text-[9px]" style={{ color: colors.textSecondary }}>
+          กำลังโหลดโมเดล OCR ครั้งแรก
+        </div>
+      )}
+      {over && (
+        <div className="pointer-events-none fixed inset-0 z-[100] flex items-center justify-center bg-black/75">
+          <div
+            className="m-4 flex h-[calc(100%-2rem)] w-full items-center justify-center border-2 border-dashed text-sm font-bold"
+            style={{ borderColor: colors.accent, color: colors.accent }}
+          >
+            {busy ? "กำลังอ่านสลิป" : "ปล่อยภาพสลิปเพื่อเติมข้อมูล"}
+          </div>
+        </div>
+      )}
       {pages.length > 0 && !busy && (
         <div className="flex items-center gap-3 text-[9px]" style={{ color: colors.textSecondary }}>
           <span>

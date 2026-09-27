@@ -1,9 +1,5 @@
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
-import type {
-  RegressionSelection,
-  StoredRegressionChannel,
-} from "../chart/indicators/regression-channel";
 import type { RsiScaleConfig } from "../chart/indicators/rsiScale";
 import { marketData as fallbackData } from "../lib/marketData";
 import type { FilterState, MarketData } from "../types";
@@ -81,6 +77,10 @@ export const tickerEnabledAtom = atom(true); // Bloomberg crawl strip
 export const currentViewAtom = atom<
   "market" | "news" | "heatmap" | "stock" | "portfolio" | "tail" | "bonds"
 >("market");
+
+// Symbol requested by another view for the main MKT chart. The market view
+// consumes and clears this when it becomes active.
+export const marketSearchSymbolAtom = atom<string>("");
 
 /** Market shown by the HMAP view — set by the `heatmap(MARKET)` terminal command. */
 export const heatmapMarketAtom = atom<string>("US");
@@ -183,11 +183,9 @@ export const chartWindowUnitAtom = atomWithStorage<"bars" | "days">(
   undefined,
   { getOnInit: true }
 );
-/** Multiple scoped REG channels. The old single-selection object is accepted
- * so existing localStorage data can be migrated on the next edit. */
-export const chartRegressionAtom = atomWithStorage<
-  StoredRegressionChannel[] | RegressionSelection | null
->("chart:regression", null, undefined, { getOnInit: true });
+// REG channels and trend lines used to live here as localStorage atoms
+// ("chart:regression", "chart:trend-lines"). They are now backend rows —
+// chart/useChartDrawings.ts imports and removes those keys once.
 
 /** Rail placement for the Regression Channel. */
 export const chartRegressionOptsAtom = atomWithStorage<{

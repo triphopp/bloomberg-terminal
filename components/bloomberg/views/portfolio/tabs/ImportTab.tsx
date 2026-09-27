@@ -581,10 +581,6 @@ export function ImportTab({
       {/* ── MANUAL MODE ── */}
       {mode === "manual" && (
         <div className="p-3 space-y-3">
-          <div className="text-[9px]" style={{ color: colors.textSecondary }}>
-            กรอกข้อมูล trade ทีละรายการ — P&amp;L คำนวณอัตโนมัติเมื่อกรอก Entry/Exit/Volume
-          </div>
-
           <SlipReader colors={colors} onFill={fillFromSlip} />
 
           {/* What is being entered — one form per instrument, one place */}

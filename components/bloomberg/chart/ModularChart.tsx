@@ -81,6 +81,10 @@ export interface ChartClickContext {
    * the user clicked a cluster and should be offered the list.
    */
   events?: ChartEventMarker[];
+  /** Price under the cursor — only when the click landed on the price pane. */
+  price?: number;
+  /** Shift held during the click (trend line: snap horizontal). */
+  shiftKey?: boolean;
 }
 
 export interface ModularChartProps {
@@ -99,6 +103,12 @@ export interface ModularChartProps {
   indicators: ChartIndicator[];
   /** Active canvas overlays (e.g. Volume Profile) */
   overlays?: CanvasOverlay[];
+  /**
+   * User drawings (trend lines, regression channels). Unlike `overlays`, a
+   * change here repaints in place and never rebuilds the chart — rebuilding on
+   * every click reset the price scale and pane layout mid-drawing.
+   */
+  drawingOverlay?: CanvasOverlay | null;
   /** Event markers (dividends, earnings, splits) displayed on the chart */
   eventMarkers?: ChartEventMarker[];
   /** Current PRE/POST price shown as a dashed line on the candle pane. */
@@ -193,6 +203,13 @@ function refillSeries(
  * Callers passing "none" should pass these too.
  */
 export const NO_OVERLAYS: CanvasOverlay[] = [];
+const EMPTY_DRAWING: CanvasOverlay = {
+  id: "drawings-empty",
+  name: "Drawings",
+  mode: "full",
+  width: 0,
+  draw() {},
+};
 export const NO_INDICATORS: ChartIndicator[] = [];
 export const NO_EVENT_MARKERS: ChartEventMarker[] = [];
 
@@ -214,6 +231,7 @@ export function ModularChart({
   height = 280,
   indicators,
   overlays = NO_OVERLAYS,
+  drawingOverlay = null,
   eventMarkers = NO_EVENT_MARKERS,
   referencePriceLine = null,
   pricePrecision,
@@ -270,6 +288,9 @@ export function ModularChart({
   dataRef.current = data;
   const eventMarkersRef = useRef(eventMarkers);
   eventMarkersRef.current = eventMarkers;
+  const drawingRef = useRef<CanvasOverlay>(drawingOverlay ?? EMPTY_DRAWING);
+  drawingRef.current = drawingOverlay ?? EMPTY_DRAWING;
+  const updateDrawingRef = useRef<((overlay: CanvasOverlay) => void) | null>(null);
   const appliedEventMarkersRef = useRef(eventMarkers);
   const updateEventRailRef = useRef<
     ((markers: ChartEventMarker[], bars: OhlcvBar[]) => void) | null
@@ -719,7 +740,10 @@ export function ModularChart({
     // is the bottom-most thing in the pane.
     const gridOverlay = createPriceGridOverlay(gridColor);
     let eventRail = createEventRailOverlay(placedEvents);
-    const allOverlays = [gridOverlay, ...overlays, eventRail];
+    // Drawings sit just under the rail, in their own primitive, so a new line
+    // swaps that one primitive's contents instead of rebuilding the chart.
+    const allOverlays = [gridOverlay, ...overlays, drawingRef.current, eventRail];
+    const drawingIdx = allOverlays.length - 2;
 
     if (allOverlays.length > 0) {
       // Measured once per chart build: overlay colors follow the painted surface,
@@ -746,7 +770,7 @@ export function ModularChart({
         // z-order at construction, so swapping a "top" overlay into the slot
         // holding the "bottom" grid would put the grid over the candles.
         eventRail = createEventRailOverlay(placed);
-        const nextOverlays = [gridOverlay, ...overlays, eventRail];
+        const nextOverlays = [gridOverlay, ...overlays, drawingRef.current, eventRail];
         primitives.forEach((p, i) => p.update(nextOverlays[i], bars));
         return true;
       });
@@ -767,6 +791,9 @@ export function ModularChart({
       };
       appliedEventMarkersRef.current = eventMarkersRef.current;
 
+      updateDrawingRef.current = (overlay) =>
+        primitives[drawingIdx].update(overlay, dataRef.current);
+
       overlayUnsubscribe = () => {
         for (const p of primitives) {
           candleSeries.detachPrimitive(p);
@@ -777,7 +804,12 @@ export function ModularChart({
     // ── Bar clicks (Regression Channel range selection, event detail card) ──
     // Rail hit-testing uses the rectangles actually drawn on the pane. Future
     // icons sit in whitespace and have no bar time, so test before that guard.
-    const clickHandler = (param: { time?: unknown; point?: { x: number; y: number } }) => {
+    const clickHandler = (param: {
+      time?: unknown;
+      point?: { x: number; y: number };
+      paneIndex?: number;
+      sourceEvent?: { shiftKey?: boolean };
+    }) => {
       const events = param.point ? eventRail?.hitTest(param.point) : undefined;
       if (param.time === undefined && !events?.length) return;
       const time = (param.time ?? events?.[0].time) as string | number;
@@ -788,7 +820,17 @@ export function ModularChart({
         point = { x: rect.left + param.point.x, y: rect.top + param.point.y };
       }
 
-      barClickRef.current?.(time, { point, events });
+      const price =
+        param.point && (param.paneIndex ?? 0) === 0
+          ? candleSeries.coordinateToPrice(param.point.y)
+          : null;
+
+      barClickRef.current?.(time, {
+        point,
+        events,
+        price: price ?? undefined,
+        shiftKey: param.sourceEvent?.shiftKey ?? false,
+      });
     };
     chart.subscribeClick(clickHandler);
 
@@ -882,6 +924,7 @@ export function ModularChart({
 
       refillRef.current = null;
       updateEventRailRef.current = null;
+      updateDrawingRef.current = null;
       unwatchRange();
       overlayUnsubscribe?.();
       chart.unsubscribeClick(clickHandler);
@@ -916,6 +959,11 @@ export function ModularChart({
       updateEventRailRef.current?.(eventMarkers, dataRef.current);
     }
   }, [eventMarkers]);
+
+  // Drawings repaint in place (see `drawingOverlay`).
+  useEffect(() => {
+    updateDrawingRef.current?.(drawingOverlay ?? EMPTY_DRAWING);
+  }, [drawingOverlay]);
 
   const linePrice = referencePriceLine?.price ?? null;
   const lineColor = referencePriceLine?.color ?? null;

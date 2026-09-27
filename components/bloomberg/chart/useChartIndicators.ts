@@ -18,7 +18,6 @@ import {
   DEFAULT_INDICATOR_SPECS,
   type IndicatorSpec,
   chartIndicatorSpecsAtom,
-  chartRegressionAtom,
   chartRegressionOptsAtom,
   chartShowFootprintAtom,
   chartShowPEAtom,
@@ -34,11 +33,17 @@ import { createBbVolumeOverlay } from "./bb-volume-overlay";
 import { INDICATOR_REGISTRY, createCompositeVPOverlay, createSessionVPOverlay } from "./indicators";
 import { createFootprintOverlay } from "./indicators/order-footprint";
 import {
+  DEFAULT_REGRESSION_OPTIONS,
   REGRESSION_COLORS,
-  type RegressionSelection,
   type StoredRegressionChannel,
   createRegressionChannelOverlay,
 } from "./indicators/regression-channel";
+import {
+  type StoredTrendLine,
+  TREND_LINE_COLOR,
+  type TrendPoint,
+  createTrendLineOverlay,
+} from "./indicators/trend-line";
 import type {
   BarInterval,
   CanvasOverlay,
@@ -47,6 +52,7 @@ import type {
   IndicatorRegistryEntry,
 } from "./types";
 import type { OhlcvBar } from "./types";
+import { useChartDrawings } from "./useChartDrawings";
 import { createVolumeEventOverlay } from "./volume-event-overlay";
 import { type WindowUnit, scaleParamsToBars, specParamsKey } from "./windowUnits";
 
@@ -178,51 +184,41 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
   const [showVolumeEvents, setShowVolumeEvents] = useAtom(chartShowVolumeEventsAtom);
   const [vpConfig, setVPConfig] = useAtom(chartVPConfigAtom);
   const [intradayData, setIntradayData] = useState<OhlcvBar[] | undefined>(undefined);
-  const [storedRegressions, setStoredRegressions] = useAtom(chartRegressionAtom);
   const [defaultRegressionOpts, setDefaultRegressionOpts] = useAtom(chartRegressionOptsAtom);
   const [activeRegressionId, setActiveRegressionId] = useState<string | null>(null);
-  const regressionChannels = useMemo(() => {
+  // Drawings live in the backend (synced across machines) — see useChartDrawings.
+  const { drawings, saveDrawing, removeDrawings } = useChartDrawings();
+  const regressionChannels: StoredRegressionChannel[] = useMemo(() => {
     if (!symbol) return [];
-    if (Array.isArray(storedRegressions)) {
-      return storedRegressions.filter(
-        (channel) => channel.symbol === symbol && channel.barInterval === barInterval
-      );
-    }
-    if (storedRegressions?.fromTime != null && storedRegressions?.toTime != null) {
-      return [
-        {
-          ...storedRegressions,
-          id: "legacy",
-          symbol,
-          barInterval,
-          color: REGRESSION_COLORS[0],
-          options: defaultRegressionOpts,
-        },
-      ];
-    }
-    return [];
-  }, [storedRegressions, symbol, barInterval, defaultRegressionOpts]);
+    return drawings
+      .filter(
+        (d) => d.kind === "regression" && d.symbol === symbol && d.barInterval === barInterval
+      )
+      .map((d) => ({
+        id: d.id,
+        symbol: d.symbol,
+        barInterval: d.barInterval,
+        fromTime: d.data.fromTime,
+        toTime: d.data.toTime,
+        color: d.data.color ?? REGRESSION_COLORS[0],
+        options: { ...DEFAULT_REGRESSION_OPTIONS, ...d.data.options },
+      }));
+  }, [drawings, symbol, barInterval]);
   const activeRegression =
     regressionChannels.find((channel) => channel.id === activeRegressionId) ??
     regressionChannels.at(-1);
   const regressionSel = activeRegression ?? null;
   const regressionOpts = activeRegression?.options ?? defaultRegressionOpts;
-  const migrateRegressions = useCallback(
-    (stored: typeof storedRegressions): StoredRegressionChannel[] => {
-      if (Array.isArray(stored)) return stored;
-      if (!stored || !symbol) return [];
-      return [
-        {
-          ...stored,
-          id: "legacy",
-          symbol,
-          barInterval,
-          color: REGRESSION_COLORS[0],
-          options: defaultRegressionOpts,
-        },
-      ];
-    },
-    [symbol, barInterval, defaultRegressionOpts]
+  const saveRegression = useCallback(
+    (c: StoredRegressionChannel) =>
+      saveDrawing({
+        id: c.id,
+        kind: "regression",
+        symbol: c.symbol,
+        barInterval: c.barInterval,
+        data: { fromTime: c.fromTime, toTime: c.toTime, color: c.color, options: c.options },
+      }),
+    [saveDrawing]
   );
   // Arming is deliberately NOT persisted: reloading into "waiting for your
   // first click" with no visual cue would be baffling.
@@ -240,6 +236,29 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     pendingRef.current = t;
     setPendingAnchor(t);
   }, []);
+
+  // ── Trend lines (point to point; Shift on the 2nd click = horizontal) ──
+  // Same ref + state split as the REG anchor, for the same double-click race.
+  const [trendArmed, setTrendArmed] = useState(false);
+  const trendPendingRef = useRef<TrendPoint | null>(null);
+  const [trendPending, setTrendPendingState] = useState<TrendPoint | null>(null);
+  const setTrendPending = useCallback((p: TrendPoint | null) => {
+    trendPendingRef.current = p;
+    setTrendPendingState(p);
+  }, []);
+  const trendLines: StoredTrendLine[] = useMemo(() => {
+    if (!symbol) return [];
+    return drawings
+      .filter((d) => d.kind === "trend" && d.symbol === symbol && d.barInterval === barInterval)
+      .map((d) => ({
+        id: d.id,
+        symbol: d.symbol,
+        barInterval: d.barInterval,
+        a: d.data.a,
+        b: d.data.b,
+        color: d.data.color ?? TREND_LINE_COLOR,
+      }));
+  }, [drawings, symbol, barInterval]);
 
   // Transient per-instance config injected at runtime (e.g. fear-greed's
   // preloadedData). Deliberately NOT persisted — it holds fetched series, not
@@ -447,16 +466,6 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     if (showFootprint && footprintQuery.data) {
       result.push(createFootprintOverlay(footprintQuery.data));
     }
-    regressionChannels.forEach((channel, index) => {
-      result.push(
-        createRegressionChannelOverlay(channel, channel.options, {
-          id: `regression-channel-${channel.id}`,
-          color: channel.color,
-          label: `REG ${index + 1}`,
-          showLabel: channel.id === activeRegression?.id,
-        })
-      );
-    });
     // Last, so the chips paint over the VP strip and the channel rather than
     // under them — a label hidden behind an overlay is worse than no label.
     if (showVolumeEvents) {
@@ -471,10 +480,36 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     vpConfig,
     showFootprint,
     footprintQuery.data,
-    regressionChannels,
-    activeRegression?.id,
     showVolumeEvents,
   ]);
+
+  // User drawings — REG channels + trend lines — go to <ModularChart
+  // drawingOverlay>, which repaints in place. Kept out of `overlays` because a
+  // change there rebuilds the chart, and that reset the price scale and pane
+  // layout on every click of a drawing tool.
+  const drawingOverlay: CanvasOverlay | null = useMemo(() => {
+    const parts: CanvasOverlay[] = regressionChannels.map((channel, index) =>
+      createRegressionChannelOverlay(channel, channel.options, {
+        id: `regression-channel-${channel.id}`,
+        color: channel.color,
+        label: `REG ${index + 1}`,
+        showLabel: channel.id === activeRegression?.id,
+      })
+    );
+    if (trendLines.length > 0 || trendPending) {
+      parts.push(createTrendLineOverlay(trendLines, trendPending));
+    }
+    if (parts.length === 0) return null;
+    return {
+      id: "drawings",
+      name: "Drawings",
+      mode: "full",
+      width: 0,
+      draw(...args) {
+        for (const part of parts) part.draw(...args);
+      },
+    };
+  }, [regressionChannels, activeRegression?.id, trendLines, trendPending]);
 
   // ── Toggles ──────────────────────────────────────────────────────────────
 
@@ -498,6 +533,31 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
    */
   const handleChartClick = useCallback(
     (time: string | number, ctx?: ChartClickContext) => {
+      // Trend line: two clicks on the price pane. A click off the price pane
+      // (indicator sub-panes) has no price and is ignored while armed.
+      if (trendArmed) {
+        if (ctx?.price == null) return;
+        const first = trendPendingRef.current;
+        if (!first) {
+          setTrendPending({ time, price: ctx.price });
+          return;
+        }
+        if (String(time) === String(first.time)) return; // same bar — ignore
+        saveDrawing({
+          id: globalThis.crypto?.randomUUID?.() ?? `tl-${Date.now()}`,
+          kind: "trend",
+          symbol: symbol ?? "",
+          barInterval,
+          data: {
+            a: first,
+            b: { time, price: ctx.shiftKey ? first.price : ctx.price },
+            color: TREND_LINE_COLOR,
+          },
+        });
+        setTrendPending(null);
+        setTrendArmed(false);
+        return;
+      }
       // Regression selection owns the click while armed — otherwise picking an
       // endpoint that happens to sit near an earnings date would pop the detail
       // card instead of closing the range.
@@ -508,24 +568,15 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
           return;
         }
         if (String(time) === String(anchor)) return; // same bar — ignore
-        const selection: RegressionSelection = { fromTime: anchor, toTime: time };
         const id = globalThis.crypto?.randomUUID?.() ?? `reg-${Date.now()}`;
-        setStoredRegressions((stored) => {
-          const channels = migrateRegressions(stored);
-          const sameChart = channels.filter(
-            (channel) => channel.symbol === symbol && channel.barInterval === barInterval
-          );
-          return [
-            ...channels,
-            {
-              ...selection,
-              id,
-              symbol: symbol ?? "",
-              barInterval,
-              color: REGRESSION_COLORS[sameChart.length % REGRESSION_COLORS.length],
-              options: { ...defaultRegressionOpts },
-            },
-          ];
+        saveRegression({
+          fromTime: anchor,
+          toTime: time,
+          id,
+          symbol: symbol ?? "",
+          barInterval,
+          color: REGRESSION_COLORS[regressionChannels.length % REGRESSION_COLORS.length],
+          options: { ...defaultRegressionOpts },
         });
         setActiveRegressionId(id);
         setAnchor(null);
@@ -541,10 +592,13 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
       }
     },
     [
+      trendArmed,
+      setTrendPending,
+      saveDrawing,
       regressionArmed,
       setAnchor,
-      setStoredRegressions,
-      migrateRegressions,
+      saveRegression,
+      regressionChannels.length,
       symbol,
       barInterval,
       defaultRegressionOpts,
@@ -561,22 +615,44 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     setSelectedEvent(null);
     setAnchor(null);
     setRegressionArmed(false);
+    setTrendPending(null);
+    setTrendArmed(false);
   }, [symbol, barInterval, chartType]);
 
   /** Arm another range; existing channels stay visible. */
   const toggleRegression = useCallback(() => {
     setAnchor(null);
+    setTrendPending(null);
+    setTrendArmed(false);
     setRegressionArmed((v) => !v);
-  }, [setAnchor]);
+  }, [setAnchor, setTrendPending]);
+
+  /** Arm one trend line (two clicks). Clicking again cancels. */
+  const toggleTrendLine = useCallback(() => {
+    setAnchor(null);
+    setRegressionArmed(false);
+    setTrendPending(null);
+    setTrendArmed((v) => !v);
+  }, [setAnchor, setTrendPending]);
+
+  /** Undo: drop the newest line on this chart. */
+  const removeLastTrendLine = useCallback(() => {
+    const last = trendLines.at(-1);
+    if (last) removeDrawings([last.id]);
+  }, [trendLines, removeDrawings]);
+
+  /** Remove every line on this chart (other symbols / intervals keep theirs). */
+  const clearTrendLines = useCallback(
+    () => removeDrawings(trendLines.map((l) => l.id)),
+    [trendLines, removeDrawings]
+  );
 
   const removeRegression = useCallback(
     (id: string) => {
-      setStoredRegressions((stored) =>
-        migrateRegressions(stored).filter((channel) => channel.id !== id)
-      );
+      removeDrawings([id]);
       setActiveRegressionId((active) => (active === id ? null : active));
     },
-    [setStoredRegressions, migrateRegressions]
+    [removeDrawings]
   );
 
   const selectRegression = useCallback((id: string) => setActiveRegressionId(id), []);
@@ -587,20 +663,19 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
         setDefaultRegressionOpts((o) => ({ ...o, mode }));
         return;
       }
-      setStoredRegressions((stored) =>
-        migrateRegressions(stored).map((channel) =>
-          channel.id === activeRegression.id
-            ? { ...channel, options: { ...channel.options, mode } }
-            : channel
-        )
-      );
+      saveRegression({
+        ...activeRegression,
+        options: { ...activeRegression.options, mode },
+      });
     },
-    [activeRegression, setDefaultRegressionOpts, setStoredRegressions, migrateRegressions]
+    [activeRegression, setDefaultRegressionOpts, saveRegression]
   );
 
   return {
     indicators,
     overlays,
+    /** Pass to <ModularChart drawingOverlay> — repaints without a rebuild. */
+    drawingOverlay,
     // ── Regression Channel (click two bars to define the range) ──
     regressionSel,
     regressionChannels,
@@ -612,6 +687,15 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     removeRegression,
     selectRegression,
     setRegressionMode,
+    // ── Trend lines (click two points; Shift on the 2nd = horizontal) ──
+    trendLines,
+    trendArmed,
+    trendPending: trendPending != null,
+    toggleTrendLine,
+    removeLastTrendLine,
+    clearTrendLines,
+    /** Any click-to-draw tool is waiting for a click — show the crosshair cursor. */
+    drawingArmed: regressionArmed || trendArmed,
     handleChartClick,
     // Lookback window unit: "bars" (raw candles) vs "days" (session time)
     windowUnit,

@@ -7,6 +7,12 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### PORT symbol opens MKT but charts the default instrument (fixed 2026-09-27)
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| Clicking a PORT position opens MKT but shows a pinned/default symbol; Thai shares may show no data | MKT's default-selection effect ran on the same mount as the pending portfolio symbol and overwrote it. PORT also sent the display symbol (`PTT`) instead of the quote symbol (`PTT.BK`). | Skip default selection while a cross-view symbol is pending; send `yf_symbol` from PORT when available and open the chart panel on mobile. |
+
 ### Native select popup text disappears on Windows (IV / DCF; fixed 2026-09-26)
 
 | Symptom | Root cause | Fix |
@@ -2068,3 +2074,19 @@ other) resolves the same way everywhere — later HLC wins — and the losing ve
 silently dropped. Never write synced tables with `_sync_guard.active=1` outside the sync code: the row changes without
 an op and the devices diverge (the divergence check will catch it). Test connections need `PRAGMA foreign_keys=ON`
 like `get_db()`, or cascades silently differ from the app.
+
+## Drawing tool click → chart zooms / rescales by itself (fixed 2026-09-27)
+**Symptom:** arming REG / trend line or placing a point reset the price scale and pane layout.
+**Cause:** `ModularChart`'s build effect depends on `overlays`; every new line / pending point
+changed that array → full chart rebuild (only the time range is restored, not the price scale).
+Also the tool button label changing width (`REG +` → `REG 1/2`) reflowed the toolbar → chart
+height changed → rebuild.
+**Fix:** user drawings go through `<ModularChart drawingOverlay>` (one primitive, `update()` in
+place, never rebuilds) — `useChartIndicators().drawingOverlay` = REG channels + trend lines.
+Tool buttons reserve their width (`minWidth` in ch; undo/× kept laid out with `visibility`).
+**Rule:** anything that changes per click goes in `drawingOverlay`, never in `overlays`. Drawings persist in the backend (`chart_drawings`, synced) — 2026-09-27.
+
+## New SYNC_TABLES table + op-log: update code on every machine BEFORE it pulls (2026-09-27)
+A peer on older code stores ops for an unknown table as `"kept"` and never applies them later
+(`sync/oplog.py::_apply_one`, no replay after upgrade). Add the table → pull the code on the other
+machine and restart it before it syncs. Details: `memory/reports/oplog-kept-ops-never-replayed-risk-report.md`.
