@@ -50,6 +50,7 @@ import {
 import type { IndicatorRegistryEntry, OhlcvBar } from "../chart";
 import { FearGreedPane } from "../chart/FearGreedPane";
 import { PEPane } from "../chart/PEPane";
+import { TrendLineControls } from "../chart/TrendLineControls";
 import { VolumeEventPanel } from "../chart/VolumeEventPanel";
 import { useSdBands } from "../chart/useSdBands";
 import { BloombergButton } from "../core/bloomberg-button";
@@ -4377,6 +4378,7 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
   const {
     indicators: chartIndicators,
     overlays: chartOverlays,
+    drawingOverlay: chartDrawingOverlay,
     eventMarkers,
     supportsEvents,
     selectedEvent,
@@ -4392,6 +4394,13 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
     regressionOpts,
     toggleRegression,
     setRegressionMode,
+    trendLines,
+    trendArmed,
+    trendPending,
+    toggleTrendLine,
+    removeLastTrendLine,
+    clearTrendLines,
+    drawingArmed,
     handleChartClick,
     toggleVolumeProfile,
     showVolumeEvents,
@@ -5085,6 +5094,8 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                         backgroundColor:
                           regressionArmed || regressionSel ? "#ffc10722" : "transparent",
                         color: regressionArmed || regressionSel ? "#ffc107" : colors.textSecondary,
+                        // "REG" → "REG 1/2" must not reflow the toolbar under the chart
+                        minWidth: "calc(7ch + 12px)",
                       }}
                     >
                       {regressionArmed ? (regressionPending ? "REG 2/2" : "REG 1/2") : "REG"}
@@ -5114,6 +5125,17 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                           : `q${regressionOpts.tauPct}`}
                       </button>
                     )}
+                    {/* Trend line — click two points; Shift on the 2nd = horizontal */}
+                    <TrendLineControls
+                      count={trendLines.length}
+                      armed={trendArmed}
+                      pending={trendPending}
+                      onToggle={toggleTrendLine}
+                      onUndo={removeLastTrendLine}
+                      onClear={clearTrendLines}
+                      border={colors.border}
+                      muted={colors.textSecondary}
+                    />
                     {/* Trailing P/E pane toggle — equities only */}
                     {supportsEvents && (
                       <button
@@ -5196,10 +5218,11 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                   height={260}
                   indicators={chartIndicators.filter((i) => i.id !== "fear-greed")}
                   overlays={chartOverlays}
+                  drawingOverlay={chartDrawingOverlay}
                   eventMarkers={eventMarkers}
                   referencePriceLine={extendedHoursPriceLine(quote)}
                   onBarClick={handleChartClick}
-                  crosshairCursor={regressionArmed}
+                  crosshairCursor={drawingArmed}
                 />
                 {selectedEvent && (
                   <EventDetailPopover

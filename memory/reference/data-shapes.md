@@ -5,9 +5,16 @@
 
 ---
 
-## REG channels (client storage, 2026-09-25)
-
-No backend response change. `localStorage["chart:regression"]` stores `StoredRegressionChannel[]`: `{id, symbol, barInterval, fromTime, toTime, color, options:{mode:"stddev"|"quantile",stdDevMult,tauPct,extend}}`. `fromTime` and `toTime` are bar times, not array indices. The previous single `{fromTime,toTime}` value is accepted and migrated on the next edit. Only channels for the current symbol and bar interval render; mode changes and removal affect the selected channel.
+## Chart drawings (`GET /api/v2/chart-drawings`) — 2026-09-27
+Replaces `localStorage["chart:regression"]` / `["chart:trend-lines"]` (imported once by `useChartDrawings`, then removed).
+```json
+{"drawings": [{"id": "uuid", "kind": "trend|regression", "symbol": "^DJI", "barInterval": "1d",
+  "data": {...}, "createdAt": "2026-09-27 15:07:24.295"}]}
+```
+`data` by kind — times are bar times (not indices), prices raw floats:
+- `trend`: `{a:{time,price}, b:{time,price}, color}` — `a.price == b.price` ⇒ horizontal (Shift)
+- `regression`: `{fromTime, toTime, color, options:{mode:"stddev"|"quantile", stdDevMult, tauPct, extend}}`
+Only drawings for the current symbol + bar interval render.
 
 ## Accounting previews (2026-09-25)
 

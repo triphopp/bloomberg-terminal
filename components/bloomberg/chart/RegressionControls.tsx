@@ -37,7 +37,13 @@ export function RegressionControls({
       <button
         type="button"
         className="shrink-0 border px-1 py-0 font-normal"
-        style={{ borderColor: armed ? "#ffc107" : border, color: armed ? "#ffc107" : muted }}
+        // Fixed width: "REG +" → "REG 1/2" must not reflow the toolbar, which
+        // resizes the chart under the click that is about to land on it.
+        style={{
+          borderColor: armed ? "#ffc107" : border,
+          color: armed ? "#ffc107" : muted,
+          minWidth: "calc(7ch + 8px)",
+        }}
         title={
           armed
             ? "Click two bars to add a channel; click again to cancel"

@@ -160,6 +160,10 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     # both. Without this, two machines each hold half a flow series and neither
     # can compute a flow across the gap.
     ("etf_aum_snapshots",        ["as_of", "symbol"]),     # composite PK
+    # Trend lines + regression channels drawn on charts (routers/chart_drawings.py).
+    # Client-minted uuid PK, so the same line drawn on two devices never
+    # collides; a REG rail-mode change is an edit in place → field-level LWW.
+    ("chart_drawings",           ["id"]),
 ]
 
 TABLE_PK: dict[str, list[str]] = {t: pk for t, pk in SYNC_TABLES}

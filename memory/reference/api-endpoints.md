@@ -278,6 +278,14 @@ Generic indicator series: any number a publisher puts out over time that is **no
 - `DELETE /api/v2/series/{id}?purge_points=` — drop a series from the board; points are kept unless purged
 Scheduler: `series_scheduler.start_background_recorder()` from `main.py`, pass every 4h (`SERIES_REFRESH_INTERVAL`, 0 disables), self-gating on "did we read today (Taipei)" + one re-read after 19:00 GMT+8 when the publisher updates spot.
 
+## Chart drawings (`routers/chart_drawings.py`) — prefix `/api/v2/chart-drawings` (2026-09-27)
+Trend lines + REG channels the user draws on a chart. SQLite `chart_drawings`, in `SYNC_TABLES` (key `id`, client uuid) → reaches the other machine. Write prefix in `SYNCED_WRITE_PREFIXES` (push), not gated.
+- `GET /api/v2/chart-drawings?symbol=` — `{drawings:[{id,kind,symbol,barInterval,data,createdAt}]}`, oldest first
+- `PUT /api/v2/chart-drawings/{id}` — create or replace (UPDATE-then-INSERT, never REPLACE → no stray tombstone)
+- `DELETE /api/v2/chart-drawings/{id}` — `{deleted: n}`
+- `POST /api/v2/chart-drawings/import` — `{drawings:[{id,...}]}` insert-if-absent → `{imported, received}` (localStorage migration)
+Proxy: `app/api/v2/chart-drawings/[[...path]]/route.ts`. Frontend: `chart/useChartDrawings.ts`.
+
 ## Graphs (`routers/graphs.py`) — prefix `/api/v2/graphs`
 Rendered analysis pages. The HTML is a file (`GRAPHS_DIR/<slug>/index.html`, older versions `v<N>.html`, `meta.json` beside it); SQLite only indexes it. Schema in `db.init_graphs_schema()`. Cloud-synced since 2026-09-19: the row via `SYNC_TABLES` (key `slug`), the FILE via `sync/files.py` (`<sync>/graphs/<slug>/index.html` + `manifest.json`, sha256 compare, a locally-changed page is never clobbered). `v<N>.html` stays local.
 - `GET /api/v2/graphs?symbol&thesis_id&q&limit` — index, newest first, never includes the HTML
