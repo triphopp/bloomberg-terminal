@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { type Colors, fmt, fmtK, pnlColor } from "../helpers";
+import { type Colors, fmt, fmtAmt, fmtAxis, pnlColor } from "../helpers";
 
 // Two lines that mean different things, drawn together on purpose:
 //
@@ -46,7 +46,7 @@ export interface PayoffResult {
 }
 
 const money = (v: number | null | undefined) =>
-  v === null || v === undefined ? "—" : `${v >= 0 ? "+" : "-"}$${fmtK(Math.abs(v))}`;
+  v === null || v === undefined ? "—" : `${v >= 0 ? "+" : "-"}$${fmtAmt(Math.abs(v))}`;
 
 export function PayoffChart({
   data,
@@ -159,7 +159,7 @@ export function PayoffChart({
               tick={{ fontSize: 8, fill: colors.textSecondary }}
               tickLine={false}
               axisLine={false}
-              tickFormatter={(v) => fmtK(v)}
+              tickFormatter={(v) => fmtAxis(v)}
             />
             <Tooltip
               contentStyle={{

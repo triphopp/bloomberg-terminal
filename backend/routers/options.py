@@ -25,7 +25,7 @@ from analytics.sd_bands import (
 from cache import TTLCache
 from analytics.option_payoff import build_payoff
 from db import audit_reason, get_db, occ_symbol
-from portfolio_options import _chain_rows
+from portfolio_options import _chain_rows, match_realized
 from greeks import compute_greeks, estimate_moments
 from providers.base_options import OptionContract
 from providers.yahoo_options import YahooOptionsProvider
@@ -1074,6 +1074,65 @@ async def list_option_positions(account_id: str | None = Query(None), status: st
     return [dict(r) for r in rows]
 
 
+class OptionFeeItemIn(BaseModel):
+    component: str
+    amount: str | float
+
+
+class OptionAllocationIn(BaseModel):
+    open_trade_id: str
+    quantity: float
+
+
+class OptionFillIn(BaseModel):
+    """One option fill as the broker reported it (PORT → ENTRY; see option_fills.py)."""
+    account_id: str
+    underlying: str
+    expiry: str
+    strike: float
+    option_type: str
+    multiplier: float = 100
+    currency: str = "USD"
+    action: str                              # OPEN | CLOSE
+    side: str                                # BUY | SELL
+    quantity: float                          # contracts, always positive
+    price: Optional[float] = None            # per-share premium; empty only for EXPIRED/UNKNOWN
+    trade_date: str                          # US exchange date
+    executed_at: Optional[str] = None        # fill time with offset, e.g. 2026-04-08T21:31:00+07:00
+    submitted_at: Optional[str] = None
+    settle_date: Optional[str] = None
+    broker_order_ref: Optional[str] = None
+    close_reason: Optional[str] = None
+    fee_items: list[OptionFeeItemIn] = Field(default_factory=list)
+    allocations: list[OptionAllocationIn] = Field(default_factory=list)   # empty = FIFO
+    slip_sha256s: list[str] = Field(default_factory=list)
+    note: str = ""
+    dry_run: bool = False
+
+
+@router.post("/api/options/fills")
+async def book_option_fill(body: OptionFillIn):
+    """Record (or with dry_run, preview) one option fill with its fees, evidence and lot matches."""
+    import option_fills
+    payload = body.model_dump()
+    with get_db() as conn:
+        try:
+            if body.dry_run:
+                result = option_fills.plan(conn, payload)
+                result.pop("fill", None)
+                return {"ok": True, "dry_run": True, **result}
+            with audit_reason(conn, "ENTRY option fill" + (" from slip" if body.slip_sha256s else "")):
+                result = option_fills.book(conn, payload)
+        except option_fills.FillError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # Market state is only worth keeping for a fill made about now; a
+        # back-dated entry would store today's greeks as if they were its own.
+        if (date.today() - date.fromisoformat(body.trade_date[:10])).days <= 1:
+            await _capture_trade_greeks(conn, result["trade_id"], body.underlying, body.expiry,
+                                        body.strike, body.option_type.lower())
+    return result
+
+
 @router.post("/api/options/positions")
 async def add_option_position(body: OptionPositionIn):
     if body.option_type not in ("call", "put"):
@@ -1191,15 +1250,16 @@ async def close_option_position(position_id: str, body: OptionCloseIn | None = N
         )
 
         # Long: (exit - entry). Short: (entry - exit). `direction` carries both.
-        realized = (
-            direction * (float(body.exit_price) - entry_price) * qty * mult - float(body.fees or 0)
-            if body.exit_price is not None else None
+        realized, fee_alloc = match_realized(
+            direction, entry_price, body.exit_price, qty, mult,
+            float(lot.get("entry_fees") or 0), float(lot.get("quantity_opened") or 0),
+            float(body.fees or 0), qty,
         )
         conn.execute(
             """INSERT INTO option_trade_matches
                (close_trade_id, open_trade_id, quantity, fees_alloc, realized_pnl)
                VALUES (?,?,?,?,?)""",
-            (close_id, position_id, qty, float(body.fees or 0), realized),
+            (close_id, position_id, qty, round(fee_alloc, 6), realized),
         )
         await _capture_trade_greeks(
             conn, close_id, lot["underlying"], lot["expiry"],
@@ -1279,11 +1339,10 @@ async def close_option_fifo(body: OptionCloseFifoIn):
             take = min(left, abs(float(lot["quantity"])))
             # Fees follow the quantity they belong to; charging the whole
             # commission to the first lot would distort its realized P&L.
-            fee_alloc = total_fees * (take / want) if want else 0.0
-            realized = (
-                direction * (float(body.exit_price) - float(lot["entry_price"] or 0))
-                * take * mult - fee_alloc
-                if body.exit_price is not None else None
+            realized, fee_alloc = match_realized(
+                direction, lot["entry_price"], body.exit_price, take, mult,
+                float(lot.get("entry_fees") or 0), float(lot.get("quantity_opened") or 0),
+                total_fees, want,
             )
             conn.execute(
                 """INSERT INTO option_trade_matches
@@ -1371,6 +1430,7 @@ def _rematch_trade(conn, trade_id: str) -> int:
     rows = [dict(r) for r in conn.execute(
         """SELECT mt.close_trade_id, mt.open_trade_id, mt.quantity,
                   ot.price AS open_price, ot.side AS open_side,
+                  ot.fees AS open_fees, ot.quantity AS open_quantity,
                   ct.price AS close_price, ct.fees AS close_fees,
                   ct.quantity AS close_quantity,
                   c.multiplier
@@ -1386,14 +1446,11 @@ def _rematch_trade(conn, trade_id: str) -> int:
         mult = float(m["multiplier"] or 100)
         qty = float(m["quantity"] or 0)
         close_qty = float(m["close_quantity"] or 0)
-        fee_alloc = (
-            float(m["close_fees"] or 0) * (qty / close_qty) if close_qty else 0.0
-        )
         direction = 1 if m["open_side"] == "BUY" else -1
-        realized = (
-            direction * (float(m["close_price"]) - float(m["open_price"] or 0)) * qty * mult
-            - fee_alloc
-            if m["close_price"] is not None else None
+        realized, fee_alloc = match_realized(
+            direction, m["open_price"], m["close_price"], qty, mult,
+            float(m["open_fees"] or 0), float(m["open_quantity"] or 0),
+            float(m["close_fees"] or 0), close_qty,
         )
         conn.execute(
             """UPDATE option_trade_matches

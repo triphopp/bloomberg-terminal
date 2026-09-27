@@ -23,6 +23,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type PinGroup,
   type PinnedAsset,
+  chartCompareSymbolsAtom,
+  chartScalingUnitAtom,
+  chartTypeAtom,
   currentViewAtom,
   heatmapMarketAtom,
   heatmapMetricAtom,
@@ -419,6 +422,9 @@ export function GlobalSearch() {
   const [pins, setPins] = useAtom(pinnedAssetsAtom);
   const [groups, setGroups] = useAtom(pinGroupsAtom);
   const setCurrentView = useSetAtom(currentViewAtom);
+  const setChartCompare = useSetAtom(chartCompareSymbolsAtom);
+  const setChartScalingUnit = useSetAtom(chartScalingUnitAtom);
+  const setChartType = useSetAtom(chartTypeAtom);
   const setStockSymbol = useSetAtom(stockSearchSymbolAtom);
   const setHeatmapMarket = useSetAtom(heatmapMarketAtom);
   const setHeatmapMetric = useSetAtom(heatmapMetricAtom);
@@ -448,7 +454,7 @@ export function GlobalSearch() {
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   // ── Command / function mode ────────────────────────────────────────────────
-  const isCommandMode = isCommandInput(query);
+  const isCommandMode = isCommandInput(query) || /^[a-z]{2,8}_scaling$/i.test(query.trim());
   const suggestions = isCommandMode ? getSuggestions(query) : [];
   const upperQuery = query.trim().toUpperCase();
 
@@ -465,6 +471,11 @@ export function GlobalSearch() {
       recordSearchHit(s);
       setStockSymbol(s);
     },
+    setChartCompare: (symbols) => {
+      setChartCompare(symbols);
+      setChartType("candle");
+    },
+    setChartScalingUnit: (unit) => setChartScalingUnit(unit),
     openHeatmap: (market, metric) => {
       if (market) setHeatmapMarket(market);
       if (metric) setHeatmapMetric(metric);
@@ -591,6 +602,24 @@ export function GlobalSearch() {
       const raw = completion ?? query;
       if (!raw.trim()) return;
 
+      const scaling = /^([a-z]{2,8})_scaling$/i.exec(raw.trim());
+      if (scaling) {
+        const unit = scaling[1].toUpperCase();
+        if (!/^[A-Z]{3}$/.test(unit)) {
+          setExecResult({
+            kind: "error",
+            message: "Use a three-letter currency code, such as USD, BTC, EUR or THB.",
+          });
+          return;
+        }
+        setChartScalingUnit(unit);
+        setChartCompare([]);
+        setChartType("candle");
+        setCurrentView("market");
+        setIsOpen(false);
+        return;
+      }
+
       const parseResult = validate(parse(raw));
       if (!parseResult.ok) {
         setExecResult({ kind: "error", message: parseResult.error });
@@ -636,7 +665,7 @@ export function GlobalSearch() {
       }
     },
     // biome-ignore lint/correctness/useExhaustiveDependencies: ctx is rebuilt every render by design
-    [query, ctx, setIsOpen]
+    [query, ctx, setIsOpen, setChartScalingUnit, setChartCompare, setChartType, setCurrentView]
   );
 
   const doPin = useCallback(

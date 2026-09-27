@@ -24,6 +24,7 @@ npm run dev   # → http://localhost:3000
 - Never reintroduce `@upstash/redis`, `yahoo-finance2`, or any top-level scheduler singleton
 - Backend is modular: `main.py` (app init) + `config.py` + `db.py` + `routers/*.py`
 - State lives in Jotai atoms (`components/bloomberg/atoms/index.ts`) + React Query for server data
+- Native `<select>` menus must use the app-wide popup palette in `styles/globals.css` (`color-scheme` plus explicit `<option>` foreground/background, with light/forced-colors variants). Do not style only the closed select with light text on a transparent background: Windows can render its popup with a light system background. Verify new selectors in DCF/IV-style panels on Windows and Mac when available.
 
 ## Memory Maintenance — What to Update After Each Change
 

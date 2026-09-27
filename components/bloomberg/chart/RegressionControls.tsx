@@ -36,7 +36,7 @@ export function RegressionControls({
     <div className="flex shrink-0 items-center gap-0.5 whitespace-nowrap font-mono text-[8px]">
       <button
         type="button"
-        className="shrink-0 border px-1 py-0 font-bold"
+        className="shrink-0 border px-1 py-0 font-normal"
         style={{ borderColor: armed ? "#ffc107" : border, color: armed ? "#ffc107" : muted }}
         title={
           armed
@@ -51,7 +51,7 @@ export function RegressionControls({
         <div key={channel.id} className="flex shrink-0 items-center">
           <button
             type="button"
-            className="border px-1 py-0 font-bold"
+            className="border px-1 py-0 font-normal"
             style={{
               borderColor: channel.color,
               color: channel.color,
@@ -78,7 +78,7 @@ export function RegressionControls({
       {channels.length > 0 && (
         <button
           type="button"
-          className="shrink-0 border px-1 py-0 font-bold"
+          className="shrink-0 border px-1 py-0 font-normal"
           style={{ borderColor: border, color: muted }}
           title="Change rail mode for the selected regression channel"
           onClick={() => onModeChange(options.mode === "stddev" ? "quantile" : "stddev")}

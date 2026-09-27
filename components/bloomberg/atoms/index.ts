@@ -71,6 +71,10 @@ export const isDarkModeAtom = atom(true);
 export const errorAtom = atom<string | null>(null);
 export const isShortcutsHelpOpenAtom = atom(false);
 export const isGlobalSearchOpenAtom = atom(false);
+/** MKT chart comparison, in the order supplied by compare(...). */
+export const chartCompareSymbolsAtom = atom<string[]>([]);
+/** MKT chart price unit; NATIVE leaves the provider's quoted currency intact. */
+export const chartScalingUnitAtom = atom<string>("NATIVE");
 export const tickerEnabledAtom = atom(true); // Bloomberg crawl strip
 
 // View state atoms

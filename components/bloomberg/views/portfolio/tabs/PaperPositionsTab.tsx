@@ -1,7 +1,7 @@
 "use client";
 import { Loader2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { fmt, fmtK, fmtPct, pnlColor } from "../helpers";
+import { fmt, fmtAmt, fmtPct, fmtPx, fmtQty, pnlColor } from "../helpers";
 import type { Colors } from "../helpers";
 
 interface PaperAccount {
@@ -89,10 +89,10 @@ export function PaperPositionsTab({ colors }: { colors: Colors }) {
           ))}
         </select>
         <span className="text-[8px] opacity-50">
-          {positions.length} positions · MV {fmtK(totalValue)}
+          {positions.length} positions · MV {fmtAmt(totalValue)}
         </span>
         <span className="text-[8px]" style={{ color: pnlColor(totalUnrealized) }}>
-          · P&L {fmtK(totalUnrealized)}
+          · P&L {fmtAmt(totalUnrealized)}
         </span>
         <button type="button" className="ml-auto p-0.5" onClick={() => load()}>
           {loading ? (
@@ -133,21 +133,19 @@ export function PaperPositionsTab({ colors }: { colors: Colors }) {
                   <td className="px-2 py-0.5 font-bold" style={{ color: colors.accent }}>
                     {p.symbol}
                   </td>
-                  <td className="px-1 text-right font-mono">
-                    {fmt(p.quantity, p.quantity % 1 ? 4 : 0)}
-                  </td>
+                  <td className="px-1 text-right font-mono">{fmtQty(p.quantity)}</td>
                   <td className="px-1 text-right font-mono">{fmt(p.avg_cost)}</td>
                   <td className="px-1 text-right font-mono">
-                    {p.current_price ? fmt(p.current_price) : "—"}
+                    {p.current_price ? fmtPx(p.current_price) : "—"}
                   </td>
                   <td className="px-1 text-right font-mono">
-                    {p.market_value != null ? fmtK(p.market_value) : "—"}
+                    {p.market_value != null ? fmtAmt(p.market_value) : "—"}
                   </td>
                   <td
                     className="px-1 text-right font-mono"
                     style={{ color: pnlColor(p.unrealized_pnl) }}
                   >
-                    {p.unrealized_pnl != null ? fmtK(p.unrealized_pnl) : "—"}
+                    {p.unrealized_pnl != null ? fmtAmt(p.unrealized_pnl) : "—"}
                   </td>
                   <td
                     className="px-1 text-right font-mono"

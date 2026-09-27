@@ -2,7 +2,7 @@
 import { X } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Colors } from "../helpers";
-import { fmt, fmtK, pnlColor } from "../helpers";
+import { fmt, fmtAmt, fmtPx, fmtQty, pnlColor } from "../helpers";
 import type { OptionLot } from "../tabs/OptionsTab";
 import { PayoffChart } from "../ui/PayoffChart";
 import { type PayoffLeg, usePayoff } from "../ui/usePayoff";
@@ -103,7 +103,7 @@ export function PayoffModal({
               <span>
                 <span style={{ color: colors.textSecondary }}>MARKED NOW </span>
                 <span style={{ color: pnlColor(markPnl) }}>
-                  {markPnl >= 0 ? "+" : "-"}${fmtK(Math.abs(markPnl))}
+                  {markPnl >= 0 ? "+" : "-"}${fmtAmt(Math.abs(markPnl))}
                 </span>
               </span>
               {payoff?.current.pnl_today != null && (
@@ -111,7 +111,7 @@ export function PayoffModal({
                   <span style={{ color: colors.textSecondary }}>MODEL AT SPOT </span>
                   <span style={{ color: pnlColor(payoff.current.pnl_today) }}>
                     {payoff.current.pnl_today >= 0 ? "+" : "-"}$
-                    {fmtK(Math.abs(payoff.current.pnl_today))}
+                    {fmtAmt(Math.abs(payoff.current.pnl_today))}
                   </span>
                 </span>
               )}
@@ -119,7 +119,7 @@ export function PayoffModal({
                 <span style={{ color: colors.textSecondary }}>IF EXPIRED AT SPOT </span>
                 <span style={{ color: pnlColor(payoff?.current.pnl_if_expired_now ?? 0) }}>
                   {(payoff?.current.pnl_if_expired_now ?? 0) >= 0 ? "+" : "-"}$
-                  {fmtK(Math.abs(payoff?.current.pnl_if_expired_now ?? 0))}
+                  {fmtAmt(Math.abs(payoff?.current.pnl_if_expired_now ?? 0))}
                 </span>
               </span>
             </div>
@@ -148,19 +148,19 @@ export function PayoffModal({
                     }}
                   >
                     <td className="py-0.5" style={{ color: colors.text }}>
-                      {l.expiry} {fmt(l.strike, 0)}
+                      {l.expiry} {fmtPx(l.strike)}
                       <span style={{ color: l.option_type === "call" ? "#00FF00" : "#FF4444" }}>
                         {l.option_type === "call" ? "C" : "P"}
                       </span>
                     </td>
                     <td className="text-right py-0.5" style={{ color: colors.text }}>
-                      {l.quantity}
+                      {fmtQty(l.quantity)}
                     </td>
                     <td className="text-right py-0.5" style={{ color: colors.textSecondary }}>
-                      ${fmt(l.entry_price, 2)}
+                      ${fmtPx(l.entry_price)}
                     </td>
                     <td className="text-right py-0.5" style={{ color: colors.text }}>
-                      ${fmt(l.mark, 2)}
+                      ${fmtPx(l.mark)}
                     </td>
                     <td className="text-right py-0.5" style={{ color: colors.textSecondary }}>
                       {l.delta === null ? "—" : fmt(l.delta, 3)}
@@ -169,7 +169,8 @@ export function PayoffModal({
                       className="text-right py-0.5"
                       style={{ color: pnlColor(l.unrealized_pnl_usd) }}
                     >
-                      {l.unrealized_pnl_usd >= 0 ? "+" : "-"}${fmtK(Math.abs(l.unrealized_pnl_usd))}
+                      {l.unrealized_pnl_usd >= 0 ? "+" : "-"}$
+                      {fmtAmt(Math.abs(l.unrealized_pnl_usd))}
                     </td>
                   </tr>
                 ))}

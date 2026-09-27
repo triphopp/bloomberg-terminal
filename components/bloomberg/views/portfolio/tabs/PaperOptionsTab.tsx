@@ -1,7 +1,7 @@
 "use client";
 import { Loader2, RefreshCw, Send, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { fmt, fmtK, fmtPct, pnlColor } from "../helpers";
+import { fmt, fmtAmt, fmtPct, fmtPx, fmtQty, pnlColor } from "../helpers";
 import type { Colors } from "../helpers";
 
 interface PaperAccount {
@@ -233,7 +233,7 @@ export function PaperOptionsTab({ colors }: { colors: Colors }) {
           </button>
         ))}
         <span className="text-[8px] ml-1" style={{ color: pnlColor(totalUnrealized) }}>
-          Unreal: {fmtK(totalUnrealized)}
+          Unreal: {fmtAmt(totalUnrealized)}
         </span>
         <button type="button" className="ml-auto p-0.5" onClick={() => loadPositions()}>
           {loading ? (
@@ -424,7 +424,7 @@ export function PaperOptionsTab({ colors }: { colors: Colors }) {
                     >
                       {p.option_type.toUpperCase()}
                     </td>
-                    <td className="px-1 text-right font-mono">{fmt(p.strike)}</td>
+                    <td className="px-1 text-right font-mono">{fmtPx(p.strike)}</td>
                     <td className="px-1 font-mono opacity-60">{p.expiry}</td>
                     <td
                       className="px-1 text-right font-mono"
@@ -448,7 +448,7 @@ export function PaperOptionsTab({ colors }: { colors: Colors }) {
                       {p.direction}
                     </td>
                     <td className="px-1 text-right font-mono">{Math.abs(p.quantity)}</td>
-                    <td className="px-1 text-right font-mono">${fmt(p.entry_price, 2)}</td>
+                    <td className="px-1 text-right font-mono">${fmtPx(p.entry_price)}</td>
                     <td className="px-1 text-right font-mono">
                       {p.live_price ? `$${fmt(p.live_price, 2)}` : "—"}
                     </td>
@@ -456,7 +456,7 @@ export function PaperOptionsTab({ colors }: { colors: Colors }) {
                       className="px-1 text-right font-mono"
                       style={{ color: pnlColor(p.unrealized_pnl) }}
                     >
-                      {p.unrealized_pnl != null ? fmtK(p.unrealized_pnl) : "—"}
+                      {p.unrealized_pnl != null ? fmtAmt(p.unrealized_pnl) : "—"}
                     </td>
                     <td
                       className="px-1 text-right font-mono"
@@ -527,18 +527,18 @@ export function PaperOptionsTab({ colors }: { colors: Colors }) {
                     >
                       {p.option_type.toUpperCase()}
                     </td>
-                    <td className="px-1 text-right font-mono">{fmt(p.strike)}</td>
+                    <td className="px-1 text-right font-mono">{fmtPx(p.strike)}</td>
                     <td className="px-1 font-mono opacity-60">{p.expiry}</td>
-                    <td className="px-1 text-right font-mono">{p.quantity}</td>
-                    <td className="px-1 text-right font-mono">${fmt(p.entry_price, 2)}</td>
+                    <td className="px-1 text-right font-mono">{fmtQty(p.quantity)}</td>
+                    <td className="px-1 text-right font-mono">${fmtPx(p.entry_price)}</td>
                     <td className="px-1 text-right font-mono">
-                      {p.exit_price != null ? `$${fmt(p.exit_price, 2)}` : "—"}
+                      {p.exit_price != null ? `$${fmtPx(p.exit_price)}` : "—"}
                     </td>
                     <td
                       className="px-1 text-right font-mono"
                       style={{ color: pnlColor(p.realized_pnl) }}
                     >
-                      {p.realized_pnl != null ? fmtK(p.realized_pnl) : "—"}
+                      {p.realized_pnl != null ? fmtAmt(p.realized_pnl) : "—"}
                     </td>
                     <td
                       className="px-1 font-bold text-[8px]"

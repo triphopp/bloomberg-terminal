@@ -123,3 +123,14 @@ def test_ledger_posts_buy_fee_as_its_own_cash_event(pv2):
     assert by["BUY"].fee == 0                                   # cost stays qty × price
     assert by["SELL"].fee == pytest.approx(12.74)
     assert by["SELL"].net_cash == pytest.approx(4.4628775 * 1754.96 - 12.74, abs=0.01)
+
+
+def test_slip_fee_breakdown_is_kept_beside_the_typed_total(pv2):
+    mod, db, _ = pv2
+    r = _buy(mod, symbol="COST", price_entry=914.1187, volume=2.0751791, fee_entry=3.04,
+             fee_entry_breakdown={"commission": "2.84", "vat": "0.20"})
+    detail = json.loads(_row(db, r["id"])["fee_detail"])["entry"]
+    assert detail == {"total": 3.04, "source": "slip", "commission": 2.84, "vat": 0.2}
+    # an estimate is never overwritten by a breakdown
+    r2 = _buy(mod, fee_entry_breakdown={"commission": "9.99"})
+    assert json.loads(_row(db, r2["id"])["fee_detail"])["entry"]["source"] == "auto"

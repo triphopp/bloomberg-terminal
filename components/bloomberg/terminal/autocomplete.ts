@@ -10,27 +10,27 @@ const CMD_FIRST_WORDS: Set<string> = new Set(
   ALL_COMMANDS.flatMap((c) => [
     c.name.split(" ")[0],
     ...(c.aliases ?? []).map((a) => a.split(" ")[0]),
-  ]),
+  ])
 );
 
 export interface Suggestion {
   /** Full text to replace input with on Tab/click */
   completion: string;
   /** Short label shown in list */
-  label:      string;
+  label: string;
   /** Description text */
-  desc:       string;
+  desc: string;
   /** Visual group tag */
-  group:      string;
+  group: string;
   /** Whether this is a function (show arg hints) */
-  isFunc:     boolean;
+  isFunc: boolean;
 }
 
 const GROUP_SORT: Record<string, number> = {
   analysis: 0,
-  nav:      1,
-  setting:  2,
-  info:     3,
+  nav: 1,
+  setting: 2,
+  info: 3,
 };
 
 const PERIODS = ["1m", "3m", "6m", "1y", "2y", "5y", "5d", "10d"];
@@ -49,6 +49,17 @@ const PERIODS = ["1m", "3m", "6m", "1y", "2y", "5y", "5d", "10d"];
 export function getSuggestions(raw: string): Suggestion[] {
   const upper = raw.trim().toUpperCase();
   if (!upper) return [];
+  if (/^[A-Z]{3}_SCALING$/.test(upper)) {
+    return [
+      {
+        completion: upper,
+        label: upper,
+        desc: "Change MKT chart price unit",
+        group: "setting",
+        isFunc: false,
+      },
+    ];
+  }
 
   const tokens = tokenize(raw);
   const hasOpen = tokens.some((t) => t.kind === "LPAREN");
@@ -56,52 +67,53 @@ export function getSuggestions(raw: string): Suggestion[] {
   // ── Inside function call — show arg hints ─────────────────────────────────
   if (hasOpen) {
     const fnName = tokens[0]?.raw;
-    const def    = CMD_MAP.get(fnName);
+    const def = CMD_MAP.get(fnName);
     if (!def || !def.args) return [];
 
     const commaCount = tokens.filter((t) => t.kind === "COMMA").length;
-    const argIdx     = commaCount;
-    const argDef     = def.args[argIdx];
+    const argIdx = commaCount;
+    const argDef = def.args[argIdx];
     if (!argDef) return [];
 
     if (argDef.type === "period") {
       return PERIODS.map((p) => ({
         completion: `${raw.trim().replace(/,?\s*$/, "")}, ${p})`,
-        label:      p,
-        desc:       "period",
-        group:      "period",
-        isFunc:     false,
+        label: p,
+        desc: "period",
+        group: "period",
+        isFunc: false,
       }));
     }
 
     // symbol arg hint
-    return [{
-      completion: raw,
-      label:      `<${argDef.name.toUpperCase()}>`,
-      desc:       argDef.optional ? "optional symbol" : "required symbol (e.g. AAPL, ^GSPC)",
-      group:      "hint",
-      isFunc:     false,
-    }];
+    return [
+      {
+        completion: raw,
+        label: `<${argDef.name.toUpperCase()}>`,
+        desc: argDef.optional ? "optional symbol" : "required symbol (e.g. AAPL, ^GSPC)",
+        group: "hint",
+        isFunc: false,
+      },
+    ];
   }
 
   // ── Top-level: match by prefix ────────────────────────────────────────────
   const matches = ALL_COMMANDS.filter(
-    (c) =>
-      c.name.startsWith(upper) ||
-      (c.aliases ?? []).some((a) => a.startsWith(upper)),
+    (c) => c.name.startsWith(upper) || (c.aliases ?? []).some((a) => a.startsWith(upper))
   );
 
   return matches
     .map((c) => {
-      const isFunc  = c.group === "analysis";
-      const argHint = isFunc && c.args
-        ? `(${c.args.map((a) => (a.optional ? `${a.name}?` : a.name)).join(", ")})`
-        : "";
+      const isFunc = c.group === "analysis";
+      const argHint =
+        isFunc && c.args
+          ? `(${c.args.map((a) => (a.optional ? `${a.name}?` : a.name)).join(", ")})`
+          : "";
       return {
         completion: isFunc ? `${c.name}(` : c.name,
-        label:      c.name + argHint,
-        desc:       c.description,
-        group:      c.group,
+        label: c.name + argHint,
+        desc: c.description,
+        group: c.group,
         isFunc,
       };
     })

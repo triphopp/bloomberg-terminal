@@ -18,16 +18,10 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { memo } from "react";
+import { CartesianGrid, Line, LineChart, ReferenceLine, Tooltip, XAxis, YAxis } from "recharts";
+// Charts below the fold mount when scrolled near — see LazyResponsiveContainer.
+import { LazyResponsiveContainer as ResponsiveContainer } from "../../ui/LazyResponsiveContainer";
 
 import {
   COT_PCT_HIGH,
@@ -104,7 +98,7 @@ function Stat({ label, s, color }: { label: string; s: BasisStats | undefined; c
   );
 }
 
-export function BasisTradePanel() {
+function BasisTradePanelView() {
   const { data, isLoading } = useCotBasis();
 
   if (isLoading || !data?.series?.length) {
@@ -278,3 +272,7 @@ export function DealerBalanceSheetPanel() {
     </Panel>
   );
 }
+
+// Memoised: takes no props — it only needs to re-render when its own CFTC query
+// changes, not on every BondsView render.
+export const BasisTradePanel = memo(BasisTradePanelView);

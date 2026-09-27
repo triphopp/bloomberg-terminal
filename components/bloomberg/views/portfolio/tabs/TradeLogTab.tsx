@@ -1,7 +1,7 @@
 "use client";
 import { Loader2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { type Colors, FLAG, fmt, fmtK, pnlColor } from "../helpers";
+import { type Colors, FLAG, fmt, fmtAmt, fmtPx, fmtQty, pnlColor } from "../helpers";
 import { TradeEditModal } from "../modals/TradeEditModal";
 import type { Trade } from "../types";
 import { WLBadge } from "../ui/AccBadge";
@@ -181,21 +181,21 @@ export function TradeLogTab({
                   </td>
                   <td className="px-2 py-0.5">
                     {t.price_entry
-                      ? `${csym}${fmt(t.price_entry_base ?? toBase(t.price_entry, t.currency))}`
+                      ? `${csym}${fmtPx(t.price_entry_base ?? toBase(t.price_entry, t.currency))}`
                       : "—"}
                   </td>
                   <td className="px-2 py-0.5">
                     {t.price_exit
-                      ? `${csym}${fmt(t.price_exit_base ?? toBase(t.price_exit, t.currency))}`
+                      ? `${csym}${fmtPx(t.price_exit_base ?? toBase(t.price_exit, t.currency))}`
                       : "—"}
                   </td>
-                  <td className="px-2 py-0.5">{t.volume}</td>
+                  <td className="px-2 py-0.5">{fmtQty(t.volume)}</td>
                   <td className="px-2 py-0.5">
-                    {amountVal != null ? `${csym}${fmtK(amountVal)}` : "—"}
+                    {amountVal != null ? `${csym}${fmtAmt(amountVal)}` : "—"}
                   </td>
                   <td className="px-2 py-0.5 font-bold" style={{ color: pnlColor(pnlVal) }}>
                     {pnlVal != null
-                      ? `${csym}${fmtK(Math.abs(pnlVal))} ${pnlVal >= 0 ? "▲" : "▼"}`
+                      ? `${csym}${fmtAmt(Math.abs(pnlVal))} ${pnlVal >= 0 ? "▲" : "▼"}`
                       : "—"}
                   </td>
                   <td className="px-2 py-0.5">

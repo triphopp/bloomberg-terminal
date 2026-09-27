@@ -199,11 +199,21 @@ test("BB overlay and %B use the same fitted bands; manual defaults stay 20/2", (
   near(m[0].value, data.slice(0, 20).reduce((s, b) => s + b.close, 0) / 20);
 });
 
-test("cache is scoped to the dataset and cost assumptions", () => {
+test("cache is scoped to the closed bars and cost assumptions, not the array", () => {
   const data = sample();
   assert.equal(fitBollingerSharpe(data), fitBollingerSharpe(data));
   assert.notEqual(fitBollingerSharpe(data, 0), fitBollingerSharpe(data, 5));
-  assert.notEqual(fitBollingerSharpe(sample()), fitBollingerSharpe(data));
+  // A live tick is a NEW array with the same closed bars: it must not refit.
+  const ticked = data.map((b) => ({ ...b }));
+  ticked[800].close *= 1.01;
+  assert.equal(fitBollingerSharpe(ticked), fitBollingerSharpe(data));
+  // Any closed bar changing — price or time — is a different dataset.
+  const repriced = data.map((b) => ({ ...b }));
+  repriced[400].close *= 1.0001;
+  assert.notEqual(fitBollingerSharpe(repriced), fitBollingerSharpe(data));
+  const retimed = data.map((b) => ({ ...b }));
+  retimed[400].time = (retimed[400].time as number) + 1;
+  assert.notEqual(fitBollingerSharpe(retimed), fitBollingerSharpe(data));
 });
 
 test("a negative best Sharpe is reported honestly instead of replaced with zero", () => {

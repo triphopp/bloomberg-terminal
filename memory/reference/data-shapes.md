@@ -76,10 +76,13 @@ History (`/api/cot/history`): `{code,key,label,dataset,focus,rows:[{date,release
 ## Stock History (`GET /api/stock/history/{symbol}?period=3m`)
 ```json
 {
-  "symbol": "AAPL", "period": "3m",
-  "data": [{ "date": "2026-03-01", "open": 180.0, "high": 185.0, "low": 179.0, "close": 184.0, "volume": 55000000 }]
+  "quotes": [{ "date": "2026-03-01", "open": 180.0, "high": 185.0, "low": 179.0, "close": 184.0, "volume": 55000000 }],
+  "yf_symbol": "AAPL",        // symbol actually fetched (bare Thai ticker → .BK) — live stream key
+  "interval": "1d",           // bar size served (requested, or the period default)
+  "utc_offset_min": -240      // exchange UTC offset; bar dates are exchange-local, zone-less
 }
 ```
+Intraday `date` = `"YYYY-MM-DDTHH:MM:SS"` exchange-local (AAPL 15:30 = New York). `chartkit/live-bars.ts` needs `utc_offset_min` to place UTC stream ticks in a bar. (Older cached responses lack the 3 extra keys.)
 
 ## Stock P/E History (`GET /api/stock/pe-history/{symbol}`)
 ```json
@@ -217,6 +220,7 @@ Illustrative values; `calls`/`puts` rows do not include Greeks. Backend `clean_d
     "account_id": "dime", "acc_currency": "USD",
     "currency": "THB", "pos_currency": "THB",
     "price_entry": 183.0, "volume": 200.0, "current_price": 185.0,
+    "yf_symbol": "BH.BK",   // key for /api/stream/quotes
     "unrealized_pnl": 400.0, "unrealized_pct": 1.09,
     "unrealized_pnl_thb": 400.0, "unrealized_pnl_base": 400.0,
     "cost_basis_base": 36600.0, "market_value_base": 37000.0,
@@ -818,6 +822,17 @@ Flags: `TREND_UP`/`TREND_DOWN`, `GOLDEN_CROSS`/`DEATH_CROSS`, `RSI_OVERBOUGHT`/`
 ```
 `kind` ∈ FOMC|CPI|NFP|PCE|GDP. Spreads are percentage points (UI ×100 → bp). `calendar`/`regime`/`fed`/`yield_curve`/`indicators` may be `null` on failure — render NO DATA, never calm.
 
+## Stream status (`GET /api/stream/status`) — 2026-09-26
+
+```json
+{"connected": true, "symbols": ["AAPL", "BTC-USD"], "live": 2, "denied": [], "max_symbols": 900,
+ "shards": [{"id": 2, "symbols": 90, "connected": true}, {"id": 3, "symbols": 12, "connected": false}],
+ "shard_cap": 90, "last_message_age_s": 1.4, "cached": 102}
+```
+`connected` = at least one shard and all shards connected. Shard ids only grow. `denied` = wanted but refused a slot (budget). No frontend consumer.
+
+SSE `event: coverage` on `/api/stream/quotes`: `{"live": 214, "denied": ["SLND-USD", …]}` — this client's symbols only, sent on change.
+
 ## Upstream Health (`GET /api/health/upstream`)
 
 ```json
@@ -1125,6 +1140,29 @@ interface PolySignal { type: string; label: string; color: string; question: str
     "weekly_corr": { "UST10Y": { "r": 0.1, "n": 50 }, "IG_OAS": { "r": -0.2, "n": 50 } }, "note": "..." },
   "backfill": { "days_total": 262, "days_stored": 120, "pending": 142, "running": true, "last_error": null },
   "method": { "query", "forms", "unit", "caveat", "excluded" }, "source": "SEC EDGAR full-text search" }
+```
+
+
+### `GET /api/bonds/decomposition` (2026-09-26) — TS `BondDecomposition`
+```jsonc
+{ "ok": true, "model": "ACM" /* | "KW" fallback */, "modelNote": "...",
+  "snapshot": {
+    "market": { "asOf": "2026-09-24", "nominal": 5.18, "real": 2.85, "breakeven": 2.33, "residual_bp": 0 },
+    "model":  { "asOf": "2026-09-24", "fitted": 5.144, "expected": 4.414, "termPremium": 0.730, "residual_bp": 0 },
+    "pieces": { "asOf": "...", "expReal": 2.084, "breakeven": 2.33, "termPremium": 0.730, "total": 5.144,
+                "share": { "expReal": 41, "breakeven": 45, "termPremium": 14 } },
+    "doubleCount": { "stacked": 5.91, "nominal": 5.18, "overshoot_bp": 73.0 } },
+  "attribution": [ { "days": 20, "since": "...", "dNominal_bp": 52, "dReal_bp": 51, "dBE_bp": 1, "realShare": 98,
+                     "dExpected_bp": 43.9, "dTP_bp": -1.9, "modelSince": "...", "dExpReal_bp": 42.9,
+                     "dModel_bp": 42.0, "driver": "REAL" /* | "BE" | "TP" | null */ } /* days 1,5,20,60 */ ],
+  "driver": { "window": 20, "key": "REAL", "label": "REAL RATE", "case": "...", "read": "(Thai)", "severity": 1 },
+  "tripwires": { "wires": [ { "id": "TP_HIGH"|"BE_RANGE"|"NOM_ALARM", "label", "piece", "value", "level",
+                              "levelNote", "warn", "status": "OK"|"WATCH"|"BREACH"|"NA", "gap_bp", "tpRoom_bp?" } ],
+                 "flip": false, "flipNote": null },
+  "context": { "nominal"|"real"|"breakeven"|"termPremium": { "y20": {years,since,avg,min,minDate,max,maxDate,pctile}|null,
+               "y10": …, "ago5"|"ago10"|"ago20": {date,value}|null } },
+  "history": [ { "date", "nominal", "real", "expReal", "breakeven", "termPremium", "expected" } ],  // last 520
+  "errors": [], "source": "..." }
 ```
 
 ## `/api/rates/curve` — bond curve tick rows (`routers/rates.py`)
@@ -1510,7 +1548,10 @@ SQLite: `search_hits(symbol TEXT PK, count INTEGER, last_at TEXT)` — local onl
 - `verified` = no MISSING/NETTED/NO_EVIDENCE and |cash_gap − fee_gap| ≤ 0.05
 
 ### trades fee columns (2026-09-26)
-`fee_entry REAL` buy commission+VAT, `fee_exit REAL` sale commission+VAT+SEC+TAF (already inside `pnl_amount`), `fee_detail TEXT` JSON `{entry:{…estimate or {total,source:"manual"}}, exit:{…}}`. Instrument currency. Not in `price_entry`/`amount`. `/summary` accounts add `entry_fees_base`.
+`fee_entry REAL` buy commission+VAT, `fee_exit REAL` sale commission+VAT+SEC+TAF (already inside `pnl_amount`), `fee_detail TEXT` JSON `{entry:{…estimate or {total,source:"manual"} or {total,source:"slip",commission,vat,sec_fee?,taf_fee?}}, exit:{…}}`. Provenance (2026-09-26): `broker_order_ref`, `executed_at` (`2026-09-25T20:45+07:00`), `entry_source` (`manual`/`slip`/`excel`/NULL), `source_sha256`; partial sell copies all four onto the sold piece. Slip evidence adds to `broker_executions`: `order_ref` (unique per account), `gross_value`, `commission`, `vat`, `sec_fee`, `taf_fee`, `exchange`, `order_type`, `trade_id`, `extractor` (decimal strings like the rest). Instrument currency. Not in `price_entry`/`amount`. `/summary` accounts add `entry_fees_base`.
+
+### option fill provenance + `trade_fee_items` (2026-09-26)
+`option_trades` adds `executed_at` (ISO with offset, e.g. `2026-01-26T21:39:00+07:00`; `trade_date` stays the US exchange date), `settle_date`, `broker_order_ref` (unique per account), `entry_source` (`slip`/`excel`/NULL). New table `trade_fee_items {id, account_id, trade_table:'trades'|'option_trades', trade_id, leg:'FILL'|'ENTRY'|'EXIT', component:'COMMISSION'|'COMMISSION_DISCOUNT'|'VAT'|'SEC'|'TAF'|'ORF'|'OCC'|'EXCHANGE'|'OTHER', amount:decimal string (cost +, promo −), currency, basis:'ESTIMATED'|'POSTED', source:'SLIP'|'BROKER_POSTING'|'SCHEDULE'|'MANUAL', evidence_id?, note}`; `option_trades.fees` = Σ items with POSTED replacing ESTIMATED per component (check F1). `broker_executions` adds `instrument_type:'STOCK'|'OPTION'`, `option_trade_id`, `commission_discount`, `occ_fee`, `orf_fee`, `submitted_at_local`, `settle_date`; an OPTION row has `symbol` = OCC symbol and `quantity` = contracts. `option_trade_matches.realized_pnl` / `fees_alloc` now include the opening fill's fee share. No endpoint response changed shape beyond these extra columns where a route returns `t.*`.
 
 ### trades takeover columns + `GET /api/v2/portfolio/takeover` (2026-09-26)
 `acquisition_type TEXT` (`'TRANSFER_IN'` = lot received in kind at a portfolio takeover; NULL = normal buy), `original_price_entry REAL` (previous owner's cost/unit, memo), `transfer_price_entry REAL` (fair value/unit on the transfer date). For these lots `price_entry`/`amount`/`date_entry` = fair value on the transfer date, so every return starts there. Both memo prices are copied on partial-sell splits and never AVCO-rebased.

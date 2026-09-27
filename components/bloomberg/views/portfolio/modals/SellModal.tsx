@@ -2,7 +2,7 @@
 import { X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { type FeeEstimate, feeBreakdown, fetchFeeEstimate } from "../accounting-types";
-import { type Colors, fmt, fmtK } from "../helpers";
+import { type Colors, fmt, fmtAmt, fmtPx } from "../helpers";
 import type { Trade } from "../types";
 
 interface Props {
@@ -235,7 +235,7 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
               }}
             >
               {target.current_price != null
-                ? `${(target.currency || target.pos_currency || target.acc_currency) === "THB" ? "฿" : "$"}${fmt(target.current_price, 4)}`
+                ? `${(target.currency || target.pos_currency || target.acc_currency) === "THB" ? "฿" : "$"}${fmtPx(target.current_price)}`
                 : "—"}
             </span>
           </div>

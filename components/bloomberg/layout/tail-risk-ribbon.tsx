@@ -1,9 +1,8 @@
 "use client";
 
 /**
- * Always-on TAIL strip. Shows the six risk dimensions rather than individual
- * signal names: at 18px tall there is no room for a signal list, and "which
- * kind of risk is lit" is the question a glance can actually answer.
+ * Always-on TAIL summary in the shared status row. Keep the current risk and
+ * three highest-ranked named events stationary while market quotes move.
  *
  * A dimension whose data could not be verified reads NO DATA, never NORMAL —
  * the previous strip could print "ALL CLEAR" while its inputs were offline.
@@ -46,28 +45,21 @@ interface RibbonData {
     id: string;
     name: string;
     severity: EventSeverity;
+    score?: number;
     summary: string;
     channel_label: string;
   }[];
   risk_basis?: { driver: "events" | "dimensions" | null; events_rule: string };
 }
 
-/** Short tags — the full dimension labels don't fit an 18px strip. */
-const SHORT: Record<string, string> = {
-  equity_vol: "EQ-VOL",
-  tail_pricing: "TAIL",
-  cross_asset_vol: "X-ASSET",
-  credit_stress: "CREDIT",
-  flow_positioning: "FLOW",
-  correlation: "CORR",
-};
+const EVENT_RANK: Record<EventSeverity, number> = { SEVERE: 3, ACTIVE: 2, WATCH: 1 };
 
-const STATUS_COLOR: Record<DimensionStatus, { fg: string; bg: string; border: string }> = {
-  ALERT: { fg: "#FF3333", bg: "#260000", border: "#5a0000" },
-  WATCH: { fg: "#FFAA00", bg: "#1a1200", border: "#4a3200" },
-  NORMAL: { fg: "#3a6b48", bg: "#050a06", border: "#16241a" },
-  UNKNOWN: { fg: "#8a6a3a", bg: "#0f0900", border: "#2a1a00" },
-};
+function stripEventName(name: string): string {
+  return name
+    .replace(/^Cross-Asset /i, "")
+    .split(" — ")[0]
+    .toUpperCase();
+}
 
 const RISK_BADGE: Record<RiskLevel, { bg: string; border: string; fg: string }> = {
   HIGH: { bg: "#AA0000", border: "#550000", fg: "#FFDDDD" },
@@ -92,131 +84,72 @@ export function TailRiskRibbon() {
   const dims = data?.dimensions ?? [];
   const degraded = data?.data_health?.degraded_count ?? 0;
   const failed = data != null && data.ok === false;
-  const events = data?.events ?? [];
+  const events = [...(data?.events ?? [])].sort(
+    (a, b) => EVENT_RANK[b.severity] - EVENT_RANK[a.severity] || (b.score ?? 0) - (a.score ?? 0)
+  );
 
   const vix = data?.vix_term?.vix;
   const inverted =
     data?.vix_term?.backwardation_front === true || data?.vix_term?.backwardation_back === true;
   const byName = new Map((data?.vol_table ?? []).map((r) => [r.name, r]));
 
-  /** VVIX and SKEW ride along in the strip: they move on different information
-   *  than VIX and are the cheapest early read on tail demand. */
+  /** Detailed readings remain available on hover and in the TAIL view. */
   const extras = ["VVIX", "SKEW"]
     .map((n) => byName.get(n))
     .filter((r): r is NonNullable<typeof r> => !!r && r.ok && r.value != null);
 
+  const topEvents = events.slice(0, 3);
+  const detail = [
+    ...dims.map((d) => `${d.label}: ${d.status} (${d.on_count}/${d.total})`),
+    ...events.map((e) => `${e.name}: ${e.severity} — ${e.summary}`),
+    ...extras.map((r) => `${r.name} ${r.value} (z63 ${r.z63 ?? "--"})`),
+    vix != null ? `VIX ${vix.toFixed(1)}${inverted ? " inverted" : ""}` : "",
+    degraded ? `${degraded} signals without data` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
   return (
-    // A real <button>: the strip toggles a view, so it should be reachable and
-    // activatable by keyboard without reimplementing what the element already does.
     <button
       type="button"
-      className="shrink-0 w-full flex items-center gap-0 border-t cursor-pointer select-none font-mono text-left"
+      className="flex h-full min-w-0 shrink-0 items-center gap-1.5 overflow-hidden border-r px-2 text-left font-mono select-none"
       style={{
-        height: 18,
-        backgroundColor: isActive ? "#0a0500" : level === "NORMAL" ? "#000000" : `${badge.bg}22`,
-        borderColor: isActive ? "#FF6600" : level === "NORMAL" ? "#111111" : badge.border,
+        width: "fit-content",
+        maxWidth: "min(58vw, 820px)",
+        backgroundColor: isActive ? "#170e02" : level === "NORMAL" ? "#050505" : `${badge.bg}22`,
+        borderColor: isActive ? "#FF9800" : badge.border,
       }}
-      aria-label={isActive ? "Leave tail risk view" : "Open tail risk view"}
+      title={detail}
+      aria-label={`TAIL ${failed ? "data unavailable" : level}. Top events: ${topEvents.map((e) => e.name).join(", ") || "none"}. ${isActive ? "Leave" : "Open"} tail risk view`}
       onClick={() => setCurrentView(isActive ? "market" : "tail")}
     >
-      <span
-        className="shrink-0 flex items-center justify-center h-full px-2 border-r font-bold tracking-widest"
-        style={{
-          backgroundColor: badge.bg,
-          borderColor: badge.border,
-          color: badge.fg,
-          fontSize: 7.5,
-          minWidth: 38,
-        }}
-      >
+      <span className="shrink-0 font-bold tracking-wide" style={{ color: "#FF9800", fontSize: 9 }}>
         TAIL
       </span>
-
-      <div className="flex items-center gap-1 px-2 h-full overflow-hidden">
-        {failed ? (
-          <span style={{ color: "#FF4444", fontSize: 7.5 }}>TAIL DATA UNAVAILABLE</span>
-        ) : dims.length === 0 ? (
-          <span style={{ color: "#333", fontSize: 7.5 }}>LOADING RISK DIMENSIONS...</span>
-        ) : (
-          <>
-            <span style={{ color: badge.fg, fontSize: 7.5, fontWeight: "bold" }}>{level}</span>
-            {dims.map((d) => {
-              const c = STATUS_COLOR[d.status];
-              const muted = d.status === "NORMAL";
-              return (
-                <span
-                  key={d.id}
-                  className="px-1"
-                  style={{
-                    color: c.fg,
-                    backgroundColor: c.bg,
-                    border: `1px solid ${c.border}`,
-                    fontSize: 6.5,
-                    letterSpacing: "0.05em",
-                    opacity: muted ? 0.55 : 1,
-                    fontWeight: muted ? "normal" : "bold",
-                  }}
-                  title={`${d.label}: ${d.status} — ${d.on_count}/${d.total} signals on${
-                    d.unknown_count ? `, ${d.unknown_count} without data` : ""
-                  }`}
-                >
-                  {SHORT[d.id] ?? d.label}
-                  {d.status === "UNKNOWN" ? "?" : d.on_count > 0 ? ` ${d.on_count}` : ""}
-                </span>
-              );
-            })}
-            {/* Named events: what is happening, not which gauge lit. Two at
-                most — the strip is 18px; the rest are one click away in TAIL. */}
-            {events.slice(0, 2).map((e) => (
-              <span
-                key={e.id}
-                className="truncate"
-                style={{
-                  color: SEVERITY_COLOR[e.severity],
-                  fontSize: 7,
-                  fontWeight: "bold",
-                  marginLeft: 6,
-                }}
-                title={`${e.name} · ${e.severity} · ${e.channel_label}
-${e.summary}`}
-              >
-                ● {e.name.toUpperCase()}
-                <span style={{ fontWeight: "normal", opacity: 0.7 }}> {e.severity}</span>
-              </span>
-            ))}
-            {events.length > 2 && (
-              <span style={{ color: "#555", fontSize: 7 }}>+{events.length - 2}</span>
-            )}
-          </>
-        )}
-      </div>
-
-      <div className="ml-auto flex items-center gap-2 px-2 shrink-0">
-        {extras.map((r) => (
-          <span
-            key={r.name}
-            style={{
-              color: r.z63 != null && r.z63 > 1.5 ? "#FF8800" : "#444",
-              fontSize: 7,
-            }}
-            title={`${r.name} z63 ${r.z63 ?? "--"}`}
-          >
-            {r.name} {r.value?.toFixed(r.name === "SKEW" ? 0 : 1)}
-          </span>
-        ))}
-        {vix != null && (
-          <span style={{ color: inverted ? "#FF4444" : "#555", fontSize: 7.5 }}>
-            VIX {vix.toFixed(1)}
-            {inverted ? " INV" : ""}
-          </span>
-        )}
-        {degraded > 0 && (
-          <span style={{ color: "#B06000", fontSize: 7 }} title="Signals with unverifiable data">
-            ⚠ {degraded} NO DATA
-          </span>
-        )}
-        <span style={{ color: "#222", fontSize: 7 }}>{isActive ? "v" : "^"} TAIL</span>
-      </div>
+      <span
+        className="shrink-0 rounded-sm px-1 py-0.5 font-bold"
+        style={{ backgroundColor: badge.bg, color: badge.fg, fontSize: 9 }}
+      >
+        {failed ? "NO DATA" : dims.length === 0 ? "LOADING" : level}
+      </span>
+      {topEvents.map((e, index) => (
+        <span
+          key={e.id}
+          className="min-w-0 truncate font-semibold"
+          style={{ color: SEVERITY_COLOR[e.severity], fontSize: 8.5 }}
+        >
+          {index + 1} {stripEventName(e.name)}
+        </span>
+      ))}
+      {events.length > 3 && (
+        <span className="shrink-0 text-[8px] text-[#aaa]">+{events.length - 3}</span>
+      )}
+      {topEvents.length === 0 && dims.length > 0 && !failed && (
+        <span className="min-w-0 truncate text-[8.5px] text-[#999]">NO NAMED EVENTS</span>
+      )}
+      {degraded > 0 && (
+        <span className="ml-auto shrink-0 text-[8.5px] font-bold text-[#D6983C]">⚠ {degraded}</span>
+      )}
     </button>
   );
 }

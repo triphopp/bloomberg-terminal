@@ -18,16 +18,49 @@ import type { LogicalRange, TimeRange } from "../types.ts";
  * request for history that is on its way. Long enough (220ms) that a fast
  * flick of the wheel is read once, where it stopped, rather than several times
  * on the way. Returns an unsubscribe.
+ *
+ * With `inputTarget`, only ranges the USER caused are reported. The engine
+ * emits the same event for `fitContent()`, a resize, a `setData()` refill and a
+ * restored viewport — and a fitted chart sits exactly on its oldest bar, which
+ * reads as "zoomed out to the edge". Unfiltered, every chart load climbed the
+ * history ladder by itself (3M → YTD, 1Y → 5Y) without anyone touching it.
  */
 export function watchLogicalRange(
   chart: IChartApi,
   onRange: (range: LogicalRange) => void,
-  debounceMs = 220
+  debounceMs = 220,
+  inputTarget?: HTMLElement | null
 ): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
 
+  // Last wheel / drag / touch / key on the chart. A range event within the
+  // window counts as the user's; kinetic scroll after a drag keeps emitting
+  // for a few hundred ms after the pointer lets go, hence not zero.
+  const USER_INPUT_WINDOW_MS = 800;
+  let lastInput = Number.NEGATIVE_INFINITY;
+  const markInput = () => {
+    lastInput = Date.now();
+  };
+  const markDrag = (e: PointerEvent) => {
+    if (e.buttons !== 0) markInput();
+  };
+  const inputEvents: [string, EventListener][] = inputTarget
+    ? [
+        ["wheel", markInput],
+        ["pointerdown", markInput],
+        ["pointermove", markDrag as EventListener],
+        ["touchstart", markInput],
+        ["touchmove", markInput],
+        ["keydown", markInput],
+      ]
+    : [];
+  for (const [type, fn] of inputEvents) {
+    inputTarget?.addEventListener(type, fn, { capture: true, passive: true });
+  }
+
   const handler = (range: LogicalRange | null) => {
     if (!range) return; // no data on the scale yet
+    if (inputTarget && Date.now() - lastInput > USER_INPUT_WINDOW_MS) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
@@ -39,6 +72,9 @@ export function watchLogicalRange(
 
   return () => {
     if (timer) clearTimeout(timer);
+    for (const [type, fn] of inputEvents) {
+      inputTarget?.removeEventListener(type, fn, { capture: true });
+    }
     chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
   };
 }

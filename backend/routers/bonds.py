@@ -27,6 +27,8 @@ Endpoints:
   GET /api/bonds/overview   — KPIs + aligned 2y daily history
   GET /api/bonds/supply     — Treasury auctions + weekly coupon supply + slow series
   GET /api/bonds/issuance   — daily deal counts, recent deals, event study, backfill status
+  GET /api/bonds/decomposition — 10Y = expected real + breakeven + term premium (ACM),
+                                 which piece moved, tripwires (bond_decomposition.py)
 """
 from __future__ import annotations
 
@@ -39,6 +41,7 @@ from datetime import date, datetime, timedelta
 import requests
 from fastapi import APIRouter
 
+import bond_decomposition
 from cache import TTLCache
 from config import FRED_API_KEY
 from db import get_db
@@ -66,7 +69,9 @@ _DAILY: list[tuple[str, str, str, str, str]] = [
     ("UST2Y",  "DGS2",           "UST 2Y",            "%", "treasury"),
     ("UST10Y", "DGS10",          "UST 10Y",           "%", "treasury"),
     ("UST30Y", "DGS30",          "UST 30Y",           "%", "treasury"),
-    ("TP10",   "THREEFFTP10",    "10Y TERM PREMIUM",  "%", "treasury"),
+    # THREEFYTP10 = Kim-Wright TP on the 10Y zero. NOT THREEFFTP10, which is the
+    # instantaneous forward TP 10 years hence (was mislabelled here until 2026-09-26)
+    ("TP10",   "THREEFYTP10",    "10Y TERM PREM (KW)", "%", "treasury"),
     ("REAL10", "DFII10",         "10Y REAL (TIPS)",   "%", "treasury"),
     ("IG_OAS", "BAMLC0A0CM",     "IG OAS",            "%", "credit"),
     ("HY_OAS", "BAMLH0A0HYM2",   "HY OAS",            "%", "credit"),
@@ -716,6 +721,101 @@ def bonds_issuance():
     # While the backfill runs the numbers move every few seconds — short TTL
     _cset("issuance", data, 30 if _backfill.running() else 1800)
     return data
+
+
+# ── Yield decomposition: expected real + breakeven + term premium ─────────────
+
+_ACM_URL = "https://www.newyorkfed.org/medialibrary/media/research/data_indicators/ACMTermPremium.xls"
+_DECOMP_START = "2003-01-01"   # TIPS breakeven/real series begin 2003-01-02
+
+
+def _fetch_acm() -> dict[str, dict[str, float]]:
+    """NY Fed ACM daily: fitted 10Y zero yield, risk-neutral (expected) yield, TP.
+
+    One ~10 MB .xls, updated about weekly — cached a day, and a failure is
+    negative-cached (see get_decomposition) so it is not re-pulled per request.
+    """
+    import io
+
+    import pandas as pd
+
+    r = requests.get(_ACM_URL, timeout=45, headers={"User-Agent": "Mozilla/5.0"})
+    r.raise_for_status()
+    df = pd.read_excel(io.BytesIO(r.content), sheet_name="ACM Daily",
+                       usecols=["DATE", "ACMY10", "ACMTP10", "ACMRNY10"])
+    df["DATE"] = pd.to_datetime(df["DATE"], format="%d-%b-%Y", errors="coerce")
+    df = df.dropna()
+    df = df[df["DATE"] >= _DECOMP_START]
+    ds = df["DATE"].dt.strftime("%Y-%m-%d").tolist()
+    return {col: dict(zip(ds, (round(float(v), 4) for v in df[col]))) for col in
+            ("ACMY10", "ACMTP10", "ACMRNY10")}
+
+
+def _build_decomposition() -> dict:
+    if not FRED_API_KEY:
+        return {"ok": False, "detail": "FRED_API_KEY not configured"}
+
+    fred_ids = {"nominal": "DGS10", "real": "DFII10", "be": "T10YIE",
+                "kw_y": "THREEFY10", "kw_tp": "THREEFYTP10"}
+    fred: dict[str, dict[str, float]] = {}
+    errors: list[str] = []
+
+    def _one(sid: str):
+        return {o["date"]: o["value"] for o in _fred_fetch(sid, limit=10000, obs_start=_DECOMP_START)}
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futs = {k: pool.submit(_one, sid) for k, sid in fred_ids.items()}
+        acm_fut = pool.submit(_fetch_acm)
+        for k, fut in futs.items():
+            try:
+                fred[k] = fut.result()
+            except Exception as exc:
+                errors.append(f"{fred_ids[k]}: {type(exc).__name__}")
+                fred[k] = {}
+        try:
+            acm = acm_fut.result()
+        except Exception as exc:
+            errors.append(f"ACM: {type(exc).__name__}")
+            acm = None
+
+    if not (fred["nominal"] and fred["real"] and fred["be"]):
+        return {"ok": False, "detail": "FRED 10Y / TIPS / breakeven unavailable", "errors": errors}
+
+    if acm and acm["ACMTP10"]:
+        model = "ACM"
+        model_y, tp, exp = acm["ACMY10"], acm["ACMTP10"], acm["ACMRNY10"]
+    else:
+        # Kim-Wright fallback: expected = fitted − TP. Different model, different
+        # level (KW TP runs lower than ACM) — the UI names which one it is showing.
+        model = "KW"
+        model_y, tp = fred["kw_y"], fred["kw_tp"]
+        exp = {d: round(v - tp[d], 4) for d, v in model_y.items() if d in tp}
+
+    out = bond_decomposition.build(fred["nominal"], fred["real"], fred["be"], model_y, exp, tp)
+    return {
+        "ok": True,
+        "model": model,
+        "modelNote": ("NY Fed Adrian-Crump-Moench (ACM), daily" if model == "ACM" else
+                      "Kim-Wright via FRED (ACM unavailable) — TP level not comparable to ACM"),
+        **out,
+        "errors": errors,
+        "source": "FRED DGS10/DFII10/T10YIE · NY Fed ACM term premium",
+    }
+
+
+def get_decomposition() -> dict:
+    cached = _cget("decomposition")
+    if cached is not None:
+        return cached
+    data = _build_decomposition()
+    # Full pull a day-ish (ACM updates ~weekly, FRED daily → 3h); degraded 20 min
+    _cset("decomposition", data, 1200 if data.get("errors") or not data.get("ok") else 3 * 3600)
+    return data
+
+
+@router.get("/api/bonds/decomposition")
+def bonds_decomposition():
+    return get_decomposition()
 
 
 @router.delete("/api/bonds/cache")

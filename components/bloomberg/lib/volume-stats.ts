@@ -55,6 +55,8 @@
  * trailing window and ignore `mode`.
  */
 
+import { RollingSample } from "../chart/rolling.ts";
+
 /** The fields these functions read. Structurally a subset of OhlcvBar. */
 export interface VolumeBar {
   /** "YYYY-MM-DD" for daily/weekly; UNIX seconds for intraday. */
@@ -87,7 +89,7 @@ export const SESSION_GAP_SEC = 4 * 60 * 60;
 export const MIN_SAMPLES = 8;
 
 /** MAD → σ under normality. */
-const MAD_TO_SIGMA = 1.4826;
+export const MAD_TO_SIGMA = 1.4826;
 
 /**
  * Smallest dispersion (in log-volume units) that counts as a scale.
@@ -104,7 +106,7 @@ const MIN_SIGMA = 1e-6;
 
 export function median(values: number[]): number {
   if (values.length === 0) return Number.NaN;
-  const sorted = [...values].sort((a, b) => a - b);
+  const sorted = [...values].sort((a, b) => a - b); // perf-ok: one-shot helper; rolling callers use RollingSample
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
@@ -199,42 +201,57 @@ function slotBars(bars: VolumeBar[], mode: VolMode): Slotted {
 }
 
 /**
- * For each bar, the prior comparable observations its baseline is built from —
- * most recent last, capped at `lookback`.
+ * Walk the bars, handing each bar that has an observation to `visit` together
+ * with the prior comparable observations (passed through `f`) — never the
+ * current bar, so a spike can never dilute its own baseline (the reason
+ * watchlist_signals.py shifts by one).
  *
- * Daily: the prior `lookback` bars. Intraday: the same slot in prior sessions.
- * The current bar is never included, so a spike can never dilute its own
- * baseline (the reason watchlist_signals.py shifts by one).
+ * Daily: the prior `lookback` BARS (a bar with no volume keeps its slot, empty).
+ * Intraday: the last `lookback` observations of the same slot in prior sessions.
+ *
+ * The window is a RollingSample that slides one bar at a time: median and MAD
+ * are lookups on its sorted view, bit-identical to sorting a fresh copy per
+ * bar — which is what this used to do, at 12–116 ms per call on a 5Y chart
+ * (O(N·k log k), plus one array per bar for the GC).
  */
-function priorObservations(bars: VolumeBar[], opts: VolStatsOpts): (number[] | null)[] {
+function scanPriors(
+  bars: VolumeBar[],
+  opts: VolStatsOpts,
+  f: (v: number) => number,
+  visit: (i: number, v: number, prior: RollingSample) => void
+): void {
   const mode: VolMode = isIntraday(bars) ? (opts.mode ?? "bar") : "bar";
   const { slot, obs } = slotBars(bars, mode);
   const lookback = Math.max(1, Math.floor(opts.lookback));
-  const out: (number[] | null)[] = new Array(bars.length).fill(null);
 
   if (!isIntraday(bars)) {
+    const prior = new RollingSample(lookback);
     for (let i = 0; i < bars.length; i++) {
-      if (obs[i] == null) continue;
-      const hist: number[] = [];
-      for (let j = Math.max(0, i - lookback); j < i; j++) {
-        const v = obs[j];
-        if (v != null) hist.push(v);
-      }
-      out[i] = hist;
+      const v = obs[i];
+      if (v != null) visit(i, v, prior);
+      prior.push(v == null ? Number.NaN : f(v));
     }
-    return out;
+    return;
   }
 
-  const history = new Map<number, number[]>();
+  const bySlot = new Map<number, RollingSample>();
   for (let i = 0; i < bars.length; i++) {
-    const key = slot[i];
     const v = obs[i];
     if (v == null) continue;
-    const hist = history.get(key);
-    out[i] = hist ? hist.slice(-lookback) : [];
-    if (hist) hist.push(v);
-    else history.set(key, [v]);
+    let prior = bySlot.get(slot[i]);
+    if (!prior) {
+      prior = new RollingSample(lookback);
+      bySlot.set(slot[i], prior);
+    }
+    visit(i, v, prior);
+    prior.push(f(v));
   }
+}
+
+/** Values of a sample oldest → newest — only for the rare stdev fallback. */
+function valuesOf(sample: RollingSample): number[] {
+  const out: number[] = [];
+  sample.forEachValue((v) => out.push(v));
   return out;
 }
 
@@ -247,28 +264,24 @@ function priorObservations(bars: VolumeBar[], opts: VolStatsOpts): (number[] | n
  * Rough reading: |z| < 1 ordinary · 1.5 notable · 2 abnormal · 3 an event.
  */
 export function volumeZ(bars: VolumeBar[], opts: VolStatsOpts): (number | null)[] {
-  const mode: VolMode = isIntraday(bars) ? (opts.mode ?? "bar") : "bar";
-  const { obs } = slotBars(bars, mode);
-  const priors = priorObservations(bars, opts);
   const out: (number | null)[] = new Array(bars.length).fill(null);
 
-  for (let i = 0; i < bars.length; i++) {
-    const v = obs[i];
-    const hist = priors[i];
-    if (v == null || hist == null || hist.length < MIN_SAMPLES) continue;
-
-    const logs = hist.map((h) => Math.log(h));
-    const center = median(logs);
-    let sigma = madSigma(logs, center);
+  scanPriors(bars, opts, Math.log, (i, v, logs) => {
+    if (logs.size < MIN_SAMPLES) return;
+    const center = logs.median();
+    let sigma = MAD_TO_SIGMA * logs.sorted.madAbout(center);
     // MAD collapses to 0 when more than half the history is one repeated value
     // — routine in an illiquid name whose volume prints in round lots. σ still
     // has something to say there; when it does not, there is genuinely no scale
     // and the honest output is null rather than ±Infinity.
-    if (!(sigma >= MIN_SIGMA)) sigma = stdev(logs, mean(logs));
-    if (!(sigma >= MIN_SIGMA)) continue;
+    if (!(sigma >= MIN_SIGMA)) {
+      const xs = valuesOf(logs);
+      sigma = stdev(xs, mean(xs));
+    }
+    if (!(sigma >= MIN_SIGMA)) return;
 
     out[i] = (Math.log(v) - center) / sigma;
-  }
+  });
   return out;
 }
 
@@ -278,19 +291,19 @@ export function volumeZ(bars: VolumeBar[], opts: VolStatsOpts): (number | null)[
  * what makes it trustworthy.
  */
 export function volumeRatio(bars: VolumeBar[], opts: VolStatsOpts): (number | null)[] {
-  const mode: VolMode = isIntraday(bars) ? (opts.mode ?? "bar") : "bar";
-  const { obs } = slotBars(bars, mode);
-  const priors = priorObservations(bars, opts);
-  const stat = opts.baseline === "mean" ? mean : median;
+  const useMean = opts.baseline === "mean";
   const out: (number | null)[] = new Array(bars.length).fill(null);
 
-  for (let i = 0; i < bars.length; i++) {
-    const v = obs[i];
-    const hist = priors[i];
-    if (v == null || hist == null || hist.length < MIN_SAMPLES) continue;
-    const base = stat(hist);
-    if (!(base > 0)) continue;
-    out[i] = v / base;
-  }
+  scanPriors(
+    bars,
+    opts,
+    (v) => v,
+    (i, v, hist) => {
+      if (hist.size < MIN_SAMPLES) return;
+      const base = useMean ? hist.mean() : hist.median();
+      if (!(base > 0)) return;
+      out[i] = v / base;
+    }
+  );
   return out;
 }

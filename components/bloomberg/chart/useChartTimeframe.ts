@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { BarInterval, TimePeriod } from "./types";
-import { INTERVAL_DEFAULT_RANGE, INTERVAL_VALID_RANGES } from "./types";
+import { INTERVAL_DEFAULT_RANGE, INTERVAL_VALID_RANGES } from "./types.ts";
 
 export const TIME_PERIODS: TimePeriod[] = ["1d", "5d", "1m", "3m", "ytd", "1y", "5y", "max"];
 export const BAR_INTERVALS: BarInterval[] = [
@@ -82,25 +82,41 @@ export function applyPeriod(
   return { timePeriod: p, barInterval: fallback };
 }
 
-/** Interval picked → the legal (period, interval) pair. Mirror of applyPeriod. */
+/**
+ * Interval picked → the legal (period, interval) pair. Mirror of applyPeriod.
+ *
+ * `preferred` is the period the user last picked BY HAND. An interval that
+ * cannot show the current period forces one (1W → MAX), and without this the
+ * forced period stuck: 1D → 1W → 1D left a 3M chart on MAX, pulling decades
+ * of daily bars. The hand-picked period comes back as soon as the interval
+ * allows it.
+ */
 export function applyInterval(
   iv: BarInterval,
-  timePeriod: TimePeriod
+  timePeriod: TimePeriod,
+  preferred?: TimePeriod
 ): { timePeriod: TimePeriod; barInterval: BarInterval } {
+  const valid = INTERVAL_VALID_RANGES[iv];
   return {
     barInterval: iv,
-    timePeriod: INTERVAL_VALID_RANGES[iv].includes(timePeriod)
-      ? timePeriod
-      : INTERVAL_DEFAULT_RANGE[iv],
+    timePeriod:
+      preferred && valid.includes(preferred)
+        ? preferred
+        : valid.includes(timePeriod)
+          ? timePeriod
+          : INTERVAL_DEFAULT_RANGE[iv],
   };
 }
 
 export function useChartTimeframe(options?: ChartTimeframeOptions) {
   const [timePeriod, setTimePeriod] = useState<TimePeriod>(options?.defaultPeriod ?? "1y");
   const [barInterval, setBarInterval] = useState<BarInterval>(options?.defaultInterval ?? "1d");
+  // Last period chosen by hand — survives an interval forcing another one.
+  const handPeriodRef = useRef<TimePeriod>(options?.defaultPeriod ?? "1y");
 
   const handlePeriodChange = useCallback(
     (p: TimePeriod, chartType: "area" | "candle" = "candle") => {
+      handPeriodRef.current = p;
       setTimePeriod(p);
       setBarInterval((prev) => applyPeriod(p, prev, chartType).barInterval);
     },
@@ -109,7 +125,7 @@ export function useChartTimeframe(options?: ChartTimeframeOptions) {
 
   const handleIntervalChange = useCallback((iv: BarInterval) => {
     setBarInterval(iv);
-    setTimePeriod((prev) => applyInterval(iv, prev).timePeriod);
+    setTimePeriod((prev) => applyInterval(iv, prev, handPeriodRef.current).timePeriod);
   }, []);
 
   const isIntraday = !["1d", "1wk"].includes(barInterval);

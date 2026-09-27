@@ -446,8 +446,8 @@ function emptyOutput(
  */
 function fmtPrice(price: number): string {
   if (!Number.isFinite(price)) return "";
-  if (price >= 1000) return price.toFixed(0);
-  if (price >= 100) return price.toFixed(1);
+  // House rule (CLAUDE.md "Number format"): a price never shows fewer than 2
+  // decimals, even where it costs cell width.
   if (price >= 10) return price.toFixed(2);
   return price.toFixed(3);
 }

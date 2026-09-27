@@ -22,6 +22,7 @@ import {
   smilePlotRows,
   smileWingMetrics,
 } from "../lib/iv-smile";
+import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import type { bloombergColors } from "../lib/theme-config";
 
 export interface IvSmilePanelProps {
@@ -114,8 +115,9 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
     value == null ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}pp`;
   const distinctStrikes = new Set(curves.flatMap((c) => c.points.map((p) => p.strike))).size;
   const fontSize = compact ? 8 : 11;
-  const muted = { color: colors.textSecondary };
-  const control = { background: "#101010", color: colors.text, borderColor: colors.border };
+  const muted = { color: "#a0a0a0" };
+  const control = { background: "transparent", color: "#f1f1f1", borderColor: "transparent" };
+  const selectControl = { ...control, appearance: "none" as const, cursor: "pointer" as const };
   const expirations = model.expirations.filter((value) => expiryDays(value) >= 0);
   const firstData = model.slices.find((s) => s.data)?.data;
   const message = !symbol
@@ -140,10 +142,10 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
   return (
     <div
       className="h-full flex flex-col overflow-y-auto overflow-x-hidden font-mono"
-      style={{ fontSize, background: "#000" }}
+      style={{ fontSize, background: "#000", ...SCROLLBAR_THIN_LIGHTER }}
     >
       <div
-        className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1 shrink-0 border-b"
+        className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-2 py-1 shrink-0 border-b"
         style={{ borderColor: colors.border }}
       >
         <span className="font-bold" style={{ color: "#FF9800" }}>
@@ -154,7 +156,7 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
           aria-label="Compare IV smile expiries"
           aria-pressed={compare}
           title="Compare actual expiries nearest the selected calendar months"
-          className="border px-1 py-0.5"
+          className="px-1.5 py-0.5 font-bold"
           style={control}
           onClick={() => model.setCompare(!compare)}
         >
@@ -165,8 +167,8 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
             EXP
             <select
               aria-label="IV smile expiry"
-              className="border px-1 py-0.5 min-w-0"
-              style={control}
+              className="min-w-0 px-0.5 py-0.5 focus-visible:outline focus-visible:outline-1 focus-visible:outline-[#777]"
+              style={selectControl}
               value={expiry ?? ""}
               disabled={!expirations.length}
               onChange={(e) => model.selectExpiry(e.target.value)}
@@ -200,12 +202,11 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
               key={month}
               aria-label={`IV tenor ${month} months`}
               aria-pressed={model.months.includes(month)}
-              className="border px-1.5 py-0.5"
+              className="px-1.5 py-0.5"
               onClick={() => model.toggleMonth(month)}
               style={{
                 ...control,
                 color: model.months.includes(month) ? TENOR_COLORS[index] : colors.textSecondary,
-                borderColor: model.months.includes(month) ? TENOR_COLORS[index] : colors.border,
               }}
             >
               {month}M
@@ -213,17 +214,20 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
           ))}
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1 shrink-0" style={muted}>
+      <div
+        className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-2 py-1 shrink-0"
+        style={muted}
+      >
         <label className="flex items-center gap-1">
           FIT
           <select
             aria-label="IV smile fit model"
             value={fitMode}
             onChange={(e) => model.setFitMode(e.target.value as SmileFitMode)}
-            className="border px-1 py-0.5"
-            style={control}
+            className="px-0.5 py-0.5 focus-visible:outline focus-visible:outline-1 focus-visible:outline-[#777]"
+            style={selectControl}
           >
-            <option value="observed">OFF · Observed</option>
+            <option value="observed">OBSERVED</option>
             <option value="raw_svi">Raw SVI</option>
           </select>
         </label>
@@ -232,10 +236,10 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
           value={side}
           onChange={(e) => model.setSide(e.target.value as SmileSide)}
           title="OTM uses puts below spot and calls at/above spot; no ITM substitution."
-          className="border px-1 py-0.5"
-          style={control}
+          className="px-0.5 py-0.5 focus-visible:outline focus-visible:outline-1 focus-visible:outline-[#777]"
+          style={selectControl}
         >
-          <option value="both">Call + Put</option>
+          <option value="both">CALL + PUT</option>
           <option value="otm">OTM smile</option>
           <option value="call">Call</option>
           <option value="put">Put</option>
@@ -245,7 +249,7 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
             type="button"
             aria-label="Show observed IV points"
             aria-pressed={model.showPoints}
-            className="border px-1 py-0.5"
+            className="px-1 py-0.5"
             style={control}
             onClick={() => model.setShowPoints(!model.showPoints)}
           >
@@ -256,8 +260,8 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
           aria-label="IV smile strike range"
           value={rangePercent}
           onChange={(e) => model.setRangePercent(Number(e.target.value))}
-          className="border px-1 py-0.5"
-          style={control}
+          className="px-0.5 py-0.5 focus-visible:outline focus-visible:outline-1 focus-visible:outline-[#777]"
+          style={selectControl}
         >
           <option value={25}>K ±25%</option>
           <option value={50}>K ±50%</option>
@@ -267,7 +271,7 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
           type="button"
           aria-pressed={quotedOnly}
           title="Quoted: finite IV, positive bid and ask ≥ bid. All IV includes unquoted contracts."
-          className="border px-1 py-0.5"
+          className="px-1 py-0.5"
           style={control}
           onClick={() => model.setQuotedOnly(!quotedOnly)}
         >
@@ -278,7 +282,7 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
           aria-label="Show open interest"
           aria-pressed={model.showOi}
           title="Latest reported Call/Put open interest by strike. Independent of IV and quote filters."
-          className="border px-1 py-0.5"
+          className="px-1 py-0.5"
           style={{ ...control, color: model.showOi ? "#FFB347" : colors.textSecondary }}
           onClick={() => model.setShowOi(!model.showOi)}
         >
@@ -296,8 +300,8 @@ export function IvSmilePanel({ model, colors, compact = false }: IvSmilePanelPro
           {compare && (
             <select
               aria-label="Open interest expiry"
-              className="border px-1 py-0.5"
-              style={control}
+              className="px-0.5 py-0.5 focus-visible:outline focus-visible:outline-1 focus-visible:outline-[#777]"
+              style={selectControl}
               value={model.oiExpiry ?? ""}
               disabled={!model.slices.some((s) => s.expiry)}
               onChange={(e) => model.selectOiExpiry(e.target.value)}

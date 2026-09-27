@@ -5,6 +5,7 @@
  * Default: period=20, stdDev=2
  */
 
+import { BB_VOLUME_PARAMS, readBbVolumeSettings } from "../bb-volume-overlay.ts";
 import {
   BOLLINGER_FIT_PARAMS,
   calcBollingerStats,
@@ -17,6 +18,9 @@ export const createBollingerBands: IndicatorFactory = (overrides = {}) => {
   const stdDev = (overrides.stdDev as number) ?? 2;
   const fitMode = overrides.fitMode === "sharpe" ? "sharpe" : "manual";
   const fitCostBps = Number(overrides.fitCostBps ?? 5);
+  // Volume drawn inside the band (bb-volume-overlay.ts). Not part of the id:
+  // switching the overlay re-edits this BB rather than adding a second one.
+  const vol = readBbVolumeSettings(overrides);
 
   const indicator: ChartIndicator = {
     id: `bb-${period}-${stdDev}`,
@@ -45,8 +49,23 @@ export const createBollingerBands: IndicatorFactory = (overrides = {}) => {
         step: 0.25,
       },
       ...BOLLINGER_FIT_PARAMS,
+      ...BB_VOLUME_PARAMS,
     ],
-    config: { period, stdDev, fitMode, fitCostBps },
+    config: {
+      period,
+      stdDev,
+      fitMode,
+      fitCostBps,
+      volOverlay: vol.mode,
+      volBasis: vol.basis,
+      volLayout: vol.layout,
+      volSigma: vol.sigma,
+      volLookback: vol.lookback,
+      volShow: vol.abnormalOnly ? "abnormal" : "all",
+      volOpacity: vol.opacity,
+      vpPeriod: vol.vpPeriod,
+      vpBars: vol.vpBars,
+    },
 
     compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
       const { period: p, stdDev: sd } = resolveBollingerParameters(data, config);

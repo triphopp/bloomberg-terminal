@@ -272,6 +272,11 @@ MEM_CACHE_TTL = 300  # 5 minutes — used by bot, central_banks, crisis, macro, 
 QUOTE_PROVIDER_DEFAULT = os.getenv("QUOTE_PROVIDER_DEFAULT", "yfinance")
 QUOTE_AUTO_FAILOVER = os.getenv("QUOTE_AUTO_FAILOVER", "true").lower() == "true"
 
+# Live quote stream (quote_stream.py): symbols streamed at once across all
+# Yahoo sockets (90 per socket). Past it, lower-priority symbols are denied a
+# slot and stay on their REST poll. 900 = 10 sockets; 400 were tested clean.
+QUOTE_STREAM_MAX_SYMBOLS = max(1, int(os.getenv("QUOTE_STREAM_MAX_SYMBOLS", "900")))
+
 # ── HTTP defaults ──────────────────────────────────────────────────────────────
 DEFAULT_HTTP_TIMEOUT = 15  # seconds — shared by central_banks, bot, polymarket
 
@@ -318,7 +323,9 @@ FACEBOOK_TOKEN = os.getenv("FACEBOOK_ACCESS_TOKEN", "")
 RSSHUB_URL = os.getenv("RSSHUB_URL", "https://rsshub.app")
 
 CLIPPINGS_DIR = Path(os.getenv("CLIPPINGS_DIR", "./data/clippings"))
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+# 127.0.0.1, not localhost: Ollama binds IPv4 loopback, and on Windows Python
+# clients try ::1 first and wait ~2 s for it to fail — per request.
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 
 THESES_DIR = Path(os.getenv("THESES_DIR", "./data/theses"))
 SOURCES_DIR = Path(os.getenv("SOURCES_DIR", "./data/sources"))

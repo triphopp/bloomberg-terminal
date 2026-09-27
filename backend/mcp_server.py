@@ -16,11 +16,28 @@ import json
 import os
 from typing import Any, Literal, Optional
 
+from urllib.parse import urlsplit, urlunsplit
+
 import requests
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-API = os.getenv("PYTHON_API_URL", "http://localhost:9317").rstrip("/")
+def _ipv4_loopback(url: str) -> str:
+    """`localhost` → `127.0.0.1`, same server.
+
+    uvicorn binds 127.0.0.1 (IPv4 only). On Windows `localhost` resolves to ::1
+    first and Python HTTP clients wait for that connect to time out before
+    falling back — measured 2,050 ms added to EVERY tool call, vs 15–30 ms.
+    (Browsers and Node's fetch race both families, so they never showed it.)
+    """
+    parts = urlsplit(url)
+    if parts.hostname != "localhost":
+        return url
+    netloc = "127.0.0.1" + (f":{parts.port}" if parts.port else "")
+    return urlunsplit(parts._replace(netloc=netloc))
+
+
+API = _ipv4_loopback(os.getenv("PYTHON_API_URL", "http://localhost:9317").rstrip("/"))
 ACTOR = f"agent:{os.getenv('MCP_AGENT_NAME', 'claude')}"
 THESES = f"{API}/api/v2/theses"
 
@@ -55,10 +72,15 @@ class BackendError(ToolError):
     """Surfaced to the agent verbatim — the SDK hides the text of any other exception."""
 
 
+# One pooled connection for the life of the MCP process instead of a new TCP
+# handshake per call.
+_SESSION = requests.Session()
+
+
 def _call(method: str, url: str, *, params: Optional[dict] = None,
           body: Optional[dict] = None, timeout: float = 30) -> Any:
     try:
-        r = requests.request(
+        r = _SESSION.request(
             method, url,
             params={k: v for k, v in (params or {}).items() if v is not None},
             json=body,

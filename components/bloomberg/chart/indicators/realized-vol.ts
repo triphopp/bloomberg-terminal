@@ -25,7 +25,7 @@ import {
   type RvEstimator,
   calcRealizedVol,
   inferPeriodsPerYear,
-} from "./rv-core";
+} from "./rv-core.ts";
 
 const LINE_COLORS = ["#26c6da", "#ffa726", "#ab47bc"]; // fast, slow, long
 

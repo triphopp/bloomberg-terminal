@@ -1,6 +1,6 @@
 "use client";
 import { Loader2 } from "lucide-react";
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import {
   CartesianGrid,
   ComposedChart,
@@ -8,12 +8,15 @@ import {
   ReferenceArea,
   ReferenceDot,
   ReferenceLine,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { type Colors, fmtK, pnlColor } from "../helpers";
+// Charts below the fold mount when scrolled near — see LazyResponsiveContainer.
+import { LazyResponsiveContainer as ResponsiveContainer } from "../../../ui/LazyResponsiveContainer";
+import { type Colors, fmtAmt, pnlColor } from "../helpers";
+
+const NO_POINTS: never[] = [];
 
 // Signals-style growth view of the book: cumulative time-weighted growth (a
 // deposit does not move it), deposit ▲ / withdrawal ▼ marks (cash EDIT offsets ◆
@@ -60,7 +63,7 @@ const FLOW_MIN_SHARE = 0.001;
 const pct = (v: number | null | undefined, d = 2) =>
   v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(d)}%`;
 
-export function NavGrowthChart({
+function NavGrowthChartView({
   data,
   loading,
   colors,
@@ -71,7 +74,7 @@ export function NavGrowthChart({
   colors: Colors;
   height?: number;
 }) {
-  const pts = data?.points ?? [];
+  const pts = data?.points ?? NO_POINTS; // stable while loading — `?? []` re-ran the model memo every render
   const sym = data?.base_currency === "USD" ? "$" : "฿";
 
   const model = useMemo(() => {
@@ -219,14 +222,14 @@ export function NavGrowthChart({
         )}
         {stat(
           "Deposits",
-          `${sym}${fmtK(model.deposits)}`,
+          `${sym}${fmtAmt(model.deposits)}`,
           colors.text,
           UP,
           "External inflows in the chart span"
         )}
         {stat(
           "Withdrawals",
-          `${sym}${fmtK(model.withdrawals)}`,
+          `${sym}${fmtAmt(model.withdrawals)}`,
           colors.text,
           DOWN,
           "External outflows in the chart span"
@@ -234,7 +237,7 @@ export function NavGrowthChart({
         {model.adjustments.length > 0 &&
           stat(
             "Cash adj.",
-            `${model.adjTotal < 0 ? "−" : ""}${sym}${fmtK(Math.abs(model.adjTotal))}`,
+            `${model.adjTotal < 0 ? "−" : ""}${sym}${fmtAmt(Math.abs(model.adjTotal))}`,
             colors.text,
             ADJ,
             "Cash EDIT / reconcile offsets (◆) — corrections to the cash figure, not deposits. Netted out of growth like a flow."
@@ -323,19 +326,19 @@ export function NavGrowthChart({
                   <div style={{ color: pnlColor(r.ret) }}>Day {pct(r.ret)}</div>
                   <div style={{ color: "#aaa" }}>
                     NAV {sym}
-                    {fmtK(r.nav)}
+                    {fmtAmt(r.nav)}
                   </div>
                   {Math.abs(r.flow) > 0.5 && (
                     <div style={{ color: r.flow > 0 ? UP : DOWN }}>
                       {r.flow > 0 ? "Deposit" : "Withdrawal"} {sym}
-                      {fmtK(Math.abs(r.flow))}
+                      {fmtAmt(Math.abs(r.flow))}
                     </div>
                   )}
                   {Math.abs(r.adj) > 0.5 && (
                     <div style={{ color: ADJ }}>
                       Cash adj. {r.adj < 0 ? "−" : "+"}
                       {sym}
-                      {fmtK(Math.abs(r.adj))}
+                      {fmtAmt(Math.abs(r.adj))}
                     </div>
                   )}
                   {r.suspect && <div style={{ color: DOWN }}>⚠ suspect day</div>}
@@ -458,7 +461,7 @@ export function NavGrowthChart({
                       className="text-right py-0.5 px-1.5 text-[8px]"
                       style={{ color: f == null ? "#333" : f > 0 ? UP : DOWN }}
                     >
-                      {f == null ? "" : `${f > 0 ? "▲" : "▼"}${fmtK(Math.abs(f))}`}
+                      {f == null ? "" : `${f > 0 ? "▲" : "▼"}${fmtAmt(Math.abs(f))}`}
                     </td>
                   ))}
                   <td
@@ -467,7 +470,7 @@ export function NavGrowthChart({
                   >
                     {row.flowTotal >= 0 ? "▲" : "▼"}
                     {sym}
-                    {fmtK(Math.abs(row.flowTotal))}
+                    {fmtAmt(Math.abs(row.flowTotal))}
                   </td>
                 </tr>
               ),
@@ -492,3 +495,7 @@ export function NavGrowthChart({
     </div>
   );
 }
+
+// Memoised: its parent re-renders on every data load (AnalyticsTab mounts in ~7
+// passes) with the same props; without memo each pass re-laid-out this chart.
+export const NavGrowthChart = memo(NavGrowthChartView);

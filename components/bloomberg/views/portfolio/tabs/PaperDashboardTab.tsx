@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { fmt, fmtK, fmtPct, pnlColor } from "../helpers";
+import { fmt, fmtAmt, fmtPct, pnlColor } from "../helpers";
 import type { Colors } from "../helpers";
 
 interface PaperAccount {
@@ -224,15 +224,15 @@ export function PaperDashboardTab({ colors }: { colors: Colors }) {
       {s && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-1">
           {[
-            { label: "EQUITY", value: fmtK(s.equity), sub: s.currency },
+            { label: "EQUITY", value: fmtAmt(s.equity), sub: s.currency },
             {
               label: "CASH",
-              value: fmtK(s.cash),
+              value: fmtAmt(s.cash),
               sub: `${((s.cash / s.equity) * 100).toFixed(0)}%`,
             },
             {
               label: "UNREALIZED",
-              value: fmtK(s.unrealized_pnl),
+              value: fmtAmt(s.unrealized_pnl),
               color: pnlColor(s.unrealized_pnl),
             },
             {

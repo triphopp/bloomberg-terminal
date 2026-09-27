@@ -449,9 +449,9 @@ test("each cell is labelled with the price RANGE its row covers", () => {
   assert.deepEqual(spec.columns[0].cellLabels, [
     "<92.00",
     "92.00-97.00",
-    "97.00-103.0",
-    "103.0-108.0",
-    ">108.0",
+    "97.00-103.00",
+    "103.00-108.00",
+    ">108.00",
   ]);
 });
 
@@ -470,8 +470,8 @@ test("each cell also carries THAT DAY's price in a compact form", () => {
     "<92.00",
     "92.00+",
     "97.00+",
-    "103.0+",
-    "108.0+",
+    "103.00+",
+    "108.00+",
   ]);
 });
 
@@ -487,9 +487,9 @@ test("compact cell prices fall back to centre prices when a row has no edges", (
   assert.deepEqual(spec.columns[0].cellLabelsCompact, [
     "90.00",
     "95.00",
-    "100.0",
-    "105.0",
-    "110.0",
+    "100.00",
+    "105.00",
+    "110.00",
   ]);
 });
 
@@ -503,14 +503,14 @@ test("a row with no edges leaves the cells unlabelled rather than guessing", () 
 test("price precision follows magnitude, not a fixed setting", () => {
   // One band can span an index in the thousands and a stock under ten; a single
   // precision is either unreadable noise or loses the band entirely.
-  assert.equal(fmtBand(1234.5, 2345.6), "1235-2346");
+  assert.equal(fmtBand(1234.5, 2345.6), "1234.50-2345.60");
   assert.equal(fmtBand(12.345, 23.456), "12.35-23.46");
   assert.equal(fmtBand(1.2345, 2.3456), "1.234-2.346");
 });
 
 test("fmtBand handles both open ends and rejects a fully open row", () => {
   assert.equal(fmtBand(null, 92), "<92.00");
-  assert.equal(fmtBand(108, null), ">108.0");
+  assert.equal(fmtBand(108, null), ">108.00");
   assert.equal(fmtBand(null, null), null);
 });
 
@@ -525,14 +525,14 @@ test("the gutter carries bucket EDGES, which are unambiguous alone", () => {
   const p = payload();
   p.series = [p.series[0]];
   const spec = heat(build(p, ["2026-01-02"]));
-  assert.deepEqual(valuesOf(spec), ["<92.00", "92.00+", "97.00+", "103.0+", "108.0+"]);
+  assert.deepEqual(valuesOf(spec), ["<92.00", "92.00+", "97.00+", "103.00+", "108.00+"]);
 });
 
 test("gutter values report the NEWEST reading even when that column is off-screen", () => {
   // The gutter is a reference for "where things stand now", not an annotation of
   // the visible columns.
   const spec = heat(build(payload(), ["2026-01-02"]));
-  assert.deepEqual(valuesOf(spec), ["<93.00", "93.00+", "98.00+", "104.0+", "109.0+"]);
+  assert.deepEqual(valuesOf(spec), ["<93.00", "93.00+", "98.00+", "104.00+", "109.00+"]);
 });
 
 test("gutter prefers the still-open projection over the last plotted column", () => {
@@ -552,14 +552,14 @@ test("gutter prefers the still-open projection over the last plotted column", ()
     },
   });
   const spec = heat(build(p, ["2026-01-02"]));
-  assert.deepEqual(valuesOf(spec), ["<202.0", "202.0+", "207.0+", "212.0+", "217.0+"]);
+  assert.deepEqual(valuesOf(spec), ["<202.00", "202.00+", "207.00+", "212.00+", "217.00+"]);
 });
 
 test("gutter falls back to centre prices when a payload carries no edges", () => {
   const p = payload({ current: null });
   p.series = [{ ...p.series[1], edges: [] }];
   const spec = heat(build(p, ["2026-01-05"]));
-  assert.deepEqual(valuesOf(spec), ["91.00", "96.00", "101.0", "106.0", "111.0"]);
+  assert.deepEqual(valuesOf(spec), ["91.00", "96.00", "101.00", "106.00", "111.00"]);
 });
 
 test("gutter omits the odds when the payload predates exceedProbs", () => {

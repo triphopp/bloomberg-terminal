@@ -780,7 +780,7 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
           className="flex items-center gap-1 px-1 py-0.5 shrink-0"
           style={{ background: "#0a0a0a", borderBottom: `1px solid ${colors.border}` }}
         >
-          <span className="text-[8px] font-bold tracking-widest" style={{ color: "#FF9800" }}>
+          <span className="text-[8px] font-bold tracking-wide" style={{ color: "#FF9800" }}>
             REGIME
           </span>
 

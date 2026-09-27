@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { tickerEnabledAtom } from "../atoms";
 import { useAlertNotifications } from "../hooks/useAlertNotifications";
 import { type AlertEvent, ruleDisplayName } from "../hooks/useAlertRules";
+import { fmtPriceStd } from "../lib/number-format";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -24,7 +25,7 @@ interface TickerItem {
 }
 
 interface TickerAlert {
-  type: "regime" | "dcc";
+  type: "regime";
   severity: "critical" | "warning";
   symbol: string | null;
   message: string;
@@ -49,8 +50,7 @@ interface TickerResponse {
 function fmtValue(v: number | null, type: string): string {
   if (v == null) return "--";
   if (type === "fx") return v.toFixed(4);
-  if (v >= 10_000) return v.toLocaleString("en-US", { maximumFractionDigits: 0 });
-  return v.toFixed(2);
+  return fmtPriceStd(v);
 }
 
 function fmtChange(
@@ -82,20 +82,18 @@ function fmtChange(
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 const SEP = (
-  <span className="mx-2 select-none" style={{ color: "#2a2a2a" }}>
-    |
+  <span className="mx-2 select-none" style={{ color: "#555" }}>
+    ·
   </span>
 );
 
 /**
- * One palette for the whole crawl. Every segment — quote, ALERT, REGIME, F&G —
- * uses these three roles and nothing else, so a signal is distinguished by what
- * it says, not by a colour of its own.
+ * Shared roles for quote and contextual readings in the moving market feed.
  */
 const C = {
-  tag: "#999999", // small left-hand label
+  tag: "#aaa", // small left-hand label
   value: "#FFD700", // the reading itself
-  detail: "#777777", // trailing context, no direction
+  detail: "#aaa", // trailing context, no direction
   up: "#22DD66",
   down: "#FF5555",
 };
@@ -116,9 +114,7 @@ const REGIME_DISPLAY: Record<string, string> = {
 };
 
 /**
- * Every non-quote segment (ALERT / REGIME / F&G / stop / corr-spike) renders
- * through here, with the same three slots and the same type scale as a quote:
- * 9px grey tag, gold value at the bar's base size, 9px trailing detail.
+ * Contextual market readings use the same label/value structure as a quote.
  */
 function SignalPill({
   tag,
@@ -131,10 +127,13 @@ function SignalPill({
 }) {
   return (
     <span className="inline-flex items-baseline gap-1">
-      <span style={{ color: C.tag, fontSize: 9 }}>{tag}</span>
+      <span style={{ color: C.tag, fontSize: 8.5 }}>{tag}</span>
       {value != null && <span style={{ color: C.value, letterSpacing: "0.02em" }}>{value}</span>}
       {children != null && (
-        <span className="inline-flex items-baseline gap-1" style={{ color: C.detail, fontSize: 9 }}>
+        <span
+          className="inline-flex items-baseline gap-1"
+          style={{ color: C.detail, fontSize: 8.5 }}
+        >
           {children}
         </span>
       )}
@@ -169,11 +168,14 @@ function ItemSegment({ item }: { item: TickerItem }) {
 
   return (
     <span className="inline-flex items-baseline gap-1">
-      <span style={{ color: C.tag, fontSize: 9 }}>{item.label}</span>
-      <span style={{ color: C.value, letterSpacing: "0.02em" }}>
+      <span style={{ color: C.tag, fontSize: 8.5 }}>{item.label}</span>
+      <span
+        className="font-semibold"
+        style={{ color: C.value, fontSize: 10.5, letterSpacing: "0.01em" }}
+      >
         {fmtValue(item.value, item.type)}
       </span>
-      {text && <span style={{ color: changeColor, fontSize: 9 }}>{text}</span>}
+      {text && <span style={{ color: changeColor, fontSize: 8.5 }}>{text}</span>}
     </span>
   );
 }
@@ -254,40 +256,6 @@ function groupRuleEvents(events: AlertEvent[]): SymbolAlertGroup[] {
     .sort((a, b) => b.latestId - a.latestId);
 }
 
-/** Alert-rule pill (backend/alerts) — cyan, so it reads as distinct from the
- *  regime/DCC alerts that share this ticker. One pill per symbol,
- *  listing every condition that symbol currently satisfies. */
-function RuleEventSegment({ group }: { group: SymbolAlertGroup }) {
-  return (
-    <SignalPill tag="ALERT" value={group.symbol}>
-      {group.conditions.length > 1 && <span>×{group.conditions.length}</span>}
-      {group.conditions.map((c, i) => (
-        <span key={c.ruleId} className="inline-flex items-center gap-1">
-          {i > 0 && <span style={{ opacity: 0.4 }}>·</span>}
-          <span>{c.label}</span>
-          {c.values && <span>{c.values}</span>}
-        </span>
-      ))}
-    </SignalPill>
-  );
-}
-
-function AlertSegment({ alert }: { alert: TickerAlert }) {
-  // ── DCC correlation spike ─────────────────────────────────────────────────
-  if (alert.type === "dcc") {
-    return <SignalPill tag="CORR-SPIKE" value={alert.message} />;
-  }
-
-  // ── Regime change event ───────────────────────────────────────────────────
-  const m = alert.message.match(/REGIME:\s+(.+?)\s+[->]+\s+(.+)/);
-  const plain = (w: string) => REGIME_DISPLAY[w.trim().toUpperCase()] ?? w.trim();
-  const label = m
-    ? `${plain(m[1])} → ${plain(m[2])}`
-    : alert.message.replace(/^[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]\s*/u, "");
-
-  return <SignalPill tag="REGIME CHG" value={label} />;
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function AlertTicker() {
@@ -332,21 +300,10 @@ export function AlertTicker() {
   // Dimmed, not blank: the data on screen is real but no longer current.
   const isStale = Boolean(shown && (shown.stale || shown.degraded || isError || shown !== data));
 
-  // ── Build content segments (alerts first, then market items) ───────────────
+  // Alerts stay stationary; only quotes scroll. A critical alert must never
+  // require waiting for the crawl to cycle back into view.
   const makeContent = () => {
     const parts: React.ReactNode[] = [];
-
-    // Rule events lead: they're the ones the user explicitly asked to be told
-    // about, unlike the standing regime watches behind them.
-    for (const group of ruleGroups) {
-      parts.push(<RuleEventSegment key={`re${group.symbol}`} group={group} />);
-      parts.push(<span key={`res${group.symbol}`}>{SEP}</span>);
-    }
-
-    for (let i = 0; i < alerts.length; i++) {
-      parts.push(<AlertSegment key={`a${i}`} alert={alerts[i]} />);
-      parts.push(<span key={`as${i}`}>{SEP}</span>);
-    }
 
     for (let i = 0; i < items.length; i++) {
       parts.push(<ItemSegment key={`m${i}`} item={items[i]} />);
@@ -363,7 +320,7 @@ export function AlertTicker() {
   // payload with rows lands it is held in lastGood and kept on screen. The
   // three cases read differently and used to be one undifferentiated
   // "MARKET DATA LOADING..." that also covered outright failure.
-  if (content.length === 0) {
+  if (content.length === 0 && ruleGroups.length === 0 && alerts.length === 0) {
     const [msg, color] = isLoading
       ? ["MARKET DATA LOADING...", "#333"]
       : isError || data?.degraded || !rows
@@ -371,30 +328,36 @@ export function AlertTicker() {
         : ["NO MARKET DATA", "#333"];
     return (
       <div
-        className="shrink-0 flex items-center px-2 font-mono border-t"
-        style={{ height: 22, backgroundColor: "#000", borderColor: "#1f1f1f" }}
+        className="min-w-0 flex-1 flex items-center px-2 font-mono"
+        style={{ backgroundColor: "#000" }}
       >
-        <span style={{ color, fontSize: 9 }}>{msg}</span>
+        <span style={{ color, fontSize: 8.5 }}>{msg}</span>
       </div>
     );
   }
 
-  // Duration: ~4s per item, min 30s
-  const durationSec = Math.max(30, items.length * 4 + alerts.length * 6 + ruleGroups.length * 6);
+  // Duration: ~4s per market item, min 30s. Alerts never enter this crawl.
+  const durationSec = Math.max(30, items.length * 4);
+  const firstRule = ruleGroups[0];
+  const firstAlert = alerts[0];
+  const alertCount = ruleGroups.length + alerts.length;
+  const alertTitle = [
+    ...ruleGroups.map(
+      (g) => `${g.symbol}: ${g.conditions.map((c) => `${c.label} ${c.values}`).join(" · ")}`
+    ),
+    ...alerts.map((a) => a.message),
+  ].join("\n");
 
   return (
     <div
-      className="shrink-0 overflow-hidden flex items-center font-mono border-t select-none"
+      className="min-w-0 flex-1 overflow-hidden flex items-center font-mono select-none"
       style={{
-        height: 22,
-        minHeight: 22,
         backgroundColor: hasCritical ? "#100000" : "#000000",
-        borderColor: hasCritical ? "#330000" : "#1f1f1f",
       }}
     >
       {/* Label badge */}
       <span
-        className="shrink-0 flex items-center justify-center h-full px-2 border-r font-bold tracking-widest"
+        className="shrink-0 flex items-center justify-center h-full px-2 border-r font-bold tracking-wide"
         style={{
           backgroundColor: hasCritical ? "#CC0000" : isStale ? "#665200" : "#FF6600",
           borderColor: hasCritical ? "#880000" : isStale ? "#443300" : "#cc4400",
@@ -406,9 +369,30 @@ export function AlertTicker() {
         {hasCritical ? "ALERT" : isStale ? "STALE" : "LIVE"}
       </span>
 
+      {alertCount > 0 && (
+        <span
+          className="flex min-w-0 max-w-[42%] shrink-0 items-center gap-1.5 overflow-hidden border-r px-2 font-bold"
+          style={{
+            borderColor: "#3a2922",
+            color: hasCritical ? "#FF6565" : "#FFB13B",
+            fontSize: 9,
+          }}
+          title={alertTitle}
+          aria-label={`${alertCount} active alerts: ${alertTitle}`}
+        >
+          <span className="shrink-0">●</span>
+          <span className="truncate">
+            {firstRule
+              ? `${firstRule.symbol} ${firstRule.conditions[0]?.label ?? "ALERT"}`
+              : firstAlert?.message}
+          </span>
+          {alertCount > 1 && <span className="shrink-0">+{alertCount - 1}</span>}
+        </span>
+      )}
+
       {/* Scrolling content — content duplicated for seamless loop via translateX(-50%) */}
       <div
-        className="flex-1 overflow-hidden h-full flex items-center pl-2"
+        className="min-w-0 flex-1 overflow-hidden h-full flex items-center pl-2"
         style={{ opacity: isStale ? 0.55 : 1 }}
       >
         {/* Two identical halves; the keyframe translates exactly -50%, so the

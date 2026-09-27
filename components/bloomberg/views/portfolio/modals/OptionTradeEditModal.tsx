@@ -2,7 +2,7 @@
 import { Loader2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { Colors } from "../helpers";
-import { fmt } from "../helpers";
+import { fmt, fmtPx } from "../helpers";
 import type { OptionTrade } from "../ui/OptionTradeLog";
 
 // Correcting a mis-entered trade — not recording that something changed in the
@@ -148,7 +148,7 @@ export function OptionTradeEditModal({
           <div className="text-[11px] font-bold" style={{ color: colors.accent }}>
             EDIT OPTION TRADE
             <span className="ml-2 text-[9px] font-normal" style={{ color: colors.textSecondary }}>
-              {trade.action}/{trade.side} · {trade.underlying} {trade.expiry} {fmt(trade.strike, 0)}
+              {trade.action}/{trade.side} · {trade.underlying} {trade.expiry} {fmtPx(trade.strike)}
               {trade.option_type === "call" ? "C" : "P"}
             </span>
           </div>

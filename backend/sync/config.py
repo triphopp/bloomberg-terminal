@@ -49,6 +49,10 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     # at them.
     ("option_contracts",        ["occ_symbol"]),          # UNIQUE(occ_symbol)
     ("option_trades",           ["trade_id"]),
+    # Fee breakdown of a fill (trades or option_trades). uuid5 PK derived from
+    # (trade, leg, component, basis), so the same item entered on two devices
+    # is one row.
+    ("trade_fee_items",         ["id"]),
     # The market state at each execution. Same argument as iv_snapshots below:
     # a chain only ever reports NOW, so spot/IV/greeks at a past trade cannot be
     # re-derived on the other machine — without this the peer receives the trade
@@ -167,7 +171,7 @@ TABLE_PK: dict[str, list[str]] = {t: pk for t, pk in SYNC_TABLES}
 MONEY_TABLES: frozenset[str] = frozenset({
     "transactions", "trades", "cash_ledger", "cash_adjustments", "broker_statements",
     "broker_executions", "dividends",
-    "option_trades", "option_trade_matches",
+    "option_trades", "option_trade_matches", "trade_fee_items",
     "portfolio_accounts", "position_cost_overrides",
 })
 

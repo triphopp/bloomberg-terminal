@@ -16,13 +16,23 @@ export function fmtVol(v: number): string {
   return `$${v.toFixed(0)}`;
 }
 
-export function fmtEndDate(iso: string): string {
+// Built once — `toLocale*String(locale, opts)` constructs a formatter per call,
+// and fmtEndDate runs per Polymarket row.
+const MONTH_DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
+const HOUR_MINUTE = new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit" });
+
+/**
+ * `format()` throws on an invalid Date where `toLocale*String` returned the
+ * text "Invalid Date" — keep the old output for bad input.
+ */
+function formatIso(f: Intl.DateTimeFormat, iso: string): string {
   if (!iso) return "";
-  try {
-    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  } catch {
-    return "";
-  }
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "Invalid Date" : f.format(d);
+}
+
+export function fmtEndDate(iso: string): string {
+  return formatIso(MONTH_DAY, iso);
 }
 
 export function polyUrl(slug: string, eventSlug: string): string {
@@ -30,10 +40,5 @@ export function polyUrl(slug: string, eventSlug: string): string {
 }
 
 export function clockStr(iso: string): string {
-  if (!iso) return "";
-  try {
-    return new Date(iso).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return "";
-  }
+  return formatIso(HOUR_MINUTE, iso);
 }

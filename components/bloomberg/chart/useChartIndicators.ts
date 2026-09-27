@@ -30,6 +30,7 @@ import {
 import { useFootprintData } from "../hooks/useFootprintData";
 import type { ChartClickContext } from "./ModularChart";
 import type { PeStats } from "./PEPane";
+import { createBbVolumeOverlay } from "./bb-volume-overlay";
 import { INDICATOR_REGISTRY, createCompositeVPOverlay, createSessionVPOverlay } from "./indicators";
 import { createFootprintOverlay } from "./indicators/order-footprint";
 import {
@@ -420,8 +421,25 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
 
   // ── Canvas overlays: VP + Footprint ─────────────────────────────────────
 
+  // Volume inside the band: one BB carries it — the first with the overlay on.
+  // Two stacked would paint over each other in the same space.
+  const bbVolumeConfig = useMemo(
+    () =>
+      indicators.find(
+        (ind) =>
+          ind.id.startsWith("bb-") &&
+          ind.config.volOverlay != null &&
+          ind.config.volOverlay !== "off"
+      )?.config ?? null,
+    [indicators]
+  );
+
   const overlays: CanvasOverlay[] = useMemo(() => {
     const result: CanvasOverlay[] = [];
+    // First, so VP strips, channels and chips all paint over it.
+    if (bbVolumeConfig && chartType === "candle") {
+      result.push(createBbVolumeOverlay(bbVolumeConfig));
+    }
     if (showVolumeProfile) {
       result.push(createSessionVPOverlay(intradayData, vpConfig));
       result.push(createCompositeVPOverlay(vpConfig, intradayData));
@@ -446,6 +464,8 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     }
     return result;
   }, [
+    bbVolumeConfig,
+    chartType,
     showVolumeProfile,
     intradayData,
     vpConfig,

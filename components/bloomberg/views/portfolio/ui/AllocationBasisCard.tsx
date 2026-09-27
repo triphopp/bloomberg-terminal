@@ -1,9 +1,11 @@
 "use client";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { Cell, Pie, PieChart, Tooltip } from "recharts";
+// Charts below the fold mount when scrolled near — see LazyResponsiveContainer.
+import { LazyResponsiveContainer as ResponsiveContainer } from "../../../ui/LazyResponsiveContainer";
 import { ALLOC_COLORS } from "../constants";
-import { type Colors, fmtK, pnlColor } from "../helpers";
+import { type Colors, fmtAmt, pnlColor } from "../helpers";
 
 // ALLOCATION (OPEN) on two bases at once. The old card weighted sectors by COST
 // alone, which is frozen at entry — a position that doubled still showed the
@@ -60,7 +62,7 @@ type Mode = "COST" | "VALUE" | "DRIFT";
 const growthColor = (v: number | null | undefined) =>
   v == null ? "#666" : v > 0 ? "#4ade80" : v < 0 ? "#f87171" : "#888";
 
-export function AllocationBasisCard({
+function AllocationBasisCardView({
   accountId,
   currency,
   colors,
@@ -173,12 +175,12 @@ export function AllocationBasisCard({
       return (
         <span style={{ color }}>
           {row.action} {Math.abs(row.delta_shares).toLocaleString()}
-          {row.est_value != null && ` ≈ ${sym}${fmtK(row.est_value)}`}
+          {row.est_value != null && ` ≈ ${sym}${fmtAmt(row.est_value)}`}
           {isSell && row.est_realized != null && (
             <span style={{ color: pnlColor(row.est_realized) }}>
               {" "}
               (realize {sym}
-              {fmtK(Math.abs(row.est_realized))})
+              {fmtAmt(Math.abs(row.est_realized))})
             </span>
           )}
         </span>
@@ -187,14 +189,14 @@ export function AllocationBasisCard({
     return (
       <span style={{ color }}>
         {row.action} {sym}
-        {fmtK(Math.abs(row.delta_value))}
+        {fmtAmt(Math.abs(row.delta_value))}
       </span>
     );
   };
 
   const numCell = (v: number | null | undefined, color?: string) => (
     <td className="text-right py-0.5 tabular-nums" style={{ color: color ?? colors.text }}>
-      {v == null ? "—" : `${sym}${fmtK(v)}`}
+      {v == null ? "—" : `${sym}${fmtAmt(v)}`}
     </td>
   );
 
@@ -335,10 +337,14 @@ export function AllocationBasisCard({
           {/* Summary strip — the four numbers the rebalance decision hangs on */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-px mb-2">
             {[
-              { label: "COST BASIS", value: `${sym}${fmtK(totals.cost_base)}`, color: colors.text },
+              {
+                label: "COST BASIS",
+                value: `${sym}${fmtAmt(totals.cost_base)}`,
+                color: colors.text,
+              },
               {
                 label: "MARKET VALUE",
-                value: `${sym}${fmtK(totals.market_value)}`,
+                value: `${sym}${fmtAmt(totals.market_value)}`,
                 color: colors.text,
               },
               {
@@ -346,7 +352,7 @@ export function AllocationBasisCard({
                 value:
                   totals.growth_pct == null
                     ? "—"
-                    : `${totals.growth_pct >= 0 ? "+" : ""}${totals.growth_pct.toFixed(2)}%  (${sym}${fmtK(totals.unrealized)})`,
+                    : `${totals.growth_pct >= 0 ? "+" : ""}${totals.growth_pct.toFixed(2)}%  (${sym}${fmtAmt(totals.unrealized)})`,
                 color: growthColor(totals.growth_pct),
               },
               {
@@ -433,7 +439,7 @@ export function AllocationBasisCard({
                         itemStyle={{ color: "#e5e5e5" }}
                         // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
                         formatter={(v: any, _n: any, p: any) => [
-                          `${sym}${fmtK(v)}`,
+                          `${sym}${fmtAmt(v)}`,
                           `${p.payload.sector} (${mode.toLowerCase()})`,
                         ]}
                       />
@@ -495,3 +501,7 @@ export function AllocationBasisCard({
     </div>
   );
 }
+
+// Memoised: its parent re-renders on every data load (AnalyticsTab mounts in ~7
+// passes) with the same props; without memo each pass re-laid-out this chart.
+export const AllocationBasisCard = memo(AllocationBasisCardView);

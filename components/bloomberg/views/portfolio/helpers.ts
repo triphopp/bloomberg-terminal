@@ -1,14 +1,33 @@
+import { numberFormat } from "../../lib/number-format";
 import type { bloombergColors } from "../../lib/theme-config";
 import type { Trade } from "./types";
 
-export const fmt = (n: number, d = 2) =>
-  n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+// Cached formatters (lib/number-format `numberFormat`) — these run per table cell.
+export const fmt = (n: number, d = 2) => numberFormat(d, d).format(n);
 
-export const fmtK = (n: number) => {
+/** Money amount, exact to the satang/cent: 1,234,567.89. No K/M rounding. */
+export const fmtAmt = (n: number) => fmt(n, 2);
+
+/** Chart axis ticks only — the one place a K/M suffix is worth the lost digits. */
+export const fmtAxis = (n: number) => {
   if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
   if (Math.abs(n) >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
   return fmt(n, 0);
 };
+
+/**
+ * Per-unit price — entry, exit, current, target, stop, strike, premium.
+ * House rule: at least 2 decimals, up to 4 (a ฿0.47 stock or a $0.05 option
+ * premium moves in the 3rd–4th place).
+ */
+export const fmtPx = (n: number) => numberFormat(2, 4).format(n);
+
+/**
+ * Volume / quantity. House rule: up to 7 decimals (0.001 BTC, 27.295 fractional
+ * shares), none shown when whole — 3,000 shares reads 3,000.
+ * `toLocaleString()` alone stops at 3 decimals and would print 0.0012345 BTC as 0.001.
+ */
+export const fmtQty = (n: number) => numberFormat(undefined, 7).format(n);
 
 export const fmtPct = (n: number) => `${n >= 0 ? "+" : ""}${fmt(n)}%`;
 

@@ -392,6 +392,28 @@ def realized_option_pnl(row: Mapping[str, object], base_currency: str = "THB") -
     )
 
 
+def match_realized(direction: int, entry_price, exit_price, quantity: float,
+                   multiplier: float, open_fees: float, open_quantity: float,
+                   close_fees: float, close_quantity: float) -> tuple[Optional[float], float]:
+    """Realized P&L of one close↔open match and the fees charged to it.
+
+    Both legs' fees follow the quantity they belong to: a match of 3 out of an
+    opening fill of 10 carries 3/10 of that fill's fees, and likewise for the
+    close. Charging only the closing fees (as before 2026-09-26) left every
+    opening fee out of realized P&L — and so out of derived cash — for good.
+    Returns (None, fees) when the closing price is unknown.
+    """
+    fees = 0.0
+    if close_quantity:
+        fees += float(close_fees or 0) * quantity / close_quantity
+    if open_quantity:
+        fees += float(open_fees or 0) * quantity / open_quantity
+    if exit_price is None:
+        return None, fees
+    gross = direction * (float(exit_price) - float(entry_price or 0)) * quantity * multiplier
+    return gross - fees, fees
+
+
 def has_realized_price(row: Mapping[str, object]) -> bool:
     return row.get("realized_pnl") is not None
 

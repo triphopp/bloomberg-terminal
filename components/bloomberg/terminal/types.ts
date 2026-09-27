@@ -69,6 +69,8 @@ export interface TerminalCtx {
   setDarkMode: (b: boolean) => void;
   setShowYTD: (b: boolean) => void;
   setStockSymbol: (s: string) => void;
+  setChartCompare: (symbols: string[]) => void;
+  setChartScalingUnit: (unit: string) => void;
   /** Open the HMAP view; omitted market/metric keep the last ones. market: US, TH, JP… metric: d1 w52 d50 d200 */
   openHeatmap: (market?: string, metric?: string) => void;
   invalidate: (keys: string[]) => void;

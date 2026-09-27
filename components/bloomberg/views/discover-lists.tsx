@@ -3,7 +3,7 @@
 /**
  * FREQ / ACTIVE — the two feeds that share the MKT left panel with WATCHLIST.
  *
- * Both use the TICK DATA grammar (one 13px line, 9px mono, SYM · LAST · CHG ·
+ * Both use the TICK DATA grammar (one mono line, sizes from lib/tick-grammar, SYM · LAST · CHG ·
  * one extra column) so switching tabs never changes how a row is read.
  *
  * - FREQ   the 30 symbols opened most often from a search box
@@ -16,8 +16,10 @@ import { useQuery } from "@tanstack/react-query";
 import { memo, useCallback, useEffect, useMemo } from "react";
 import { type SessionQuote, extendedSessionMove, staleMoveStyle } from "../core/market-session";
 import { useWatchlistQuotes } from "../hooks/useWatchlistData";
+import { fmtPriceStd } from "../lib/number-format";
 import { SEARCH_HIT_EVENT } from "../lib/search-stats";
 import type { bloombergColors } from "../lib/theme-config";
+import { TICK_HEAD, TICK_NOTE, TICK_TABLE } from "../lib/tick-grammar";
 
 type Colors = typeof bloombergColors.dark;
 
@@ -25,11 +27,7 @@ const CELL = "pl-1 pr-0.5 py-0 text-right whitespace-nowrap tabular-nums";
 const UP = "#00FF00";
 const DOWN = "#FF0000";
 
-function fmtPrice(n: number) {
-  if (n >= 10000)
-    return n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+const fmtPrice = fmtPriceStd;
 
 function fmtPct(n: number) {
   return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
@@ -50,10 +48,7 @@ function Head({
 }: { extra: string; colors: Colors; extLabel?: string | null }) {
   return (
     <thead>
-      <tr
-        className="text-[7px] font-bold tracking-wider leading-[12px]"
-        style={{ background: "#050505", color: colors.textSecondary }}
-      >
+      <tr className={TICK_HEAD} style={{ background: "#050505", color: colors.textSecondary }}>
         <th className="px-1 py-0 text-left">SYM</th>
         <th className="px-1 py-0 text-right">LAST</th>
         <th className="px-1 py-0 text-right">CHG</th>
@@ -66,10 +61,7 @@ function Head({
 
 function Notice({ text, colors, warn }: { text: string; colors: Colors; warn?: boolean }) {
   return (
-    <div
-      className="px-1 text-[8px] font-mono leading-[14px]"
-      style={{ color: warn ? "#facc15" : colors.textSecondary }}
-    >
+    <div className={`px-1 ${TICK_NOTE}`} style={{ color: warn ? "#facc15" : colors.textSecondary }}>
       {text}
     </div>
   );
@@ -271,10 +263,7 @@ export const FrequentSearchList = memo(function FrequentSearchList({
     );
 
   return (
-    <table
-      className="w-full text-[9px] leading-[13px] font-mono"
-      style={{ borderCollapse: "collapse" }}
-    >
+    <table className={TICK_TABLE} style={{ borderCollapse: "collapse" }}>
       <Head extra="HITS" colors={colors} extLabel={extLabel} />
       <tbody>
         {items.map((it) => {
@@ -361,10 +350,7 @@ export const MostActiveList = memo(function MostActiveList({
         }`}
         colors={colors}
       />
-      <table
-        className="w-full text-[9px] leading-[13px] font-mono"
-        style={{ borderCollapse: "collapse" }}
-      >
+      <table className={TICK_TABLE} style={{ borderCollapse: "collapse" }}>
         <Head extra="VOL" colors={colors} extLabel={extLabel} />
         <tbody>
           {items.map((it) => (

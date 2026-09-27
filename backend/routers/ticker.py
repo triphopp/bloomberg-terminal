@@ -301,24 +301,9 @@ def _fetch_alerts() -> list[dict]:
     except Exception as e:
         print(f"[ticker] alerts error: {e}")
 
-    # DCC correlation spike alerts (from tail-risk cache — no circular dependency,
-    # tail-risk never calls /api/ticker in its DCC path)
-    try:
-        from routers.tail_risk import get_cached_dcc_signals
-        _DCC_RANK = {"NORMAL": 0, "CAUTION": 1, "SPIKE": 2, "EXTREME": 3}
-        v1, v3 = get_cached_dcc_signals()
-        max_rank = max(_DCC_RANK.get(v1, 0), _DCC_RANK.get(v3, 0))
-        if max_rank >= 2:  # SPIKE or EXTREME
-            alerts.append({
-                "type":     "dcc",
-                "severity": "critical" if max_rank >= 3 else "warning",
-                "symbol":   None,
-                "message":  f"V1:{v1} HMM:{v3}",
-                "persistent": True,
-            })
-    except Exception as e:
-        print(f"[ticker] DCC alert error: {e}")
-
+    # No DCC alert here (removed 2026-09-26): the raw "V1:… HMM:…" codes meant
+    # nothing on the strip, and a correlation spike already reaches it as the
+    # named TAIL event CORRELATION SPIKE. DCC V1 / HMM stays in the TAIL view.
     return alerts
 
 

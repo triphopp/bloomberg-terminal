@@ -121,6 +121,36 @@ def cost_conservation(ctx):
                                "remaining_cost": remaining})
 
 
+@check("F1", "error", "row")
+def fee_breakdown(ctx):
+    """option_trades.fees must equal its fee items (POSTED beats ESTIMATED per component)."""
+    has = ctx.conn.execute("SELECT 1 FROM sqlite_master WHERE name='trade_fee_items'").fetchone()
+    if not has:
+        ctx.count("F1", 0, "skipped", "No fee breakdown table.")
+        return
+    items = defaultdict(dict)
+    for r in _rows(ctx.conn, "trade_fee_items"):
+        if r["trade_table"] != "option_trades":
+            continue
+        slot = items[r["trade_id"]]
+        key = (r["leg"], r["component"])
+        if key not in slot or r["basis"] == "POSTED":
+            slot[key] = r
+    for trade_id, parts in items.items():
+        ctx.count("F1")
+        row = ctx.conn.execute("SELECT account_id, fees FROM option_trades WHERE trade_id=?",
+                               (trade_id,)).fetchone()
+        if not row:
+            yield Finding("F1_ORPHAN", "error", None, None,
+                          "Fee items point at an option fill that no longer exists.", {"trade_id": trade_id})
+            continue
+        total = sum(dec(p["amount"]) for p in parts.values())
+        if abs(total - dec(row["fees"])) > Decimal("0.005"):
+            yield Finding("F1", "error", row["account_id"], None,
+                          f"Option fill fees {row['fees']} differ from its fee items {total}.",
+                          {"trade_id": trade_id, "fees": row["fees"], "items_total": str(total)})
+
+
 @check("H1", "warn", "row")
 def hygiene(ctx):
     specs = {

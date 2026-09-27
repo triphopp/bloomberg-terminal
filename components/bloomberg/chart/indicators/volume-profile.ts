@@ -121,8 +121,14 @@ function distributeToBuckets(
   priceMax: number;
   totalVolume: number;
 } {
-  const priceMin = Math.min(...bars.map((b) => b.low));
-  const priceMax = Math.max(...bars.map((b) => b.high));
+  // A loop, not Math.min(...bars.map()): spreading a MAX intraday array
+  // exceeds the engine's argument limit and throws RangeError.
+  let priceMin = Number.POSITIVE_INFINITY;
+  let priceMax = Number.NEGATIVE_INFINITY;
+  for (const b of bars) {
+    if (b.low < priceMin) priceMin = b.low;
+    if (b.high > priceMax) priceMax = b.high;
+  }
   const range = priceMax - priceMin;
   const bucketSize = range / numBuckets || 1;
 
@@ -364,7 +370,8 @@ export function createSessionVPOverlay(
         const sessionWidth = Math.abs(xEnd - xStart);
         if (sessionWidth < 8) continue; // too narrow to draw
 
-        const maxBucketVol = Math.max(...profile.buckets.map((b) => b.volume), 1);
+        let maxBucketVol = 1;
+        for (const bk of profile.buckets) if (bk.volume > maxBucketVol) maxBucketVol = bk.volume;
 
         // Draw volume bars
         for (let b = 0; b < profile.buckets.length; b++) {

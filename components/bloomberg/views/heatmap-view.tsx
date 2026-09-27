@@ -26,6 +26,7 @@ import {
   stockSearchSymbolAtom,
 } from "../atoms";
 import { openChartWindowAtom } from "../atoms/chart-windows";
+import { fmtPriceStd } from "../lib/number-format";
 import { bloombergColors } from "../lib/theme-config";
 
 const colors = bloombergColors.dark;
@@ -134,13 +135,11 @@ function fmtCap(v: number): string {
   return v.toFixed(0);
 }
 
-function fmtPx(v: number): string {
-  return v >= 1000
-    ? v.toLocaleString("en-US", { maximumFractionDigits: 0 })
-    : v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+const fmtPx = fmtPriceStd;
 
 /** Cap-weighted mean of a metric (RVOL too — a big name trading heavy matters more). */
+
+const NO_TILES: Tile[] = [];
 function capWeighted(tiles: Tile[], metric: Metric): number | null {
   let num = 0;
   let den = 0;
@@ -369,7 +368,7 @@ export function HeatmapView() {
     staleTime: 60_000,
     refetchInterval: 120_000,
   });
-  const tiles = data?.tiles ?? [];
+  const tiles = data?.tiles ?? NO_TILES; // stable while loading — `?? []` re-ran every memo below per render
 
   // Measure the map box
   const boxRef = useRef<HTMLDivElement>(null);

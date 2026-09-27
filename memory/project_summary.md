@@ -30,7 +30,7 @@
 ## Tests (verified 2026-09-26)
 
 ```bash
-cd backend && python -m pytest -q -p no:cacheprovider --basetemp=<scratch dir> tests/   # 1012 pass, 1 fail (test_iv_scheduler — see Known Issues)
+cd backend && python -m pytest -q -p no:cacheprovider --basetemp=<scratch dir>   # backend/pytest.ini: tests/ + slip_ocr/tests/ — 1042 pass (2026-09-26)
 npm run typecheck      # tsc --noEmit — clean
 npm run test:chart     # 264 pass
 npm run test:session   # 73 pass
@@ -53,7 +53,7 @@ This Windows box denies the system temp dir to pytest — pass `--basetemp` to a
 | State | Jotai (atoms) + TanStack React Query |
 | Charts | lightweight-charts v5 via our `chartkit/` + `chart/` (ModularChart, panes, event rail, regression channels), Recharts for dashboards |
 | Styling | Tailwind CSS, `bloombergColors` theme; text-only controls (`styles/globals.css`) |
-| Backend | Python FastAPI (port 9317) — 61 routers, `main.py` mounts them |
+| Backend | Python FastAPI (port 9317) — 62 routers, `main.py` mounts them |
 | Data | yfinance through a provider registry (`sources/`) + app-wide Yahoo gate (`yahoo_gate.py`, 6 concurrent) + shared request coordinator (`market_requests.py`) |
 | Macro / rates | FRED (+ Alpha Vantage fallback), Japan MOF JGB CSV, CBOE vol CSVs, Treasury fiscaldata |
 | Filings / positioning | SEC EDGAR (submissions, 8-K EX-99.1, XBRL, EFTS 424B2/424B5), CFTC Socrata (TFF + Disaggregated) |
@@ -82,6 +82,7 @@ PORTFOLIO_DB          — default portfolio.db (scripts honour it: e.g. run back
 CORS_ORIGINS          — must include the frontend origin (port 9318)
 YAHOO_MAX_CONCURRENT  — default 6
 QUOTE_PROVIDER_DEFAULT / QUOTE_AUTO_FAILOVER — quote registry
+QUOTE_STREAM_MAX_SYMBOLS (default 900) — live stream budget across all Yahoo sockets (90/socket)
 IV_SNAPSHOT_INTERVAL (default 10800, 0 = off) / IV_SNAPSHOT_SYMBOLS — ATM IV recorder
 SERIES_REFRESH_INTERVAL — indicator series collectors
 ALERT_SCAN_INTERVAL   — alert rule scanner
@@ -102,7 +103,7 @@ PYTHON_API_URL=http://localhost:9317   — imported ONLY via lib/constants.ts (P
 
 ## Backend Architecture — Modular Routers
 
-`main.py` = app init + CORS + schema init + router mounting (61 routers). All logic in `backend/routers/`.
+`main.py` = app init + CORS + schema init + router mounting (62 routers). All logic in `backend/routers/`.
 Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo_gate` load before any router.
 
 | Router file | Prefix | Source |
@@ -114,9 +115,10 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `dcf.py` | `/api/dcf/*` (adaptive valuation + sensitivity + audit lineage) | yfinance + `analytics/dcf.py` |
 | `ir_stress.py` | `/api/ir-stress/{curve,scenarios,{symbol}/exposure|duration|scenario,screen/rank}` (CIRST, stock RATE STRESS tab) | XBRL + FRED |
 | `market_heatmap.py` | `/api/market-heatmap?market=US&per=25` (HMAP view) | yfinance `screen()` × 11 sectors in parallel; 90s, fail 60s, last-good 6h |
+| `stream.py` | `/api/stream/quotes?symbols=` (SSE, ≤1 msg/s, only symbols that ticked) · `/api/stream/status` | Yahoo pricing WebSocket, sharded ≤90 symbols per socket (Yahoo cap 100) on an own asyncio thread, protobuf decoded directly (`backend/quote_stream.py`), ref-counted subscriptions, regular-session ticks only; no REST calls, no key; upstream source `Yahoo stream` |
 | `cot.py` | `/api/cot/{snapshot,history,basis,factor,portfolio,status}` | CFTC Socrata, 17 contracts, background refresh → `cot_*` tables; endpoints read SQLite only |
 | `discover.py` | `/api/search-stats/{hit,top,{symbol}}`, `/api/most-active` (MKT FREQ / ACTIVE) | SQLite `search_hits` + yfinance `screen("most_actives")` |
-| `bonds.py` | `/api/bonds/{overview,supply,issuance}` (BOND view) | FRED + Treasury fiscaldata + SEC EFTS |
+| `bonds.py` | `/api/bonds/{overview,decomposition,supply,issuance}` (BOND view) | FRED + NY Fed ACM + Treasury fiscaldata + SEC EFTS |
 | `rates.py` | `/api/rates/curve` (UST 11 + JGB 15 tenors, tick-row shape) | FRED daily + MOF CSV |
 | `crisis.py` | `/api/crisis`, `/api/crisis/composite` (BOND → CONDITIONS, TAIL) | FRED |
 | `macro.py` | `/api/macro`, `/api/macro/calendar` (event rail: FOMC/CPI/NFP/PCE/GDP, back 3y) | FRED + AV; `event_calendar.py` |
@@ -130,6 +132,7 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `company_filings.py` | `/api/company/{filings,outlook,xbrl}/{symbol}` | SEC EDGAR (US only) |
 | `series.py` | `/api/v2/series/*` (generic indicator series; dramexchange DRAM/NAND) | SQLite + `series_sources/` |
 | `portfolio_v2.py` | `/api/v2/portfolio/*` — accounts, trades, sell (AVCO), cash/transfer/reconcile, dividends, fees, open-positions, summary, returns, nav-history, **nav-index** (TWR, start-of-day for capital dated before the snapshot day), **takeover**, **history-review**, ledger check/stock-card/statements/evidence, import | SQLite |
+| `slip_ocr.py` | `/api/v2/portfolio/slip/{read,status}` — broker slip screenshot → ENTRY fields (engine `backend/slip_ocr/`, easyocr in a spawned worker); read-only | — |
 | `risk.py` | `/api/v2/portfolio/risk/*` (VaR/CVaR/Parity/Stress/Sizing) | Ledoit-Wolf |
 | `backtest_v2.py` | `/api/v2/portfolio/backtest/*` | SQLite trades + yfinance |
 | `portfolio.py` | `/api/portfolio/*` (legacy research: thesis files, transactions, backtest) | filesystem + SQLite |
@@ -160,6 +163,8 @@ trades              (id, account_id, symbol, sector, date_entry, date_exit, pric
                      currency, exchange_rate, exit_exchange_rate, resolved_symbol, market, is_reinvest,
                      fee_entry, fee_exit, fee_detail JSON,
                      acquisition_type, original_price_entry, transfer_price_entry,
+                     broker_order_ref (indexed, NOT unique — split lots share it), executed_at (ISO+offset),
+                     entry_source manual|slip|excel|NULL(legacy), source_sha256,
                      strategy_name, entry_trigger, exit_trigger, market_trend, news_sentiment,
                      expectation_based, factor_based, fear_greed_index, vix_index, note, created_at, updated_at)
 -- one row per lot; win_loss='P' = open. AVCO: a sell rebases every open lot of the symbol (_rebase_open_lots_to_avco);
@@ -211,7 +216,13 @@ broker_statements   (id uuid, account_id FK, as_of, currency, cash TEXT, market_
 --   Source reference is user supplied, not verified file; no real statement loaded yet.
 broker_executions   (id uuid, account_id FK, broker, symbol, side, executed_at_local, display_timezone,
                      quantity TEXT, unit_price TEXT, instrument_ccy, order_amount TEXT?, order_ccy?,
-                     source_image, source_sha256, source_note, created_at, updated_at)
+                     source_image, source_sha256, source_note, created_at, updated_at,
+                     order_ref UNIQUE(account_id, order_ref), gross_value, commission, vat, sec_fee, taf_fee,
+                     exchange, order_type, trade_id (NULL when its trade is deleted), extractor,
+                     instrument_type STOCK|OPTION, option_trade_id, commission_discount, occ_fee, orf_fee,
+                     submitted_at_local, settle_date)
+-- 2026-09-26: OPTION rows = option order slips (symbol = OCC, quantity = contracts); evidence_match skips them.
+-- 2026-09-26: slip provenance (slip_evidence.py). Slip images + OCR sidecar in backend/evidence/slips/ (gitignored, not synced).
 -- 2026-09-25: 29 Dime Activity fills from 10 hash-verified user images; sync + audit.
 --   Evidence only: no trades/cash/lot/ledger posting. Screen time zone and sale settlement remain unknown.
 portfolio_history_review (id uuid, source_sha256, record_type TRADE|CASH, source_sheet, source_row,
@@ -243,7 +254,17 @@ option_contracts    (contract_id, occ_symbol UNIQUE, underlying, expiry, strike,
                      UNIQUE(underlying, expiry, strike, option_type)
 option_trades       (trade_id, contract_id FK, account_id, trade_date, action OPEN|CLOSE,
                      side BUY|SELL, quantity>0, price, fees, exchange_rate,
-                     close_reason TRADE|EXPIRED|EXERCISED|ASSIGNED|UNKNOWN, note, created_at)
+                     close_reason TRADE|EXPIRED|EXERCISED|ASSIGNED|UNKNOWN, note, created_at,
+                     executed_at (ISO + offset), settle_date, broker_order_ref UNIQUE(account_id,…), entry_source)
+trade_fee_items     (id uuid5, account_id, trade_table trades|option_trades, trade_id, leg FILL|ENTRY|EXIT,
+                     component COMMISSION|COMMISSION_DISCOUNT|VAT|SEC|TAF|ORF|OCC|EXCHANGE|OTHER,
+                     amount TEXT (cost +, promo discount −), currency, basis ESTIMATED|POSTED,
+                     source SLIP|BROKER_POSTING|SCHEDULE|MANUAL, evidence_id, note, created_at)
+                     UNIQUE(trade_table, trade_id, leg, component, basis)
+-- 2026-09-26: fee breakdown; option_trades.fees = Σ items (POSTED beats ESTIMATED per component), check F1.
+--   Synced + audited. Only option fills use it so far. 14 Dime option fills (Jan–Apr 2026) imported
+--   from slips: backend/option_history.py + scripts/import_option_history.py, manifest in
+--   backups/accounting-evidence-20260926-options/; DATA_FIX −140.26 USD keeps today's cash.
 option_trade_greeks (trade_id PK/FK CASCADE, spot, iv, delta, gamma, theta, vega, rho,
                      source live|manual|unavailable, captured_at)
 option_trade_matches(close_trade_id FK, open_trade_id FK, quantity, fees_alloc, realized_pnl,
@@ -358,7 +379,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 |-----|--------|------|-----------|
 | `1` | MKT | Market (default, eager-loaded) | `market-view.tsx` — left panel WATCH / FREQ / ACTIVE (`discover-lists.tsx`, watchlist `pinned-assets.tsx` compact/table/cards) · main chart (`chart/ModularChart`, indicators, multiple regression channels, event rail: dividends/earnings/SET deadlines/FOMC/CPI/NFP/PCE/GDP) · REGIME panel CORR / GEOM / ROT (table + RRG map) / IV (smile, SVI, OI, 25Δ) / COT (PC1 + extremes) · TICK DATA board — 7 foldable, drag-reorderable sections (AMERICAS / EMEA / ASIA PACIFIC / RATES·US / RATES·JP / VOLATILITY / FX) in 4 columns NAME · LAST · CHG · YTD, ▼p/▲p CFTC crowding marks, `UsMarketClock` on top |
 | `2` | NEWS | News | `views/news/` — WATCHLIST (per-ticker, 7 sources, by sector; HEADLINES / RATE STRESS / DCF / REGIME panels) · NEWSFEED · SOCIAL · DATA (indicator series board) + Polymarket column |
-| `3` / `b` | BOND | Bond Monitor | `views/bonds/` — MARKET: KPI strip, TREASURY LEG, CREDIT LEG (IG/HY trigger lines 2%/5%), CORPORATE ISSUANCE/WEEK (SEC 424B2/424B5 ex-bank) + EVENT STUDY + RECENT DEALS, TREASURY AUCTIONS, DEBT STOCK, CFTC Treasury futures + basis trade · CONDITIONS (ex-CRDT, `useCreditData(isActive)` → `/api/crisis`): crisis level L0–3 (also in the status bar), STL FSI / NFCI, breakevens, 30Y mortgage, delinquencies, dealer balance sheet. `Alt+1/2` tabs |
+| `3` / `b` | BOND | Bond Monitor | `views/bonds/` — MARKET: KPI strip, 10Y YIELD DECOMPOSITION (ACM: expected real + BE + TP, 20D driver, tripwires), TREASURY LEG, CREDIT LEG (IG/HY trigger lines 2%/5%), CORPORATE ISSUANCE/WEEK (SEC 424B2/424B5 ex-bank) + EVENT STUDY + RECENT DEALS, TREASURY AUCTIONS, DEBT STOCK, CFTC Treasury futures + basis trade · CONDITIONS (ex-CRDT, `useCreditData(isActive)` → `/api/crisis`): crisis level L0–3 (also in the status bar), STL FSI / NFCI, breakevens, 30Y mortgage, delinquencies, dealer balance sheet. `Alt+1/2` tabs |
 | `4` / `p` | PORT | Portfolio | `portfolio-view.tsx` → `views/portfolio/` — PORTFOLIO (POSITIONS incl. TAKEOVER strip · OPTIONS · TRADES · CASH · ENTRY) · ANALYTICS (P&L dashboard: KPI strip, flagged XIRR, period returns, PORTFOLIO GROWTH (TWR, deposit ▲ / withdrawal ▼ / EDIT ◆, estimated span shaded, monthly table) · ROTATION · BACKTEST) · RISK (VaR/CVaR/stress/parity/sizing + FUTURES POSITIONING vs BOOK) · TOOLS (THESES: THESIS / NOTES / KB Zettelkasten / GRAPHS / HISTORY / LINKED TRADES / AI · IMPORT · AUDIT incl. ACCOUNTING CHECK) · PAPER (DASHBOARD / TRADE / POSITIONS / OPTIONS / HISTORY) |
 | `5` / `t` | TAIL | Tail Risk Monitor | `tail-risk-view.tsx` + `views/tail/` — MARKET EVENTS (named cross-asset shocks; SEVERE raises the composite) · 6 risk dimensions → composite · MACRO CONTEXT (not in composite: event strip, Fed, curve, regime, latest prints, MACRO READ) · SECTOR ROTATION (turnover tilt + self-recorded ETF AUM) · POSITIONING (CFTC crowding flags; `cot_crowding` shown with CTX tag, `counted: False`) |
 | `h` | — | HMAP (no nav button) | `heatmap-view.tsx` — one market as a sector treemap (~275 names); command `heatmap(TH)`, `heatmap(US, 52w)`; metrics 1D · 52W · 50D · 200D · HIGH · RVOL switch without a request; click → stock view, shift-click → floating chart |
@@ -410,11 +431,19 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 
 Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished plan becomes `- [x] … done YYYY-MM-DD` only with a Completion Evidence section.
 
+- [x] **Chart Compare and Price Scaling** — done 2026-09-26; COMPARE icon, `compare(A,B,...)` ≤10, `<unit>_scaling` chart units (`plans/completed/chart-compare-and-scaling.md`)
+- [ ] **Chart render performance** — tick path O(1) (series.update + incremental indicators), columnar Float64Array bars, chunked history by calendar block, cache tiers FE L1/L2 (React Query + IndexedDB) · BE L1/L2 (bytes LRU + SQLite `price_bars`), LOD decimation (`plans/chart-render-perf.md`)
+- [ ] **Quote stream visibility budget** — global symbol budget + priority by what's on screen (focus/visible/mounted, LRU, lazy eviction), coverage event, REST gated by viewport (`plans/quote-stream-visibility-budget.md`)
+- [x] **Quote stream sharding** — done 2026-09-26; Yahoo WS 100-symbol/conn cap → async shards ≤90 each + direct proto decode (6× less CPU/tick) (`plans/completed/quote-stream-sharding.md`)
+- [x] **BB Volume Overlay** — done 2026-09-26; volume ในกรอบ BB (spike/delta est./vol/rvol/events/profile ต่อเดือน), σ วัดจาก volume เอง, params ใน BB settings (`plans/completed/bb-volume-overlay.md`)
+- [x] **Compact Status Strip** — done 2026-09-26; รวม TAIL/LIVE จาก 40px เป็น 24px, TAIL แสดง 3 เหตุการณ์เสี่ยงสูงสุด, alert ค้างให้อ่านทันที (`plans/completed/compact-status-strip.md`)
+
 ### Open
 
 - [ ] **PORT Evidence Match** — broker fills ↔ reconstructed trades, AUDIT → EVIDENCE (`plans/port-evidence-match.md`)
 - [ ] **THESES readability + GRAPHS format + graph sync** — 7/7 steps coded 2026-09-19 (counts บนแท็บมากับ payload, markdown renderer เต็ม, rail พับได้, ปุ่ม READ โหมดเอกสาร, GRAPHS render shell + เทมเพลต + lint, `graphs` เข้า SYNC_TABLES + ไฟล์ HTML ไป Drive); เหลือฝังไฟล์ฟอนต์ Laksaman (`plans/theses-readability-and-sync.md`)
 - [ ] **PORT Accounting Subsystems (S0–S7)** — audit + AVCO/FIFO preview + preflight + statement revisions/R3 + cash EDIT categories/R1/R2 + 29 image-cited Dime fills staged separately. 11 offsets เก่ายัง UNKNOWN; ไม่ migrate/activate, C1/H2/N1 ค้าง (`plans/port-accounting-subsystems.md`, `sessions/2026-09-25-dime-broker-execution-evidence.md`)
+- [ ] **Unified Trade Entry** — ENTRY เป็นที่กรอกเดียว หุ้น + option (สลิป option OCR, fee items, lot picker/FIFO, preview P&L); OPTIONS/POSITIONS ปุ่มพาไป ENTRY (`plans/unified-trade-entry.md`)
 - [ ] **PORT Accounting Ledger** — Step 1 done; Step 2 verified SQLite backup + apply gate; Step 3 stock-card AVCO/FIFO + CHECK UI/API reconstructed; Step 6 statement intake/diff code prepared. ยังไม่มี posted events, dual-write/read switch (`plans/port-accounting-ledger.md`)
 - [ ] **Mobile Responsive** — shell bottom nav + MKT single-panel switcher first; PORT, NEWS, rest follow (`plans/mobile-responsive.md`)
 - [ ] **Migrate Fund legacy → v2** — ⚠️ overdue: the SEC old portal closed 2026-06-30; `/api/sec/*` legacy fund endpoints are dead
@@ -507,7 +536,7 @@ Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished pl
 - [x] Portfolio Risk System: VaR/CVaR/Stress/Parity/Sizing (2026-06-02)
 - [x] Options: position tracking + BS+GC Greeks (2026-06-03)
 - [x] Regime Detection panel in MKT view (2026-06-03)
-- [x] **DCC v1+v3 live signals** — backtest IS/OOS/FWD, wired into tail ribbon + alert ticker (g13_dcc_v1, g14_dcc_hmm) done 2026-06-07
+- [x] **DCC v1+v3 live signals** — backtest IS/OOS/FWD, wired into tail ribbon + alert ticker (g13_dcc_v1, g14_dcc_hmm) done 2026-06-07; alert-ticker `V1:… HMM:…` chip removed 2026-09-26 (TAIL view keeps DCC V1 / HMM; spike shows as CORRELATION SPIKE event)
 - [x] **Portfolio: Trade DELETE button** — confirm banner, irreversible delete done 2026-06-07
 - [x] **Portfolio: Import + Edit modal bug fixes** — price_exit auto-sets win_loss W/L; symbol blur → sector auto-fill via `/api/stock/sector/{symbol}` done 2026-06-07
 - [x] **Strategy Builder** — 19 templates (inc. Calendar/Diagonal multi-expiry), BS payoff, PoP/E[P&L]/Kelly ranking table done 2026-06-08 (`plans/completed/strategy-builder.md`)

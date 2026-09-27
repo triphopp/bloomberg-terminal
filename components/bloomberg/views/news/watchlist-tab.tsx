@@ -25,9 +25,16 @@ import type {
   ThemeColors,
   WatchlistArticle,
   WatchlistMarket,
+  WatchlistSectorMeta,
   WatchlistSymbolMeta,
 } from "./types";
 import { useWatchlistNews, useWatchlistSymbols } from "./useWatchlistNews";
+
+// Stable fallbacks while there is no response — see the note at their use.
+const NO_ARTICLES: WatchlistArticle[] = [];
+const NO_SECTORS: WatchlistSectorMeta[] = [];
+const NO_SYMBOLS: WatchlistSymbolMeta[] = [];
+const NO_MARKETS: WatchlistMarket[] = [];
 
 type GroupMode = "sector" | "ticker" | "time";
 /** Which panel the right-hand column shows once a single company is in focus. */
@@ -266,9 +273,14 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
     perSymbol: layout.perSymbol,
   });
 
-  const articles = data?.articles ?? [];
-  const sectors = data?.sectors ?? [];
-  const symbolMeta: WatchlistSymbolMeta[] = data?.symbols ?? [];
+  // Module-level empties, never `?? []`: a fresh array per render while `data`
+  // is undefined (loading, failed, or the query disabled by an empty watchlist)
+  // re-fired the Polymarket effect below every render, which set parent state
+  // with yet another fresh array — an infinite loop (~15 renders/s, React
+  // "Maximum update depth exceeded") for as long as there was no data.
+  const articles = data?.articles ?? NO_ARTICLES;
+  const sectors = data?.sectors ?? NO_SECTORS;
+  const symbolMeta: WatchlistSymbolMeta[] = data?.symbols ?? NO_SYMBOLS;
 
   // Feed the Polymarket column
   useEffect(() => {
@@ -283,7 +295,7 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
           company: symbolMeta.find((m) => m.symbol === selectedSymbol)?.company ?? "",
         }
       : null;
-    onMarketsChange(data?.markets ?? [], focus, ladder);
+    onMarketsChange(data?.markets ?? NO_MARKETS, focus, ladder);
   }, [data?.markets, selectedSector, selectedSymbol, sectors, symbolMeta, onMarketsChange]);
 
   // ── Filtering ───────────────────────────────────────────────────────────────

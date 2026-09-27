@@ -7,6 +7,7 @@ import {
   probColor,
   useStockPrediction,
 } from "../../hooks/useStockPredictions";
+import { fmtPriceStd } from "../../lib/number-format";
 import { fmtEndDate, fmtVol } from "./helpers";
 import type { ThemeColors } from "./types";
 
@@ -16,7 +17,7 @@ function pct(p: number | null | undefined): string {
 
 function price(n: number | null | undefined): string {
   if (n == null) return "—";
-  return n >= 1000 ? n.toLocaleString("en-US", { maximumFractionDigits: 0 }) : n.toFixed(2);
+  return fmtPriceStd(n);
 }
 
 const TYPE_LABEL: Record<string, string> = {

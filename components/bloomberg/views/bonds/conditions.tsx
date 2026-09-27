@@ -11,15 +11,9 @@
  * MARKET tab; VIX lives in TAIL.
  */
 
-import {
-  Area,
-  AreaChart,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { Area, AreaChart, ReferenceLine, Tooltip, XAxis, YAxis } from "recharts";
+// Charts below the fold mount when scrolled near — see LazyResponsiveContainer.
+import { LazyResponsiveContainer as ResponsiveContainer } from "../../ui/LazyResponsiveContainer";
 
 import type { CreditData, CreditSignal } from "../../hooks/useCreditData";
 import { DealerBalanceSheetPanel } from "./positioning";

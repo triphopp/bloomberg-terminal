@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "slip-ocr"
+version = "0.1.0"
+description = "Broker order-slip screenshot → trade-entry fields, with arithmetic cross-checks. Local OCR, Thai-aware."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "pillow>=10",
+]
+
+[project.optional-dependencies]
+# One OCR backend is needed to read images; parse_tokens() works with none.
+rapid = ["rapidocr>=3.6", "onnxruntime>=1.20"]   # ~1.5 s / slip on CPU (preferred)
+easy = ["easyocr>=1.7"]                          # 12–25 s / slip, pulls torch (fallback)
+test = ["pytest>=7"]
+
+# This directory IS the package: in the monorepo it is backend/slip_ocr/, and
+# after `git subtree split --prefix=backend/slip_ocr` it is the repo root.
+# Mapping "." keeps one layout valid in both places.
+[tool.setuptools]
+package-dir = { "slip_ocr" = ".", "slip_ocr.parsers" = "parsers" }
+packages = ["slip_ocr", "slip_ocr.parsers"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

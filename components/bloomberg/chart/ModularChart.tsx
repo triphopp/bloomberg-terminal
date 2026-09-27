@@ -60,6 +60,7 @@ import {
 import { OverlayPrimitive } from "./overlay-primitive";
 import { clampPaneHeight, computePaneLayout, paneKey, subPaneKeyAtOffset } from "./pane-layout";
 import { createPriceGridOverlay } from "./price-grid-overlay";
+import { setSeriesData } from "./series-data.ts";
 import type {
   CanvasOverlay,
   ChartColors,
@@ -102,6 +103,8 @@ export interface ModularChartProps {
   eventMarkers?: ChartEventMarker[];
   /** Current PRE/POST price shown as a dashed line on the candle pane. */
   referencePriceLine?: { price: number; color: string; title: string } | null;
+  /** Extra decimals for ratios such as a stock price expressed in BTC. */
+  pricePrecision?: number;
   /**
    * Fired with the bar time when the user clicks inside the data area. Used by
    * the Regression Channel to pick its two endpoints, and by the event detail
@@ -177,10 +180,21 @@ function refillSeries(
   if (outputs.length !== built.length) return false;
   for (const [i, output] of outputs.entries()) {
     // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
-    built[i].setData(output.data as any[]);
+    setSeriesData(built[i], output.data as any[]);
   }
   return true;
 }
+
+/**
+ * Shared empties for omitted / cleared props. `overlays` and `indicators` are dependencies of the
+ * chart BUILD effect, so a fresh `[]` per render (a default param, or an inline
+ * `[]` from the caller) tore the whole chart down and rebuilt it on every
+ * parent render — MKT with a scaling unit set rebuilt ~2× per keystroke.
+ * Callers passing "none" should pass these too.
+ */
+export const NO_OVERLAYS: CanvasOverlay[] = [];
+export const NO_INDICATORS: ChartIndicator[] = [];
+export const NO_EVENT_MARKERS: ChartEventMarker[] = [];
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -199,9 +213,10 @@ export function ModularChart({
   colors,
   height = 280,
   indicators,
-  overlays = [],
-  eventMarkers = [],
+  overlays = NO_OVERLAYS,
+  eventMarkers = NO_EVENT_MARKERS,
   referencePriceLine = null,
+  pricePrecision,
   onBarClick,
   crosshairCursor = false,
   onLogicalRange,
@@ -440,10 +455,19 @@ export function ModularChart({
       borderDownColor: colors.negative,
       wickUpColor: colors.positive,
       wickDownColor: colors.negative,
+      ...(pricePrecision
+        ? {
+            priceFormat: {
+              type: "price" as const,
+              precision: pricePrecision,
+              minMove: 10 ** -pricePrecision,
+            },
+          }
+        : {}),
       autoscaleInfoProvider: referenceAutoscale,
     });
     // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
-    candleSeries.setData(data as any[]);
+    setSeriesData(candleSeries, data as any[]);
     mainSeriesRef.current = candleSeries;
     const initialReference = referencePriceLineRef.current;
     if (initialReference && Number.isFinite(initialReference.price) && initialReference.price > 0) {
@@ -457,7 +481,7 @@ export function ModularChart({
     }
     refills.push((bars) => {
       // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
-      candleSeries.setData(bars as any[]);
+      setSeriesData(candleSeries, bars as any[]);
       return true;
     });
 
@@ -479,7 +503,7 @@ export function ModularChart({
             crosshairMarkerVisible: false,
           });
           // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
-          series.setData(output.data as any[]);
+          setSeriesData(series, output.data as any[]);
           built.push(series);
         }
       }
@@ -552,7 +576,7 @@ export function ModularChart({
                 value: 0.5,
               }));
           // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
-          anchor.setData(anchorPoints as any[]);
+          setSeriesData(anchor, anchorPoints as any[]);
           const primitive = new OverlayPrimitive(
             createHeatmapOverlay(output.heatmap),
             data,
@@ -571,7 +595,7 @@ export function ModularChart({
             lastValueVisible: false,
           });
           // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
-          series.setData(output.data as any[]);
+          setSeriesData(series, output.data as any[]);
           builtSeries.push(series);
         } else if (output.type === "line") {
           const series = subPane.addSeries(LineSeries, {
@@ -592,7 +616,7 @@ export function ModularChart({
             ...(rsiPriceFormat ? { priceFormat: rsiPriceFormat } : {}),
           });
           // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
-          series.setData(output.data as any[]);
+          setSeriesData(series, output.data as any[]);
           builtSeries.push(series);
         }
       }
@@ -770,7 +794,14 @@ export function ModularChart({
 
     // Viewport readings for the caller (auto-extend lives outside the chart —
     // only the caller knows what "more history" means for its data source).
-    const unwatchRange = watchLogicalRange(chart, (range) => logicalRangeRef.current?.(range));
+    // Filtered to user input: the fitContent() above lands on the oldest bar
+    // and would otherwise read as a zoom-out and pull the next window unasked.
+    const unwatchRange = watchLogicalRange(
+      chart,
+      (range) => logicalRangeRef.current?.(range),
+      undefined,
+      container
+    );
 
     /**
      * Re-record what the panes currently measure.
@@ -872,6 +903,7 @@ export function ModularChart({
     paneHeightSig,
     indicators,
     overlays,
+    pricePrecision,
     rsiScale,
     rebuildTick,
   ]);

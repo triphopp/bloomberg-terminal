@@ -397,6 +397,18 @@ def init_portfolio_v2() -> None:
         _ensure_column(conn, "trades", "acquisition_type", "acquisition_type TEXT")
         _ensure_column(conn, "trades", "original_price_entry", "original_price_entry REAL")
         _ensure_column(conn, "trades", "transfer_price_entry", "transfer_price_entry REAL")
+        # Provenance of a trade row. broker_order_ref is NOT unique here: a
+        # partial sell splits one buy into two rows that share the order.
+        # Uniqueness lives on broker_executions (one order = one evidence row);
+        # create_trade refuses an order number already in the book.
+        # executed_at = fill time with its offset (date_entry stays the trade
+        # date); entry_source = manual | slip | excel, NULL for older rows.
+        _ensure_column(conn, "trades", "broker_order_ref", "broker_order_ref TEXT")
+        _ensure_column(conn, "trades", "executed_at", "executed_at TEXT")
+        _ensure_column(conn, "trades", "entry_source", "entry_source TEXT")
+        _ensure_column(conn, "trades", "source_sha256", "source_sha256 TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_order_ref ON trades(account_id, broker_order_ref) "
+                     "WHERE broker_order_ref IS NOT NULL")
         _ensure_column(conn, "portfolio_accounts", "markets", "markets TEXT")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS cash_ledger (
@@ -483,6 +495,20 @@ def init_portfolio_v2() -> None:
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_broker_executions_date ON broker_executions(account_id, executed_at_local)")
+        # Order-slip evidence (slip_evidence.py): an order detail screen shows
+        # more than an Activity row — the broker's order number, the value
+        # before rounding and each fee. One broker order is one evidence row,
+        # so the order number is unique per account; trade_id links the book
+        # row it was entered as (NULL again if that trade is deleted).
+        for col, ddl in (("order_ref", "order_ref TEXT"), ("gross_value", "gross_value TEXT"),
+                         ("commission", "commission TEXT"), ("vat", "vat TEXT"),
+                         ("sec_fee", "sec_fee TEXT"), ("taf_fee", "taf_fee TEXT"),
+                         ("exchange", "exchange TEXT"), ("order_type", "order_type TEXT"),
+                         ("trade_id", "trade_id TEXT"), ("extractor", "extractor TEXT")):
+            _ensure_column(conn, "broker_executions", col, ddl)
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_broker_executions_order_ref "
+                     "ON broker_executions(account_id, order_ref) WHERE order_ref IS NOT NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_broker_executions_trade ON broker_executions(trade_id)")
         # Row-level change log for every money table, written by triggers (see
         # init_audit_layer) so no endpoint — present or future — can skip it.
         # Append-only; `event_id` is a uuid so the log syncs as a union.
@@ -718,6 +744,79 @@ def init_portfolio_v2() -> None:
             JOIN option_trades ot ON ot.trade_id = mt.open_trade_id
             JOIN option_contracts c ON c.contract_id = ot.contract_id
         """)
+
+        # Provenance of an option fill, the same four facts trades carries:
+        # executed_at = fill time with its offset as the broker displayed it
+        # (trade_date stays the exchange date); settle_date = the day the cash
+        # moved; broker_order_ref = the broker's order number, unique per
+        # account; entry_source = manual | slip | excel, NULL for older rows.
+        for col, ddl in (("executed_at", "executed_at TEXT"),
+                         ("settle_date", "settle_date TEXT"),
+                         ("broker_order_ref", "broker_order_ref TEXT"),
+                         ("entry_source", "entry_source TEXT")):
+            _ensure_column(conn, "option_trades", col, ddl)
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ot_order_ref "
+                     "ON option_trades(account_id, broker_order_ref) "
+                     "WHERE broker_order_ref IS NOT NULL")
+
+        # Fee breakdown of one fill. `option_trades.fees` (and trades.fee_entry
+        # / fee_exit) stays the single number every P&L path reads; these rows
+        # say what it is made of and how sure we are of each part, and
+        # accounting check F1 holds the two equal.
+        #
+        # A broker slip shows fees "pending, estimated" (basis ESTIMATED); the
+        # broker later debits the real amount as its own cash line (POSTED),
+        # which can differ by cents and may be a daily total across fills.
+        # When both exist for a component the POSTED one wins. amount is a
+        # decimal string in the fill's currency: a cost is positive, a promo
+        # that cancels a commission is a negative COMMISSION_DISCOUNT row, so
+        # the waived commission stays visible instead of reading as "free".
+        # source: SLIP (read off the order confirmation), BROKER_POSTING (cash
+        # activity line), SCHEDULE (computed from a fitted fee schedule, no
+        # confirmation seen), MANUAL. leg: FILL for a one-fill row
+        # (option_trades), ENTRY / EXIT for the two legs a trades row holds.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS trade_fee_items (
+                id           TEXT PRIMARY KEY,
+                account_id   TEXT NOT NULL,
+                trade_table  TEXT NOT NULL CHECK(trade_table IN ('trades','option_trades')),
+                trade_id     TEXT NOT NULL,
+                leg          TEXT NOT NULL CHECK(leg IN ('FILL','ENTRY','EXIT')),
+                component    TEXT NOT NULL CHECK(component IN
+                                 ('COMMISSION','COMMISSION_DISCOUNT','VAT','SEC','TAF',
+                                  'ORF','OCC','EXCHANGE','OTHER')),
+                amount       TEXT NOT NULL,
+                currency     TEXT NOT NULL,
+                basis        TEXT NOT NULL CHECK(basis IN ('ESTIMATED','POSTED')),
+                source       TEXT NOT NULL CHECK(source IN
+                                 ('SLIP','BROKER_POSTING','SCHEDULE','MANUAL')),
+                evidence_id  TEXT,
+                note         TEXT NOT NULL DEFAULT '',
+                created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
+                UNIQUE(trade_table, trade_id, leg, component, basis)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tfi_trade "
+                     "ON trade_fee_items(trade_table, trade_id)")
+
+        # broker_executions began as stock fills. An option order slip is the
+        # same kind of evidence with a contract instead of a ticker: symbol is
+        # the OCC symbol, quantity is contracts, unit_price the per-share
+        # premium. It also shows fees a stock slip has no field for (OCC
+        # clearing, ORF) and a commission cancelled by a promo, plus when the
+        # order was sent as well as filled and the settlement date.
+        for col, ddl in (("instrument_type",
+                          "instrument_type TEXT NOT NULL DEFAULT 'STOCK' "
+                          "CHECK(instrument_type IN ('STOCK','OPTION'))"),
+                         ("option_trade_id", "option_trade_id TEXT"),
+                         ("commission_discount", "commission_discount TEXT"),
+                         ("occ_fee", "occ_fee TEXT"),
+                         ("orf_fee", "orf_fee TEXT"),
+                         ("submitted_at_local", "submitted_at_local TEXT"),
+                         ("settle_date", "settle_date TEXT")):
+            _ensure_column(conn, "broker_executions", col, ddl)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_broker_executions_option_trade "
+                     "ON broker_executions(option_trade_id)")
 
         _migrate_option_positions(conn)
 
@@ -1352,6 +1451,7 @@ AUDITED_TABLES: tuple[str, ...] = (
     "allocation_targets",
     "option_contracts",
     "option_trades",
+    "trade_fee_items",
     "transactions",
 )
 

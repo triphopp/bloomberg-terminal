@@ -2,18 +2,14 @@
  * SMA (Simple Moving Average) Indicator
  */
 
-import type { ChartIndicator, IndicatorFactory, OhlcvBar, IndicatorSeriesOutput } from "../types";
+import { rollingMean } from "../rolling.ts";
+import type { ChartIndicator, IndicatorFactory, IndicatorSeriesOutput, OhlcvBar } from "../types";
 
+/** Null during warm-up; NaN where the window holds a NaN (as the plain loop gave). */
 export function calcSMA(values: number[], period: number): (number | null)[] {
-  const result: (number | null)[] = [];
-  for (let i = 0; i < values.length; i++) {
-    if (i < period - 1) {
-      result.push(null);
-    } else {
-      const slice = values.slice(i - period + 1, i + 1);
-      result.push(slice.reduce((a, b) => a + b, 0) / period);
-    }
-  }
+  const mean = rollingMean(values, period);
+  const result: (number | null)[] = new Array(values.length);
+  for (let i = 0; i < values.length; i++) result[i] = i < period - 1 ? null : mean[i];
   return result;
 }
 
@@ -29,33 +25,50 @@ export const createSMA: IndicatorFactory = (overrides = {}) => {
     description: `${period}-period Simple Moving Average`,
     minBars: period,
     params: [
-      { key: "period", label: "Period", type: "number", default: period, min: 2, max: 500, step: 1 },
-      { key: "color", label: "Color", type: "select", default: color, options: [
-        { value: "#00bcd4", label: "Cyan" },
-        { value: "#ffc107", label: "Gold" },
-        { value: "#2196f3", label: "Blue" },
-        { value: "#e91e63", label: "Pink" },
-        { value: "#4caf50", label: "Green" },
-      ]},
+      {
+        key: "period",
+        label: "Period",
+        type: "number",
+        default: period,
+        min: 2,
+        max: 500,
+        step: 1,
+      },
+      {
+        key: "color",
+        label: "Color",
+        type: "select",
+        default: color,
+        options: [
+          { value: "#00bcd4", label: "Cyan" },
+          { value: "#ffc107", label: "Gold" },
+          { value: "#2196f3", label: "Blue" },
+          { value: "#e91e63", label: "Pink" },
+          { value: "#4caf50", label: "Green" },
+        ],
+      },
     ],
     config: { period, color },
 
     compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
       const p = config.period as number;
       const c = config.color as string;
-      const closes = data.map(d => d.close);
+      const closes = data.map((d) => d.close);
       const smaValues = calcSMA(closes, p);
 
-      return [{
-        id: `sma-${p}-line`,
-        label: `SMA ${p}`,
-        type: "line",
-        color: c,
-        lineWidth: 1,
-        data: data
-          .map((d, i) => ({ time: d.time, value: smaValues[i]! }))
-          .filter(d => d.value != null),
-      }];
+      return [
+        {
+          id: `sma-${p}-line`,
+          label: `SMA ${p}`,
+          type: "line",
+          color: c,
+          lineWidth: 1,
+          data: data.flatMap((d, i) => {
+            const v = smaValues[i];
+            return v == null ? [] : [{ time: d.time, value: v }];
+          }),
+        },
+      ];
     },
   };
 

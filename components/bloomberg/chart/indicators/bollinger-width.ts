@@ -19,6 +19,7 @@
  * (e.g. flow, %B, price structure).
  */
 
+import { rollingVariance } from "../rolling.ts";
 import type {
   ChartIndicator,
   HistogramDataPoint,
@@ -27,7 +28,7 @@ import type {
   OhlcvBar,
   SeriesDataPoint,
 } from "../types";
-import { calcSMA } from "./sma";
+import { calcSMA } from "./sma.ts";
 
 // Squeeze flagging needs enough BBW history to be meaningful; below this the
 // trailing low is too easy to touch and every early bar would light up.
@@ -37,19 +38,12 @@ const MIN_SQUEEZE_OBS = 30;
 // only ever mark the single lowest bar.
 const SQUEEZE_TOL = 1.05;
 
-function calcStdDev(values: number[], period: number, sma: (number | null)[]): (number | null)[] {
-  const result: (number | null)[] = [];
-  for (let i = 0; i < values.length; i++) {
-    const smaAtI = sma[i];
-    if (i < period - 1 || smaAtI == null) {
-      result.push(null);
-    } else {
-      const slice = values.slice(i - period + 1, i + 1);
-      const mean = smaAtI;
-      const variance = slice.reduce((sum, v) => sum + (v - mean) ** 2, 0) / period;
-      result.push(Math.sqrt(variance));
-    }
-  }
+/** Population σ about the window mean, null during warm-up. */
+function calcStdDev(values: number[], period: number): (number | null)[] {
+  const { variance } = rollingVariance(values, period, 0);
+  const result: (number | null)[] = new Array(values.length);
+  for (let i = 0; i < values.length; i++)
+    result[i] = i < period - 1 ? null : Math.sqrt(variance[i]);
   return result;
 }
 
@@ -103,7 +97,7 @@ export const createBollingerWidth: IndicatorFactory = (overrides = {}) => {
 
       const closes = data.map((d) => d.close);
       const sma = calcSMA(closes, p);
-      const stdDevValues = calcStdDev(closes, p, sma);
+      const stdDevValues = calcStdDev(closes, p);
 
       // BBW aligned to data indices (null during warm-up).
       const bbw: (number | null)[] = new Array(data.length).fill(null);
@@ -118,17 +112,27 @@ export const createBollingerWidth: IndicatorFactory = (overrides = {}) => {
       const widthPoints: HistogramDataPoint[] = [];
       const floorPoints: SeriesDataPoint[] = [];
 
-      // Trailing-low ring: indices of the last `lb` non-null BBW values.
-      const window: number[] = [];
+      // Trailing low of the last `lb` non-null BBW values: monotone deque of
+      // their values (non-decreasing head→tail) and their ordinal among the
+      // non-null ones, so each value enters and leaves once — O(1) per bar.
+      const dqVal = new Float64Array(data.length);
+      const dqOrd = new Int32Array(data.length);
+      let head = 0;
+      let tail = 0;
+      let seen = 0;
       for (let i = 0; i < data.length; i++) {
         const w = bbw[i];
         if (w == null) continue;
-        window.push(w);
-        if (window.length > lb) window.shift();
+        while (tail > head && dqVal[tail - 1] >= w) tail--;
+        dqVal[tail] = w;
+        dqOrd[tail++] = seen;
+        seen++;
+        while (dqOrd[head] <= seen - 1 - lb) head++;
+        const filled = Math.min(seen, lb);
 
         let color = "rgba(120,144,156,0.45)"; // normal width — muted blue-grey
-        if (window.length >= Math.min(lb, MIN_SQUEEZE_OBS)) {
-          const floor = Math.min(...window);
+        if (filled >= Math.min(lb, MIN_SQUEEZE_OBS)) {
+          const floor = dqVal[head];
           floorPoints.push({ time: data[i].time, value: floor });
           if (w <= floor * SQUEEZE_TOL) color = "#ff9800"; // squeeze
         }
