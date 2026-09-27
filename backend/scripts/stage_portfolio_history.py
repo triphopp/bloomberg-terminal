@@ -165,13 +165,13 @@ def stage(source: Path, audit_dir: Path, db: Path, apply: bool) -> dict:
         return result
 
     backup = audit_dir / f"portfolio-pre-history-review-{datetime.now(timezone.utc):%Y%m%d-%H%M%S-%f}.db"
-    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as source_conn:
-        with sqlite3.connect(backup) as backup_conn:
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as source_conn:  # db-ok: one-off, target chosen by caller
+        with sqlite3.connect(backup) as backup_conn:  # db-ok: fresh backup file
             source_conn.backup(backup_conn)
             if backup_conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise RuntimeError("SQLite backup failed integrity_check")
     result["backup"] = str(backup)
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db) as conn:  # db-ok: one-off, target chosen by caller
         conn.execute("PRAGMA foreign_keys=ON")
         before = {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                   for table in ("trades", "cash_ledger", "dividends", "portfolio_nav_snapshots")}
@@ -197,7 +197,7 @@ def stage(source: Path, audit_dir: Path, db: Path, apply: bool) -> dict:
         if after != before or count_after != len(rows):
             raise RuntimeError("Portfolio counts changed or staged rows are incomplete")
         result.update(inserted=count_after - count_before, live_portfolio_counts_unchanged=True)
-    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as check:
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as check:  # db-ok: one-off, target chosen by caller
         if check.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise RuntimeError("Live database failed integrity_check")
     return result

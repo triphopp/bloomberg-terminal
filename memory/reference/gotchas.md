@@ -2029,3 +2029,13 @@ After `series.setData(bars)` / `series.update(bar)` each point's `"YYYY-MM-DD"` 
 
 ## Sync `def` route waiting on a future = thread starvation (fixed for history 2026-09-26)
 FastAPI runs `def` routes in anyio's worker pool (40 threads). `/api/stock/history` blocked on `future.result(timeout=22)` for the Yahoo fetch, so a burst of chart requests held every worker and unrelated sync routes queued — BOND's endpoints took 60–82 s. Now `stock_history_route` is `async`: cache hit → no thread; miss → `await asyncio.wrap_future(history_future(...))` first, then the unchanged sync body in the threadpool finds a finished fetch. Measured: BOND 40–620 ms while 40 uncached history requests are in flight. Other sync routes that wait on `market_requests` futures (quote, snapshots) have the same shape. Report: `reports/history-bk-retry-risk-report.md` (pre-existing `.BK` retry miss found alongside).
+
+## Two machines show different cash with zero sync conflicts (found 2026-09-27)
+Mac showed cash ≈ −฿629K while Windows showed +฿243,081. Drive snapshots: device `alvis_local` differed from
+Windows (`user`) on 23 `trades` rows — the Finansia takeover re-booking (cost gap ฿872,149) plus Dime fixes —
+with **identical `updated_at`** on both sides. `backend/sync/merge.py:120-126` (neither side "changed" vs its own
+ancestor) keeps the LOCAL value on each device, so both converge on themselves forever and `last_conflicts` stays 0.
+Diagnose: compare `snapshots/<device>.json` rows in the Drive sync folder (`manifest.json` lists devices and last push).
+Fix: one source of truth — `backend/scripts/adopt_db_copy.py export` on the right machine, `adopt` on the wrong one
+(backs up, copies, fingerprint-checks, sets `SYNC_ENABLED=false`). Long term: `plans/central-db-cloud-primary.md`.
+[risk report](../reports/sync-merge-divergence-risk-report.md)

@@ -28,13 +28,8 @@ from accounting_io import backup_book, read_book  # noqa: E402
 
 
 def _connect(read_only: bool) -> sqlite3.Connection:
-    if read_only:
-        uri = "file:" + os.path.abspath(DB_PATH).replace("\\", "/") + "?mode=ro"
-        conn = sqlite3.connect(uri, uri=True)
-    else:
-        conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    from db import connect
+    return connect(readonly=read_only)
 
 
 def _fmt(v, nd=2):
@@ -54,7 +49,7 @@ def apply_reviewed_book(path, *, accept_warnings=False):
         audit = accounting_checks.run(snapshot)
     if audit["counts"]["error"] or (audit["counts"]["warn"] and not accept_warnings):
         raise ValueError(f"Apply blocked: {audit['counts']}. Review accounting_audit first. Backup: {backup}")
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path)  # db-ok: apply target chosen on the command line
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA foreign_keys=ON")

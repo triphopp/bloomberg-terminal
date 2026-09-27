@@ -353,6 +353,10 @@ BOT_STATS_TOKEN = os.getenv("BOT_STATS_TOKEN", "")   # Statistics (CategoryList)
 BOT_BASE_URL    = "https://gateway.api.bot.or.th"
 
 DB_PATH = Path(os.getenv("PORTFOLIO_DB", "portfolio.db"))
+# How db.connect() opens DB_PATH. "local" = the SQLite file itself (the only mode
+# today). "replica" is reserved for the cloud-primary replica
+# (memory/plans/central-db-cloud-primary.md) and refuses until that lands.
+DB_MODE = os.getenv("DB_MODE", "local").strip().lower() or "local"
 
 # ── SEC Thailand (sec.or.th) ──────────────────────────────────────────────────
 # Each product subscription has its own key. Store Primary key only.
