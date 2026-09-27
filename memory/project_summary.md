@@ -438,6 +438,11 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 
 Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished plan becomes `- [x] … done YYYY-MM-DD` only with a Completion Evidence section.
 
+- [x] **Analytics INDEX underwater fill** — done 2026-09-27: blue portfolio drawdown area anchored at zero, SPY yellow line retained (`plans/completed/analytics-index-underwater-fill.md`)
+- [x] **Analytics INDEX drawdown pane** — done 2026-09-27: portfolio and benchmark underwater paths beneath the unchanged equity curve (`plans/completed/analytics-index-drawdown-pane.md`)
+
+- [x] **Analytics INDEX risk metrics** — done 2026-09-27: max drawdown and annualized return standard deviation for portfolio and benchmark; chart style unchanged (`plans/completed/analytics-index-risk-metrics.md`)
+
 - [x] **Chart Compare and Price Scaling** — done 2026-09-26; COMPARE icon, `compare(A,B,...)` ≤10, `<unit>_scaling` chart units (`plans/completed/chart-compare-and-scaling.md`)
 - [ ] **Central DB (Postgres primary + local mirrors)** — Postgres orders every write (future multi-user), SQLite mirror per machine pulled by change_seq, offline outbox with version-checked replay + conflict review; replaces multi-writer Drive merge. P0 (`db.connect`, `adopt_db_copy.py`) done (`plans/central-db-cloud-primary.md`)
 - [ ] **Chart render performance** — tick path O(1) (series.update + incremental indicators), columnar Float64Array bars, chunked history by calendar block, cache tiers FE L1/L2 (React Query + IndexedDB) · BE L1/L2 (bytes LRU + SQLite `price_bars`), LOD decimation (`plans/chart-render-perf.md`)

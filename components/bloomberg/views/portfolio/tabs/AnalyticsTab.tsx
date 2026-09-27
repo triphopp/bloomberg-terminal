@@ -28,6 +28,7 @@ import {
   type RotationGroup,
   type RotationMode,
 } from "../ui/PortfolioRotationChart";
+import { indexRiskMetrics, runningDrawdownPct } from "../ui/nav-index-metrics";
 
 interface CapmRow {
   beta: number | null;
@@ -419,14 +420,28 @@ function NavIndexChartView({
     );
   }
 
-  const chart = pts.map((p) => ({
+  const portDrawdown = runningDrawdownPct(pts.map((p) => p.port_index));
+  const benchDrawdown = runningDrawdownPct(pts.map((p) => p.bench_index));
+  const chart = pts.map((p, i) => ({
     date: p.date.slice(5),
     port: p.port_index,
     bench: p.bench_index,
+    portDd: portDrawdown[i],
+    benchDd: benchDrawdown[i],
   }));
   const twr = data?.port_twr_pct ?? null;
   const bench = data?.bench_pct ?? null;
   const excess = data?.excess_pct ?? null;
+  const portRisk = indexRiskMetrics(pts.map((p) => p.port_index));
+  const benchRisk = indexRiskMetrics(pts.map((p) => p.bench_index));
+  const trough = Math.min(
+    -1,
+    ...portDrawdown.filter((v): v is number => v !== null),
+    ...benchDrawdown.filter((v): v is number => v !== null)
+  );
+  const ddFloor = Math.floor(trough - Math.max(1, Math.abs(trough) * 0.08));
+  const riskPct = (value: number | null, sign = "") =>
+    value == null ? "—" : `${value === 0 ? "" : sign}${value.toFixed(2)}%`;
 
   return (
     <>
@@ -450,6 +465,34 @@ function NavIndexChartView({
           EXCESS{" "}
           <span style={{ color: pnlColor(excess ?? 0) }} className="font-bold">
             {excess == null ? "—" : `${excess >= 0 ? "+" : ""}${excess.toFixed(2)}%`}
+          </span>
+        </span>
+        <span title="Largest peak-to-trough decline in the portfolio INDEX line over this span">
+          MAX DD{" "}
+          <span style={{ color: "#f87171" }} className="font-bold">
+            {riskPct(portRisk.maxDrawdownPct, "−")}
+          </span>
+        </span>
+        <span
+          title={`Largest peak-to-trough decline in the ${benchmark} INDEX line over this span`}
+        >
+          {benchmark} DD{" "}
+          <span style={{ color: "#f87171" }} className="font-bold">
+            {riskPct(benchRisk.maxDrawdownPct, "−")}
+          </span>
+        </span>
+        <span title="Portfolio annualized sample standard deviation of returns between displayed observations (×√252); calendar gaps count as one observation">
+          TWR STD{" "}
+          <span style={{ color: colors.text }} className="font-bold">
+            {riskPct(portRisk.stdAnnualPct)}
+          </span>
+        </span>
+        <span
+          title={`${benchmark} annualized sample standard deviation of returns between displayed observations (×√252); calendar gaps count as one observation`}
+        >
+          {benchmark} STD{" "}
+          <span style={{ color: colors.text }} className="font-bold">
+            {riskPct(benchRisk.stdAnnualPct)}
           </span>
         </span>
         <span>
@@ -509,6 +552,51 @@ function NavIndexChartView({
             connectNulls
             fill="none"
           />
+        </ComposedChart>
+      </ResponsiveContainer>
+      <div
+        className="flex items-center gap-3 mt-2 mb-1 text-[8px] font-mono"
+        style={{ color: colors.textSecondary }}
+      >
+        <span style={{ color: colors.accent }} className="font-bold">
+          DRAWDOWN
+        </span>
+        <span style={{ color: "#60a5fa" }}>● TWR</span>
+        {data?.benchmark_available && <span style={{ color: "#facc15" }}>● {benchmark}</span>}
+        <span className="ml-auto">0% = NEW HIGH</span>
+      </div>
+      <ResponsiveContainer width="100%" height={132}>
+        <ComposedChart data={chart} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
+          <XAxis dataKey="date" tick={{ fill: "#666", fontSize: 8 }} tickLine={false} />
+          <YAxis
+            tick={{ fill: "#666", fontSize: 8 }}
+            tickLine={false}
+            axisLine={false}
+            domain={[ddFloor, 0]}
+            tickFormatter={(v: number) => `${v.toFixed(0)}%`}
+          />
+          <Tooltip
+            contentStyle={tooltipContentStyle}
+            labelStyle={tooltipLabelStyle}
+            itemStyle={tooltipItemStyle}
+            // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
+            formatter={(v: any, name: any) => [
+              v == null ? "—" : `${Number(v).toFixed(2)}%`,
+              name === "portDd" ? "Portfolio drawdown" : `${benchmark} drawdown`,
+            ]}
+          />
+          <ReferenceLine y={0} stroke="#444" strokeDasharray="3 3" />
+          <Area
+            dataKey="portDd"
+            baseValue={0}
+            stroke="#60a5fa"
+            strokeWidth={1.6}
+            fill="#60a5fa"
+            fillOpacity={0.3}
+            dot={false}
+          />
+          <Line dataKey="benchDd" stroke="#facc15" strokeWidth={1.2} dot={false} fill="none" />
         </ComposedChart>
       </ResponsiveContainer>
     </>
