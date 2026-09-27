@@ -60,6 +60,17 @@ export type TakeoverPayload = {
     inherited_pnl: number;
     realized_since: number;
   };
+  /** Takeover debt per sub-portfolio (account + sub-port): the inherited loss,
+   *  paid down by EVERY trade closed there since the transfer (not just the
+   *  transferred lots). The UI adds the scope's open unrealized P&L. */
+  scopes?: TakeoverScope[];
+};
+export type TakeoverScope = {
+  account_id: string;
+  sub_port: string;
+  transfer_date: string;
+  inherited_pnl: number;
+  realized_since: number;
 };
 
 export const portfolioQueries = {

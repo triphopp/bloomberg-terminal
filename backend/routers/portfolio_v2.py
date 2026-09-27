@@ -1462,12 +1462,51 @@ def get_takeover(account_id: Optional[str] = Query(None), base_currency: str = Q
         totals["transfer_value"] += lot["transfer_value_base"]
         totals["inherited_pnl"] += lot["inherited_pnl_base"]
         totals["realized_since"] += lot["realized_since_base"] or 0.0
+
+    # Takeover debt: the inherited loss belongs to the sub-portfolio that was
+    # taken over, and any profit that sub-portfolio makes afterwards — on the
+    # transferred lots or on anything bought with its cash — pays it down.
+    # Scope = account + sub-port (Finansia 6065151 ≠ 0153717). Realized here;
+    # the frontend adds the unrealized P&L of the scope's open positions.
+    scopes: dict[tuple[str, str], dict] = {}
+    for t, lot in zip(rows, lots):
+        key = (t["account_id"], _sub_port(t["note"]))
+        s = scopes.setdefault(key, {"account_id": key[0], "sub_port": key[1],
+                                    "transfer_date": lot["date_transfer"],
+                                    "inherited_pnl": 0.0, "realized_since": 0.0})
+        s["transfer_date"] = min(s["transfer_date"], lot["date_transfer"])
+        s["inherited_pnl"] += lot["inherited_pnl_base"]
+    if scopes:
+        with get_db() as conn:
+            closed = [dict(r) for r in conn.execute(
+                f"SELECT * FROM trades WHERE win_loss IN ('W','L') AND date_exit IS NOT NULL "
+                f"AND account_id IN ({','.join('?' * len({k[0] for k in scopes}))})",
+                sorted({k[0] for k in scopes}),
+            ).fetchall()]
+        for t in closed:
+            s = scopes.get((t["account_id"], _sub_port(t["note"])))
+            if s and t["date_exit"] >= s["transfer_date"]:
+                s["realized_since"] += realized_pnl_in_report(t, base_currency)
     return {
         "base_currency": base_currency,
         "transfer_dates": sorted({l["date_transfer"] for l in lots}),
         "lots": lots,
         "totals": {k: round(v, 2) for k, v in totals.items()},
+        "scopes": [{**s, "inherited_pnl": round(s["inherited_pnl"], 2),
+                    "realized_since": round(s["realized_since"], 2)} for s in scopes.values()],
     }
+
+
+def _sub_port(note: Optional[str]) -> str:
+    """Sub-port label from a trade note, e.g. "Finansia (6065151) | …" → "6065151".
+    Mirrors `splitNote` / `subPortLabel` in views/portfolio/helpers.ts."""
+    # Closed rows append "\n[SOLD …]" to the sub-port segment, so lines split too.
+    for part in re.split(r" \| |\n", note or ""):
+        part = part.strip()
+        m = re.fullmatch(r".+\s\(([^)]+)\)", part)
+        if m and not part.startswith("VAT:"):
+            return m.group(1)
+    return ""
 
 
 @router.post("/cost-overrides")
