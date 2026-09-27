@@ -789,3 +789,13 @@ Proxies: `app/api/v2/portfolio/ledger/evidence/route.ts`, `…/evidence/image/ro
 
 Router `backend/routers/slip_ocr.py` (adds `form.account_hint` from its `ACCOUNT_HINT`, passes `slip_evidence.fee_schedule`); engine `backend/slip_ocr/` — split-ready: imports nothing from the backend, own `pyproject.toml` (`slip-ocr`, extras `rapid`/`easy`/`test`), own `tests/` + fixtures, `README.md`. Split with `git subtree split --prefix=backend/slip_ocr`. Proxies `app/api/v2/portfolio/slip/{read,status,warm}/route.ts` (read: 180 s timeout).
 | GET | `/api/v2/portfolio/takeover?account_id&base_currency` | in-kind takeover lots (fair-value basis) + previous owner's cost memo; see data-shapes. Proxy `app/api/v2/portfolio/takeover/route.ts`; shown as the TAKEOVER strip in PORT → POSITIONS (2026-09-26) |
+
+## Cloud sync (`routers/sync_router.py`)
+
+Two engines. Legacy snapshot merge (`sync/manager.py`, `SYNC_ENABLED`) or the **op log** (`sync/oplog.py`, `OPLOG_ENABLED=true`, 2026-09-27) — the op log switches the snapshot merge off.
+- `GET /api/sync/status` — snapshot engine: `{enabled, device, sync_dir, reachable, last_pull, last_push, last_conflicts}`. Op log adds `{mode:"oplog", root, pending, ops, open_conflicts, peers:[{device, at, state: in_sync|catching_up|DIVERGED}], diverged, last_sync, last_error, last_result}` and maps `last_pull/last_push = last_sync`, `last_conflicts = open_conflicts` for the header chip.
+- `POST /api/sync/pull` · `POST /api/sync/push` — snapshot engine; with the op log both run one full round (`sync_once`).
+- `POST /api/sync/now` — op log only: flush → export → pull/apply → publish state. 409 when the op log is off.
+- `GET /api/sync/conflicts?all=` — op-log conflicts (open only unless `all=true`): `{conflicts:[{id, table_name, row_key, kept_op, kept_device, kept_row, other_op, other_device, other_row, reason, detected_at, resolved_at, resolution}]}`. `other_*` is always the losing side.
+- `POST /api/sync/conflicts/{id}/resolve` body `{choice:"kept"|"other"}` — writes a new op carrying `resolves=id`, so every device closes the same conflict and ends on the same row. 404 unknown id, 400 bad choice.
+- Next.js proxies: `app/api/sync/{status,pull,push}/route.ts`, `app/api/sync/conflicts/route.ts`, `app/api/sync/conflicts/[id]/resolve/route.ts`.

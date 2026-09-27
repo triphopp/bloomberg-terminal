@@ -196,6 +196,16 @@ def cmd_adopt(a) -> int:
         print_fp("MISMATCH after copy:", got)
         return 1
     print("copied, integrity ok, fingerprint matches source")
+    # Op-log bookkeeping that belongs to the source machine, not this one:
+    # unflushed captures would otherwise become ops under THIS device's name.
+    c = connect(dst)
+    try:
+        if c.execute("SELECT 1 FROM sqlite_master WHERE name='sync_pending'").fetchone():
+            n = c.execute("DELETE FROM sync_pending").rowcount
+            c.commit()
+            print(f"cleared {n} unflushed op-log capture(s) from the source")
+    finally:
+        c.close()
 
     if sidecars:
         aside = backups / f"sync-sidecars-pre-adopt-{stamp}"

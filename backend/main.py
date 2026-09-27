@@ -53,6 +53,7 @@ from db import (
     init_db,
     init_portfolio_v2,
     init_sync_layer,
+    init_oplog_layer,
     init_audit_layer,
     init_alerts_schema,
     init_thesis_schema,
@@ -74,6 +75,7 @@ from routers import market, stock, options, pins, clippings, news, news_watchlis
 from routers import health as upstream_health_router
 from routers import dev as dev_router
 import sync
+from sync import oplog
 from sources.errors import UpstreamRateLimited, is_rate_limit
 from sync.gate import is_synced_write, should_gate
 from alerts import scheduler as alert_scheduler
@@ -118,6 +120,7 @@ init_cot_schema()      # CFTC COT cache; not synced, order free
 init_sync_layer()
 init_audit_layer()     # after sync layer: needs _sync_guard + final column set
 init_alerts_schema()
+init_oplog_layer()     # last: its capture triggers cover every synced table
 seed_symbol_lists()
 sync_symbol_lists()
 
@@ -127,6 +130,9 @@ sync_symbol_lists()
 # Stream is still mounting, so the frontend (already serving) hit a dead backend
 # and rendered empty views. _SYNC_GATED_PREFIXES below keeps correctness.
 sync.start_startup_async()
+# Op-log sync (OPLOG_ENABLED=true) replaces the snapshot merge above, which
+# then reports itself disabled — see sync/oplog.py.
+oplog.start()
 
 # ── Regime model (trains in background if missing/stale) ──────────────────────
 ensure_model_fresh(triggered_by="startup")
@@ -235,6 +241,7 @@ async def _gate_on_sync(request: Request, call_next):
             and response.status_code < 400
             and is_synced_write(request.url.path)):
         sync.request_push()
+        oplog.request_sync()
     return response
 
 
