@@ -201,7 +201,9 @@ def sync_dir() -> Path | None:
     raw = os.getenv("SYNC_DIR", "").strip().strip("'\"").strip()
     if raw:
         return Path(raw)
-    return _autodetect_dir()
+    # SYNC_AUTODETECT=false means only an explicit SYNC_DIR counts — a found
+    # Google Drive must not become the folder anyway (tests rely on this).
+    return _autodetect_dir() if autodetect_on() else None
 
 
 # Subfolder inside "My Drive" that holds the portfolio snapshots.

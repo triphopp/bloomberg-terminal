@@ -8,3 +8,13 @@ import os
 
 # Ensure backend/ is on path for all tests
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# No test may reach the real cloud folder. SYNC_AUTODETECT finds the machine's
+# Google Drive, and the sync worker a TestClient starts outlives its test: it
+# kept pulling the real cloud into whichever temp DB was current and pushing
+# the result as this machine's device — two test trades reached the Mac on
+# 2026-09-27. Set before config is imported (load_dotenv never overrides);
+# sync tests opt back in with their own temp SYNC_DIR via monkeypatch.
+os.environ["SYNC_ENABLED"] = "false"
+os.environ["SYNC_AUTODETECT"] = "false"
+os.environ["SYNC_DIR"] = ""  # empty, not unset: backend/.env sets it and would fill a gap

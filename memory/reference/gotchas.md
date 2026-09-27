@@ -2039,3 +2039,10 @@ Diagnose: compare `snapshots/<device>.json` rows in the Drive sync folder (`mani
 Fix: one source of truth — `backend/scripts/adopt_db_copy.py export` on the right machine, `adopt` on the wrong one
 (backs up, copies, fingerprint-checks, sets `SYNC_ENABLED=false`). Long term: `plans/central-db-cloud-primary.md`.
 [risk report](../reports/sync-merge-divergence-risk-report.md)
+
+## pytest pushed test rows into the real Drive sync folder (fixed 2026-09-27)
+`backend/.env` sets `SYNC_DIR`; a test that boots the app (TestClient) starts the sync worker, which outlives the test,
+pulls the real cloud into the current temp DB and pushes it as this machine's device. Two `test_trade_fees` trades
+reached the Mac. `tests/conftest.py` now sets `SYNC_ENABLED=false`, `SYNC_AUTODETECT=false` and `SYNC_DIR=""` —
+**empty, not unset**: `load_dotenv()` only fills variables that are missing. `sync_dir()` honours `SYNC_AUTODETECT`.
+Sync tests opt in with a temp `SYNC_DIR` via monkeypatch. Guard: `tests/test_sync_never_real_cloud.py`.
