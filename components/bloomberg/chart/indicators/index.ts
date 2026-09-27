@@ -7,37 +7,59 @@
  * 3. Register it in the `INDICATOR_REGISTRY` array below
  *
  * That's it. The indicator will appear in the chart's indicator picker UI.
+ *
+ * ── Performance rules (enforced by __tests__/indicator-rules.test.ts) ──────
+ *
+ * `compute(data)` runs on EVERY live tick over the WHOLE loaded history — a
+ * MAX daily chart is 10k+ bars, and the user can drag a window to its max.
+ *
+ *  1. Cost may not grow with the window. Anything over "the last k bars" goes
+ *     through ../rolling.ts: rollingMean / rollingVariance / rollingMax /
+ *     rollingMin, SortedWindow (median, rank, quantile, MAD), RollingSample
+ *     (a prior-N-bars baseline with empty slots). Never re-slice, re-loop or
+ *     re-sort the window at each bar.
+ *  2. Linear in bars. No work per bar that scans the whole history.
+ *  3. No `Math.max(...arr)` / `Math.min(...arr)` — a MAX intraday array
+ *     exceeds the argument limit and throws RangeError. Loop.
+ *  4. No `Array#shift` in a loop (O(k)) — RollingSample or a ring buffer.
+ *  5. Anything expensive that does not depend on the forming bar (fits,
+ *     optimisations, backtests) is cached on the CLOSED bars' content, never
+ *     on array identity: every tick hands over a new array, so an identity
+ *     key (WeakMap on `data`) misses every time. See bollinger-fit.ts.
+ *  6. A deliberate exception carries `// perf-ok: <reason>` — the test then
+ *     lets it through, and a reviewer can see why.
  */
 
-import { BOLLINGER_FIT_PARAMS } from "../bollinger-fit";
+import { BB_VOLUME_PARAMS } from "../bb-volume-overlay.ts";
+import { BOLLINGER_FIT_PARAMS } from "../bollinger-fit.ts";
 
-export { createEMA, calcEMA } from "./ema";
-export { createSMA, calcSMA } from "./sma";
-export { createMACD } from "./macd";
-export { createRSI } from "./rsi";
-export { createBollingerBands } from "./bollinger";
+export { createEMA, calcEMA } from "./ema.ts";
+export { createSMA, calcSMA } from "./sma.ts";
+export { createMACD } from "./macd.ts";
+export { createRSI } from "./rsi.ts";
+export { createBollingerBands } from "./bollinger.ts";
 export {
   createATR,
   calcAtrRegime,
   resolveAtrConfig,
   ATR_REGIME_PARAMS,
   ATR_REGIME_COLORS,
-} from "./atr";
+} from "./atr.ts";
 export type { AtrRegimeConfig, AtrRegimePoint } from "./atr";
-export { createBollingerB } from "./bollinger-b";
-export { createBollingerWidth } from "./bollinger-width";
-export { createVWAP } from "./vwap";
-export { createVolume } from "./volume";
-export { createRVOL, RVOL_BASELINES, RVOL_MODES, RVOL_SCALES } from "./rvol";
-export { createRealizedVol } from "./realized-vol";
-export { createRVRank } from "./rv-rank";
-export { createRVRatio } from "./rv-ratio";
+export { createBollingerB } from "./bollinger-b.ts";
+export { createBollingerWidth } from "./bollinger-width.ts";
+export { createVWAP } from "./vwap.ts";
+export { createVolume } from "./volume.ts";
+export { createRVOL, RVOL_BASELINES, RVOL_MODES, RVOL_SCALES } from "./rvol.ts";
+export { createRealizedVol } from "./realized-vol.ts";
+export { createRVRank } from "./rv-rank.ts";
+export { createRVRatio } from "./rv-ratio.ts";
 export {
   createSdHeatmap,
   cheapnessColor,
   occupancyColor,
   SD_HEATMAP_MODES,
-} from "./sd-heatmap";
+} from "./sd-heatmap.ts";
 export type { SdBandRow, SdBandsPayload } from "./sd-heatmap";
 export {
   calcRealizedVol,
@@ -45,22 +67,22 @@ export {
   rollingPercentRank,
   RV_ESTIMATOR_OPTIONS,
   RV_ESTIMATOR_SHORT,
-} from "./rv-core";
+} from "./rv-core.ts";
 export type { RvEstimator } from "./rv-core";
-export { createFlowToxicity } from "./flow-toxicity";
-export { createAbsorption } from "./absorption";
-export { createStochastic } from "./stochastic";
-export { createFearGreed, fearGreedZoneColor, fearGreedZoneName } from "./fear-greed";
+export { createFlowToxicity } from "./flow-toxicity.ts";
+export { createAbsorption } from "./absorption.ts";
+export { createStochastic } from "./stochastic.ts";
+export { createFearGreed, fearGreedZoneColor, fearGreedZoneName } from "./fear-greed.ts";
 export {
   createVolumeProfileOverlay,
   createSessionVPOverlay,
   createCompositeVPOverlay,
-} from "./volume-profile";
-export { createFootprintOverlay } from "./order-footprint";
+} from "./volume-profile.ts";
+export { createFootprintOverlay } from "./order-footprint.ts";
 export type { FootprintData, FootprintCandle, FootprintLevel } from "./order-footprint";
 
 import type { IndicatorRegistryEntry } from "../types";
-import { createAbsorption } from "./absorption";
+import { createAbsorption } from "./absorption.ts";
 import {
   BB_WIDTH_LABELS,
   BOLLINGER_B_LABELS,
@@ -71,31 +93,31 @@ import {
   RVOL_LABELS,
   SMA_LABELS,
   STOCHASTIC_LABELS,
-} from "./alertLabels";
-import { ATR_REGIME_PARAMS, createATR } from "./atr";
-import { createBollingerBands } from "./bollinger";
-import { createBollingerB } from "./bollinger-b";
-import { createBollingerWidth } from "./bollinger-width";
-import { createEMA } from "./ema";
-import { createFearGreed } from "./fear-greed";
-import { createFlowToxicity } from "./flow-toxicity";
-import { createMACD } from "./macd";
-import { createRealizedVol } from "./realized-vol";
-import { createRSI } from "./rsi";
-import { RV_ESTIMATOR_OPTIONS } from "./rv-core";
-import { createRVRank } from "./rv-rank";
-import { createRVRatio } from "./rv-ratio";
-import { RVOL_BASELINES, RVOL_MODES, RVOL_SCALES, createRVOL } from "./rvol";
+} from "./alertLabels.ts";
+import { ATR_REGIME_PARAMS, createATR } from "./atr.ts";
+import { createBollingerB } from "./bollinger-b.ts";
+import { createBollingerWidth } from "./bollinger-width.ts";
+import { createBollingerBands } from "./bollinger.ts";
+import { createEMA } from "./ema.ts";
+import { createFearGreed } from "./fear-greed.ts";
+import { createFlowToxicity } from "./flow-toxicity.ts";
+import { createMACD } from "./macd.ts";
+import { createRealizedVol } from "./realized-vol.ts";
+import { createRSI } from "./rsi.ts";
+import { RV_ESTIMATOR_OPTIONS } from "./rv-core.ts";
+import { createRVRank } from "./rv-rank.ts";
+import { createRVRatio } from "./rv-ratio.ts";
+import { RVOL_BASELINES, RVOL_MODES, RVOL_SCALES, createRVOL } from "./rvol.ts";
 import {
   SD_HEATMAP_MODES,
   SD_SIGMA_BASES,
   SD_SIGMA_BASIS_DEFAULT,
   createSdHeatmap,
-} from "./sd-heatmap";
-import { createSMA } from "./sma";
-import { createStochastic } from "./stochastic";
-import { createVolume } from "./volume";
-import { createVWAP } from "./vwap";
+} from "./sd-heatmap.ts";
+import { createSMA } from "./sma.ts";
+import { createStochastic } from "./stochastic.ts";
+import { createVolume } from "./volume.ts";
+import { createVWAP } from "./vwap.ts";
 
 // ── Global Indicator Registry ────────────────────────────────────────────────
 
@@ -206,6 +228,7 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
       { key: "period", label: "Period", type: "number", default: 20, min: 5, max: 200, step: 1 },
       { key: "stdDev", label: "Std Dev", type: "number", default: 2, min: 0.5, max: 4, step: 0.25 },
       ...BOLLINGER_FIT_PARAMS,
+      ...BB_VOLUME_PARAMS,
     ],
     timeScalableParams: ["period"],
     factory: createBollingerBands,

@@ -1,7 +1,7 @@
 "use client";
 import { Loader2, Pencil, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { type Colors, fmt, pnlColor } from "../helpers";
+import { type Colors, fmt, fmtPx, fmtQty, pnlColor } from "../helpers";
 import { OptionTradeEditModal } from "../modals/OptionTradeEditModal";
 
 // Every option execution, immutable, with the market state captured at it.
@@ -171,13 +171,13 @@ export function OptionTradeLog({ accountId, colors }: { accountId: string; color
                     </td>
                     <td className="px-1.5 py-1" style={{ color: colors.text }}>
                       {t.underlying} <span style={{ color: colors.textSecondary }}>{t.expiry}</span>{" "}
-                      {fmt(t.strike, 0)}
+                      {fmtPx(t.strike)}
                       <span style={{ color: typeColor }}>
                         {t.option_type === "call" ? "C" : "P"}
                       </span>
                     </td>
                     <td className="px-1.5 py-1 text-right" style={{ color: colors.text }}>
-                      {t.quantity}
+                      {fmtQty(t.quantity)}
                       {isOpen && t.quantity_matched > 0 && (
                         <span
                           className="text-[8px] ml-0.5"

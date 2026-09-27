@@ -20,16 +20,34 @@ import { useTabShortcuts } from "../../hooks/useTabShortcuts";
 import {
   HistoryChart,
   IssuanceChart,
+  type LineDef,
   RANGES,
   type RangeKey,
   SlowCard,
   TreasurySupplyChart,
 } from "./charts";
 import { ConditionsTab } from "./conditions";
+import { DecompositionPanel } from "./decomposition";
 import { BasisTradePanel } from "./positioning";
 import { AuctionsTable, DealsPanel, EventStudyPanel, KpiStrip } from "./tables";
-import type { BondIssuance, BondOverview, BondSupply } from "./types";
+import type { BondDecomposition, BondIssuance, BondOverview, BondSupply } from "./types";
 import { C, Panel } from "./ui";
+
+// Static series configs — module-level so HistoryChart (memoised) sees the same
+// array every render instead of a fresh literal.
+const TREASURY_LINES: LineDef[] = [
+  { key: "UST2Y", label: "2Y", color: "#60A5FA" },
+  { key: "UST10Y", label: "10Y", color: C.amber },
+  { key: "UST30Y", label: "30Y", color: "#F472B6" },
+  { key: "REAL10", label: "10Y REAL", color: "#A3E635" },
+  { key: "TP10", label: "TERM PREM (KW)", color: "#C084FC", axis: "right" },
+];
+const CREDIT_LINES: LineDef[] = [
+  { key: "IG_OAS", label: "IG OAS", color: "#3B82F6", threshold: 2 },
+  { key: "HY_OAS", label: "HY OAS", color: "#EF4444", threshold: 5 },
+  { key: "BAA_AAA", label: "Baa−Aaa", color: "#A3A3A3" },
+  { key: "BBB_Y", label: "BBB YLD", color: C.amber, axis: "right" },
+];
 
 type BondTab = "market" | "conditions";
 const TABS: { id: BondTab; label: string }[] = [
@@ -76,6 +94,12 @@ export function BondView() {
     staleTime: 10 * 60_000,
     refetchInterval: 30 * 60_000,
   });
+  const decomposition = useQuery<BondDecomposition>({
+    queryKey: ["bonds", "decomposition"],
+    queryFn: () => getJson("/api/bonds/decomposition"),
+    staleTime: 30 * 60_000,
+    refetchInterval: 60 * 60_000,
+  });
   const supply = useQuery<BondSupply>({
     queryKey: ["bonds", "supply"],
     queryFn: () => getJson("/api/bonds/supply"),
@@ -106,15 +130,21 @@ export function BondView() {
 
   const refreshAll = () => {
     overview.refetch();
+    decomposition.refetch();
     supply.refetch();
     issuance.refetch();
     if (tab === "conditions") refreshCredit();
   };
   const fetching =
-    overview.isFetching || supply.isFetching || issuance.isFetching || credit.isFetching;
+    overview.isFetching ||
+    decomposition.isFetching ||
+    supply.isFetching ||
+    issuance.isFetching ||
+    credit.isFetching;
   const level = credit.data?.level;
   const errors = [
     ...(overview.data?.errors ?? []),
+    ...(decomposition.data?.errors ?? []),
     ...(supply.data?.errors ?? []),
     ...(issuance.data?.backfill.last_error ? [`EDGAR ${issuance.data.backfill.last_error}`] : []),
   ];
@@ -208,30 +238,27 @@ export function BondView() {
               <KpiStrip kpis={overview.data?.kpis ?? []} />
             )}
 
+            {/* ── What the 10Y is made of, and which piece is moving it ─────── */}
+            <DecompositionPanel
+              data={decomposition.data}
+              error={decomposition.error}
+              isLoading={decomposition.isLoading}
+              days={RANGES[range]}
+            />
+
             {/* ── Price: Treasury leg, credit leg ───────────────────────────── */}
             <div className="grid gap-2 grid-cols-1 xl:grid-cols-2">
               <HistoryChart
                 title="TREASURY LEG"
                 note="yields % · term premium ▸ right axis"
                 rows={rows}
-                lines={[
-                  { key: "UST2Y", label: "2Y", color: "#60A5FA" },
-                  { key: "UST10Y", label: "10Y", color: C.amber },
-                  { key: "UST30Y", label: "30Y", color: "#F472B6" },
-                  { key: "REAL10", label: "10Y REAL", color: "#A3E635" },
-                  { key: "TP10", label: "TERM PREM", color: "#C084FC", axis: "right" },
-                ]}
+                lines={TREASURY_LINES}
               />
               <HistoryChart
                 title="CREDIT LEG"
                 note="spreads % · BBB yield ▸ right axis"
                 rows={rows}
-                lines={[
-                  { key: "IG_OAS", label: "IG OAS", color: "#3B82F6", threshold: 2 },
-                  { key: "HY_OAS", label: "HY OAS", color: "#EF4444", threshold: 5 },
-                  { key: "BAA_AAA", label: "Baa−Aaa", color: "#A3A3A3" },
-                  { key: "BBB_Y", label: "BBB YLD", color: C.amber, axis: "right" },
-                ]}
+                lines={CREDIT_LINES}
               />
             </div>
 

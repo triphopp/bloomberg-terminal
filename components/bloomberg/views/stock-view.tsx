@@ -543,25 +543,57 @@ function fmtLarge(val: number | null | undefined, prefix = "$"): string {
   if (abs >= 1e3) return `${prefix}${(val / 1e3).toFixed(0)}K`;
   return `${prefix}${val.toFixed(2)}`;
 }
+const PRICE_2DP = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 function fmtPrice(val: number | null | undefined): string {
   if (val == null) return "N/A";
-  return val.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return PRICE_2DP.format(val);
 }
 function fmtPct(val: number | null | undefined, decimals = 2): string {
   if (val == null || Number.isNaN(val)) return "N/A";
   return `${val >= 0 ? "+" : ""}${val.toFixed(decimals)}%`;
 }
 
+// Built once — `toLocale*String(locale, opts)` constructs a formatter per call,
+// and this runs per bar on every tick (see market-view's fmtDateLabel).
+const LABEL_TIME = new Intl.DateTimeFormat("en-US", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+const LABEL_WEEKDAY = new Intl.DateTimeFormat("en-US", {
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+});
+const LABEL_MONTH_YEAR = new Intl.DateTimeFormat("en-US", { month: "short", year: "2-digit" });
+const LABEL_MONTH_DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
+
+// Per-tick relabel of every bar → cache the pure (period, date) → label map
+// (see market-view's fmtDateLabel).
+const LABEL_CACHE = new Map<string, string>();
+
 function fmtDateLabel(dateStr: string, period: TimePeriod): string {
+  const key = `${period}|${dateStr}`;
+  let label = LABEL_CACHE.get(key);
+  if (label === undefined) {
+    if (LABEL_CACHE.size >= 50_000) LABEL_CACHE.clear();
+    label = formatDateLabel(dateStr, period);
+    LABEL_CACHE.set(key, label);
+  }
+  return label;
+}
+
+function formatDateLabel(dateStr: string, period: TimePeriod): string {
   const d = new Date(dateStr);
   if (Number.isNaN(d.getTime())) return dateStr;
-  if (period === "1d" || dateStr.includes("T"))
-    return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-  if (period === "5d")
-    return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-  if (period === "5y" || period === "1y")
-    return d.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  if (period === "1d" || dateStr.includes("T")) return LABEL_TIME.format(d);
+  if (period === "5d") return LABEL_WEEKDAY.format(d);
+  if (period === "5y" || period === "1y") return LABEL_MONTH_YEAR.format(d);
+  return LABEL_MONTH_DAY.format(d);
 }
 
 // ─── Financials data transform ───────────────────────────────────────────────────
@@ -3244,11 +3276,11 @@ function AnalystTab({ symbol, colors }: { symbol: string; colors: typeof bloombe
                     <td className="px-1 py-0.5 text-right">
                       {u.currentPriceTarget != null ? (
                         <span style={{ color: colors.text }}>
-                          ${u.currentPriceTarget.toFixed(0)}
+                          ${u.currentPriceTarget.toFixed(2)}
                           {u.priorPriceTarget != null && (
                             <span style={{ color: colors.textSecondary }}>
                               {" "}
-                              ← ${u.priorPriceTarget.toFixed(0)}
+                              ← ${u.priorPriceTarget.toFixed(2)}
                             </span>
                           )}
                         </span>

@@ -51,7 +51,8 @@
  * The reader (and any study built on this) should combine the two.
  */
 
-import { MIN_SAMPLES, type VolMode, median, stdev, volumeZ } from "./volume-stats.ts";
+import { RollingSample, rollingMax, rollingMin } from "../chart/rolling.ts";
+import { MIN_SAMPLES, type VolMode, volumeZ } from "./volume-stats.ts";
 
 /** The fields the classifier reads. Structurally a subset of OhlcvBar. */
 export interface EventBar {
@@ -200,6 +201,21 @@ function computeFeatures(
     if (p0 > 0 && p1 > 0) logRet[i] = Math.log(p1 / p0);
   }
 
+  // Prior-window baselines slide one bar at a time (O(1)/O(log k) per bar);
+  // each used to re-collect and sort the window at every bar.
+  const priorRanges = new RollingSample(cfg.lookback);
+  const priorRets = new RollingSample(cfg.lookback);
+  const highs = new Float64Array(n);
+  const lows = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    highs[i] = bars[i].high;
+    lows[i] = bars[i].low;
+  }
+  // Highest high / lowest low of the `breakoutBars` bars BEFORE i = the
+  // window ending at i − 1.
+  const hiPrior = rollingMax(highs, cfg.breakoutBars);
+  const loPrior = rollingMin(lows, cfg.breakoutBars);
+
   for (let i = 0; i < n; i++) {
     const bar = bars[i];
     const range = bar.high - bar.low;
@@ -207,42 +223,30 @@ function computeFeatures(
     // 0.5 is the only honest answer and it disqualifies the extreme tests.
     closePos[i] = range > 0 ? (bar.close - bar.low) / range : 0.5;
 
-    const priorRanges: number[] = [];
-    const priorRets: number[] = [];
-    for (let j = Math.max(0, i - cfg.lookback); j < i; j++) {
-      const r = bars[j].high - bars[j].low;
-      if (r > 0) priorRanges.push(r);
-      const lr = logRet[j];
-      if (lr != null) priorRets.push(lr);
-    }
-
-    if (priorRanges.length >= MIN_SAMPLES) {
-      const medRange = median(priorRanges);
+    if (priorRanges.size >= MIN_SAMPLES) {
+      const medRange = priorRanges.median();
       compressed[i] = medRange > 0 && range <= cfg.rangeCompress * medRange;
     }
 
     const lr = logRet[i];
     if (lr != null) {
       retPct[i] = (Math.exp(lr) - 1) * 100;
-      if (priorRets.length >= MIN_SAMPLES) {
+      if (priorRets.size >= MIN_SAMPLES) {
         // Centred on zero, not on the sample mean: the question is how big this
         // move is against the symbol's normal move, and a drifting mean would
         // quietly re-baseline that in a trend.
-        const sigma = stdev(priorRets, 0);
+        const sigma = Math.sqrt(priorRets.sumSquaresAbout(0) / (priorRets.size - 1));
         if (sigma > 0) retSigma[i] = lr / sigma;
       }
     }
 
     if (i >= cfg.breakoutBars) {
-      let hi = Number.NEGATIVE_INFINITY;
-      let lo = Number.POSITIVE_INFINITY;
-      for (let j = i - cfg.breakoutBars; j < i; j++) {
-        hi = Math.max(hi, bars[j].high);
-        lo = Math.min(lo, bars[j].low);
-      }
-      breaksUp[i] = bar.close > hi;
-      breaksDown[i] = bar.close < lo;
+      breaksUp[i] = bar.close > hiPrior[i - 1];
+      breaksDown[i] = bar.close < loPrior[i - 1];
     }
+
+    priorRanges.push(range > 0 ? range : Number.NaN);
+    priorRets.push(lr ?? Number.NaN);
   }
 
   return { z, retSigma, retPct, closePos, compressed, breaksUp, breaksDown };
@@ -350,7 +354,7 @@ export function classifyVolumeEvents(
     }
   }
 
-  events.sort((a, b) => a.index - b.index);
+  events.sort((a, b) => a.index - b.index); // perf-ok: once per call over the events found
   return events;
 }
 

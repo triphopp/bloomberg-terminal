@@ -1,7 +1,7 @@
 "use client";
 
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   Activity,
@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  GitCompareArrows,
   GripVertical,
   LineChart,
   Loader2,
@@ -31,6 +32,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   Area,
   Bar,
@@ -45,6 +47,8 @@ import {
   YAxis,
 } from "recharts";
 import {
+  chartCompareSymbolsAtom,
+  chartScalingUnitAtom,
   chartTypeAtom,
   currentViewAtom,
   focusHeatmapSearchAtom,
@@ -64,6 +68,9 @@ import {
   IndicatorPicker,
   IntervalPicker,
   ModularChart,
+  NO_EVENT_MARKERS,
+  NO_INDICATORS,
+  NO_OVERLAYS,
   PERIOD_LABEL,
   TIME_PERIODS,
   TimeframeRow,
@@ -72,10 +79,12 @@ import {
   useChartTimeframe,
 } from "../chart";
 import type { BarInterval, IndicatorRegistryEntry, OhlcvBar, TimePeriod } from "../chart";
+import { CompareChart } from "../chart/CompareChart";
 import { FearGreedPane } from "../chart/FearGreedPane";
 import { PEPane } from "../chart/PEPane";
 import { RegressionControls } from "../chart/RegressionControls";
 import { VolumeEventPanel } from "../chart/VolumeEventPanel";
+import { scaleBars, usdPriceSymbol } from "../chart/price-scaling";
 import { useAutoExtendRange } from "../chart/useAutoExtendRange";
 import { useSdBands } from "../chart/useSdBands";
 import { COT_KEY_BY_RATE_ID, CotChip } from "../core/cot-chip";
@@ -89,6 +98,7 @@ import { UsMarketClock } from "../core/us-market-clock";
 import { type CotFlag, cotKeyFor, useCotSnapshot } from "../hooks/useCot";
 import { type FxPair, useFxTicks } from "../hooks/useFxTicks";
 import { useMarketDataQuery } from "../hooks/useMarketDataQuery";
+import { type QuoteTick, useQuoteStream } from "../hooks/useQuoteStream";
 import { type RateRowData, useRatesCurve } from "../hooks/useRatesCurve";
 import {
   usePrefetchStockHistory,
@@ -96,11 +106,14 @@ import {
   useStockQuote,
   useStockSearch,
 } from "../hooks/useStockData";
+import { patchRowGroups } from "../lib/live-quotes";
 import { calcHurst } from "../lib/market-utils";
+import { fmtPriceStd } from "../lib/number-format";
 import { recordSearchHit } from "../lib/search-stats";
 import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import { displayName, displaySymbol } from "../lib/symbol-display";
 import { bloombergColors } from "../lib/theme-config";
+import { TICK_HEAD, TICK_NOTE, TICK_REGION, TICK_SUBGROUP, TICK_TABLE } from "../lib/tick-grammar";
 import type { MarketItem } from "../types";
 import { FrequentSearchList, MostActiveList } from "./discover-lists";
 import { PinnedAssets } from "./pinned-assets";
@@ -231,25 +244,48 @@ function saveLayout(layout: LayoutSettings) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function fmtPrice(n: number) {
-  if (n >= 10000)
-    return n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+// Always two decimals. Dropping them above 10,000 made the board read 51,829
+// while the chart's last price said 51,828.62, and a move smaller than a point
+// changed CHG with LAST standing still.
+const fmtPrice = fmtPriceStd;
 
 function fmtPct(n: number) {
   return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
 }
 
-function fmtDateLabel(dateStr: string, period: string) {
+// Built once: `toLocale*String(locale, opts)` constructs a new Intl formatter
+// on EVERY call — this runs per bar per tick, and cost 77 ms a tick on a 5Y
+// chart (275 ms on MAX). Same locale/options/time zone ⇒ identical strings.
+const LABEL_TIME = new Intl.DateTimeFormat("en-US", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+const LABEL_MONTH_DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
+const LABEL_MONTH_YEAR = new Intl.DateTimeFormat("en-US", { month: "short", year: "2-digit" });
+
+function formatDateLabel(dateStr: string, period: string) {
   const d = new Date(dateStr);
-  if (period === "1d" || period === "5d") {
-    return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  if (period === "1d" || period === "5d") return LABEL_TIME.format(d);
+  if (period === "1m" || period === "3m") return LABEL_MONTH_DAY.format(d);
+  return LABEL_MONTH_YEAR.format(d);
+}
+
+// A tick rebuilds every bar's label but only the newest bar is new — the rest
+// come back from here instead of a Date parse + format each (1.6 → ~0.2 ms a
+// tick at 5Y, 6.5 → ~0.8 ms at MAX). A pure function of (period, date), so a
+// cache cannot change what is shown. Wiped when it grows past a few charts.
+const LABEL_CACHE = new Map<string, string>();
+
+function fmtDateLabel(dateStr: string, period: string) {
+  const key = `${period}|${dateStr}`;
+  let label = LABEL_CACHE.get(key);
+  if (label === undefined) {
+    if (LABEL_CACHE.size >= 50_000) LABEL_CACHE.clear();
+    label = formatDateLabel(dateStr, period);
+    LABEL_CACHE.set(key, label);
   }
-  if (period === "1m" || period === "3m") {
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  }
-  return d.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+  return label;
 }
 
 function fmtCompact(n: number | null | undefined): string {
@@ -262,10 +298,18 @@ function fmtCompact(n: number | null | undefined): string {
 }
 
 /** JPY crosses quote to 3 decimals (157.243); everything else to 5 (1.09241). */
+const FX_3DP = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 3,
+  maximumFractionDigits: 3,
+});
+const FX_5DP = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 5,
+  maximumFractionDigits: 5,
+});
+
 function fmtFxPrice(id: string, n: number | null | undefined): string {
   if (n == null) return "—";
-  const d = id.toUpperCase().includes("JPY") ? 3 : 5;
-  return n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+  return (id.toUpperCase().includes("JPY") ? FX_3DP : FX_5DP).format(n);
 }
 
 /** The 4 UST tenors that have a yfinance series — see `_UST_CHART` in rates.py. */
@@ -488,7 +532,7 @@ function SubGroupHeader({
     <tr>
       <td
         colSpan={TICK_COLS}
-        className="px-1 py-0 text-[7px] font-bold tracking-widest leading-[11px]"
+        className={`px-1 py-0 ${TICK_SUBGROUP}`}
         style={{ background: "#080808", color: `${colors.textSecondary}cc` }}
       >
         <span className="pl-2">{label}</span>
@@ -538,7 +582,7 @@ function RegionHeader({
     >
       <td
         colSpan={TICK_COLS}
-        className="px-1 py-0 text-[8px] font-bold tracking-widest cursor-pointer hover:bg-[#141414] leading-[14px]"
+        className={`px-1 py-0 cursor-pointer hover:bg-[#141414] ${TICK_REGION}`}
         style={{
           background: "#0a0a0a",
           color: colors.accent,
@@ -559,7 +603,7 @@ function RegionHeader({
           </span>
           {note && (
             <span
-              className="ml-auto font-mono text-[7px] normal-case truncate"
+              className="ml-auto font-mono text-[8px] normal-case truncate"
               style={{ color: "#facc15" }}
             >
               {note}
@@ -589,7 +633,7 @@ function TickNotice({
     <tr>
       <td
         colSpan={TICK_COLS}
-        className="px-1 py-0 text-[8px] font-mono"
+        className={`px-1 py-0 ${TICK_NOTE}`}
         style={{ color: error ? "#facc15" : colors.textSecondary }}
       >
         {text}
@@ -1012,6 +1056,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   const colors = isDark ? bloombergColors.dark : bloombergColors.light;
 
   const { marketData, refreshData, isLoading: marketLoading } = useMarketDataQuery();
+  const queryClient = useQueryClient();
 
   // TICK DATA cross-asset sections — indices come from useMarketDataQuery above,
   // rates and FX from their own endpoints (merged client-side so /api/market-data
@@ -1030,6 +1075,19 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     staleTime: 55_000,
     refetchInterval: 60_000,
   });
+  const volSymbols = useMemo(
+    () => (volData?.items ?? []).map((v) => v.symbol).filter((s): s is string => !!s),
+    [volData]
+  );
+  const onVolTicks = useCallback(
+    (ticks: Record<string, QuoteTick>) => {
+      queryClient.setQueryData<Record<string, unknown>>(["volatility"], (prev) =>
+        patchRowGroups(prev, ["items"], ticks)
+      );
+    },
+    [queryClient]
+  );
+  useQuoteStream(volSymbols, onVolTicks);
   const volItems = volData?.items ?? [];
   const usRates = ratesData?.us ?? [];
   const jpRates = ratesData?.jp ?? [];
@@ -1235,6 +1293,15 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   const [showVolume, setShowVolume] = useState(true);
   const [showMACD, setShowMACD] = useState(false);
   const [heatmapChartType, setHeatmapChartType] = useAtom(chartTypeAtom);
+  const [compareSymbols, setCompareSymbols] = useAtom(chartCompareSymbolsAtom);
+  const [scalingUnit, setScalingUnit] = useAtom(chartScalingUnitAtom);
+  const [compareEditorOpen, setCompareEditorOpen] = useState(false);
+  // Indicator chips live in a hover legend over the chart's top-right corner,
+  // not the toolbar — the toolbar overflowed into COMPARE with 3+ indicators.
+  const [indicatorLegendEl, setIndicatorLegendEl] = useState<HTMLDivElement | null>(null);
+  const [comparePos, setComparePos] = useState<{ left: number; top: number } | null>(null);
+  const [compareInput, setCompareInput] = useState("");
+  const [compareError, setCompareError] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const [focusSignal] = useAtom(focusHeatmapSearchAtom);
 
@@ -1423,6 +1490,11 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   const historyQuery = heatmapChartType === "candle" ? candleHistQuery : areaHistQuery;
 
   const quote = quoteQuery.data;
+  const sourceCurrency = String(quote?.currency ?? "USD").toUpperCase();
+  const sourceFxSymbol = scalingUnit === "NATIVE" ? null : usdPriceSymbol(sourceCurrency);
+  const targetFxSymbol = scalingUnit === "NATIVE" ? null : usdPriceSymbol(scalingUnit);
+  const sourceFxQuery = useStockHistory(sourceFxSymbol, effectivePeriod, "1d", !!sourceFxSymbol);
+  const targetFxQuery = useStockHistory(targetFxSymbol, effectivePeriod, "1d", !!targetFxSymbol);
   // Opening an event card re-renders MKT. Keep the filtered bars stable until
   // the query actually changes: a fresh array here cascades into new OHLCV and
   // makes ModularChart refill every series/overlay on each card click.
@@ -1507,6 +1579,28 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
         )
     );
   }, [rawChartData, timePeriod, heatmapChartType, barInterval]);
+  const scaledOhlcv = useMemo(
+    () =>
+      scalingUnit === "NATIVE"
+        ? heatmapOhlcv
+        : scaleBars(
+            heatmapOhlcv,
+            sourceCurrency,
+            scalingUnit,
+            sourceFxQuery.data?.quotes ?? [],
+            targetFxQuery.data?.quotes ?? []
+          ),
+    [heatmapOhlcv, scalingUnit, sourceCurrency, sourceFxQuery.data, targetFxQuery.data]
+  );
+  const scalingLoading =
+    scalingUnit !== "NATIVE" &&
+    ((sourceFxQuery.isPending && !!sourceFxSymbol) ||
+      (targetFxQuery.isPending && !!targetFxSymbol));
+  const scalingError =
+    scalingUnit !== "NATIVE" &&
+    (sourceFxQuery.isError ||
+      targetFxQuery.isError ||
+      (!scalingLoading && heatmapOhlcv.length > 0 && scaledOhlcv.length === 0));
 
   /**
    * Indicators minus Fear & Greed (it has its own pane below the chart).
@@ -1569,29 +1663,38 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   const handleTickSelect = useCallback(
     (item: MarketItem) => {
       setSelectedSymbol(item.symbol ?? indexToSymbol(item.id));
+      setCompareSymbols([]);
       setSelectedLabel(item.id);
       setSelectedTickId(item.id);
     },
-    [indexToSymbol]
+    [indexToSymbol, setCompareSymbols]
   );
 
-  const handleRateSelect = useCallback((row: RateRowData) => {
-    // Only 4 UST tenors have a yfinance series (^IRX/^FVX/^TNX/^TYX). For the
-    // rest, highlight the row but leave BOTH the chart and its label alone —
-    // relabelling the header to "US 7Y" while it still draws the previously
-    // selected symbol would caption someone else's prices as a 7Y yield.
-    setSelectedTickId(row.id);
-    if (row.chartSymbol) {
-      setSelectedSymbol(row.chartSymbol);
-      setSelectedLabel(row.id);
-    }
-  }, []);
+  const handleRateSelect = useCallback(
+    (row: RateRowData) => {
+      // Only 4 UST tenors have a yfinance series (^IRX/^FVX/^TNX/^TYX). For the
+      // rest, highlight the row but leave BOTH the chart and its label alone —
+      // relabelling the header to "US 7Y" while it still draws the previously
+      // selected symbol would caption someone else's prices as a 7Y yield.
+      setSelectedTickId(row.id);
+      if (row.chartSymbol) {
+        setSelectedSymbol(row.chartSymbol);
+        setCompareSymbols([]);
+        setSelectedLabel(row.id);
+      }
+    },
+    [setCompareSymbols]
+  );
 
-  const handleFxSelect = useCallback((pair: FxPair) => {
-    setSelectedSymbol(pair.symbol); // e.g. "EURUSD=X"
-    setSelectedLabel(pair.id);
-    setSelectedTickId(pair.id);
-  }, []);
+  const handleFxSelect = useCallback(
+    (pair: FxPair) => {
+      setSelectedSymbol(pair.symbol); // e.g. "EURUSD=X"
+      setCompareSymbols([]);
+      setSelectedLabel(pair.id);
+      setSelectedTickId(pair.id);
+    },
+    [setCompareSymbols]
+  );
 
   // Which feed fills the left panel's top slot. Restored after mount — the
   // server renders the default, so reading storage in the initializer would
@@ -1616,15 +1719,20 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
 
   // Stable identity: PinnedAssets is memoised, and an inline arrow here made
   // it re-render (~30ms) on every MKT state change — a keystroke in SYMBOL.
-  const handleWatchlistPick = useCallback((sym: string) => {
-    setSelectedSymbol(sym);
-    setSelectedLabel(sym);
-  }, []);
+  const handleWatchlistPick = useCallback(
+    (sym: string) => {
+      setSelectedSymbol(sym);
+      setCompareSymbols([]);
+      setSelectedLabel(sym);
+    },
+    [setCompareSymbols]
+  );
 
   const handleSearchSubmit = useCallback(() => {
     const sym = searchInput.trim().toUpperCase();
     if (!sym) return;
     setSelectedSymbol(sym);
+    setCompareSymbols([]);
     setSelectedLabel(sym);
     setSelectedTickId(null);
     addToRecent(sym, sym);
@@ -1633,11 +1741,12 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     setShowDropdown(false);
     setDropdownIdx(-1);
     searchRef.current?.blur();
-  }, [searchInput, addToRecent]);
+  }, [searchInput, addToRecent, setCompareSymbols]);
 
   const handleSelectSuggestion = useCallback(
     (symbol: string, name?: string) => {
       setSelectedSymbol(symbol);
+      setCompareSymbols([]);
       // Display normalisation is centralised in lib/symbol-display —
       // the real provider symbol stays in selectedSymbol for data fetches
       const dispSym = displaySymbol({ symbol });
@@ -1860,13 +1969,10 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
         <UsMarketClock colors={colors} />
         <div className="flex-1 overflow-y-auto overflow-x-hidden" style={SCROLLBAR_THIN_LIGHTER}>
           {
-            <table
-              className="w-full text-[9px] leading-[13px] font-mono"
-              style={{ borderCollapse: "collapse" }}
-            >
+            <table className={TICK_TABLE} style={{ borderCollapse: "collapse" }}>
               <thead>
                 <tr
-                  className="text-[7px] font-bold tracking-wider leading-[12px]"
+                  className={TICK_HEAD}
                   style={{
                     background: "#050505",
                     color: colors.textSecondary,
@@ -2297,7 +2403,14 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
         className="px-1 py-0.5 shrink-0 flex flex-nowrap items-center gap-2 overflow-hidden"
         style={{ background: "#050505", borderBottom: `1px solid ${colors.border}` }}
       >
-        {selectedSymbol ? (
+        {compareSymbols.length >= 2 ? (
+          <span
+            className="text-[11px] font-bold font-mono truncate"
+            style={{ color: colors.accent }}
+          >
+            COMPARE · {compareSymbols.join(" / ")}
+          </span>
+        ) : selectedSymbol ? (
           <>
             <span
               className="text-sm font-bold font-mono whitespace-nowrap shrink-0"
@@ -2384,7 +2497,109 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 windowUnit={heatmapWindowUnit}
                 onToggleWindowUnit={toggleHeatmapWindowUnit}
                 compact
+                chipsTarget={indicatorLegendEl}
               />
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  className="flex items-center gap-0.5 px-1 text-[8px] font-normal"
+                  style={{ color: compareSymbols.length ? colors.accent : colors.textSecondary }}
+                  title="Compare 2–10 symbols on this chart"
+                  aria-label="Compare symbols"
+                  onClick={(event) => {
+                    setCompareInput(compareSymbols.join(", "));
+                    setCompareError("");
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    setComparePos({
+                      left: Math.min(rect.left, window.innerWidth - 296),
+                      top: rect.bottom + 2,
+                    });
+                    setCompareEditorOpen((open) => !open);
+                  }}
+                >
+                  <GitCompareArrows className="h-3 w-3" /> COMPARE
+                </button>
+                {compareEditorOpen &&
+                  comparePos &&
+                  createPortal(
+                    <form
+                      className="fixed z-50 w-72 border p-2 shadow-xl font-mono"
+                      style={{
+                        background: "#0b0b0b",
+                        borderColor: colors.border,
+                        left: comparePos.left,
+                        top: comparePos.top,
+                      }}
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const symbols = [
+                          ...new Set(
+                            compareInput
+                              .toUpperCase()
+                              .split(/[\s,]+/)
+                              .filter(Boolean)
+                          ),
+                        ];
+                        if (
+                          symbols.length < 2 ||
+                          symbols.length > 10 ||
+                          symbols.some((s) => !/^[A-Z0-9^.=_-]+$/.test(s))
+                        ) {
+                          setCompareError("Enter 2–10 valid symbols, separated by commas.");
+                          return;
+                        }
+                        setCompareSymbols(symbols);
+                        setScalingUnit("NATIVE");
+                        setCompareEditorOpen(false);
+                      }}
+                    >
+                      <div className="text-[9px] mb-1" style={{ color: colors.textSecondary }}>
+                        COMPARE SYMBOLS · 2–10
+                      </div>
+                      <input
+                        value={compareInput}
+                        onChange={(event) => setCompareInput(event.target.value)}
+                        placeholder="AAPL, MSFT, BTC-USD"
+                        className="w-full border px-1 py-1 text-[10px] outline-none"
+                        style={{
+                          background: "#000",
+                          borderColor: colors.border,
+                          color: colors.text,
+                        }}
+                      />
+                      {compareError && (
+                        <div className="text-[9px] mt-1 text-red-400">{compareError}</div>
+                      )}
+                      <div className="flex justify-between gap-2 mt-2 text-[9px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCompareSymbols([]);
+                            setCompareEditorOpen(false);
+                          }}
+                          style={{ color: colors.textSecondary }}
+                        >
+                          CLEAR
+                        </button>
+                        <button type="submit" style={{ color: colors.accent }}>
+                          APPLY ↵
+                        </button>
+                      </div>
+                    </form>,
+                    document.body
+                  )}
+              </div>
+              {scalingUnit !== "NATIVE" && (
+                <button
+                  type="button"
+                  className="shrink-0 text-[8px] font-normal"
+                  style={{ color: colors.accent }}
+                  title="Return chart to its normal quote currency"
+                  onClick={() => setScalingUnit("NATIVE")}
+                >
+                  {scalingUnit} ×
+                </button>
+              )}
               {(() => {
                 // Volume Profile needs traded volume, and several things reachable
                 // from this view report none: calculated indices (^VIX, ^OVX — a
@@ -2396,7 +2611,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 const hasVolume = heatmapOhlcv.some((d) => (d.volume ?? 0) > 0);
                 return (
                   <button
-                    className="text-[8px] px-1 py-0 font-bold border"
+                    className="text-[8px] px-1 py-0 font-normal border"
                     style={{
                       borderColor: heatmapShowVP && hasVolume ? colors.accent : colors.border,
                       color: !hasVolume
@@ -2423,7 +2638,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 const hasVolume = heatmapOhlcv.some((d) => (d.volume ?? 0) > 0);
                 return (
                   <button
-                    className="text-[8px] px-1 py-0 font-bold border"
+                    className="text-[8px] px-1 py-0 font-normal border"
                     style={{
                       borderColor: heatmapShowVolumeEvents && hasVolume ? "#26a69a" : colors.border,
                       color: !hasVolume
@@ -2462,7 +2677,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
               />
               {heatmapSupportsEvents && (
                 <button
-                  className="text-[8px] px-1 py-0 font-bold border"
+                  className="text-[8px] px-1 py-0 font-normal border"
                   style={{
                     borderColor: heatmapShowPE ? "#ba68c8" : colors.border,
                     color: heatmapShowPE ? "#ba68c8" : colors.textSecondary,
@@ -2476,7 +2691,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
               )}
               {isCryptoSymbol && (
                 <button
-                  className="text-[8px] px-1 py-0 font-bold border"
+                  className="text-[8px] px-1 py-0 font-normal border"
                   style={{
                     borderColor: showFootprint ? "#ff9800" : colors.border,
                     color: showFootprint ? "#ff9800" : colors.textSecondary,
@@ -2591,7 +2806,9 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
         className="flex-1 min-h-0 overflow-hidden px-0.5 py-0.5"
         style={{ background: "#050505" }}
       >
-        {!selectedSymbol ? (
+        {compareSymbols.length >= 2 ? (
+          <CompareChart symbols={compareSymbols} period={effectivePeriod} interval={barInterval} />
+        ) : !selectedSymbol ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <BarChart2
@@ -2607,25 +2824,71 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
           <div className="flex items-center justify-center h-full">
             <Loader2 className="h-5 w-5 animate-spin" style={{ color: colors.accent }} />
           </div>
+        ) : scalingLoading ? (
+          <div
+            className="flex items-center justify-center h-full text-[10px]"
+            style={{ color: colors.textSecondary }}
+          >
+            LOADING {scalingUnit} RATE…
+          </div>
+        ) : scalingError ? (
+          <div
+            className="flex items-center justify-center h-full text-[10px]"
+            style={{ color: colors.negative }}
+          >
+            NO CONVERSION RATE FOR {sourceCurrency} → {scalingUnit}
+          </div>
         ) : chartData.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <span className="text-[10px]" style={{ color: colors.textSecondary }}>
               No data for this period
             </span>
           </div>
-        ) : heatmapChartType === "candle" ? (
+        ) : heatmapChartType === "candle" || scalingUnit !== "NATIVE" ? (
           /* ── Candlestick (Modular Chart) ── */
           <div className="h-full flex flex-col">
-            <div className="flex-1 min-h-0">
+            <div className="flex-1 min-h-0 relative">
+              {/* Indicator legend: invisible until the pointer enters the chart's
+                  top-right corner (left of the VRVP strip and price scale), so the
+                  plot keeps the whole area. The hover zone swallows pan/crosshair
+                  only inside that small corner. */}
+              {scalingUnit === "NATIVE" && heatmapIndicators.length > 0 && (
+                <div
+                  className="group absolute top-1 z-20 flex justify-end"
+                  style={{
+                    right: heatmapShowVP ? 132 : 72,
+                    minWidth: 180,
+                    minHeight: 18 * Math.min(heatmapIndicators.length, 4) + 8,
+                  }}
+                >
+                  <div
+                    ref={setIndicatorLegendEl}
+                    className="flex flex-col items-end gap-0.5 p-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
+                    style={{ background: "rgba(5,5,5,0.85)" }}
+                  />
+                </div>
+              )}
               <ModularChart
-                data={heatmapOhlcv}
+                data={scaledOhlcv}
                 isDark={isDark}
                 colors={colors}
                 height={240}
-                indicators={chartIndicators}
-                overlays={heatmapOverlays}
-                eventMarkers={heatmapEventMarkers}
-                referencePriceLine={extendedHoursPriceLine(quote)}
+                indicators={scalingUnit === "NATIVE" ? chartIndicators : NO_INDICATORS}
+                overlays={scalingUnit === "NATIVE" ? heatmapOverlays : NO_OVERLAYS}
+                eventMarkers={scalingUnit === "NATIVE" ? heatmapEventMarkers : NO_EVENT_MARKERS}
+                referencePriceLine={scalingUnit === "NATIVE" ? extendedHoursPriceLine(quote) : null}
+                pricePrecision={
+                  scalingUnit === "NATIVE"
+                    ? undefined
+                    : Math.min(
+                        10,
+                        Math.max(
+                          4,
+                          3 -
+                            Math.floor(Math.log10(scaledOhlcv[scaledOhlcv.length - 1]?.close || 1))
+                        )
+                      )
+                }
                 onBarClick={handleMktChartClick}
                 crosshairCursor={mktRegressionArmed}
                 onLogicalRange={onChartLogicalRange}
@@ -2642,22 +2905,31 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 />
               )}
             </div>
-            {fearGreedActiveInMkt && fearGreedMktQuery.data?.history && (
-              <div className="shrink-0">
-                <FearGreedPane data={fearGreedMktQuery.data.history} colors={colors} height={100} />
-              </div>
-            )}
-            {heatmapShowPE && heatmapPeData?.history && heatmapPeData.history.length > 0 && (
-              <div className="shrink-0">
-                <PEPane
-                  data={heatmapPeData.history}
-                  stats={heatmapPeData.stats}
-                  colors={colors}
-                  height={100}
-                />
-              </div>
-            )}
-            {heatmapShowVolumeEvents && heatmapOhlcv.length > 0 && (
+            {scalingUnit === "NATIVE" &&
+              fearGreedActiveInMkt &&
+              fearGreedMktQuery.data?.history && (
+                <div className="shrink-0">
+                  <FearGreedPane
+                    data={fearGreedMktQuery.data.history}
+                    colors={colors}
+                    height={100}
+                  />
+                </div>
+              )}
+            {scalingUnit === "NATIVE" &&
+              heatmapShowPE &&
+              heatmapPeData?.history &&
+              heatmapPeData.history.length > 0 && (
+                <div className="shrink-0">
+                  <PEPane
+                    data={heatmapPeData.history}
+                    stats={heatmapPeData.stats}
+                    colors={colors}
+                    height={100}
+                  />
+                </div>
+              )}
+            {scalingUnit === "NATIVE" && heatmapShowVolumeEvents && heatmapOhlcv.length > 0 && (
               <div className="shrink-0">
                 <VolumeEventPanel data={heatmapOhlcv} colors={colors} />
               </div>
@@ -2667,45 +2939,59 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
               className="shrink-0 flex justify-between text-[9px] font-mono px-1 py-0.5"
               style={{ borderTop: "1px solid #1a1a1a", color: colors.textSecondary }}
             >
-              <span>
-                O:
-                <span style={{ color: colors.text }}>
-                  {fmtQuote(selectedSymbol, chartData[0]?.price)}
-                </span>
-              </span>
-              <span>
-                H:
-                <span style={{ color: colors.text }}>
-                  {fmtQuote(
-                    selectedSymbol,
-                    Math.max(...chartData.map((d: { price: number }) => d.price))
-                  )}
-                </span>
-              </span>
-              <span>
-                L:
-                <span style={{ color: colors.text }}>
-                  {fmtQuote(
-                    selectedSymbol,
-                    Math.min(...chartData.map((d: { price: number }) => d.price))
-                  )}
-                </span>
-              </span>
-              <span>
-                C:
-                <span style={{ color: colors.text }}>
-                  {fmtQuote(selectedSymbol, chartData[chartData.length - 1]?.price)}
-                </span>
-              </span>
-              <span style={{ color: chartColor }}>
-                {chartTrend ? "▲" : "▼"}
-                {Math.abs(
-                  ((chartData[chartData.length - 1].price - chartData[0].price) /
-                    chartData[0].price) *
-                    100
-                ).toFixed(2)}
-                %
-              </span>
+              {scalingUnit !== "NATIVE" ? (
+                <>
+                  <span>
+                    {selectedSymbol} / {scalingUnit}
+                  </span>
+                  <span>O {scaledOhlcv[0]?.open.toPrecision(6)}</span>
+                  <span>H {Math.max(...scaledOhlcv.map((bar) => bar.high)).toPrecision(6)}</span>
+                  <span>L {Math.min(...scaledOhlcv.map((bar) => bar.low)).toPrecision(6)}</span>
+                  <span>C {scaledOhlcv[scaledOhlcv.length - 1]?.close.toPrecision(6)}</span>
+                </>
+              ) : (
+                <>
+                  <span>
+                    O:
+                    <span style={{ color: colors.text }}>
+                      {fmtQuote(selectedSymbol, chartData[0]?.price)}
+                    </span>
+                  </span>
+                  <span>
+                    H:
+                    <span style={{ color: colors.text }}>
+                      {fmtQuote(
+                        selectedSymbol,
+                        Math.max(...chartData.map((d: { price: number }) => d.price))
+                      )}
+                    </span>
+                  </span>
+                  <span>
+                    L:
+                    <span style={{ color: colors.text }}>
+                      {fmtQuote(
+                        selectedSymbol,
+                        Math.min(...chartData.map((d: { price: number }) => d.price))
+                      )}
+                    </span>
+                  </span>
+                  <span>
+                    C:
+                    <span style={{ color: colors.text }}>
+                      {fmtQuote(selectedSymbol, chartData[chartData.length - 1]?.price)}
+                    </span>
+                  </span>
+                  <span style={{ color: chartColor }}>
+                    {chartTrend ? "▲" : "▼"}
+                    {Math.abs(
+                      ((chartData[chartData.length - 1].price - chartData[0].price) /
+                        chartData[0].price) *
+                        100
+                    ).toFixed(2)}
+                    %
+                  </span>
+                </>
+              )}
             </div>
           </div>
         ) : (

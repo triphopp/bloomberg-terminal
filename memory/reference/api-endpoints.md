@@ -31,7 +31,7 @@ Audit CLI: `python scripts/accounting_audit.py --api-url http://localhost:9317 -
 - `GET /api/stock/search` — ticker autocomplete
 - `GET /api/stock/sector/{symbol}` — classification for the ENTRY form. Returns the raw provider fields (`sector`, `industry`, `sector_raw`, `industry_raw`, `quote_type`) **plus** `asset_class` (`equity`/`etf`/`fund`/`crypto`/`fx`/`index`/`future`/`option`/`dw`/`warrant`) and the sector in BOTH vocabularies: `set_sector` (SET codes — BANK, COMM, ENERG…) and `us_sector` (GICS labels — Financials, Consumer Staples…). Mapping lives in `backend/sector_map.py`, never a string match: "Healthcare" does not contain "Health Care" and "Consumer Defensive" matches "Consumer Discretionary" on its first word. Unknown resolves to `"Other"`, never `null`. No cache (one `.info` call)
 - `GET /api/stock/quote/{symbol}` — real-time quote
-- `GET /api/stock/history/{symbol}` — OHLCV history (1d/1w/1m/3m/ytd/1y/5y/max). For a daily final row whose Yahoo `Close` is null, the router checks the same-day regular quote and a separate raw-history frame; it restores the bar only when raw O/H/L/volume are finite and the quote close falls within that day's high/low. An incomplete response is not stored in the router cache, so a later request can recover when vendor data arrives. Response shape remains `{quotes: [...]}`.
+- `GET /api/stock/history/{symbol}` — OHLCV history (1d/1w/1m/3m/ytd/1y/5y/max). For a daily final row whose Yahoo `Close` is null, the router checks the same-day regular quote and a separate raw-history frame; it restores the bar only when raw O/H/L/volume are finite and the quote close falls within that day's high/low. An incomplete response is not stored in the router cache, so a later request can recover when vendor data arrives. Response `{quotes, yf_symbol, interval, utc_offset_min}` (last three added 2026-09-26 for the live stream).
 - `GET /api/stock/financials/{symbol}` — income statement + cash flow
 - `GET /api/stock/analyst/{symbol}` — analyst ratings
 - `GET /api/stock/dividends/{symbol}` — `{dividends, splits, upcomingDividends}`; cache 1h. `dividends` is paid history only (yfinance `ticker.dividends` can never hold a future date) — the next **declared** ex-date comes from `ticker.calendar` as `upcomingDividends: [{date, payDate, dividend, estimated}]`, empty when Yahoo's calendar date is already in the past. Next.js proxy: `type=dividends`
@@ -80,6 +80,7 @@ Audit CLI: `python scripts/accounting_audit.py --api-url http://localhost:9317 -
 - `GET /api/options/surface` — implied volatility surface
 - `POST /api/options/{symbol}/iv-snapshot?expiry=&targetDte=30` — record today's ATM IV explicitly (for a daily cron; the chain endpoint already does it on read). Picks the expiry nearest `targetDte` and **skips anything under 7 DTE** — `expirations[0]` is often 0DTE, whose ATM call/put pair can disagree by 40 vol points (see gotchas). 422 if no usable ATM IV
 - `GET /api/options/{symbol}/sd-bands?period=&mode=&horizonDays=&rvWindow=&occWindow=` — Black-Scholes lognormal σ-bands per day for the SD heatmap pane. `mode=occupancy` (default) = realized bucket frequency vs the band projected `horizonDays` earlier; `mode=cheapness` = `P_rv − P_iv` on the same price edges. History depth is bounded by `iv_snapshots`, NOT by `period` — a fresh symbol returns `snapshotCount: 0` + a `note`, never an error (plus `rawSnapshotCount` when rows exist but are all under 7 DTE and therefore excluded). Per day it picks the expiry closest to `horizonDays`, not the nearest one. **`cheapness` works from the FIRST snapshot** (realized vol comes from price history); `occupancy` cannot draw until outcomes exist ~`horizonDays` later — hence `cheapness` is the default mode. Math: `backend/analytics/sd_bands.py`
+- `POST /api/options/fills` (2026-09-26) — **the one write path PORT → ENTRY uses for an option fill** (`backend/option_fills.py`). Body `{account_id, underlying, expiry, strike, option_type, multiplier=100, currency=USD, action OPEN|CLOSE, side BUY|SELL, quantity (contracts, >0), price (per-share premium; null only for EXPIRED→0 or UNKNOWN), trade_date (US date), executed_at?/submitted_at? (ISO **with offset**), settle_date?, broker_order_ref?, close_reason?, fee_items[{component, amount}], allocations[{open_trade_id, quantity}] (empty = FIFO by fill time → trade date → entry time), slip_sha256s[], note, dry_run}`. Writes option_trades + trade_fee_items (ESTIMATED, source SLIP/MANUAL) + broker_executions OPTION (only with slip + fill time) + matches via `match_realized` (both legs' fees). `dry_run` returns the same `{matches[{open_trade_id,entry_date,entry_price,quantity,fees_alloc,realized_pnl}], gross, fees, cash_effect, realized_total}` without writing. 422 with a person-readable `detail`: order ref already booked, no open lot on that side, more contracts than open, premium 0 without EXPIRED, timestamp without offset, fill before its lot. Greeks captured only when trade_date is within 1 day of today. Proxy `app/api/options/fills/route.ts`. The older `POST /positions`, `/close`, `/close-fifo` stay for compatibility; no UI calls them
 - `GET /api/options/positions/list` — list option positions
 - `POST /api/options/positions` — add position (underlying, expiry, strike, type, qty, entry_price)
 - `POST /api/options/positions/seed-demo` — insert 6 demo positions
@@ -317,9 +318,16 @@ HTTP client over the running backend (`PYTHON_API_URL`, default :9317) — never
 - `DELETE /api/rates/curve` — clear the cache
 
 ## Bonds (`routers/bonds.py`) — BOND view `B` (2026-09-25)
-- `GET /api/bonds/overview` — 10 FRED daily series (DGS2/10/30, THREEFFTP10, DFII10, BAMLC0A0CM,
+- `GET /api/bonds/overview` — 10 FRED daily series (DGS2/10/30, THREEFYTP10 [KW 10Y-zero TP; was THREEFFTP10 = forward TP until 2026-09-26], DFII10, BAMLC0A0CM,
   BAMLH0A0HYM2, BAMLC0A4CBBBEY, DAAA, DBAA) + derived 2s10s, Baa−Aaa → KPIs (1d/5d/20d bp, 1Y pctile)
   + aligned ~2y history. Cache 1h (10 min when any series failed).
+- `GET /api/bonds/decomposition` (2026-09-26) — 10Y = expected real + breakeven + term premium.
+  FRED DGS10/DFII10/T10YIE (since 2003) + NY Fed ACM daily `.xls` (ACMY10/ACMTP10/ACMRNY10, ~10 MB,
+  needs `xlrd`); ACM down → Kim-Wright THREEFY10/THREEFYTP10 fallback (`model: "KW"`). Pure math in
+  `backend/bond_decomposition.py`: snapshot of both lenses + double-count overshoot, attribution
+  1/5/20/60d (driver REAL/BE/TP = largest piece in direction of Δ, |Δ|≥10bp), tripwires (TP > prior
+  10y high, BE ≥2.5 → 20y high, 10Y 5.5%; TP+BE both breached = `flip`), 20y/10y context, 520d history.
+  Cache 3h (20 min on any error).
 - `GET /api/bonds/supply` — Treasury auctions (fiscaldata `auctions_query`, no key, last 190d + announced):
   high yield (bills = `high_investment_rate`), bid-to-cover, dealer/indirect % of competitive; weekly
   bills vs coupons $bn; slow FRED `NCBDBIQ027S` (Z.1, $M→$bn), `BUSLOANS`, `DRTSCILM`, `GFDEBTN`. Cache 6h.
@@ -332,6 +340,19 @@ HTTP client over the running backend (`PYTHON_API_URL`, default :9317) — never
   t/t+1/t+3, Welch t), backfill status. Cache 30 min (30 s while backfill runs).
 - `DELETE /api/bonds/cache`
 - Proxy: `app/api/bonds/[section]/route.ts` (overview|supply|issuance, 60s timeout)
+
+### Live quote stream (`routers/stream.py` + `backend/quote_stream.py`) — 2026-09-26
+- `GET /api/stream/quotes?symbols=AAPL,PTT.BK,BTC-USD` — `text/event-stream`. At most one `data:` per second:
+  `{"AAPL":{"price":231.4,"change":1.2,"change_pct":0.52,"ts":<exchange ms>}}`, only symbols that ticked since
+  the last frame (first frame = cache). `: ping` every 15s when quiet. Optional `focus=` (must stay live: open chart, held position) and `mounted=` (out of view, first evicted); `symbols=` = on screen. A symbol keeps the best tier any client gives it. Per request ≤ `QUOTE_STREAM_MAX_SYMBOLS`, kept in the order sent (no longer cut at 200 alphabetically).
+  `event: coverage` `{"live": N, "denied": [sym…]}` when it changes — denied = no slot, budget full (REST poll only). Unnamed `message` listeners ignore it.
+- `GET /api/stream/status` — `{connected, symbols, live, denied, max_symbols, shards:[{id, symbols, connected}], shard_cap, last_message_age_s, cached}`; `connected` = every shard connected.
+- Budget (2026-09-26): process-wide `QUOTE_STREAM_MAX_SYMBOLS` (900). Over it: best tier first, then already-streaming, then oldest ask; a newcomer takes a slot only from a strictly lower tier, on the same socket.
+- Source: Yahoo pricing WebSocket (unofficial, no key) via `websockets` + `yfinance.pricing_pb2`. Yahoo serves 100 symbols per socket, so symbols are sharded ≤ `SHARD_CAP` (90) per socket on one asyncio loop in its own thread (sharded 2026-09-26); subscriptions
+  ref-counted across clients, dropped on disconnect. Regular-session ticks only (`market_hours == 1`).
+  .BK quotes are Yahoo-delayed (~15m) like everywhere else.
+- Proxy: `app/api/stream/quotes/route.ts` (forwards `symbols`/`focus`/`mounted`, passes `request.signal` so a closed tab closes the backend stream).
+- Consumers (one shared EventSource per page, `hooks/useQuoteStream.ts`): PORT positions (`live-patch.ts` `applyTicks`, price deltas) · every chart via `useStockHistory` (`chartkit/live-bars.ts` `applyTickToBars`: moves last candle, opens a new one past it) · chart header via `useStockQuote` · watchlist via `useWatchlistQuotes` · TICK DATA board: indices (`useMarketDataQuery`), FX (`useFxTicks`), volatility (market-view) — all through `lib/live-quotes.ts`.
 
 ### COT (`routers/cot.py`) — CFTC Commitments of Traders (2026-09-25)
 - `GET /api/cot/snapshot?window=156` (52–1040 weeks) — per contract (17: UST 2Y/5Y/10Y/Ultra10Y/Bond/UltraBond,
@@ -756,4 +777,15 @@ Proxies: `app/api/v2/portfolio/ledger/evidence/route.ts`, `…/evidence/image/ro
 ### Broker fees (2026-09-26, `backend/broker_fees.py`)
 | GET | `/api/v2/portfolio/fees/estimate?account_id&side=BUY|SELL&qty&price[&symbol&market&currency]` | `{profile, basis, currency, side, value, commission, vat, sec_fee, taf_fee, total, source}`; `profile: null` = no schedule for this account/currency |
 `POST /trades` takes `fee_entry` / `fee_exit` (None = estimate, number = as typed); `/sell` and `/sell-all-lots` `commission` None = estimate (split by volume across lots). Proxy `app/api/v2/portfolio/fees/estimate/route.ts`.
+`POST /trades` also takes `slip_sha256` (from `/slip/read`: order ref + fill time come from the saved slip, not the form; writes/relinks a `broker_executions` row, returns `evidence_id`; 422 if the slip file is gone), `broker_order_ref` / `executed_at` (typed by hand). **409** when the account already has a trade with that order ref. `DELETE /trades/{id}` sets the evidence row's `trade_id` NULL (the fill stays). It also takes `fee_entry_breakdown` / `fee_exit_breakdown` (`{commission, vat, sec_fee?, taf_fee?}` from a slip) → stored in `fee_detail` beside the typed total with `source: "slip"`; ignored when the fee is an estimate.
+
+| Method | Path | Returns |
+|---|---|---|
+| POST | `/api/v2/portfolio/slip/read` (multipart `file`, or `files` ×1–4 = screenshots of ONE order top→bottom (2026-09-26), ≤12 MB each) | `{engine, broker, status: ok\|review\|fail, slip{fields{side,symbol,exchange,order_amount,price,quantity,gross_value,commission,vat,sec_fee,taf_fee,order_type,submitted_at,executed_at,order_ref,settlement}, derived{exact_price,fee_total,fee_breakdown,trade_date,executed_at_utc}}, checks[{id,level,message}], form{side,account_hint,symbol,volume,date_entry\|exit,price_entry\|exit,fee_entry\|exit,fee_breakdown,note,broker_order_ref,executed_at}, warnings[], duplicates[trades whose note holds the order ref], image_sha256, ocr}` — reads only, never writes a trade. 422 = not an image, 503 = OCR unavailable |
+| GET | `/api/v2/portfolio/slip/status` | `{engine, ocr_loaded, backend}` — backend `rapidocr:PP-OCRv5-th` (~1.5 s/slip) or `easyocr:th+en` fallback (12–25 s) |
+| POST | `/api/v2/portfolio/slip/warm` | `{ok, backend}` — starts the OCR worker + loads the model (SlipReader calls it on mount) |
+
+**Option slips (2026-09-26):** `slip.kind` = `stock` | `option`; an option slip (`parsers/dime_option.py`, asked before the stock parser) returns `form{instrument:'option', side, underlying, option_type, strike, expiry, contracts, multiplier, price, limit_price, trade_date, executed_at/submitted_at (ISO +07:00), settle_date, broker_order_ref, order_type, fee_items[{component,amount}], fee_total, note}` with checks `value` (contracts×mult×premium), `total` (BUY value+fees = payable, SELL value−fees = receivable), `ref_date`, `expiry`. Response adds `image_sha256s[]` + `ocr.pages`; `duplicates` also lists option_trades with that order ref.
+
+Router `backend/routers/slip_ocr.py` (adds `form.account_hint` from its `ACCOUNT_HINT`, passes `slip_evidence.fee_schedule`); engine `backend/slip_ocr/` — split-ready: imports nothing from the backend, own `pyproject.toml` (`slip-ocr`, extras `rapid`/`easy`/`test`), own `tests/` + fixtures, `README.md`. Split with `git subtree split --prefix=backend/slip_ocr`. Proxies `app/api/v2/portfolio/slip/{read,status,warm}/route.ts` (read: 180 s timeout).
 | GET | `/api/v2/portfolio/takeover?account_id&base_currency` | in-kind takeover lots (fair-value basis) + previous owner's cost memo; see data-shapes. Proxy `app/api/v2/portfolio/takeover/route.ts`; shown as the TAKEOVER strip in PORT → POSITIONS (2026-09-26) |

@@ -68,6 +68,16 @@ export function ladderSteps(interval: BarInterval, now?: Date): LadderStep<TimeP
 /** How long a requested extend may stay in flight before the lock is dropped. */
 const PENDING_TIMEOUT_MS = 8000;
 
+/**
+ * Widest window the settle-time prefetch may warm unasked, in days.
+ *
+ * Warming "one rung ahead" is cheap from 3M (→ YTD) but from 1Y the next rung
+ * is 5Y — five times the bars and the slowest Yahoo pull — fired for every
+ * chart anyone opens at the default window. Past this, a window is only warmed
+ * once a gesture actually heads for the edge.
+ */
+const SETTLE_PREFETCH_MAX_SPAN_DAYS = 400;
+
 export interface AutoExtendOptions {
   symbol: string | null;
   /** The window the user picked. Never written to. */
@@ -117,7 +127,11 @@ export function useAutoExtendRange({
   enabled = true,
   onPrefetch,
 }: AutoExtendOptions): AutoExtendState {
-  const [extendedPeriod, setExtendedPeriod] = useState<TimePeriod | null>(null);
+  // Tagged with the view it was reached on. The reset effect below runs AFTER
+  // the render that changed symbol, so an untagged value leaked one render into
+  // the next symbol — long enough to fire (and abort) its 5Y request, which the
+  // backend still ran to completion against Yahoo.
+  const [extended, setExtended] = useState<{ key: string; period: TimePeriod } | null>(null);
 
   /**
    * An extend that has been asked for but whose bars have not arrived.
@@ -137,6 +151,7 @@ export function useAutoExtendRange({
 
   // Identity of what the USER asked for. An auto-extend leaves it alone.
   const viewportKey = `${symbol ?? "-"}|${period}|${interval}`;
+  const extendedPeriod = extended?.key === viewportKey ? extended.period : null;
 
   // A new symbol, interval or hand-picked period abandons the climb: the user
   // asked for a specific window and should get it, not the widest one they
@@ -145,7 +160,7 @@ export function useAutoExtendRange({
   useEffect(() => {
     pendingRef.current = null;
     warmedRef.current = null;
-    setExtendedPeriod(null);
+    setExtended(null);
   }, [viewportKey]);
 
   // The requested history landed (or the window turned out to hold the same
@@ -169,8 +184,11 @@ export function useAutoExtendRange({
    */
   useEffect(() => {
     if (!enabled || !symbol || barCount <= 0) return;
-    const ahead = planPrefetch({ current: effectivePeriod, steps: ladderSteps(interval) });
+    const steps = ladderSteps(interval);
+    const ahead = planPrefetch({ current: effectivePeriod, steps });
     if (!ahead) return;
+    const aheadSpan = steps.find((s) => s.period === ahead)?.spanDays ?? Number.POSITIVE_INFINITY;
+    if (aheadSpan > SETTLE_PREFETCH_MAX_SPAN_DAYS) return;
     const key = `${symbol}|${interval}|${ahead}`;
     if (warmedRef.current === key) return;
     warmedRef.current = key;
@@ -187,8 +205,24 @@ export function useAutoExtendRange({
   // Read inside the callback so a stale closure cannot fire a request against
   // last render's window (the callback is handed to a chart subscription that
   // outlives individual renders).
-  const stateRef = useRef({ symbol, effectivePeriod, interval, barCount, isLoading, enabled });
-  stateRef.current = { symbol, effectivePeriod, interval, barCount, isLoading, enabled };
+  const stateRef = useRef({
+    symbol,
+    effectivePeriod,
+    interval,
+    barCount,
+    isLoading,
+    enabled,
+    viewportKey,
+  });
+  stateRef.current = {
+    symbol,
+    effectivePeriod,
+    interval,
+    barCount,
+    isLoading,
+    enabled,
+    viewportKey,
+  };
 
   const onLogicalRange = useCallback((range: LogicalRange) => {
     const s = stateRef.current;
@@ -219,7 +253,7 @@ export function useAutoExtendRange({
     // gesture would otherwise plan the same jump again.
     pendingRef.current = { period: next, barCountAt: s.barCount };
     stateRef.current = { ...s, effectivePeriod: next };
-    setExtendedPeriod(next);
+    setExtended({ key: s.viewportKey, period: next });
 
     // Safety valve: a failed request never changes the bar count, and without
     // this the chart would be locked out of extending for the rest of the

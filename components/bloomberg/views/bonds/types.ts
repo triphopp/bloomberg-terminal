@@ -138,3 +138,111 @@ export interface BondIssuance {
   method: { query: string; forms: string[]; unit: string; caveat: string; excluded: string };
   source: string;
 }
+
+// ── /api/bonds/decomposition — 10Y = expected real + breakeven + term premium ──
+
+export type DecompPiece = "REAL" | "BE" | "TP";
+
+export interface DecompAttribution {
+  days: number;
+  since?: string;
+  dNominal_bp?: number | null;
+  dReal_bp?: number | null;
+  dBE_bp?: number | null;
+  /** % of the market-lens move from TIPS real; null when real and BE offset */
+  realShare?: number | null;
+  dExpected_bp?: number | null;
+  dTP_bp?: number | null;
+  modelSince?: string;
+  dExpReal_bp?: number | null;
+  dModel_bp?: number | null;
+  driver?: DecompPiece | null;
+}
+
+export interface DecompWire {
+  id: "TP_HIGH" | "BE_RANGE" | "NOM_ALARM";
+  label: string;
+  piece: DecompPiece | "ALL";
+  value: number | null;
+  level: number | null;
+  levelNote: string;
+  warn?: number | null;
+  status: "OK" | "WATCH" | "BREACH" | "NA";
+  gap_bp: number | null;
+  tpRoom_bp?: number | null;
+}
+
+export interface DecompLongRun {
+  years: number;
+  since: string;
+  avg: number;
+  min: number;
+  minDate: string;
+  max: number;
+  maxDate: string;
+  pctile: number;
+}
+
+export interface DecompContext {
+  y20: DecompLongRun | null;
+  y10: DecompLongRun | null;
+  ago5: { date: string; value: number } | null;
+  ago10: { date: string; value: number } | null;
+  ago20: { date: string; value: number } | null;
+}
+
+export interface DecompHistoryRow {
+  date: string;
+  nominal: number | null;
+  real: number | null;
+  expReal: number | null;
+  breakeven: number | null;
+  termPremium: number | null;
+  expected: number | null;
+}
+
+export interface BondDecomposition {
+  ok: boolean;
+  detail?: string;
+  model: "ACM" | "KW";
+  modelNote: string;
+  snapshot: {
+    market?: {
+      asOf: string;
+      nominal: number;
+      real: number;
+      breakeven: number;
+      residual_bp: number;
+    };
+    model?: {
+      asOf: string;
+      fitted: number;
+      expected: number;
+      termPremium: number;
+      residual_bp: number;
+    };
+    pieces?: {
+      asOf: string;
+      expReal: number;
+      breakeven: number;
+      termPremium: number;
+      total: number;
+      share: { expReal: number | null; breakeven: number | null; termPremium: number | null };
+    };
+    doubleCount?: { stacked: number; nominal: number; overshoot_bp: number };
+  };
+  attribution: DecompAttribution[];
+  driver: {
+    window: number;
+    key: DecompPiece | null;
+    label: string;
+    case: string;
+    read: string;
+    severity: 0 | 1 | 2 | 3;
+  };
+  tripwires: { wires: DecompWire[]; flip: boolean; flipNote: string | null };
+  context: Record<"nominal" | "real" | "breakeven" | "termPremium", DecompContext>;
+  history: DecompHistoryRow[];
+  errors: string[];
+  source: string;
+}

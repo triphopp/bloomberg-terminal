@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import type { Auction, BondIssuance, BondKpi, Deal, EventStudy } from "./types";
 import { C, Panel, bpColor, fmtBp } from "./ui";
 
@@ -179,7 +180,7 @@ export function DealsPanel({ deals, method }: { deals: Deal[]; method: BondIssua
 
 const AUCTION_COLS = "46px 1fr 44px 50px 40px 40px 40px";
 
-function AuctionRow({ a }: { a: Auction }) {
+function AuctionRowView({ a }: { a: Auction }) {
   const coupon = a.type !== "Bill" && a.type !== "CMB";
   return (
     <div
@@ -261,3 +262,6 @@ export function AuctionsTable({
     </div>
   );
 }
+
+// Memoised: one row per auction, re-rendered with identical props on every BOND render.
+const AuctionRow = memo(AuctionRowView);

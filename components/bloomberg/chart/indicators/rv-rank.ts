@@ -29,7 +29,7 @@ import {
   calcRealizedVol,
   inferPeriodsPerYear,
   rollingPercentRank,
-} from "./rv-core";
+} from "./rv-core.ts";
 
 /** Below this many prior observations a percentile is meaningless, so plot nothing. */
 const MIN_RANK_OBS = 30;

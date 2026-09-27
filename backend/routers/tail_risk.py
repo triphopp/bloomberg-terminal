@@ -483,8 +483,7 @@ def _compute_dcc_v3_signal(ret: pd.DataFrame, corr_window: int = 21) -> str:
 def _dcc_levels() -> tuple[str, str]:
     """(v1, v3) correlation levels, computed once per cache window.
 
-    Own cache key so `get_cached_dcc_signals` can serve the ticker without
-    waiting on — or duplicating — the full signal computation.
+    Own cache key so the levels are computed once per window, not per caller.
     """
 
     def compute() -> tuple[str, str]:
@@ -494,21 +493,6 @@ def _dcc_levels() -> tuple[str, str]:
         return _compute_dcc_v1_signal(ret), _compute_dcc_v3_signal(ret)
 
     return _dcc_cache.get_or_set("levels", compute)
-
-
-def get_cached_dcc_signals() -> tuple[str, str]:
-    """Public: (v1, v3) levels for ticker.py alerts. Cache-only by design — the
-    ticker refreshes every 60s and must not block on a 7-asset download plus an
-    HMM fit.
-
-    Returns UNKNOWN, not NORMAL, on a cold cache. v1 returned NORMAL, which the
-    ticker could not distinguish from a genuine all-clear, so a cold start
-    reported calm correlation rather than "not measured yet".
-    """
-    cached = _dcc_cache.get("levels")
-    if cached:
-        return cached
-    return "UNKNOWN", "UNKNOWN"
 
 
 # ─── Market data (SPY / AGG) ──────────────────────────────────────────────────

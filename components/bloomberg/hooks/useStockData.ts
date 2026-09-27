@@ -1,11 +1,14 @@
 "use client";
 
 import { QUERY_RETRY_ONCE } from "@/lib/constants";
-import { marketJson, quoteQueryOptions } from "@/lib/market-data-client";
+import { type StockQuote, marketJson, quoteQueryOptions } from "@/lib/market-data-client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { useCallback } from "react";
 import { isRealTimeEnabledAtom } from "../atoms";
+import { applyTickToBars } from "../chartkit/live-bars";
+import { patchQuote } from "../lib/live-quotes";
+import { type QuoteTick, useQuoteStream } from "./useQuoteStream";
 
 async function stockFetch(params: Record<string, string>, signal?: AbortSignal) {
   // biome-ignore lint/suspicious/noExplicitAny: stock proxy serves search, history and financial response shapes
@@ -33,12 +36,30 @@ export function useStockSearch(query: string) {
  */
 export function useStockQuote(symbol: string | null) {
   const isRealTimeEnabled = useAtomValue(isRealTimeEnabledAtom);
-  return useQuery({
-    ...quoteQueryOptions(symbol ?? ""),
+  const options = quoteQueryOptions(symbol ?? "");
+  const query = useQuery({
+    ...options,
     enabled: !!symbol,
     refetchInterval: isRealTimeEnabled ? 60_000 : 300_000,
     refetchOnWindowFocus: true,
   });
+
+  // Live header price, in step with the chart's last candle (useStockHistory
+  // takes the same ticks) — otherwise the axis label moves and the header sits
+  // on the last 60s poll, and the two disagree on screen.
+  const qc = useQueryClient();
+  const streamSymbol = symbol ? String(query.data?.symbol ?? symbol).toUpperCase() : "";
+  const onTicks = useCallback(
+    (ticks: Record<string, QuoteTick>) => {
+      const t = ticks[streamSymbol];
+      if (!t) return;
+      qc.setQueryData<StockQuote>(options.queryKey, (prev) => patchQuote(prev, t));
+    },
+    [qc, streamSymbol, options.queryKey]
+  );
+  useQuoteStream(streamSymbol ? [streamSymbol] : [], onTicks);
+
+  return query;
 }
 
 interface StockHistory {
@@ -50,6 +71,12 @@ interface StockHistory {
     close: number;
     volume: number;
   }>;
+  /** Yahoo symbol actually fetched (a bare Thai ticker resolves to .BK). */
+  yf_symbol?: string;
+  /** Bar size the backend served — the requested one, or the period default. */
+  interval?: string;
+  /** Exchange UTC offset: bar dates are exchange-local with no zone. */
+  utc_offset_min?: number | null;
 }
 
 export function useStockHistory(
@@ -58,8 +85,9 @@ export function useStockHistory(
   interval = "",
   enabled = true
 ) {
-  return useQuery<StockHistory>({
-    queryKey: ["stock", "history", symbol, period, interval],
+  const queryKey = ["stock", "history", symbol, period, interval] as const;
+  const query = useQuery<StockHistory>({
+    queryKey,
     queryFn: ({ signal }) =>
       stockFetch(
         {
@@ -85,6 +113,29 @@ export function useStockHistory(
       prevQuery?: { queryKey: readonly unknown[] }
     ) => (prevQuery?.queryKey[2] === symbol ? prev : undefined),
   });
+
+  // Live last candle: every chart reads its bars through here, so the stream
+  // is wired once for all of them (MKT, chart windows, stock view). Ticks move
+  // the cached bars; the REST refetch replaces them with Yahoo's own bar.
+  // `setQueryData` with no data yet (placeholder / first load) is a no-op.
+  const qc = useQueryClient();
+  const streamSymbol =
+    symbol && enabled && !query.isPlaceholderData
+      ? (query.data?.yf_symbol ?? symbol.toUpperCase())
+      : "";
+  const onTicks = useCallback(
+    (ticks: Record<string, QuoteTick>) => {
+      const t = ticks[streamSymbol];
+      if (!t) return;
+      qc.setQueryData<StockHistory>(["stock", "history", symbol, period, interval], (prev) =>
+        prev ? applyTickToBars(prev, t) : prev
+      );
+    },
+    [qc, streamSymbol, symbol, period, interval]
+  );
+  useQuoteStream(streamSymbol ? [streamSymbol] : [], onTicks);
+
+  return query;
 }
 
 /**

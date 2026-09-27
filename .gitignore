@@ -109,3 +109,6 @@ backend/backups/
 # ad-hoc pytest roots / temp files some runs leave in backend/
 backend/.pytest-temp-*/
 backend/tmp*.tmp
+
+# Broker slip screenshots (slip_evidence.py) — hold account numbers; never commit
+backend/evidence/

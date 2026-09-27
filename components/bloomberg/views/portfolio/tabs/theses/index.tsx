@@ -3,7 +3,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { BookOpen, ChevronLeft, ChevronRight, FlaskConical, Loader2, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Colors } from "../../helpers";
-import { fmtK, pnlColor } from "../../helpers";
+import { fmtAmt, fmtQty, pnlColor } from "../../helpers";
 import { ConfirmDeleteModal } from "../../modals/ConfirmDeleteModal";
 import type { Trade } from "../../types";
 import { ReadView } from "./ReadView";
@@ -602,7 +602,7 @@ export function ThesesTab({
                 {livePosition
                   ? chip(
                       "POSITION (OPEN)",
-                      `${livePosition.volume.toLocaleString()} sh · ${fmtK(livePosition.pnl)}${
+                      `${fmtQty(livePosition.volume)} sh · ${fmtAmt(livePosition.pnl)}${
                         livePosition.pct == null ? "" : ` (${livePosition.pct.toFixed(1)}%)`
                       }`,
                       pnlColor(livePosition.pnl)

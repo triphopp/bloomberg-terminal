@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { type Colors, fmt, fmtK, pnlColor } from "../helpers";
+import { type Colors, fmt, fmtAmt, fmtPx, fmtQty, pnlColor } from "../helpers";
 import { CotCrowdingPanel } from "../ui/CotCrowdingPanel";
 
 type SubTab = "overview" | "options";
@@ -1063,7 +1063,7 @@ function EnsembleRow({
       </td>
       <td className="text-right py-0.5 font-mono text-[7px]" style={{ color: "#888" }}>
         {sym}
-        {fmtK(amt)}
+        {fmtAmt(amt)}
       </td>
       <td className="text-right py-0.5 text-[7px]" style={{ color: "#666" }}>
         {note}
@@ -1095,7 +1095,7 @@ function RegimeBadge({
       {(regime === "STRESSED" || regime === "ELEVATED") && stressedPct > 0 && (
         <span style={{ color: "#FF4444", marginLeft: 4 }}>
           · Stressed CVaR: {stressedPct.toFixed(2)}% ({sym}
-          {fmtK(stressedAmt)})
+          {fmtAmt(stressedAmt)})
         </span>
       )}
     </span>
@@ -1370,23 +1370,19 @@ function OverviewSection({
                               : "—"}
                         </td>
                         <td className="px-2 py-1 text-right" style={{ color: "#888" }}>
-                          {s.current_price != null
-                            ? `${sym}${s.current_price.toLocaleString()}`
-                            : "—"}
+                          {s.current_price != null ? `${sym}${fmtPx(s.current_price)}` : "—"}
                         </td>
                         <td className="px-2 py-1 text-right" style={{ color: "#666" }}>
-                          {s.avg_entry_price != null
-                            ? `${sym}${s.avg_entry_price.toLocaleString()}`
-                            : "—"}
+                          {s.avg_entry_price != null ? `${sym}${fmtPx(s.avg_entry_price)}` : "—"}
                         </td>
                         <td className="px-2 py-1 text-right" style={{ color: "#aaa" }}>
                           {(s.action === "TRIM" ? s.trim_value : s.buy_value) != null
-                            ? `${sym}${((s.action === "TRIM" ? s.trim_value : s.buy_value) ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                            ? `${sym}${fmtAmt((s.action === "TRIM" ? s.trim_value : s.buy_value) ?? 0)}`
                             : "—"}
                         </td>
                         <td className="px-2 py-1 text-right font-bold" style={{ color: pnlColor }}>
                           {s.action === "TRIM" && s.trim_pnl != null ? (
-                            `${s.trim_pnl >= 0 ? "+" : ""}${sym}${s.trim_pnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}${s.trim_pnl_pct != null ? ` (${s.trim_pnl_pct >= 0 ? "+" : ""}${s.trim_pnl_pct.toFixed(1)}%)` : ""}`
+                            `${s.trim_pnl >= 0 ? "+" : "-"}${sym}${fmtAmt(Math.abs(s.trim_pnl))}${s.trim_pnl_pct != null ? ` (${s.trim_pnl_pct >= 0 ? "+" : ""}${s.trim_pnl_pct.toFixed(1)}%)` : ""}`
                           ) : s.action === "BUY" ? (
                             <span style={{ color: "#555" }}>n/a</span>
                           ) : (
@@ -1541,7 +1537,7 @@ function OverviewSection({
                       style={{ color: colors.textSecondary }}
                     >
                       {sym}
-                      {fmtK(row.amt)}
+                      {fmtAmt(row.amt)}
                     </td>
                     <td
                       className="text-right"
@@ -1565,7 +1561,7 @@ function OverviewSection({
               </span>
               <span className="text-[6px]" style={{ color: colors.textSecondary }}>
                 {sym}
-                {fmtK(metrics.ensemble_conservative_amount * scale)}
+                {fmtAmt(metrics.ensemble_conservative_amount * scale)}
               </span>
             </div>
             {metrics.cvar_ci_lo > 0 && (
@@ -2217,7 +2213,7 @@ function ParitySection({
                   </span>
                   <span className="ml-2" style={{ color: colors.textSecondary }}>
                     {sym}
-                    {fmtK(Math.abs(a.trade_value))}
+                    {fmtAmt(Math.abs(a.trade_value))}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 mt-0.5 pl-10">
@@ -2242,7 +2238,7 @@ function ParitySection({
                   {a.current_price != null && (
                     <span style={{ color: colors.textSecondary }}>
                       @ {sym}
-                      {fmt(a.current_price)}
+                      {fmtPx(a.current_price)}
                     </span>
                   )}
                 </div>
@@ -2427,7 +2423,7 @@ function OptionsRiskSection({
             PREMIUM AT RISK
           </div>
           <div className="text-[12px] font-bold font-mono" style={{ color: "#FF4444" }}>
-            ${portfolio.total_premium_at_risk.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+            ${fmtAmt(portfolio.total_premium_at_risk)}
           </div>
           <div className="text-[8px]" style={{ color: colors.textSecondary }}>
             max loss (long only)
@@ -2578,7 +2574,7 @@ function OptionsRiskSection({
                       style={{ color: p.quantity > 0 ? "#00FF00" : "#FF4444" }}
                     >
                       {p.quantity > 0 ? "+" : ""}
-                      {p.quantity}
+                      {fmtQty(p.quantity)}
                     </td>
                     <td
                       className="px-1 py-1 text-right"
@@ -2614,9 +2610,7 @@ function OptionsRiskSection({
                           ∞
                         </span>
                       ) : p.max_loss != null ? (
-                        <span style={{ color: "#FF4444" }}>
-                          ${p.max_loss.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-                        </span>
+                        <span style={{ color: "#FF4444" }}>${fmtAmt(p.max_loss)}</span>
                       ) : (
                         "—"
                       )}

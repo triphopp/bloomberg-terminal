@@ -29,6 +29,7 @@
  * 5m chart and a daily one.
  */
 
+import { SortedWindow, rollingMean, rollingVariance } from "../rolling.ts";
 import type { OhlcvBar } from "../types";
 
 export type RvEstimator = "cc" | "parkinson" | "gk" | "rs" | "yz";
@@ -61,7 +62,7 @@ function toSeconds(t: string | number): number {
 
 function median(xs: number[]): number {
   if (xs.length === 0) return Number.NaN;
-  const s = [...xs].sort((a, b) => a - b);
+  const s = [...xs].sort((a, b) => a - b); // perf-ok: once per compute, ≤200 bar gaps
   const mid = s.length >> 1;
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
@@ -161,33 +162,6 @@ function openCloseTerms(data: OhlcvBar[]): number[] {
   });
 }
 
-/** Sample variance about the window mean, over exactly `period` values ending at i. */
-function rollingSampleVar(values: number[], period: number, i: number): number {
-  if (period < 2 || i < period - 1) return Number.NaN;
-  let sum = 0;
-  for (let j = i - period + 1; j <= i; j++) {
-    const v = values[j];
-    if (!Number.isFinite(v)) return Number.NaN;
-    sum += v;
-  }
-  const mean = sum / period;
-  let ss = 0;
-  for (let j = i - period + 1; j <= i; j++) ss += (values[j] - mean) ** 2;
-  return ss / (period - 1);
-}
-
-/** Plain mean over exactly `period` values ending at i (any NaN ⇒ NaN). */
-function rollingMean(values: number[], period: number, i: number): number {
-  if (period < 1 || i < period - 1) return Number.NaN;
-  let sum = 0;
-  for (let j = i - period + 1; j <= i; j++) {
-    const v = values[j];
-    if (!Number.isFinite(v)) return Number.NaN;
-    sum += v;
-  }
-  return sum / period;
-}
-
 /**
  * Rolling annualised realized volatility, in PERCENT, aligned to `data`.
  * Null during warm-up or wherever a bar's inputs are unusable.
@@ -213,10 +187,13 @@ export function calcRealizedVol(
     const rs = rsTerms(data);
     // k minimises the variance of the combined estimator (Yang & Zhang 2000).
     const k = 0.34 / (1.34 + (period + 1) / (period - 1));
+    const varOn = rollingVariance(on, period, 1).variance;
+    const varOc = rollingVariance(oc, period, 1).variance;
+    const meanRs = rollingMean(rs, period);
     for (let i = 0; i < n; i++) {
-      const vOn = rollingSampleVar(on, period, i);
-      const vOc = rollingSampleVar(oc, period, i);
-      const vRs = rollingMean(rs, period, i);
+      const vOn = varOn[i];
+      const vOc = varOc[i];
+      const vRs = meanRs[i];
       if (!Number.isFinite(vOn) || !Number.isFinite(vOc) || !Number.isFinite(vRs)) continue;
       const variance = vOn + k * vOc + (1 - k) * vRs;
       if (!(variance > 0)) continue; // RS can go slightly negative on flat bars
@@ -234,8 +211,9 @@ export function calcRealizedVol(
           ? gkTerms(data)
           : rsTerms(data);
 
+  const meanTerms = rollingMean(terms, period);
   for (let i = 0; i < n; i++) {
-    const variance = rollingMean(terms, period, i);
+    const variance = meanTerms[i];
     if (!Number.isFinite(variance) || !(variance > 0)) continue;
     out[i] = Math.sqrt(variance) * ann;
   }
@@ -253,17 +231,26 @@ export function rollingPercentRank(
   minObs: number
 ): (number | null)[] {
   const out = new Array<number | null>(values.length).fill(null);
-  const window: number[] = [];
+  if (lookback < 1) return out;
+  // Sorted copy of the window for the rank, plus insertion order (a ring) to
+  // know which value leaves — O(log k) search + one memmove per bar instead
+  // of a linear count and an O(k) `shift()`.
+  const sorted = new SortedWindow(lookback);
+  const ring = new Float64Array(lookback);
+  let ringStart = 0;
   for (let i = 0; i < values.length; i++) {
     const v = values[i];
     if (v == null || !Number.isFinite(v)) continue;
-    if (window.length >= minObs) {
-      let below = 0;
-      for (const w of window) if (w < v) below++;
-      out[i] = (below / window.length) * 100;
+    const size = sorted.size;
+    if (size >= minObs) out[i] = (sorted.countBelow(v) / size) * 100;
+    if (size === lookback) {
+      sorted.remove(ring[ringStart]);
+      ring[ringStart] = v;
+      ringStart = (ringStart + 1) % lookback;
+    } else {
+      ring[(ringStart + size) % lookback] = v;
     }
-    window.push(v);
-    if (window.length > lookback) window.shift();
+    sorted.insert(v);
   }
   return out;
 }

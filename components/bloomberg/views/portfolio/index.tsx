@@ -2,26 +2,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
 import { Loader2, RefreshCw } from "lucide-react";
-import {
-  BarChart2,
-  BookOpen,
-  Briefcase,
-  Database,
-  FileText,
-  FlaskConical,
-  History,
-  Layers,
-  LayoutDashboard,
-  LineChart,
-  List,
-  Send,
-  ShieldAlert,
-  TrendingUp,
-  Upload,
-  Wrench,
-} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { isDarkModeAtom } from "../../atoms";
+import { useLiveQuery } from "../../hooks/useLiveQuery";
 import { useTabShortcuts } from "../../hooks/useTabShortcuts";
 import { bloombergColors } from "../../lib/theme-config";
 import { FLAG } from "./helpers";
@@ -42,6 +25,7 @@ import { RiskTab } from "./tabs/RiskTab";
 import { ThesesTab } from "./tabs/ThesesTab";
 import { TradeLogTab } from "./tabs/TradeLogTab";
 import type { Account, Summary } from "./types";
+import type { OptionEntryPrefill } from "./ui/OptionEntryForm";
 import { SummaryBar } from "./ui/SummaryBar";
 
 type TopTab = "portfolio" | "analytics" | "risk" | "tools" | "paper";
@@ -50,113 +34,76 @@ type AnalyticsSub = "analytics" | "backtest";
 type ToolsSub = "theses" | "import" | "audit";
 type PaperSub = "dashboard" | "trade" | "positions" | "options" | "history";
 
-const TOP_TABS: { id: TopTab; label: string; icon: React.ReactNode }[] = [
-  { id: "portfolio", label: "PORTFOLIO", icon: <Briefcase className="h-2.5 w-2.5" /> },
-  { id: "analytics", label: "ANALYTICS", icon: <LineChart className="h-2.5 w-2.5" /> },
-  { id: "risk", label: "RISK", icon: <ShieldAlert className="h-2.5 w-2.5" /> },
-  { id: "tools", label: "TOOLS", icon: <Wrench className="h-2.5 w-2.5" /> },
-  { id: "paper", label: "PAPER", icon: <FileText className="h-2.5 w-2.5" /> },
+type Tab<T extends string> = { id: T; label: string };
+
+const TOP_TABS: Tab<TopTab>[] = [
+  { id: "portfolio", label: "PORTFOLIO" },
+  { id: "analytics", label: "ANALYTICS" },
+  { id: "risk", label: "RISK" },
+  { id: "tools", label: "TOOLS" },
+  { id: "paper", label: "PAPER" },
 ];
 
-const PORTFOLIO_SUBS: { id: PortfolioSub; label: string; icon: React.ReactNode }[] = [
-  { id: "positions", label: "POSITIONS", icon: <TrendingUp className="h-2 w-2" /> },
-  { id: "options", label: "OPTIONS", icon: <Layers className="h-2 w-2" /> },
-  { id: "trades", label: "TRADES", icon: <History className="h-2 w-2" /> },
-  { id: "cash", label: "CASH", icon: <Database className="h-2 w-2" /> },
-  { id: "entry", label: "✏️ ENTRY", icon: <Upload className="h-2 w-2" /> },
+const PORTFOLIO_SUBS: Tab<PortfolioSub>[] = [
+  { id: "positions", label: "POSITIONS" },
+  { id: "options", label: "OPTIONS" },
+  { id: "trades", label: "TRADES" },
+  { id: "cash", label: "CASH" },
+  { id: "entry", label: "ENTRY" },
 ];
 
-const ANALYTICS_SUBS: { id: AnalyticsSub; label: string; icon: React.ReactNode }[] = [
-  { id: "analytics", label: "P&L", icon: <BarChart2 className="h-2 w-2" /> },
-  { id: "backtest", label: "BACKTEST", icon: <FlaskConical className="h-2 w-2" /> },
+const ANALYTICS_SUBS: Tab<AnalyticsSub>[] = [
+  { id: "analytics", label: "P&L" },
+  { id: "backtest", label: "BACKTEST" },
 ];
 
-const TOOLS_SUBS: { id: ToolsSub; label: string; icon: React.ReactNode }[] = [
-  { id: "theses", label: "THESES", icon: <BookOpen className="h-2 w-2" /> },
-  { id: "import", label: "IMPORT", icon: <Upload className="h-2 w-2" /> },
-  { id: "audit", label: "AUDIT", icon: <History className="h-2 w-2" /> },
+const TOOLS_SUBS: Tab<ToolsSub>[] = [
+  { id: "theses", label: "THESES" },
+  { id: "import", label: "IMPORT" },
+  { id: "audit", label: "AUDIT" },
 ];
 
-const PAPER_SUBS: { id: PaperSub; label: string; icon: React.ReactNode }[] = [
-  { id: "dashboard", label: "DASHBOARD", icon: <LayoutDashboard className="h-2 w-2" /> },
-  { id: "trade", label: "TRADE", icon: <Send className="h-2 w-2" /> },
-  { id: "positions", label: "POSITIONS", icon: <TrendingUp className="h-2 w-2" /> },
-  { id: "options", label: "OPTIONS", icon: <Layers className="h-2 w-2" /> },
-  { id: "history", label: "HISTORY", icon: <List className="h-2 w-2" /> },
+const PAPER_SUBS: Tab<PaperSub>[] = [
+  { id: "dashboard", label: "DASHBOARD" },
+  { id: "trade", label: "TRADE" },
+  { id: "positions", label: "POSITIONS" },
+  { id: "options", label: "OPTIONS" },
+  { id: "history", label: "HISTORY" },
 ];
 
-// Module-level tab bars: defining these inside PortfolioView creates a new
+// Module-level tab strip: defining it inside PortfolioView creates a new
 // component type on every render, forcing React to unmount/remount the subtree.
 type ThemeColors = typeof bloombergColors.dark;
 
-function TopTabBar({
-  topTab,
-  setTopTab,
-  colors,
-}: { topTab: TopTab; setTopTab: (t: TopTab) => void; colors: ThemeColors }) {
-  return (
-    <div
-      className="flex items-center gap-px px-2 py-1 border-b overflow-x-auto"
-      style={{ borderColor: colors.border }}
-    >
-      {TOP_TABS.map((t, i) => (
-        <button
-          type="button"
-          key={t.id}
-          className="flex items-center gap-1 text-[9px] px-2.5 py-0.5 font-bold hover:opacity-80 whitespace-nowrap"
-          style={{
-            color: topTab === t.id ? colors.accent : colors.textSecondary,
-            borderBottom: topTab === t.id ? `2px solid ${colors.accent}` : "2px solid transparent",
-          }}
-          onClick={() => setTopTab(t.id)}
-          title={`Alt+${i + 1}`}
-        >
-          <span
-            className="text-[7px] opacity-35 hidden sm:inline mr-0.5"
-            style={{ color: topTab === t.id ? colors.accent : colors.textSecondary }}
-          >
-            ⌥{i + 1}
-          </span>
-          {t.icon}
-          {t.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function SubTabBar<T extends string>({
+function TabStrip<T extends string>({
   tabs,
   active,
   setActive,
   colors,
+  sub,
 }: {
-  tabs: { id: T; label: string; icon: React.ReactNode }[];
+  tabs: Tab<T>[];
   active: T;
   setActive: (id: T) => void;
   colors: ThemeColors;
+  /** Sub-tabs sit after the top tabs on the same row, a step smaller. */
+  sub?: boolean;
 }) {
   return (
-    <div
-      className="flex items-center gap-px px-3 py-0.5 border-b overflow-x-auto"
-      style={{ borderColor: colors.border, background: "#050505" }}
-    >
-      {tabs.map((t) => (
+    <>
+      {tabs.map((t, i) => (
         <button
           type="button"
           key={t.id}
-          className="flex items-center gap-1 text-[8px] px-2 py-0.5 font-bold hover:opacity-80 whitespace-nowrap"
-          style={{
-            color: active === t.id ? colors.accent : colors.textSecondary,
-            borderBottom: active === t.id ? `1px solid ${colors.accent}` : "1px solid transparent",
-          }}
+          className={`${sub ? "text-[8px] px-1.5" : "text-[9px] px-2"} py-1 font-bold hover:opacity-80 whitespace-nowrap`}
+          style={{ color: active === t.id ? colors.accent : colors.textSecondary }}
           onClick={() => setActive(t.id)}
+          title={sub ? undefined : `Alt+${i + 1}`}
         >
-          {t.icon}
           {t.label}
         </button>
       ))}
-    </div>
+    </>
   );
 }
 
@@ -171,6 +118,14 @@ export function PortfolioView() {
 
   const [topTab, setTopTab] = useState<TopTab>("portfolio");
   const [portfolioSub, setPortfolioSub] = useState<PortfolioSub>("positions");
+  // OPTIONS → ADD / CLOSE hand the contract to ENTRY; seq makes a repeat click refill.
+  const [optionPrefill, setOptionPrefill] = useState<(OptionEntryPrefill & { seq: number }) | null>(
+    null
+  );
+  const openOptionEntry = (p: OptionEntryPrefill) => {
+    setOptionPrefill({ ...p, seq: Date.now() });
+    setPortfolioSub("entry");
+  };
   const [analyticsSub, setAnalyticsSub] = useState<AnalyticsSub>("analytics");
   const [toolsSub, setToolsSub] = useState<ToolsSub>("theses");
   const [paperSub, setPaperSub] = useState<PaperSub>("dashboard");
@@ -320,8 +275,12 @@ export function PortfolioView() {
     data: summaryData,
     isFetching: loadingSummary,
     refetch: refetchSummary,
-  } = useQuery({
-    ...portfolioQueries.summary(currency),
+  } = useLiveQuery({
+    // Live cadence (60s real-time / 5m idle), same as MKT: P&L, NAV and cash
+    // move with prices, and PORT stays open through a trading session.
+    // Polling stops on its own when PORT is left — the view unmounts.
+    queryKey: portfolioQueries.summary(currency).queryKey,
+    queryFn: portfolioQueries.summary(currency).queryFn,
     retry: 5,
     placeholderData: (prev) => prev,
   });
@@ -330,87 +289,111 @@ export function PortfolioView() {
     void refetchSummary();
   }, [refetchSummary]);
 
-  const acctBtnCls = "flex items-center gap-1 text-[9px] px-2 py-1 font-bold border transition-all";
+  const acctBtnCls = "text-[9px] px-1.5 py-1 font-bold whitespace-nowrap hover:opacity-80";
+  const subTabs =
+    topTab === "portfolio" ? (
+      <TabStrip
+        tabs={PORTFOLIO_SUBS}
+        active={portfolioSub}
+        setActive={setPortfolioSub}
+        colors={colors}
+        sub
+      />
+    ) : topTab === "analytics" ? (
+      <TabStrip
+        tabs={ANALYTICS_SUBS}
+        active={analyticsSub}
+        setActive={setAnalyticsSub}
+        colors={colors}
+        sub
+      />
+    ) : topTab === "tools" ? (
+      <TabStrip tabs={TOOLS_SUBS} active={toolsSub} setActive={setToolsSub} colors={colors} sub />
+    ) : topTab === "paper" ? (
+      <TabStrip tabs={PAPER_SUBS} active={paperSub} setActive={setPaperSub} colors={colors} sub />
+    ) : null;
 
   return (
     <div className="flex flex-col h-full" style={{ background: "#000", color: colors.text }}>
-      {/* Account row */}
+      {/* Row 1 — accounts on the left, book totals on the right */}
       <div
-        className="flex items-center gap-px px-2 pt-1.5 border-b overflow-x-auto"
+        className="flex flex-wrap items-center gap-x-3 px-2 border-b"
         style={{ borderColor: colors.border, background: "#080808" }}
       >
-        <button
-          type="button"
-          className={acctBtnCls}
-          style={{
-            borderColor: activeAccount === "all" ? colors.accent : colors.border,
-            color: activeAccount === "all" ? colors.accent : colors.textSecondary,
-            background: activeAccount === "all" ? `${colors.accent}22` : "transparent",
-          }}
-          onClick={() => setActiveAccount("all")}
-        >
-          🌐 ALL
-        </button>
-        {accounts.map((acc) => (
-          <div key={acc.id} className="group relative flex items-center">
-            <button
-              type="button"
-              className={acctBtnCls}
-              style={{
-                borderColor: activeAccount === acc.id ? colors.accent : colors.border,
-                color: activeAccount === acc.id ? colors.accent : colors.textSecondary,
-                background: activeAccount === acc.id ? `${colors.accent}22` : "transparent",
-              }}
-              onClick={() => setActiveAccount(acc.id)}
-            >
-              {FLAG[acc.country] ?? "🌐"} {acc.name.toUpperCase()}
-              <span className="ml-1 text-[8px] opacity-50">{acc.currency}</span>
-            </button>
-            <button
-              type="button"
-              // Hover reveals it with a mouse; a touch screen has no hover, so it stays.
-              className="hidden group-hover:flex [@media(hover:none)]:flex items-center justify-center absolute -top-1 -right-1 h-3 w-3 rounded-full text-[8px] font-bold leading-none"
-              style={{ background: colors.border, color: colors.text }}
-              title={`Delete ${acc.name}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                openDeleteModal(acc);
-              }}
-            >
-              ×
-            </button>
-          </div>
-        ))}
-
-        {/* + NEW account */}
-        <button
-          type="button"
-          className={acctBtnCls}
-          style={{ borderColor: colors.border, color: colors.textSecondary, borderStyle: "dashed" }}
-          onClick={() => {
-            setShowNewForm((s) => !s);
-            setNewError("");
-          }}
-        >
-          + NEW
-        </button>
-
-        <div className="ml-auto flex items-center gap-1 pb-0.5">
-          {loadingSummary && (
-            <Loader2 className="h-2.5 w-2.5 animate-spin" style={{ color: colors.textSecondary }} />
-          )}
+        <div className="flex items-center overflow-x-auto">
           <button
             type="button"
-            onClick={() => {
-              loadSummary();
-              if (bootState !== "ready") loadAccounts();
-            }}
-            disabled={loadingSummary}
-            className="p-0.5 hover:opacity-70"
+            className={acctBtnCls}
+            style={{ color: activeAccount === "all" ? colors.accent : colors.textSecondary }}
+            onClick={() => setActiveAccount("all")}
           >
-            <RefreshCw className="h-2.5 w-2.5" style={{ color: colors.textSecondary }} />
+            ALL
+          </button>
+          {accounts.map((acc) => (
+            <div key={acc.id} className="group relative flex items-center">
+              <button
+                type="button"
+                className={acctBtnCls}
+                style={{ color: activeAccount === acc.id ? colors.accent : colors.textSecondary }}
+                title={`${acc.name} · ${acc.country} · ${acc.currency}`}
+                onClick={() => setActiveAccount(acc.id)}
+              >
+                {acc.name.toUpperCase()}
+                <span className="ml-1 text-[7px] font-normal opacity-50">{acc.currency}</span>
+              </button>
+              <button
+                type="button"
+                // Hover reveals it with a mouse; a touch screen has no hover, so it stays.
+                className="hidden group-hover:flex [@media(hover:none)]:flex items-center justify-center absolute -top-0.5 -right-0.5 h-3 w-3 text-[8px] font-bold leading-none"
+                style={{ color: colors.textSecondary }}
+                title={`Delete ${acc.name}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openDeleteModal(acc);
+                }}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className={acctBtnCls}
+            style={{ color: colors.textSecondary }}
+            title="New account"
+            onClick={() => {
+              setShowNewForm((s) => !s);
+              setNewError("");
+            }}
+          >
+            +
           </button>
         </div>
+
+        <SummaryBar
+          summary={summary}
+          currency={currency}
+          colors={colors}
+          accountId={activeAccount}
+          onToggleCurrency={() => setCurrency((c) => (c === "THB" ? "USD" : "THB"))}
+        />
+
+        <button
+          type="button"
+          onClick={() => {
+            loadSummary();
+            if (bootState !== "ready") loadAccounts();
+          }}
+          disabled={loadingSummary}
+          className="ml-auto p-0.5 hover:opacity-70"
+          title="Refresh"
+        >
+          {loadingSummary ? (
+            <Loader2 className="h-2.5 w-2.5 animate-spin" style={{ color: colors.textSecondary }} />
+          ) : (
+            <RefreshCw className="h-2.5 w-2.5" style={{ color: colors.textSecondary }} />
+          )}
+        </button>
       </div>
 
       {/* New-account form */}
@@ -478,41 +461,21 @@ export function PortfolioView() {
         </div>
       )}
 
-      {/* Summary bar */}
-      <SummaryBar
-        summary={summary}
-        currency={currency}
-        colors={colors}
-        accountId={activeAccount}
-        onToggleCurrency={() => setCurrency((c) => (c === "THB" ? "USD" : "THB"))}
-      />
-
-      {/* Top tab bar */}
-      <TopTabBar topTab={topTab} setTopTab={setTopTab} colors={colors} />
-
-      {/* Sub-tab bar (context-sensitive) */}
-      {topTab === "portfolio" && (
-        <SubTabBar
-          tabs={PORTFOLIO_SUBS}
-          active={portfolioSub}
-          setActive={setPortfolioSub}
-          colors={colors}
-        />
-      )}
-      {topTab === "analytics" && (
-        <SubTabBar
-          tabs={ANALYTICS_SUBS}
-          active={analyticsSub}
-          setActive={setAnalyticsSub}
-          colors={colors}
-        />
-      )}
-      {topTab === "tools" && (
-        <SubTabBar tabs={TOOLS_SUBS} active={toolsSub} setActive={setToolsSub} colors={colors} />
-      )}
-      {topTab === "paper" && (
-        <SubTabBar tabs={PAPER_SUBS} active={paperSub} setActive={setPaperSub} colors={colors} />
-      )}
+      {/* Row 2 — top tabs, then the active tab's sub-tabs on the same line */}
+      <div
+        className="flex items-center px-1 border-b overflow-x-auto"
+        style={{ borderColor: colors.border }}
+      >
+        <TabStrip tabs={TOP_TABS} active={topTab} setActive={setTopTab} colors={colors} />
+        {subTabs && (
+          <>
+            <span className="mx-1.5 text-[9px]" style={{ color: colors.border }}>
+              │
+            </span>
+            {subTabs}
+          </>
+        )}
+      </div>
 
       {/* Content */}
       <div className="flex-1 overflow-hidden">
@@ -562,7 +525,12 @@ export function PortfolioView() {
               />
             )}
             {topTab === "portfolio" && portfolioSub === "options" && (
-              <OptionsTab accountId={activeAccount} currency={currency} colors={colors} />
+              <OptionsTab
+                accountId={activeAccount}
+                currency={currency}
+                colors={colors}
+                onOpenEntry={openOptionEntry}
+              />
             )}
             {topTab === "portfolio" && portfolioSub === "trades" && (
               <TradeLogTab accountId={activeAccount} currency={currency} colors={colors} />
@@ -571,7 +539,7 @@ export function PortfolioView() {
               <CashTab accountId={activeAccount} summary={summary} colors={colors} />
             )}
             {topTab === "portfolio" && portfolioSub === "entry" && (
-              <ImportTab colors={colors} variant="manual" />
+              <ImportTab colors={colors} variant="manual" optionPrefill={optionPrefill} />
             )}
 
             {topTab === "analytics" && analyticsSub === "analytics" && (

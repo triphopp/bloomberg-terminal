@@ -8,6 +8,7 @@
  */
 
 import type { Comparator, Operand, RuleNode } from "@/lib/alerts/ast";
+import { BB_VOLUME_PARAM_KEYS } from "../chart/bb-volume-overlay";
 import { INDICATOR_REGISTRY } from "../chart/indicators";
 import type { IndicatorRegistryEntry } from "../chart/types";
 import type { AlertScope, CreateAlertRuleInput, NotifyChannel } from "../hooks/useAlertRules";
@@ -49,6 +50,7 @@ export function defaultParamsFor(entry: IndicatorRegistryEntry): Record<string, 
   const out: Record<string, number> = {};
   for (const p of entry.defaultParams) {
     if (p.key === "fitCostBps") continue; // chart simulation cost, not an alert parameter
+    if (BB_VOLUME_PARAM_KEYS.has(p.key)) continue; // display only
     if (typeof p.default === "number") out[p.key] = p.default;
   }
   return out;

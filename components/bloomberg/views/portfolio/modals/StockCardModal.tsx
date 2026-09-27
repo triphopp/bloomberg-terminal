@@ -1,16 +1,12 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { numberFormat } from "../../../lib/number-format";
 import type { StockCard } from "../accounting-types";
 import type { Colors } from "../helpers";
 
 const number = (value: number | null, digits = 2) =>
-  value == null
-    ? "—"
-    : value.toLocaleString("en-US", {
-        maximumFractionDigits: digits,
-        minimumFractionDigits: digits,
-      });
+  value == null ? "—" : numberFormat(digits, digits).format(value);
 
 export function StockCardModal({
   accountId,

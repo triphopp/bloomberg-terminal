@@ -30,7 +30,7 @@ import {
   type RvEstimator,
   calcRealizedVol,
   inferPeriodsPerYear,
-} from "./rv-core";
+} from "./rv-core.ts";
 
 function normEstimator(v: unknown): RvEstimator {
   const s = String(v ?? "yz") as RvEstimator;

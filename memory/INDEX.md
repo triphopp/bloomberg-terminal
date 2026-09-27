@@ -46,6 +46,8 @@ memory/
 
 | Plan | สถานะ |
 |------|--------|
+| [Chart render performance](plans/chart-render-perf.md) | 📋 planning — tick O(1), columns, chunked history, cache tiers |
+| [Unified Trade Entry](plans/unified-trade-entry.md) | 🔄 ENTRY รวมหุ้น + option, สลิป option OCR |
 | [PORT Accounting Ledger](plans/port-accounting-ledger.md) | 🔄 reconstructed preview + checks; no posted journal / read switch |
 | [PORT Accounting Subsystems](plans/port-accounting-subsystems.md) | 🔄 S0–S7 preparation; migration/activation pending |
 | [PORT Evidence Match](plans/port-evidence-match.md) | 🔄 broker fills ↔ reconstructed trades |
@@ -63,6 +65,12 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 
 ## งานล่าสุด (2026-09-23 → 26)
 
+- [Chart Compare and Price Scaling](plans/completed/chart-compare-and-scaling.md) — ✅ done 2026-09-26; COMPARE icon, `compare(...)` ≤10, `<unit>_scaling` and reset control
+- [BB Volume Overlay](plans/completed/bb-volume-overlay.md) — ✅ done 2026-09-26; volume ในกรอบ BB: spike/delta/vol/rvol/events/profile, เส้นประ = σ ของ volume
+- [Native select palette](sessions/2026-09-26-native-select-palette.md) — ✅ fixed 2026-09-26; กฎสี popup กลางทุกหน้า รวม DCF และบันทึกใน `AGENTS.md`/`CLAUDE.md`
+- [IV dropdown contrast](sessions/2026-09-26-iv-dropdown-contrast.md) — ✅ fixed 2026-09-26; กำหนด dark native popup + option colors ให้ select แบบ text-only อ่านได้บน Windows
+- [IV text-only controls](sessions/2026-09-26-iv-text-only-controls.md) — ✅ done 2026-09-26; ตัวเลือกไม่มีกรอบหรือพื้นหลัง, scrollbar บางแบบ watchlist
+- [Compact Status Strip](plans/completed/compact-status-strip.md) — ✅ done 2026-09-26; TAIL/LIVE แถวเดียว 24px, TAIL เหตุการณ์เสี่ยง top 3, ไม่มีช่องว่างก่อน LIVE; [session](sessions/2026-09-26-status-strip-gap.md)
 - **2026-09-26 portfolio takeover** — Finansia 6065151/6065157 booked as an in-kind transfer at fair value on 2026-02-08 (commit `20b4294`); TWR start-of-day flows (`840ecaa`); details `reference/gotchas.md` → "A portfolio taken over is a transfer in kind"
 - **2026-09-26 2024-25 reconciliation** — workbook `Downloads/Portfolio Reconciliation 2024-2025 v2.xlsx` (price-checked dates, AVCO replay, missing buys, cash books); 20 trades imported
 - **2026-09-26 commit split** — the 2026-09-25/26 working tree landed as 17 topic commits `4d6df64..669bbeb` on `feat/port-accounting-ledger`
@@ -73,6 +81,10 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 - [MKT IV 25Δ skew and curvature](sessions/2026-09-23-iv-smile-wing-metrics.md) — ✅ done 2026-09-23; observed quote metrics under IV smile
 - [CFTC COT Positioning](plans/completed/cot-positioning.md) — ✅ done 2026-09-25; TAIL/BOND/MKT/stock/PORT + backtest (WEAK → context only); [session](sessions/2026-09-25-cot-positioning.md); [risks](reports/cot-session-risk-report.md)
 - [PORT Accounting Subsystems](plans/port-accounting-subsystems.md) — 🔄 audit + replay/preflight preparation 2026-09-25; [session](sessions/2026-09-25-accounting-foundation.md); migration/activation ยังค้าง
+- [Yahoo WebSocket limits (yfinance 1.3)](sessions/reports/yf-websocket-limits-report.md) — measured 2026-09-26: 100 symbols/conn (silent), no per-IP cap ≥400 conns, frame ≤2 MB; RTH equity tests pending; [100-cap risk](reports/quote-stream-100-symbol-cap-risk-report.md)
+- [Quote stream visibility budget](plans/quote-stream-visibility-budget.md) — 🔄 Phase 1 backend done 2026-09-26 ([session](sessions/2026-09-26-quote-stream-budget.md)); Phase 2–3 gated on real usage; priority by viewport, budget 900, coverage event
+- [Quote stream sharding](plans/completed/quote-stream-sharding.md) — ✅ done 2026-09-26; [session](sessions/2026-09-26-quote-stream-sharding.md); shards ≤90 symbols on an own asyncio thread + direct proto decode
+- [Quote stream optimisation assessment](sessions/reports/quote-stream-optimization-assessment-report.md) — 2026-09-26 before-build verdicts: async WS ✅ (own thread), queue control-plane only, ring buffer not yet; MessageToDict = 97% of tick cost; tick path causes 0 GC runs
 - [PORT 2024-25 history DB backfill](sessions/2026-09-26-portfolio-history-db-backfill.md) — Excel-backed closed trades 20 posted, 145 proposals tracked; [original staging](sessions/2026-09-26-portfolio-history-reconciliation.md) and [bulk-import risk](reports/portfolio-excel-import-risk-report.md)
 - [PORT accounting evidence phase](sessions/2026-09-25-accounting-evidence.md) — statement revisions/R3, cash EDIT category/R1/R2; no actual broker statement yet
 - [Dime broker execution images](sessions/2026-09-25-dime-broker-execution-evidence.md) — 29 image-cited fills imported as audited evidence; cash/NAV unchanged

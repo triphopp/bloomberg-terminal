@@ -27,6 +27,7 @@ import re
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional
 
 from portfolio_currency import trade_currency
@@ -97,15 +98,19 @@ class Event:
     trade_time: Optional[str] = None
     vat: float = 0.0
     tax: float = 0.0
+    settle_date: Optional[str] = None
+    broker_ref: Optional[str] = None
+    # trade_time is the broker's fill time, not the time it was typed in
+    fill_timed: bool = False
 
     def row(self) -> dict:
         return {
             "id": self.id, "account_id": self.account_id, "trade_date": self.trade_date,
-            "settle_date": None, "trade_time": self.trade_time, "type": self.type, "symbol": self.symbol,
+            "settle_date": self.settle_date, "trade_time": self.trade_time, "type": self.type, "symbol": self.symbol,
             "qty": self.qty, "price": self.price, "gross": self.gross,
             "fee": round(self.fee, 6), "vat": self.vat, "tax": self.tax,
             "net_cash": round(self.net_cash, 6), "currency": self.currency,
-            "fx_rate": self.fx_rate, "broker_ref": None, "link_id": self.link_id,
+            "fx_rate": self.fx_rate, "broker_ref": self.broker_ref, "link_id": self.link_id,
             "reverses_id": None, "source": self.source,
             "source_ref": json.dumps(self.source_ref), "note": self.note,
         }
@@ -127,6 +132,24 @@ def _audit(conn) -> list[dict]:
             d["fields"] = {}
         out.append(d)
     return out
+
+
+def _utc_stamp(value) -> Optional[str]:
+    """An offset-aware fill time as 'YYYY-MM-DD HH:MM:SS' UTC.
+
+    trade_time is compared as a string with created_at and the typed time of a
+    cash check, both UTC in that form; an ISO 'T…+07:00' stamp would sort after
+    every same-day one regardless of the actual hour.
+    """
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return None
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _thb_rate(conn, ccy: str, date: str, stored) -> Optional[float]:
@@ -316,6 +339,19 @@ def build_events(conn) -> tuple[list[Event], list[Issue]]:
             issues.append(Issue("ERROR", "B_OPTION_SIDE", o["account_id"], o["occ_symbol"],
                 f"option fill {o['trade_id'][:8]} has side {side!r}"))
             continue
+        if o.get("price") is None:
+            # close_reason UNKNOWN: the lot is closed but nobody recorded at
+            # what price. Booking it at 0 would invent a 100% loss (an EXPIRED
+            # close at 0 is a real one and carries price 0, not NULL).
+            issues.append(Issue("ERROR", "B_OPTION_PRICE", o["account_id"], o["occ_symbol"],
+                f"option close {o['trade_id'][:8]} on {_d(o['trade_date'])} has no price "
+                f"(close_reason {o.get('close_reason')}) — its P&L and cash cannot be posted"))
+            continue
+        # Without a fill time, an opening fill sorts first in its day: a lot
+        # is opened before it is closed, and the typed-in time of a fill
+        # entered months later (history import) says nothing about the day.
+        fill_time = _utc_stamp(o.get("executed_at"))
+        typed_time = "" if o.get("action") == "OPEN" else str(o.get("created_at") or "")
         units = _f(o["quantity"]) * (_f(o.get("multiplier")) or 100.0)
         price = _f(o["price"])
         fees = _f(o.get("fees"))
@@ -327,7 +363,9 @@ def build_events(conn) -> tuple[list[Event], list[Issue]]:
             type=side, symbol=o["occ_symbol"], qty=units, price=price, gross=gross, fee=fees,
             net_cash=(-gross - fees) if side == "BUY" else (gross - fees), currency=ccy,
             fx_rate=_thb_rate(conn, ccy, date, o.get("exchange_rate")),
-            source_ref=[o["trade_id"]], trade_time=str(o.get("created_at") or ""),
+            source_ref=[o["trade_id"]], trade_time=fill_time or typed_time,
+            fill_timed=fill_time is not None,
+            settle_date=o.get("settle_date"), broker_ref=o.get("broker_order_ref"),
             note=f"option {o.get('action') or ''}".strip(),
         ))
 
@@ -447,11 +485,16 @@ def check(conn, events: list[Event], issues: list[Issue]) -> dict:
                 f"sold more than bought on {neg['event'].trade_date}: balance {neg['bal_qty']:g} "
                 f"— buy history is incomplete, P&L of this position cannot be verified"))
         # Same-day buy and sale: under average cost their order changes the
-        # result, and the only evidence of it here is when each was typed in.
+        # result, and unless the broker's fill times are recorded the only
+        # evidence of it is when each was typed in.
         days: dict[str, set] = defaultdict(set)
+        untimed: set[str] = set()
         for e in evs:
             days[e.trade_date].add(e.type)
-        for day in sorted(d for d, ts in days.items() if {"BUY", "SELL"} <= ts):
+            if not e.fill_timed:
+                untimed.add(e.trade_date)
+        # A day whose every fill carries the broker's fill time is ordered.
+        for day in sorted(d for d, ts in days.items() if {"BUY", "SELL"} <= ts and d in untimed):
             issues.append(Issue("WARN", "I8_SAME_DAY", acct, sym,
                 f"bought and sold on {day}: order taken from record time — check the contract notes"))
         if any(e.note.startswith("option") for e in evs):

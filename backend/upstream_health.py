@@ -61,6 +61,7 @@ SOURCES: dict[str, str] = {
     "finance.yahoo.com": "Yahoo",
     "yahoo.com": "Yahoo",
     "stlouisfed.org": "FRED",
+    "newyorkfed.org": "NY Fed",
     "cboe.com": "CBOE",
     "cnn.io": "CNN F&G",
     "sec.gov": "SEC",

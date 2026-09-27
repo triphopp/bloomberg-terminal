@@ -1,7 +1,6 @@
 "use client";
-import { Pencil } from "lucide-react";
 import { useState } from "react";
-import { type Colors, fmtK, pnlColor } from "../helpers";
+import { type Colors, fmtAmt, pnlColor } from "../helpers";
 import { CashReconcileModal } from "../modals/CashReconcileModal";
 import type { Summary } from "../types";
 
@@ -36,7 +35,7 @@ export function SummaryBar({
   const cashAdj = summary.total_cash_adjustment_base ?? 0;
   const cashEstimate = summary.cash_is_estimate !== false;
   const adjText =
-    cashAdj !== 0 ? ` + your edits (${cashAdj >= 0 ? "+" : "-"}${fmtK(Math.abs(cashAdj))})` : "";
+    cashAdj !== 0 ? ` + your edits (${cashAdj >= 0 ? "+" : "-"}${fmtAmt(Math.abs(cashAdj))})` : "";
   const estText = cashEstimate
     ? "Not yet reconciled for every account — commissions, taxes and interest never entered are invisible to it. "
     : "";
@@ -45,10 +44,8 @@ export function SummaryBar({
     "Economic realized P&L = (entry cost + native P&L) × exit FX − entry cost × entry FX. Uses stored trade FX when available, otherwise dated market FX estimate. Includes principal FX attribution; broker-style realized P&L excludes it.";
 
   return (
-    <div
-      className="flex flex-wrap items-center gap-x-3 md:gap-x-4 gap-y-1 px-3 py-1.5 border-b text-[10px] font-mono"
-      style={{ background: "#080808", borderColor: colors.border }}
-    >
+    // Inline: sits on the account row, which owns the padding and border.
+    <div className="flex flex-wrap items-center gap-x-3 py-1 text-[10px] font-mono">
       {/* Currency + FX in one chip, first on the bar because it frames every
           number after it. The lit symbol is the display currency (every figure
           on the page carries the same ฿/$), the dim one is where a click — or
@@ -72,25 +69,28 @@ export function SummaryBar({
         <span style={{ color: colors.text }}>{summary.thb_per_usd.toFixed(2)}</span>
       </button>
       <div>
-        <span style={{ color: colors.textSecondary }}>TOTAL P&L </span>
+        <span style={{ color: colors.textSecondary }}>P&L </span>
         <span className="font-bold text-xs" style={{ color: pnlColor(totalPnl) }}>
           {sym}
-          {fmtK(Math.abs(totalPnl))} {totalPnl >= 0 ? "▲" : "▼"}
+          {fmtAmt(Math.abs(totalPnl))} {totalPnl >= 0 ? "▲" : "▼"}
         </span>
         {economicPnl != null && (
-          <div className="text-[7px] leading-none" style={{ color: colors.textSecondary }}>
-            <span title={economicPnlTitle}>
-              ECON{" "}
-              <span style={{ color: pnlColor(economicPnl) }}>
-                {sym}
-                {fmtK(Math.abs(economicPnl))} {economicPnl >= 0 ? "▲" : "▼"}
-              </span>
+          <span
+            className="ml-1.5 text-[8px]"
+            style={{ color: colors.textSecondary }}
+            title={economicPnlTitle}
+          >
+            econ{" "}
+            <span style={{ color: pnlColor(economicPnl) }}>
+              {economicPnl < 0 ? "-" : ""}
+              {sym}
+              {fmtAmt(Math.abs(economicPnl))}
             </span>
-          </div>
+          </span>
         )}
       </div>
       <div>
-        <span style={{ color: colors.textSecondary }}>WIN RATE </span>
+        <span style={{ color: colors.textSecondary }}>WIN </span>
         <span style={{ color: summary.global_win_rate >= 50 ? "#4ade80" : "#f87171" }}>
           {summary.global_win_rate.toFixed(1)}%
         </span>
@@ -101,19 +101,19 @@ export function SummaryBar({
       </div>
       {optionCount > 0 && (
         <div
-          title={`Option book market value ${sym}${fmtK(optionsMv)} · delta exposure ${sym}${fmtK(optionsDelta)}. Market value counts toward NAV; delta notional is what the book is exposed to and is what weights allocation.`}
+          title={`Option book market value ${sym}${fmtAmt(optionsMv)} · delta exposure ${sym}${fmtAmt(optionsDelta)}. Market value counts toward NAV; delta notional is what the book is exposed to and is what weights allocation.`}
         >
           <span style={{ color: colors.textSecondary }}>OPT </span>
           <span style={{ color: "#ff9900" }}>{optionCount}</span>
           <span style={{ color: colors.textSecondary }}> · </span>
           <span style={{ color: colors.text }}>
             {sym}
-            {fmtK(optionsMv)}
+            {fmtAmt(optionsMv)}
           </span>
           <span className="ml-1" style={{ color: pnlColor(optionsUnrealized) }}>
             {optionsUnrealized >= 0 ? "+" : "-"}
             {sym}
-            {fmtK(Math.abs(optionsUnrealized))}
+            {fmtAmt(Math.abs(optionsUnrealized))}
           </span>
         </div>
       )}
@@ -121,20 +121,14 @@ export function SummaryBar({
         type="button"
         title={cashTitle}
         onClick={() => setEditCash(true)}
-        className="flex items-center gap-1 hover:opacity-80"
+        className="flex items-center hover:opacity-80"
       >
         <span style={{ color: colors.textSecondary }}>CASH{cashEstimate ? "~" : ""} </span>
         <span className="font-bold text-xs" style={{ color: cash >= 0 ? "#facc15" : "#f87171" }}>
           {cash < 0 ? "-" : ""}
           {sym}
-          {fmtK(Math.abs(cash))}
+          {fmtAmt(Math.abs(cash))}
         </span>
-        {cashEstimate && (
-          <span className="text-[8px]" style={{ color: colors.textSecondary }}>
-            est
-          </span>
-        )}
-        <Pencil className="h-2.5 w-2.5" style={{ color: colors.textSecondary }} />
       </button>
       {editCash && (
         <CashReconcileModal

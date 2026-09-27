@@ -5,8 +5,9 @@
  * Default: kPeriod=14, dPeriod=3, smooth=3
  */
 
-import type { ChartIndicator, IndicatorFactory, OhlcvBar, IndicatorSeriesOutput } from "../types";
-import { calcSMA } from "./sma";
+import { rollingMax, rollingMin } from "../rolling.ts";
+import type { ChartIndicator, IndicatorFactory, IndicatorSeriesOutput, OhlcvBar } from "../types";
+import { calcSMA } from "./sma.ts";
 
 function calcStochastic(
   data: OhlcvBar[],
@@ -14,22 +15,23 @@ function calcStochastic(
   dPeriod: number,
   smooth: number
 ): { k: (number | null)[]; d: (number | null)[] } {
-  const rawK: (number | null)[] = [];
-
+  const rawK: (number | null)[] = new Array(data.length).fill(null);
+  const highs = new Float64Array(data.length);
+  const lows = new Float64Array(data.length);
   for (let i = 0; i < data.length; i++) {
-    if (i < kPeriod - 1) {
-      rawK.push(null);
-      continue;
-    }
-    const slice = data.slice(i - kPeriod + 1, i + 1);
-    const high = Math.max(...slice.map(d => d.high));
-    const low = Math.min(...slice.map(d => d.low));
-    const range = high - low;
-    rawK.push(range === 0 ? 50 : ((data[i].close - low) / range) * 100);
+    highs[i] = data[i].high;
+    lows[i] = data[i].low;
+  }
+  const hh = rollingMax(highs, kPeriod);
+  const ll = rollingMin(lows, kPeriod);
+
+  for (let i = kPeriod - 1; i < data.length; i++) {
+    const range = hh[i] - ll[i];
+    rawK[i] = range === 0 ? 50 : ((data[i].close - ll[i]) / range) * 100;
   }
 
   // Smooth %K with SMA
-  const rawKValues = rawK.filter(v => v != null) as number[];
+  const rawKValues = rawK.filter((v) => v != null) as number[];
   const smoothedK = calcSMA(rawKValues, smooth);
 
   // Align smoothed K back
@@ -43,7 +45,7 @@ function calcStochastic(
   }
 
   // %D = SMA of %K
-  const kValues = kLine.filter(v => v != null) as number[];
+  const kValues = kLine.filter((v) => v != null) as number[];
   const dValues = calcSMA(kValues, dPeriod);
 
   const dLine: (number | null)[] = new Array(data.length).fill(null);
@@ -71,8 +73,24 @@ export const createStochastic: IndicatorFactory = (overrides = {}) => {
     description: `Stochastic Oscillator %K(${kPeriod}) %D(${dPeriod})`,
     minBars: kPeriod + dPeriod + smooth,
     params: [
-      { key: "kPeriod", label: "%K Period", type: "number", default: kPeriod, min: 2, max: 100, step: 1 },
-      { key: "dPeriod", label: "%D Period", type: "number", default: dPeriod, min: 2, max: 50, step: 1 },
+      {
+        key: "kPeriod",
+        label: "%K Period",
+        type: "number",
+        default: kPeriod,
+        min: 2,
+        max: 100,
+        step: 1,
+      },
+      {
+        key: "dPeriod",
+        label: "%D Period",
+        type: "number",
+        default: dPeriod,
+        min: 2,
+        max: 50,
+        step: 1,
+      },
       { key: "smooth", label: "Smooth", type: "number", default: smooth, min: 1, max: 10, step: 1 },
     ],
     config: { kPeriod, dPeriod, smooth },
@@ -91,9 +109,10 @@ export const createStochastic: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#2196f3",
           lineWidth: 1,
-          data: data
-            .map((bar, i) => ({ time: bar.time, value: k[i]! }))
-            .filter(pt => pt.value != null),
+          data: data.flatMap((bar, i) => {
+            const v = k[i];
+            return v == null ? [] : [{ time: bar.time, value: v }];
+          }),
           priceScaleId: "stoch",
         },
         {
@@ -102,9 +121,10 @@ export const createStochastic: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#ff9800",
           lineWidth: 1,
-          data: data
-            .map((bar, i) => ({ time: bar.time, value: d[i]! }))
-            .filter(pt => pt.value != null),
+          data: data.flatMap((bar, i) => {
+            const v = d[i];
+            return v == null ? [] : [{ time: bar.time, value: v }];
+          }),
           priceScaleId: "stoch",
         },
       ];

@@ -1,6 +1,7 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 import { useRef, useState } from "react";
+import { numberFormat } from "../../../lib/number-format";
 import type { Colors } from "../helpers";
 
 type Preview = {
@@ -389,9 +390,7 @@ export function AccountingPreparePanel({
                         ] as const
                       ).map(([col, v]) => (
                         <td key={col} className="p-1">
-                          {typeof v === "number"
-                            ? v.toLocaleString("en-US", { maximumFractionDigits: 6 })
-                            : v}
+                          {typeof v === "number" ? numberFormat(undefined, 6).format(v) : v}
                         </td>
                       ))}
                     </tr>

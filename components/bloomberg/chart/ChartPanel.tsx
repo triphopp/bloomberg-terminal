@@ -15,9 +15,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { extendedHoursPriceLine } from "../core/market-session";
 import { usePrefetchStockHistory, useStockHistory, useStockQuote } from "../hooks/useStockData";
+import { fmtPriceStd } from "../lib/number-format";
 import { bloombergColors } from "../lib/theme-config";
 import { EventDetailPopover } from "./EventDetailPopover";
 import { FearGreedPane } from "./FearGreedPane";
@@ -81,13 +82,7 @@ export interface ChartPanelProps {
   frozenBodyHeight?: number | null;
 }
 
-function fmtPrice(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return "—";
-  const abs = Math.abs(n);
-  if (abs >= 1000) return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
-  if (abs >= 1) return n.toFixed(2);
-  return n.toFixed(4);
-}
+const fmtPrice = fmtPriceStd;
 
 function fmtVol(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n) || n <= 0) return "—";
@@ -239,6 +234,9 @@ export function ChartPanel({
     : null;
 
   const changeTf = onTimeframeChange;
+  // Last period picked by hand, restored when an interval stops forcing another
+  // (see applyInterval). Starts as whatever the window was opened with.
+  const handPeriodRef = useRef<TimePeriod>(timePeriod);
 
   return (
     <div className="flex flex-col h-full" style={{ background: "#050505" }}>
@@ -402,8 +400,13 @@ export function ChartPanel({
             colors={colors}
             timePeriod={timePeriod}
             barInterval={barInterval}
-            onPeriodChange={(p) => changeTf(applyPeriod(p, barInterval))}
-            onIntervalChange={(iv) => changeTf(applyInterval(iv, timePeriod))}
+            onPeriodChange={(p) => {
+              handPeriodRef.current = p;
+              changeTf(applyPeriod(p, barInterval));
+            }}
+            onIntervalChange={(iv) =>
+              changeTf(applyInterval(iv, timePeriod, handPeriodRef.current))
+            }
           />
 
           {/* ── Chart ── */}

@@ -174,7 +174,7 @@ function buildStrategies(calls: OptionRow[], puts: OptionRow[], spot: number): S
         maxProfit: width - debit,
         maxLoss: debit,
         beLow: buy.strike + debit,
-        notes: `Capped gain at ${sell.strike.toFixed(1)}, lower cost than outright call`,
+        notes: `Capped gain at ${sell.strike.toFixed(2)}, lower cost than outright call`,
       });
     })();
 
@@ -197,7 +197,7 @@ function buildStrategies(calls: OptionRow[], puts: OptionRow[], spot: number): S
         maxProfit: width - debit,
         maxLoss: debit,
         beLow: buy.strike - debit,
-        notes: `Profit maximised below ${sell.strike.toFixed(1)}`,
+        notes: `Profit maximised below ${sell.strike.toFixed(2)}`,
       });
     })();
 
@@ -271,7 +271,7 @@ function buildStrategies(calls: OptionRow[], puts: OptionRow[], spot: number): S
         maxLoss: risk,
         beLow: otmPut5.strike - Math.max(0, credit),
         beHigh: otmCall5.strike + Math.max(0, credit),
-        notes: `Profit zone: ${otmPut5.strike.toFixed(1)} – ${otmCall5.strike.toFixed(1)}`,
+        notes: `Profit zone: ${otmPut5.strike.toFixed(2)} – ${otmCall5.strike.toFixed(2)}`,
       });
     })();
 
@@ -312,7 +312,7 @@ function buildStrategies(calls: OptionRow[], puts: OptionRow[], spot: number): S
         maxProfit: otmCall5.strike - spot + income,
         maxLoss: spot - income,
         beLow: spot - income,
-        notes: `Reduced cost basis by $${income.toFixed(2)}, capped upside at ${otmCall5.strike.toFixed(1)}`,
+        notes: `Reduced cost basis by $${income.toFixed(2)}, capped upside at ${otmCall5.strike.toFixed(2)}`,
       });
     })();
 
@@ -331,7 +331,7 @@ function buildStrategies(calls: OptionRow[], puts: OptionRow[], spot: number): S
         maxProfit: income,
         maxLoss: otmPut5.strike - income,
         beLow: otmPut5.strike - income,
-        notes: `Acquire stock at ${otmPut5.strike.toFixed(1)} if assigned, keep premium otherwise`,
+        notes: `Acquire stock at ${otmPut5.strike.toFixed(2)} if assigned, keep premium otherwise`,
       });
     })();
 

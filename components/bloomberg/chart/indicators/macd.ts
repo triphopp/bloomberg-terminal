@@ -5,8 +5,14 @@
  * Default: fast=12, slow=26, signal=9
  */
 
-import type { ChartIndicator, IndicatorFactory, OhlcvBar, IndicatorSeriesOutput, HistogramDataPoint } from "../types";
-import { calcEMA } from "./ema";
+import type {
+  ChartIndicator,
+  HistogramDataPoint,
+  IndicatorFactory,
+  IndicatorSeriesOutput,
+  OhlcvBar,
+} from "../types";
+import { calcEMA } from "./ema.ts";
 
 export const createMACD: IndicatorFactory = (overrides = {}) => {
   const fast = (overrides.fast as number) ?? 12;
@@ -21,9 +27,33 @@ export const createMACD: IndicatorFactory = (overrides = {}) => {
     description: `MACD with ${fast}/${slow} EMA and ${signal}-period signal`,
     minBars: slow + signal,
     params: [
-      { key: "fast", label: "Fast Period", type: "number", default: fast, min: 2, max: 100, step: 1 },
-      { key: "slow", label: "Slow Period", type: "number", default: slow, min: 2, max: 200, step: 1 },
-      { key: "signal", label: "Signal Period", type: "number", default: signal, min: 2, max: 50, step: 1 },
+      {
+        key: "fast",
+        label: "Fast Period",
+        type: "number",
+        default: fast,
+        min: 2,
+        max: 100,
+        step: 1,
+      },
+      {
+        key: "slow",
+        label: "Slow Period",
+        type: "number",
+        default: slow,
+        min: 2,
+        max: 200,
+        step: 1,
+      },
+      {
+        key: "signal",
+        label: "Signal Period",
+        type: "number",
+        default: signal,
+        min: 2,
+        max: 50,
+        step: 1,
+      },
     ],
     config: { fast, slow, signal },
 
@@ -32,18 +62,20 @@ export const createMACD: IndicatorFactory = (overrides = {}) => {
       const s = config.slow as number;
       const sig = config.signal as number;
 
-      const closes = data.map(d => d.close);
+      const closes = data.map((d) => d.close);
       const fastEMA = calcEMA(closes, f);
       const slowEMA = calcEMA(closes, s);
 
       // MACD line = fastEMA - slowEMA
       const macdLine: (number | null)[] = data.map((_, i) => {
-        if (fastEMA[i] == null || slowEMA[i] == null) return null;
-        return fastEMA[i]! - slowEMA[i]!;
+        const a = fastEMA[i];
+        const b = slowEMA[i];
+        if (a == null || b == null) return null;
+        return a - b;
       });
 
       // Signal line = EMA of MACD line (ignore nulls at the start)
-      const macdValues = macdLine.filter(v => v != null) as number[];
+      const macdValues = macdLine.filter((v) => v != null) as number[];
       const signalEMA = calcEMA(macdValues, sig);
 
       // Align signal back to full array
@@ -62,14 +94,16 @@ export const createMACD: IndicatorFactory = (overrides = {}) => {
       const signalPoints: { time: string | number; value: number }[] = [];
 
       for (let i = 0; i < data.length; i++) {
-        if (macdLine[i] != null) {
-          macdPoints.push({ time: data[i].time, value: macdLine[i]! });
+        const m = macdLine[i];
+        const sg = signalLine[i];
+        if (m != null) {
+          macdPoints.push({ time: data[i].time, value: m });
         }
-        if (signalLine[i] != null) {
-          signalPoints.push({ time: data[i].time, value: signalLine[i]! });
+        if (sg != null) {
+          signalPoints.push({ time: data[i].time, value: sg });
         }
-        if (macdLine[i] != null && signalLine[i] != null) {
-          const diff = macdLine[i]! - signalLine[i]!;
+        if (m != null && sg != null) {
+          const diff = m - sg;
           histogram.push({
             time: data[i].time,
             value: diff,

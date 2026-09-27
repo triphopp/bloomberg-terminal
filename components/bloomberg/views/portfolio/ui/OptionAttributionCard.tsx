@@ -1,8 +1,10 @@
 "use client";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { type Colors, fmt, fmtK, pnlColor } from "../helpers";
+import { memo, useCallback, useEffect, useState } from "react";
+import { Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts";
+// Charts below the fold mount when scrolled near — see LazyResponsiveContainer.
+import { LazyResponsiveContainer as ResponsiveContainer } from "../../../ui/LazyResponsiveContainer";
+import { type Colors, fmt, fmtAmt, fmtAxis, fmtQty, pnlColor } from "../helpers";
 
 // Greeks-based P&L attribution for the option book. Every option day is split
 // into the four first-order effects plus whatever the linearisation misses:
@@ -85,12 +87,9 @@ const LEGS = [
   },
 ] as const;
 
-const money = (v: number) => `${v >= 0 ? "+" : "-"}$${fmtK(Math.abs(v))}`;
+const money = (v: number) => `${v >= 0 ? "+" : "-"}$${fmtAmt(Math.abs(v))}`;
 
-export function OptionAttributionCard({
-  accountId,
-  colors,
-}: { accountId: string; colors: Colors }) {
+function OptionAttributionCardView({ accountId, colors }: { accountId: string; colors: Colors }) {
   const [data, setData] = useState<OptionAttribution | null>(null);
   const [loading, setLoading] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -236,7 +235,7 @@ export function OptionAttributionCard({
                     tick={{ fontSize: 8, fill: colors.textSecondary }}
                     tickLine={false}
                     axisLine={false}
-                    tickFormatter={(v) => fmtK(v)}
+                    tickFormatter={(v) => fmtAxis(v)}
                   />
                   <Tooltip
                     contentStyle={{
@@ -299,7 +298,7 @@ export function OptionAttributionCard({
                         {row.symbol}
                       </td>
                       <td className="text-right py-0.5" style={{ color: colors.text }}>
-                        {row.quantity}
+                        {fmtQty(row.quantity)}
                       </td>
                       <td className="text-right py-0.5" style={{ color: colors.textSecondary }}>
                         {row.spot_from === null || row.spot_to === null
@@ -347,3 +346,7 @@ export function OptionAttributionCard({
     </div>
   );
 }
+
+// Memoised: its parent re-renders on every data load (AnalyticsTab mounts in ~7
+// passes) with the same props; without memo each pass re-laid-out this chart.
+export const OptionAttributionCard = memo(OptionAttributionCardView);

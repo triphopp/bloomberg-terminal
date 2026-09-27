@@ -2,7 +2,7 @@
 import { Loader2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BLANK_CASH, BLANK_DIV } from "../constants";
-import { type Colors, fmtK, pnlColor } from "../helpers";
+import { type Colors, fmtAmt, pnlColor } from "../helpers";
 import { BLANK_FILTER, type LedgerFilter, applyFilter, yearsOf } from "../ledger-filter";
 import { CashReconcileModal } from "../modals/CashReconcileModal";
 import { ConfirmDeleteModal } from "../modals/ConfirmDeleteModal";
@@ -345,7 +345,7 @@ export function CashTab({
     a[r.currency] = (a[r.currency] || 0) + r.reinvestAmount;
     return a;
   }, {});
-  const money = (amount: number, ccy: string) => `${ccy === "THB" ? "฿" : "$"}${fmtK(amount)}`;
+  const money = (amount: number, ccy: string) => `${ccy === "THB" ? "฿" : "$"}${fmtAmt(amount)}`;
   const mixedMoney = (values: Record<string, number>) =>
     Object.entries(values)
       .filter(([, value]) => value !== 0)
@@ -621,7 +621,7 @@ export function CashTab({
               <span style={{ color: derivedCash >= 0 ? "#facc15" : "#f87171" }}>
                 {derivedCash < 0 ? "-" : ""}
                 {summaryCcy === "THB" ? "฿" : "$"}
-                {fmtK(Math.abs(derivedCash))}
+                {fmtAmt(Math.abs(derivedCash))}
               </span>
               {!cashReconciled && <span className="ml-0.5 text-[8px]">est</span>}
               <span className="ml-1 text-[8px] border px-1" style={{ borderColor: colors.border }}>
@@ -639,16 +639,16 @@ export function CashTab({
             />
           )}
           <span style={{ color: colors.textSecondary }} title="Capital deposited (ledger, THB)">
-            DEP: <span style={{ color: "#4ade80" }}>฿{fmtK(totalDeposit)}</span>
+            DEP: <span style={{ color: "#4ade80" }}>฿{fmtAmt(totalDeposit)}</span>
           </span>
           <span style={{ color: colors.textSecondary }} title="Capital withdrawn (ledger, THB)">
-            WD: <span style={{ color: "#f87171" }}>฿{fmtK(totalWithdraw)}</span>
+            WD: <span style={{ color: "#f87171" }}>฿{fmtAmt(totalWithdraw)}</span>
           </span>
           {totalTransfer !== 0 && (
             <span style={{ color: colors.textSecondary }} title="Net transfers into this scope">
               XFER:{" "}
               <span style={{ color: "#60a5fa" }}>
-                {totalTransfer < 0 ? "-" : ""}฿{fmtK(Math.abs(totalTransfer))}
+                {totalTransfer < 0 ? "-" : ""}฿{fmtAmt(Math.abs(totalTransfer))}
               </span>
             </span>
           )}
@@ -658,7 +658,7 @@ export function CashTab({
           >
             NET:{" "}
             <span style={{ color: colors.text }}>
-              {netCapital < 0 ? "-" : ""}฿{fmtK(Math.abs(netCapital))}
+              {netCapital < 0 ? "-" : ""}฿{fmtAmt(Math.abs(netCapital))}
             </span>
           </span>
           <span style={{ color: colors.textSecondary }}>
@@ -870,9 +870,9 @@ export function CashTab({
                   className="text-[8px] mt-1 font-mono"
                   style={{ color: after < 0 ? "#f87171" : colors.textSecondary }}
                 >
-                  CASH{acct?.cash_reconciled_at ? "" : "~"} ฿{fmtK(avail)} → after ฿
+                  CASH{acct?.cash_reconciled_at ? "" : "~"} ฿{fmtAmt(avail)} → after ฿
                   {after < 0 ? "-" : ""}
-                  {fmtK(Math.abs(after))}
+                  {fmtAmt(Math.abs(after))}
                   {after < 0 &&
                     " — more than the cash this account shows; check for an unrecorded sale or deposit"}
                 </div>
@@ -1282,7 +1282,7 @@ export function CashTab({
                 {divCheck.gross_expected != null && (
                   <>
                     {" "}
-                    → gross {divForm.currency} {fmtK(divCheck.gross_expected)}
+                    → gross {divForm.currency} {fmtAmt(divCheck.gross_expected)}
                   </>
                 )}
                 {divCheck.instrument_currency &&
@@ -1375,10 +1375,10 @@ export function CashTab({
             return (
               <>
                 {shownOf(filteredCash.length, cash.length)} · in{" "}
-                <span style={{ color: "#4ade80" }}>฿{fmtK(inflow)}</span> · out{" "}
-                <span style={{ color: "#f87171" }}>฿{fmtK(outflow)}</span> · net{" "}
+                <span style={{ color: "#4ade80" }}>฿{fmtAmt(inflow)}</span> · out{" "}
+                <span style={{ color: "#f87171" }}>฿{fmtAmt(outflow)}</span> · net{" "}
                 <span style={{ color: colors.text }}>
-                  {inflow - outflow < 0 ? "-" : ""}฿{fmtK(Math.abs(inflow - outflow))}
+                  {inflow - outflow < 0 ? "-" : ""}฿{fmtAmt(Math.abs(inflow - outflow))}
                 </span>
               </>
             );
@@ -1512,10 +1512,10 @@ export function CashTab({
                       {c.note || "—"}
                     </td>
                     <td className="px-2 py-1 font-bold tabular-nums" style={{ color: flowColor }}>
-                      {c.investment < 0 ? "−" : "+"}฿{fmtK(Math.abs(c.investment))}
+                      {c.investment < 0 ? "−" : "+"}฿{fmtAmt(Math.abs(c.investment))}
                     </td>
                     <td className="px-2 py-1 tabular-nums" style={{ color: colors.textSecondary }}>
-                      {bal < 0 ? "-" : ""}฿{fmtK(Math.abs(bal))}
+                      {bal < 0 ? "-" : ""}฿{fmtAmt(Math.abs(bal))}
                     </td>
                     <td className="px-2 py-1 whitespace-nowrap opacity-60 group-hover:opacity-100">
                       {!isTransfer && (

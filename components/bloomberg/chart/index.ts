@@ -6,7 +6,7 @@
  */
 
 // Core component
-export { ModularChart } from "./ModularChart";
+export { ModularChart, NO_EVENT_MARKERS, NO_INDICATORS, NO_OVERLAYS } from "./ModularChart";
 export type { ChartClickContext, ModularChartProps } from "./ModularChart";
 
 // Event marker detail card (opened by clicking a marker on the chart)

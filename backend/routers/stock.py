@@ -2,6 +2,7 @@
 Stock-related endpoints — search, quote, history, financials, analyst, etc.
 Extracted from main.py as part of the FastAPI router refactoring.
 """
+import asyncio
 import math
 import re
 from datetime import date, datetime
@@ -10,12 +11,13 @@ from typing import Any
 import pandas as pd
 import requests
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 
 from cache import TTLCache
 from config import STOCK_CACHE_TTL, MAX_HISTORY_CACHE_TTL, PERIOD_TO_YF, HISTORY_PERIOD_MAP, VALID_INTERVALS
 from earnings_deadlines import set_filing_deadline
 from market_session import is_today_at, local_date_of
-from market_snapshots import get_quote, get_history
+from market_snapshots import get_quote, get_history, history_future
 from sector_map import classify
 from sources import market_data
 
@@ -591,14 +593,10 @@ def _recover_latest_daily_bar(hist: pd.DataFrame, raw: pd.DataFrame,
     recovered.at[day, "Close"] = price
     return recovered
 
-@router.get("/api/stock/history/{symbol}")
-def stock_history(symbol: str, period: str = "1y", interval: str = ""):
-    """OHLCV history for a single symbol.
-
-    period:   1d | 5d | 1m | 3m | ytd | 1y | 5y
-    interval: 5m | 15m | 30m | 1h | 2h | 4h | 1d | 1wk
-              (omit to use the legacy per-period default)
-    """
+def _history_args(symbol: str, period: str, interval: str):
+    """Normalised request → (period, interval, yf_period, yf_interval,
+    resample_rule, is_intraday, ttl, cache_key). Shared by the route and the
+    sync body so the pre-warmed fetch is exactly the one the body will ask for."""
     period   = period.lower().strip()
     period = {"1mo": "1m", "3mo": "3m"}.get(period, period)
     interval = interval.lower().strip()
@@ -623,6 +621,46 @@ def stock_history(symbol: str, period: str = "1y", interval: str = ""):
     )
 
     cache_key = f"history:{symbol.upper()}:{period}:{interval}"
+    return period, interval, yf_period, yf_interval, resample_rule, is_intraday, ttl, cache_key
+
+
+@router.get("/api/stock/history/{symbol}")
+async def stock_history_route(symbol: str, period: str = "1y", interval: str = ""):
+    """OHLCV history for a single symbol.
+
+    period:   1d | 5d | 1m | 3m | ytd | 1y | 5y
+    interval: 5m | 15m | 30m | 1h | 2h | 4h | 1d | 1wk
+              (omit to use the legacy per-period default)
+
+    Async on purpose. The sync body waits up to 22 s on the Yahoo future; as a
+    plain `def` route that wait held one of anyio's 40 worker threads, and a
+    burst of chart requests starved every other sync route (BOND's endpoints
+    queued 60–82 s behind them, 2026-09-26). Here a cache hit returns with no
+    thread at all, and a miss awaits the SAME future on the event loop first,
+    so the thread the body then runs in only ever finds a finished fetch.
+    """
+    *_, yf_period, yf_interval, _rule, _intraday, ttl, cache_key = _history_args(symbol, period, interval)
+    cached = _stock_cache.get(cache_key, ttl=ttl)
+    if cached is not None:
+        return cached
+    try:
+        await asyncio.wait_for(
+            asyncio.wrap_future(history_future(symbol, yf_period, yf_interval, ttl=ttl)),
+            timeout=22,
+        )
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        # Same answer get_history gives after its 22 s wait — not a second wait.
+        raise HTTPException(504, "History still loading", headers={"Retry-After": "2"}) from exc
+    except Exception:
+        pass  # fetch errors are negative-cached; the body reports them exactly as before
+    return await run_in_threadpool(stock_history, symbol, period, interval)
+
+
+def stock_history(symbol: str, period: str = "1y", interval: str = ""):
+    """Sync body of `/api/stock/history` (also called directly by tests)."""
+    period, interval, yf_period, yf_interval, resample_rule, is_intraday, ttl, cache_key = (
+        _history_args(symbol, period, interval)
+    )
     cached = _stock_cache.get(cache_key, ttl=ttl)
     if cached is not None:
         return cached
@@ -638,10 +676,12 @@ def stock_history(symbol: str, period: str = "1y", interval: str = ""):
 
     try:
         hist = _fetch_hist(symbol)
+        yf_symbol = symbol.upper()
 
         # Auto-retry with .BK suffix for Thai SET stocks (pure uppercase letters, no exchange suffix)
         if hist.empty and _re.fullmatch(r"[A-Z]{2,6}", symbol.upper()):
-            hist = _fetch_hist(f"{symbol.upper()}.BK")
+            yf_symbol = f"{symbol.upper()}.BK"
+            hist = _fetch_hist(yf_symbol)
 
         if hist.empty:
             return {"quotes": []}
@@ -682,7 +722,23 @@ def stock_history(symbol: str, period: str = "1y", interval: str = ""):
             if not pd.isna(row["Close"])
         ]
 
-        data = {"quotes": quotes}
+        # Bar dates are exchange-local and carry no zone. The live quote stream
+        # stamps ticks in UTC, so the chart needs the offset to put a tick in
+        # the right candle (and to know when a new one starts).
+        utc_offset_min = None
+        try:
+            off = hist.index[-1].utcoffset()
+            if off is not None:
+                utc_offset_min = int(off.total_seconds() // 60)
+        except Exception:
+            pass
+
+        data = {
+            "quotes": quotes,
+            "yf_symbol": yf_symbol,
+            "interval": interval,
+            "utc_offset_min": utc_offset_min,
+        }
         # A partial last row may become recoverable as soon as the quote or raw
         # chart catches up. Do not pin the truncated response in this cache.
         if not hist.empty and not pd.isna(hist.iloc[-1].get("Close")):

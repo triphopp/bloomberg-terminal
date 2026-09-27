@@ -65,10 +65,14 @@ def _load_fills(conn, account_id=None) -> list[dict]:
     has = conn.execute("SELECT 1 FROM sqlite_master WHERE name='broker_executions'").fetchone()
     if not has:
         return []
-    sql = "SELECT * FROM broker_executions"
+    # Stock fills only: an option slip is matched to option_trades by
+    # option_trade_id, not to the stock book by symbol.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(broker_executions)")}
+    sql = "SELECT * FROM broker_executions WHERE " + (
+        "instrument_type = 'STOCK'" if "instrument_type" in cols else "1=1")
     args: tuple = ()
     if account_id:
-        sql += " WHERE account_id=?"
+        sql += " AND account_id=?"
         args = (account_id,)
     out = []
     for r in conn.execute(sql + " ORDER BY executed_at_local", args):

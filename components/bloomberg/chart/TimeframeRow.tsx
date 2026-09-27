@@ -46,13 +46,13 @@ export function IntervalPicker({
       style={{ borderLeft: `1px solid ${colors.border}` }}
       ref={wrapRef}
     >
-      <span className="text-[9px] font-mono" style={{ color: colors.textSecondary }}>
+      <span className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
         TF
       </span>
       <button
         ref={triggerRef}
         type="button"
-        className="flex items-center gap-0.5 text-[9px] font-bold font-mono px-1.5 py-0.5 border transition-colors"
+        className="flex items-center gap-0.5 text-[8px] font-normal font-mono px-1.5 py-0.5 border transition-colors"
         style={{
           borderColor: colors.accent,
           backgroundColor: `${colors.accent}22`,
@@ -162,7 +162,7 @@ export function TimeframeRow({
           <button
             key={p}
             type="button"
-            className="text-[9px] font-bold font-mono px-1.5 py-0.5 shrink-0"
+            className="text-[8px] font-normal font-mono px-1.5 py-0.5 shrink-0"
             disabled={disabled}
             style={{
               background: active ? colors.accent : "transparent",

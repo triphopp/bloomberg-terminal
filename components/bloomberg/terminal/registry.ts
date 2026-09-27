@@ -726,51 +726,25 @@ const ANALYSIS: CommandDef[] = [
     },
   },
 
-  // ── compare(A, B, C, ..., period?) ────────────────────────────────────────
+  // ── compare(A, B, C, ...) ──────────────────────────────────────────────────
   {
     name: "COMPARE",
     aliases: ["CMP"],
     group: "analysis",
-    args: [
-      { name: "symbols...", type: "symbol", optional: false },
-      { name: "period", type: "period", optional: true, default: "1y" },
-    ],
-    description: "Side-by-side metrics: return / vol / sharpe / drawdown",
-    handler: async (args, _, signal) => {
-      const syms = allSymbols(args);
-      const p = period(args, "1y");
-      if (syms.length < 1) return { kind: "error", message: "Usage: compare(A, B, C, period?)" };
-      try {
-        const d = await analyticsJson<{
-          rows: Array<{
-            symbol: string;
-            return: number;
-            vol: number;
-            sharpe: number;
-            drawdown: number;
-          }>;
-        }>("compare", { symbols: syms.join(","), period: p }, signal);
+    args: [{ name: "symbols...", type: "symbol", optional: false }],
+    description: "Compare 2–10 assets on the MKT chart (normalized %)",
+    handler: (args, ctx) => {
+      const syms = [...new Set(allSymbols(args).map((s) => s.toUpperCase()))];
+      if (syms.length < 2 || syms.length > 10 || args.positional.some((a) => a.type !== "symbol")) {
         return {
-          kind: "display",
-          content: {
-            type: "table",
-            label: `COMPARE  [${p}]`,
-            cols: ["SYMBOL", "RETURN", "VOL", "SHARPE", "DRAWDOWN"],
-            rows: d.rows.map((r) => ({
-              cells: [
-                r.symbol,
-                fmtPct(r.return),
-                fmtPct(r.vol),
-                fmtNum(r.sharpe, 2),
-                fmtPct(r.drawdown),
-              ],
-              colors: ["accent", rowColor(r.return), "", rowColor(r.sharpe), rowColor(r.drawdown)],
-            })),
-          },
+          kind: "error",
+          message: "Usage: compare(A, B, ...). Choose 2–10 distinct symbols.",
         };
-      } catch (e) {
-        return { kind: "error", message: (e as Error).message };
       }
+      ctx.setChartCompare(syms);
+      ctx.setChartScalingUnit("NATIVE");
+      ctx.setView("market");
+      return { kind: "action" };
     },
   },
 

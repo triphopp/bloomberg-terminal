@@ -1,6 +1,7 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
+import { numberFormat } from "../../../lib/number-format";
 import type { EvidenceReport, EvidenceRow, EvidenceStatus } from "../accounting-types";
 import type { Colors } from "../helpers";
 
@@ -24,15 +25,12 @@ const STATUS_HELP: Record<EvidenceStatus, string> = {
 
 function num(v: number | null | undefined, digits = 2) {
   if (v == null) return "—";
-  return v.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: digits });
+  return numberFormat(0, digits).format(v);
 }
 
 function signed(v: number | null | undefined) {
   if (v == null) return "—";
-  const s = Math.abs(v).toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  const s = numberFormat(2, 2).format(Math.abs(v));
   return v > 0.004 ? `+${s}` : v < -0.004 ? `−${s}` : "0.00";
 }
 

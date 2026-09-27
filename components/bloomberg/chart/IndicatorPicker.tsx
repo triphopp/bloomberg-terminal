@@ -4,6 +4,7 @@ import { Check, ChevronDown, ChevronRight, Plus, Search, X } from "lucide-react"
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BollingerFitSummary } from "./BollingerFitSummary";
+import { type ColorKeyItem, bbVolumeColorKey, readBbVolumeSettings } from "./bb-volume-overlay";
 import { resolveBollingerParameters } from "./bollinger-fit";
 import { INDICATOR_REGISTRY } from "./indicators";
 import { ATR_REGIME_COLORS, calcAtrRegime, validAtrInputs } from "./indicators/atr";
@@ -24,6 +25,12 @@ interface IndicatorPickerProps {
   data?: OhlcvBar[];
   /** Keep active chips on one scrollable line when embedded in a chart toolbar. */
   compact?: boolean;
+  /**
+   * Render the active-indicator chips into this element instead of beside the
+   * add button (e.g. a hover legend over the chart). Passing the prop at all
+   * moves them — `null` while the target isn't mounted hides them.
+   */
+  chipsTarget?: HTMLElement | null;
 }
 
 const EMPTY_BARS: OhlcvBar[] = [];
@@ -37,6 +44,42 @@ const hasSettings = (id: string) => isBollingerEntry(id) || id === "atr-regime";
 const settingsEntryId = (ind: ChartIndicator) =>
   ind.id === "atr-regime" ? ind.id : bollingerEntryId(ind);
 const ATR_STATE_LABEL = { accumulate: "ACCUMULATE", avoid: "AVOID", unknown: "NO SIGNAL" };
+
+const ATR_KEY: ColorKeyItem[] = [
+  { color: ATR_REGIME_COLORS.accumulate, label: "accumulate · low ATR% + uptrend" },
+  { color: ATR_REGIME_COLORS.avoid, label: "avoid · filter not met" },
+  { color: ATR_REGIME_COLORS.unknown, label: "no signal · history short" },
+];
+
+/** Colour key for an indicator whose colours carry meaning, else empty. */
+function colorKeyFor(ind: ChartIndicator): ColorKeyItem[] {
+  if (ind.id === "atr-regime") return ATR_KEY;
+  if (/^bb-\d/.test(ind.id)) return bbVolumeColorKey(readBbVolumeSettings(ind.config));
+  return [];
+}
+
+function ColorKey({ items, muted }: { items: ColorKeyItem[]; muted: string }) {
+  return (
+    <div
+      className="flex flex-col items-end gap-px pr-0.5 text-[8px] font-mono"
+      style={{ color: muted }}
+    >
+      {items.map((k) => (
+        <div key={`${k.color}-${k.label}`} className="flex items-center gap-1 whitespace-nowrap">
+          <span>{k.label}</span>
+          {k.line ? (
+            <span
+              className="inline-block w-2.5"
+              style={{ borderTop: `1px ${k.line} ${k.color}` }}
+            />
+          ) : (
+            <span className="inline-block h-2 w-1.5" style={{ background: k.color }} />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const CATEGORY_LABELS: Record<string, string> = {
   trend: "Trend",
@@ -57,7 +100,9 @@ export function IndicatorPicker({
   onToggleWindowUnit,
   data = EMPTY_BARS,
   compact = false,
+  chipsTarget,
 }: IndicatorPickerProps) {
+  const chipsElsewhere = chipsTarget !== undefined;
   const [isOpen, setIsOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -201,66 +246,85 @@ export function IndicatorPicker({
     }));
   }
 
+  const chips = activeIndicators.map((ind) => {
+    const isBB = bollingerEntryId(ind) != null;
+    const isATR = ind.id === "atr-regime";
+    const atr = isATR ? calcAtrRegime(data, ind.config).at(-1) : null;
+    const accent = isATR
+      ? ATR_REGIME_COLORS[atr?.state ?? "unknown"]
+      : (colors.accent ?? colors.positive);
+    const resolved = isBB ? resolveBollingerParameters(data, ind.config) : null;
+    const label = resolved?.fit
+      ? `${ind.id.startsWith("bb-b-") ? "%B" : "BB"} (${resolved.period}, ${resolved.stdDev}σ) · ${resolved.fit.best ? "FIT" : "FIT N/A · MANUAL"}`
+      : isATR
+        ? `${ind.name} · ${ATR_STATE_LABEL[atr?.state ?? "unknown"]}`
+        : ind.name;
+    const colorKey = colorKeyFor(ind);
+    const keyText = colorKey.map((k) => `■ ${k.label}`).join("\n");
+    return (
+      <div key={ind.id} className={chipsElsewhere ? "flex flex-col items-end gap-0.5" : "contents"}>
+        <div className="flex items-center">
+          <button
+            key={ind.id}
+            type="button"
+            className="flex items-center gap-1 px-1.5 py-0.5 text-[8px] font-mono font-normal border cursor-pointer transition-colors hover:opacity-70"
+            style={{
+              borderColor: `${accent}44`,
+              backgroundColor: `${accent}11`,
+              color: accent,
+            }}
+            onClick={() => onRemove(ind.id)}
+            title={
+              keyText && !chipsElsewhere
+                ? `Remove ${ind.name}\n\nColours:\n${keyText}`
+                : `Remove ${ind.name}`
+            }
+          >
+            {label}
+            <X className="h-2.5 w-2.5" />
+          </button>
+          {(isBB || isATR) && (
+            <button
+              type="button"
+              onClick={() => openIndicatorSettings(ind)}
+              className="text-[8px] font-mono px-1 py-0.5 border hover:opacity-70"
+              style={{ borderColor: colors.border, color: colors.textSecondary }}
+              aria-label={`Settings for ${ind.name}`}
+              title={
+                isATR ? "ATR settings · color definition" : "Bollinger settings · Manual / Fit"
+              }
+            >
+              ⚙
+            </button>
+          )}
+        </div>
+        {chipsElsewhere && colorKey.length > 0 && (
+          <ColorKey items={colorKey} muted={colors.textSecondary} />
+        )}
+      </div>
+    );
+  });
+
   return (
     <div
-      className={`flex items-center gap-1 ${compact ? "min-w-0 flex-1" : "flex-wrap"}`}
+      className={`flex items-center gap-1 ${
+        chipsElsewhere ? "shrink-0" : compact ? "min-w-0 flex-1" : "flex-wrap"
+      }`}
       ref={dropdownRef}
     >
-      <div
-        className={
-          compact
-            ? "flex min-w-0 items-center gap-1 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-            : "contents"
-        }
-      >
-        {activeIndicators.map((ind) => {
-          const isBB = bollingerEntryId(ind) != null;
-          const isATR = ind.id === "atr-regime";
-          const atr = isATR ? calcAtrRegime(data, ind.config).at(-1) : null;
-          const accent = isATR
-            ? ATR_REGIME_COLORS[atr?.state ?? "unknown"]
-            : (colors.accent ?? colors.positive);
-          const resolved = isBB ? resolveBollingerParameters(data, ind.config) : null;
-          const label = resolved?.fit
-            ? `${ind.id.startsWith("bb-b-") ? "%B" : "BB"} (${resolved.period}, ${resolved.stdDev}σ) · ${resolved.fit.best ? "FIT" : "FIT N/A · MANUAL"}`
-            : isATR
-              ? `${ind.name} · ${ATR_STATE_LABEL[atr?.state ?? "unknown"]}`
-              : ind.name;
-          return (
-            <div key={ind.id} className="flex items-center">
-              <button
-                key={ind.id}
-                type="button"
-                className="flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-mono font-bold border cursor-pointer transition-colors hover:opacity-70"
-                style={{
-                  borderColor: `${accent}44`,
-                  backgroundColor: `${accent}11`,
-                  color: accent,
-                }}
-                onClick={() => onRemove(ind.id)}
-                title={`Remove ${ind.name}`}
-              >
-                {label}
-                <X className="h-2.5 w-2.5" />
-              </button>
-              {(isBB || isATR) && (
-                <button
-                  type="button"
-                  onClick={() => openIndicatorSettings(ind)}
-                  className="text-[9px] font-mono px-1 py-0.5 border hover:opacity-70"
-                  style={{ borderColor: colors.border, color: colors.textSecondary }}
-                  aria-label={`Settings for ${ind.name}`}
-                  title={
-                    isATR ? "ATR settings · color definition" : "Bollinger settings · Manual / Fit"
-                  }
-                >
-                  ⚙
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      {chipsElsewhere ? (
+        chipsTarget && createPortal(chips, chipsTarget)
+      ) : (
+        <div
+          className={
+            compact
+              ? "flex min-w-0 items-center gap-1 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              : "contents"
+          }
+        >
+          {chips}
+        </div>
+      )}
 
       <div className="relative shrink-0">
         <button
@@ -272,7 +336,7 @@ export function IndicatorPicker({
             setCategoryFilter(null);
             setExpandedId(null);
           }}
-          className="flex items-center gap-0.5 px-1.5 py-0.5 text-[9px] font-mono border transition-colors hover:opacity-70"
+          className="flex items-center gap-0.5 px-1.5 py-0.5 text-[8px] font-mono border transition-colors hover:opacity-70"
           style={{
             borderColor: colors.border,
             color: colors.textSecondary,

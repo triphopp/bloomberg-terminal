@@ -471,6 +471,16 @@ class TradeIn(BaseModel):
     # included) is what the confirmation says and is kept as typed.
     fee_entry: Optional[float] = None
     fee_exit: Optional[float] = None
+    # Line items read off a broker slip ({"commission": "2.84", "vat": "0.20"});
+    # kept in fee_detail beside the typed total so the VAT split is not lost.
+    fee_entry_breakdown: Optional[dict] = None
+    fee_exit_breakdown: Optional[dict] = None
+    # Order slip this entry was filled from (POST /slip/read → image_sha256).
+    # The order number and fill time are taken from the saved slip, not the
+    # form, and the slip becomes a broker_executions row linked to the trade.
+    slip_sha256: Optional[str] = None
+    broker_order_ref: Optional[str] = None   # typed by hand, no slip
+    executed_at: Optional[str] = None
 
 
 class TradePatch(BaseModel):
@@ -886,6 +896,20 @@ def _fee_for(conn, account_id: str, currency: str, side: str, qty, price, given)
     return est["total"], est
 
 
+def _with_breakdown(detail: Optional[dict], items: Optional[dict]) -> Optional[dict]:
+    """A typed fee total plus the slip's line items; the estimate is left alone."""
+    if not detail or not items or detail.get("source") != "manual":
+        return detail
+    out = dict(detail, source="slip")
+    for key in ("commission", "vat", "sec_fee", "taf_fee"):
+        try:
+            if items.get(key) is not None:
+                out[key] = round(float(items[key]), 2)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 @router.get("/fees/estimate")
 def estimate_fees(account_id: str, side: str, qty: float, price: float,
                   symbol: str = "", market: Optional[str] = None,
@@ -910,12 +934,28 @@ def estimate_fees(account_id: str, side: str, qty: float, price: float,
 
 @router.post("/trades", status_code=201)
 def create_trade(body: TradeIn):
+    import slip_evidence
     trade_id = str(uuid.uuid4())
+    sidecar = None
+    prov: dict = {}
+    if body.slip_sha256:
+        sidecar = slip_evidence.load(body.slip_sha256)
+        if sidecar is None:
+            raise HTTPException(status_code=422, detail="Slip not found on the server — read the slip again")
+        prov = slip_evidence.provenance(sidecar)
+    order_ref = prov.get("broker_order_ref") or (body.broker_order_ref or "").strip().upper() or None
+    executed_at = prov.get("executed_at") or body.executed_at
     with get_db() as conn:
         acc = conn.execute("SELECT currency FROM portfolio_accounts WHERE id = ?",
                            (body.account_id,)).fetchone()
         if not acc:
             raise HTTPException(status_code=404, detail="Unknown account")
+        dup = slip_evidence.booked(conn, body.account_id, order_ref)
+        if dup:
+            d = dup[0]
+            raise HTTPException(status_code=409, detail=(
+                f"Order {order_ref} is already in the book: {d['symbol']} {d['date_entry']} "
+                f"× {d['volume']} (trade {d['id'][:8]})"))
         # Deterministic resolver evidence wins. Explicit currency supports the
         # confirmed manual-override path; account currency is only the last fallback.
         inferred = infer_instrument_currency(
@@ -948,6 +988,8 @@ def create_trade(body: TradeIn):
             # pnl_amount is net of the sale's fees, as /sell stores it.
             if pnl_amount is not None and fee_exit:
                 pnl_amount = round(pnl_amount - fee_exit, 2)
+        entry_detail = _with_breakdown(entry_detail, body.fee_entry_breakdown)
+        exit_detail = _with_breakdown(exit_detail, body.fee_exit_breakdown)
         details = {k: v for k, v in (("entry", entry_detail), ("exit", exit_detail)) if v}
         fee_detail = json.dumps(details) if details else None
         conn.execute("""
@@ -958,8 +1000,9 @@ def create_trade(body: TradeIn):
                 strategy_name, entry_trigger, exit_trigger, market_trend,
                 news_sentiment, expectation_based, factor_based,
                 fear_greed_index, vix_index, note, is_reinvest,
-                fee_entry, fee_exit, fee_detail)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                fee_entry, fee_exit, fee_detail,
+                broker_order_ref, executed_at, entry_source, source_sha256)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (trade_id, body.account_id, body.symbol.upper(),
               (body.resolved_symbol or "").upper() or None,
               (body.market or "").upper() or None, body.sector,
@@ -970,10 +1013,20 @@ def create_trade(body: TradeIn):
               body.strategy_name, body.entry_trigger, body.exit_trigger,
               body.market_trend, body.news_sentiment, body.expectation_based,
               body.factor_based, body.fear_greed_index, body.vix_index, body.note,
-              1 if body.is_reinvest else 0, fee_entry, fee_exit, fee_detail))
+              1 if body.is_reinvest else 0, fee_entry, fee_exit, fee_detail,
+              order_ref, executed_at, "slip" if sidecar else "manual",
+              body.slip_sha256 if sidecar else None))
+        evidence_id = None
+        if sidecar:
+            try:
+                evidence_id = slip_evidence.record(conn, body.account_id, trade_id,
+                                                   body.slip_sha256, sidecar)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
         "ok": True,
         "id": trade_id,
+        "evidence_id": evidence_id,
         "currency": currency,
         "exchange_rate": entry_fx,
         "exit_exchange_rate": exit_fx,
@@ -1020,6 +1073,8 @@ def delete_trade(trade_id: str):
             raise HTTPException(status_code=404, detail="Trade not found")
         _write_audit_log(conn, trade_id, "DELETE", dict(old), None, "")
         conn.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+        import slip_evidence
+        slip_evidence.unlink_trade(conn, trade_id)
     return {"ok": True}
 
 
@@ -1618,12 +1673,14 @@ def sell_position(body: SellIn):
                    sector, date_entry, date_exit,
                    price_entry, price_exit, volume, pnl_amount, win_loss, pnl_percent,
                    currency, exchange_rate, exit_exchange_rate, strategy_name, note, fee_exit,
-                   acquisition_type, original_price_entry, transfer_price_entry)
+                   acquisition_type, original_price_entry, transfer_price_entry,
+                   broker_order_ref, executed_at, entry_source, source_sha256)
                    SELECT ?, account_id, symbol, resolved_symbol, market,
                    sector, date_entry, ?,
                    ?, ?, ?, ?, ?, ?,
                    currency, exchange_rate, ?, strategy_name, ?, ?,
-                   acquisition_type, original_price_entry, transfer_price_entry
+                   acquisition_type, original_price_entry, transfer_price_entry,
+                   broker_order_ref, executed_at, entry_source, source_sha256
                    FROM trades WHERE id = ?""",
                 (sold_id, body.sell_date, avg_cost, exit_price, sold_volume,
                   sold_pnl_net, sold_wl, sold_pnl_pct, exit_fx,
@@ -2215,6 +2272,9 @@ def _open_positions_enriched(account_id: Optional[str], base_currency: str) -> d
         prev_close = quote.get("prev_close") if quote else None
         pos["current_price"] = price
         pos["prev_close"] = prev_close
+        # Yahoo symbol the price came from — the browser subscribes to the live
+        # quote stream (/api/stream/quotes) with it.
+        pos["yf_symbol"] = yf_sym
         # Instrument currency, not account currency — a .BK position inside a
         # USD account is priced in THB and must NOT be scaled by thb_per_usd.
         pos_ccy = _position_currency(pos)
@@ -4736,8 +4796,8 @@ async def import_excel(file: UploadFile = File(...)):
                         pnl_amount, win_loss, pnl_percent, currency, exchange_rate, exit_exchange_rate,
                         strategy_name, entry_trigger, exit_trigger, market_trend,
                         news_sentiment, expectation_based, factor_based,
-                        fear_greed_index, vix_index, note, created_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        fear_greed_index, vix_index, note, created_at, entry_source)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'excel')
                 """, (t["id"], t["account_id"], t["symbol"], t["sector"],
                       t["date_entry"], t["date_exit"],
                       t["price_entry"], t["price_exit"], t["price_stoploss"], t["price_target"],

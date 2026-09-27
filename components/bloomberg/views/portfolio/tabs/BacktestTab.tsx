@@ -15,7 +15,7 @@ import {
   YAxis,
 } from "recharts";
 import { SECTOR_COLORS } from "../constants";
-import { type Colors, fmt, fmtK, fmtPct, pnlColor, wlColor } from "../helpers";
+import { type Colors, fmt, fmtAmt, fmtAxis, fmtPct, pnlColor, wlColor } from "../helpers";
 import type { BacktestMetrics, ChartPoint } from "../types";
 
 type BtSubTab = "equity" | "holdings" | "distribution" | "attribution";
@@ -190,7 +190,7 @@ export function BacktestTab({
         {m && (
           <span className="text-[8px] font-mono ml-auto" style={{ color: colors.textSecondary }}>
             {m.total_trades} trades | {csym}
-            {fmtK(m.total_invested ?? 0)} invested
+            {fmtAmt(m.total_invested ?? 0)} invested
           </span>
         )}
       </div>
@@ -200,7 +200,7 @@ export function BacktestTab({
         <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5">
           {(
             [
-              ["Total P&L", `${csym}${fmtK(m.total_pnl ?? 0)}`, pnlColor(m.total_pnl)],
+              ["Total P&L", `${csym}${fmtAmt(m.total_pnl ?? 0)}`, pnlColor(m.total_pnl)],
               ["Return", fmtPct(m.total_return), pnlColor(m.total_return)],
               ["Benchmark", fmtPct(m.benchmark_total_return), pnlColor(m.benchmark_total_return)],
               ["CAGR", fmtPct(m.cagr), pnlColor(m.cagr)],
@@ -214,8 +214,8 @@ export function BacktestTab({
               ],
               ["Alpha", fmtPct(m.alpha), pnlColor(m.alpha)],
               ["Beta", m.beta.toFixed(2), "#888"],
-              ["Avg Win", `${csym}${fmtK(m.avg_win ?? 0)}`, "#4ade80"],
-              ["Avg Loss", `${csym}${fmtK(Math.abs(m.avg_loss ?? 0))}`, "#f87171"],
+              ["Avg Win", `${csym}${fmtAmt(m.avg_win ?? 0)}`, "#4ade80"],
+              ["Avg Loss", `${csym}${fmtAmt(Math.abs(m.avg_loss ?? 0))}`, "#f87171"],
             ] as [string, string, string][]
           ).map(([label, val, color]) => (
             <div
@@ -364,7 +364,7 @@ export function BacktestTab({
                     tick={{ fill: "#666", fontSize: 8 }}
                     tickLine={false}
                     axisLine={false}
-                    tickFormatter={(v: number) => `${csym}${(v / 1000).toFixed(0)}K`}
+                    tickFormatter={(v: number) => `${csym}${fmtAxis(v)}`}
                     width={55}
                   />
                   <Tooltip
@@ -518,7 +518,7 @@ export function BacktestTab({
                         style={{ color: pnlColor(t.pnl_amount) }}
                       >
                         {csym}
-                        {fmtK(Math.abs(t.pnl_amount))} {t.pnl_amount >= 0 ? "▲" : "▼"}
+                        {fmtAmt(Math.abs(t.pnl_amount))} {t.pnl_amount >= 0 ? "▲" : "▼"}
                       </td>
                       <td className="px-2 py-0.5" style={{ color: pnlColor(t.pnl_percent) }}>
                         {fmtPct(t.pnl_percent)}

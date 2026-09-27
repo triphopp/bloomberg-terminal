@@ -89,16 +89,14 @@ const PALETTE = [
 ];
 
 import { DEFAULT_WATCHLIST_GROUP as DEFAULT_GROUP } from "../core/global-search";
+import { fmtPriceStd } from "../lib/number-format";
+import { TICK_HEAD, TICK_REGION, TICK_TABLE } from "../lib/tick-grammar";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function fmtPrice(n: number) {
-  if (n >= 10000)
-    return n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+const fmtPrice = fmtPriceStd;
 
 function fmtPct(n: number) {
   return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
@@ -1134,7 +1132,7 @@ function EditCardForm({
 
 // ── Compact (TICK DATA-style) row ─────────────────────────────────────────────
 //
-// Same grammar as the MKT TICK DATA board: one 13px line, four columns —
+// Same grammar as the MKT TICK DATA board: one mono line (lib/tick-grammar), four columns —
 // SYM · LAST · CHG · SIG. Company name, pin return, targets and comment move
 // into the tooltip, so a squeezed panel shows ~3x the rows the table view does.
 
@@ -2629,13 +2627,10 @@ export const PinnedAssets = memo(function PinnedAssets({
                 );
               };
               return (
-                <table
-                  className="w-full text-[9px] leading-[13px] font-mono"
-                  style={{ borderCollapse: "collapse" }}
-                >
+                <table className={TICK_TABLE} style={{ borderCollapse: "collapse" }}>
                   <thead>
                     <tr
-                      className="text-[7px] font-bold tracking-wider leading-[12px]"
+                      className={TICK_HEAD}
                       style={{ background: "#050505", color: colors.textSecondary }}
                     >
                       {sortHead("SYM", "symbol", true)}
@@ -2654,7 +2649,7 @@ export const PinnedAssets = memo(function PinnedAssets({
                           {/* biome-ignore lint/a11y/useKeyWithClickEvents: the fold header mirrors TICK DATA's RegionHeader; the SYM/LAST sort and the table view stay keyboard-reachable */}
                           <td
                             colSpan={cols}
-                            className="px-1 py-0 text-[8px] font-bold tracking-widest cursor-pointer hover:bg-[#141414] leading-[14px]"
+                            className={`px-1 py-0 cursor-pointer hover:bg-[#141414] ${TICK_REGION}`}
                             style={{
                               background: "#0a0a0a",
                               color: group.color,

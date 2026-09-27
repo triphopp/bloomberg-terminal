@@ -2,9 +2,10 @@
 import { Clock, Loader2, Pencil, Plus, RefreshCw, X } from "lucide-react";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import type { Colors } from "../helpers";
-import { fmt, fmtK, pnlColor } from "../helpers";
+import { fmt, fmtAmt, fmtPx, fmtQty, pnlColor } from "../helpers";
 import { OptionTradeEditModal } from "../modals/OptionTradeEditModal";
 import { PayoffModal } from "../modals/PayoffModal";
+import type { OptionEntryPrefill } from "../ui/OptionEntryForm";
 import { type OptionTrade, OptionTradeLog } from "../ui/OptionTradeLog";
 import { PayoffChart } from "../ui/PayoffChart";
 import { type PayoffLeg, usePayoff } from "../ui/usePayoff";
@@ -100,565 +101,6 @@ const MARK_LABEL: Record<OptionLot["mark_source"], string> = {
   intrinsic_expired: "expired — intrinsic",
 };
 
-// ── Add position form ─────────────────────────────────────────────────────────
-
-const EMPTY_FORM = {
-  underlying: "",
-  expiry: "",
-  strike: "",
-  option_type: "call" as "call" | "put",
-  quantity: "1",
-  entry_price: "",
-  entry_date: new Date().toISOString().slice(0, 10),
-  fees: "0",
-  multiplier: "100",
-  currency: "USD",
-  notes: "",
-};
-
-function AddPositionForm({
-  accountId,
-  colors,
-  onAdded,
-}: { accountId: string; colors: Colors; onAdded: () => void }) {
-  const [form, setForm] = useState({ ...EMPTY_FORM });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [verifyStatus, setVerifyStatus] = useState<"idle" | "ok" | "not_found">("idle");
-
-  const set = (k: keyof typeof EMPTY_FORM, v: string) => setForm((f) => ({ ...f, [k]: v }));
-
-  const canVerify = form.underlying && form.expiry && form.strike && form.option_type;
-
-  const verify = useCallback(async () => {
-    if (!canVerify) return;
-    try {
-      const r = await fetch(`/api/options/${form.underlying.toUpperCase()}`);
-      if (!r.ok) {
-        setVerifyStatus("not_found");
-        return;
-      }
-      const data = await r.json();
-      const found = data.expirations?.includes(form.expiry);
-      setVerifyStatus(found ? "ok" : "not_found");
-    } catch {
-      setVerifyStatus("not_found");
-    }
-  }, [form.underlying, form.expiry, canVerify]);
-
-  const submit = async () => {
-    if (!form.underlying || !form.expiry || !form.strike || !form.entry_price) {
-      setError("Fill all required fields");
-      return;
-    }
-    setSaving(true);
-    setError("");
-    try {
-      const r = await fetch("/api/options/positions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          account_id: accountId === "all" ? "dime" : accountId,
-          underlying: form.underlying.toUpperCase(),
-          expiry: form.expiry,
-          strike: Number.parseFloat(form.strike),
-          option_type: form.option_type,
-          // Signed: a negative quantity opens a short. The backend turns that
-          // into action=OPEN side=SELL and stores the size unsigned.
-          quantity: Number.parseInt(form.quantity),
-          entry_price: Number.parseFloat(form.entry_price),
-          entry_date: form.entry_date,
-          fees: Number.parseFloat(form.fees) || 0,
-          multiplier: Number.parseFloat(form.multiplier) || 100,
-          currency: form.currency.trim().toUpperCase() || "USD",
-          notes: form.notes,
-        }),
-      });
-      if (!r.ok) throw new Error((await r.json()).detail || "Save failed");
-      setForm({ ...EMPTY_FORM });
-      setVerifyStatus("idle");
-      onAdded();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Save failed");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // Everything needed to draw a payoff. Until all four are present the chart
-  // would be describing a position nobody has described yet.
-  const previewLegs: PayoffLeg[] | null = useMemo(() => {
-    const strike = Number.parseFloat(form.strike);
-    const premium = Number.parseFloat(form.entry_price);
-    const qty = Number.parseInt(form.quantity, 10);
-    if (
-      !form.underlying.trim() ||
-      !form.expiry ||
-      !Number.isFinite(strike) ||
-      !Number.isFinite(premium) ||
-      !Number.isFinite(qty) ||
-      qty === 0
-    ) {
-      return null;
-    }
-    return [
-      {
-        underlying: form.underlying.trim().toUpperCase(),
-        expiry: form.expiry,
-        strike,
-        option_type: form.option_type,
-        quantity: qty,
-        entry_price: premium,
-        multiplier: Number.parseFloat(form.multiplier) || 100,
-        fees: Number.parseFloat(form.fees) || 0,
-      },
-    ];
-  }, [
-    form.underlying,
-    form.expiry,
-    form.strike,
-    form.option_type,
-    form.quantity,
-    form.entry_price,
-    form.multiplier,
-    form.fees,
-  ]);
-
-  const { payoff, loading: payoffLoading } = usePayoff(previewLegs);
-
-  const missing = [
-    !form.underlying.trim() && "underlying",
-    !form.expiry && "expiry",
-    !Number.isFinite(Number.parseFloat(form.strike)) && "strike",
-    !Number.isFinite(Number.parseFloat(form.entry_price)) && "premium",
-  ].filter(Boolean) as string[];
-
-  const labelCls = "text-[9px] font-bold mb-0.5 block";
-  const inputCls =
-    "w-full text-[10px] px-2 py-1 font-mono border rounded bg-transparent outline-none";
-
-  return (
-    <div className="border rounded p-3 mb-3" style={{ borderColor: colors.border }}>
-      <div
-        className="text-[10px] font-bold mb-2 flex items-center gap-1"
-        style={{ color: colors.accent }}
-      >
-        <Plus className="w-3 h-3" /> ADD OPTION POSITION
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
-        <div>
-          <label
-            htmlFor="opt-underlying"
-            className={labelCls}
-            style={{ color: colors.textSecondary }}
-          >
-            Underlying *
-          </label>
-          <input
-            id="opt-underlying"
-            className={inputCls}
-            placeholder="AAPL"
-            style={{ borderColor: colors.border, color: colors.text }}
-            value={form.underlying}
-            onChange={(e) => {
-              set("underlying", e.target.value.toUpperCase());
-              setVerifyStatus("idle");
-            }}
-          />
-        </div>
-        <div>
-          <label htmlFor="opt-expiry" className={labelCls} style={{ color: colors.textSecondary }}>
-            Expiry *
-          </label>
-          <input
-            id="opt-expiry"
-            type="date"
-            className={inputCls}
-            style={{ borderColor: colors.border, color: colors.text }}
-            value={form.expiry}
-            onChange={(e) => {
-              set("expiry", e.target.value);
-              setVerifyStatus("idle");
-            }}
-          />
-        </div>
-        <div>
-          <label htmlFor="opt-strike" className={labelCls} style={{ color: colors.textSecondary }}>
-            Strike (K) *
-          </label>
-          <input
-            id="opt-strike"
-            type="number"
-            className={inputCls}
-            placeholder="150.00"
-            style={{ borderColor: colors.border, color: colors.text }}
-            value={form.strike}
-            onChange={(e) => set("strike", e.target.value)}
-          />
-        </div>
-        <div>
-          <label htmlFor="opt-type" className={labelCls} style={{ color: colors.textSecondary }}>
-            Type *
-          </label>
-          <select
-            id="opt-type"
-            className={inputCls}
-            style={{ borderColor: colors.border, color: colors.text, background: colors.bg }}
-            value={form.option_type}
-            onChange={(e) => set("option_type", e.target.value as "call" | "put")}
-          >
-            <option value="call">CALL</option>
-            <option value="put">PUT</option>
-          </select>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
-        <div>
-          <label htmlFor="opt-qty" className={labelCls} style={{ color: colors.textSecondary }}>
-            Qty (contracts)
-          </label>
-          <input
-            id="opt-qty"
-            type="number"
-            className={inputCls}
-            placeholder="1"
-            style={{ borderColor: colors.border, color: colors.text }}
-            value={form.quantity}
-            onChange={(e) => set("quantity", e.target.value)}
-          />
-        </div>
-        <div>
-          <label htmlFor="opt-premium" className={labelCls} style={{ color: colors.textSecondary }}>
-            Entry premium *
-          </label>
-          <input
-            id="opt-premium"
-            type="number"
-            className={inputCls}
-            placeholder="3.20"
-            style={{ borderColor: colors.border, color: colors.text }}
-            value={form.entry_price}
-            onChange={(e) => set("entry_price", e.target.value)}
-          />
-        </div>
-        <div>
-          <label
-            htmlFor="opt-entry-date"
-            className={labelCls}
-            style={{ color: colors.textSecondary }}
-          >
-            Entry date
-          </label>
-          <input
-            id="opt-entry-date"
-            type="date"
-            className={inputCls}
-            style={{ borderColor: colors.border, color: colors.text }}
-            value={form.entry_date}
-            onChange={(e) => set("entry_date", e.target.value)}
-          />
-        </div>
-        <div className="flex items-end gap-1">
-          <button
-            type="button"
-            onClick={verify}
-            disabled={!canVerify}
-            className="px-2 py-1 text-[9px] font-bold border rounded disabled:opacity-40"
-            style={{ borderColor: colors.border, color: colors.textSecondary }}
-          >
-            VERIFY
-          </button>
-          {verifyStatus === "ok" && <span className="text-[9px] text-green-400">✓ found</span>}
-          {verifyStatus === "not_found" && (
-            <span className="text-[9px] text-red-400">✗ not found</span>
-          )}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
-        <div>
-          <label htmlFor="opt-fees" className={labelCls} style={{ color: colors.textSecondary }}>
-            Fees / commission
-          </label>
-          <input
-            id="opt-fees"
-            type="number"
-            className={inputCls}
-            placeholder="0"
-            style={{ borderColor: colors.border, color: colors.text }}
-            value={form.fees}
-            onChange={(e) => set("fees", e.target.value)}
-          />
-        </div>
-        <div>
-          <label htmlFor="opt-mult" className={labelCls} style={{ color: colors.textSecondary }}>
-            Multiplier
-          </label>
-          <input
-            id="opt-mult"
-            type="number"
-            className={inputCls}
-            style={{ borderColor: colors.border, color: colors.text }}
-            value={form.multiplier}
-            onChange={(e) => set("multiplier", e.target.value)}
-            title="Contract size. 100 for standard US equity options; index and mini contracts differ."
-          />
-        </div>
-        <div>
-          <label htmlFor="opt-ccy" className={labelCls} style={{ color: colors.textSecondary }}>
-            Currency
-          </label>
-          <input
-            id="opt-ccy"
-            className={inputCls}
-            style={{ borderColor: colors.border, color: colors.text }}
-            value={form.currency}
-            onChange={(e) => set("currency", e.target.value.toUpperCase())}
-          />
-        </div>
-        <div>
-          <label htmlFor="opt-notes" className={labelCls} style={{ color: colors.textSecondary }}>
-            Notes
-          </label>
-          <input
-            id="opt-notes"
-            className={inputCls}
-            placeholder="thesis, tag, …"
-            style={{ borderColor: colors.border, color: colors.text }}
-            value={form.notes}
-            onChange={(e) => set("notes", e.target.value)}
-          />
-        </div>
-      </div>
-
-      {/* Live payoff. The expiry line redraws on every keystroke because it is
-          arithmetic; the modelled line follows a moment later. */}
-      <div className="border rounded p-2 mb-2" style={{ borderColor: colors.border }}>
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-[9px] font-bold" style={{ color: colors.accent }}>
-            PAYOFF PREVIEW
-          </span>
-          {payoffLoading && (
-            <Loader2 className="w-2.5 h-2.5 animate-spin" style={{ color: colors.textSecondary }} />
-          )}
-          {missing.length > 0 && (
-            <span className="text-[8px]" style={{ color: colors.textSecondary }}>
-              need {missing.join(", ")}
-            </span>
-          )}
-          {previewLegs && Number.parseInt(form.quantity, 10) < 0 && (
-            <span className="text-[8px]" style={{ color: "#f59e0b" }}>
-              short — you receive the premium; losses can exceed it
-            </span>
-          )}
-        </div>
-        <PayoffChart data={payoff} colors={colors} height={190} />
-      </div>
-
-      {error && <div className="text-[9px] text-red-400 mb-1">{error}</div>}
-
-      <div className="flex items-center justify-between">
-        <p className="text-[9px]" style={{ color: colors.textSecondary }}>
-          * Verify confirms contract exists in market data provider
-        </p>
-        <button
-          type="button"
-          onClick={submit}
-          disabled={saving}
-          className="flex items-center gap-1 px-3 py-1 text-[9px] font-bold border rounded"
-          style={{ borderColor: colors.accent, color: colors.accent }}
-        >
-          {saving ? (
-            <Loader2 className="w-2.5 h-2.5 animate-spin" />
-          ) : (
-            <Plus className="w-2.5 h-2.5" />
-          )}
-          SAVE
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── Close dialog ──────────────────────────────────────────────────────────────
-
-const CLOSE_REASONS = ["TRADE", "EXPIRED", "EXERCISED", "ASSIGNED"] as const;
-type CloseReason = (typeof CLOSE_REASONS)[number];
-
-function ClosePrompt({
-  lot,
-  colors,
-  onCancel,
-  onConfirm,
-}: {
-  lot: OptionLot;
-  colors: Colors;
-  onCancel: () => void;
-  onConfirm: (args: {
-    quantity: number;
-    exitPrice: number | null;
-    exitDate: string;
-    fees: number;
-    closeReason: CloseReason;
-  }) => void;
-}) {
-  const remaining = Math.abs(lot.quantity);
-  const [qty, setQty] = useState(String(remaining));
-  const [price, setPrice] = useState(String(lot.mark ?? ""));
-  const [when, setWhen] = useState(new Date().toISOString().slice(0, 10));
-  const [fees, setFees] = useState("0");
-  const [reason, setReason] = useState<CloseReason>("TRADE");
-
-  const parsed = Number.parseFloat(price);
-  const valid = Number.isFinite(parsed);
-  const qtyNum = Number.parseFloat(qty);
-  const qtyValid = Number.isFinite(qtyNum) && qtyNum > 0 && qtyNum <= remaining + 1e-9;
-  const feesNum = Number.parseFloat(fees) || 0;
-  // Long: (exit − entry). Short: (entry − exit). The lot's own direction
-  // carries both, so this needs no branch on call/put.
-  const direction = lot.quantity >= 0 ? 1 : -1;
-  const realized =
-    valid && qtyValid
-      ? direction * (parsed - lot.entry_price) * qtyNum * lot.multiplier - feesNum
-      : null;
-
-  return (
-    <tr style={{ background: `${colors.accent}0d` }}>
-      <td colSpan={17} className="px-2 py-2">
-        <div className="flex flex-wrap items-end gap-2 text-[10px] font-mono">
-          <span className="font-bold" style={{ color: colors.accent }}>
-            CLOSE {lot.symbol}
-          </span>
-          <label className="flex flex-col gap-0.5">
-            <span className="text-[9px]" style={{ color: colors.textSecondary }}>
-              Contracts (of {remaining})
-            </span>
-            <input
-              type="number"
-              step="1"
-              className="w-20 px-2 py-1 border rounded bg-transparent outline-none"
-              style={{
-                borderColor: qtyValid ? colors.border : "#FF4444",
-                color: colors.text,
-              }}
-              value={qty}
-              onChange={(e) => setQty(e.target.value)}
-            />
-          </label>
-          <label className="flex flex-col gap-0.5">
-            <span className="text-[9px]" style={{ color: colors.textSecondary }}>
-              Exit premium
-            </span>
-            <input
-              type="number"
-              step="0.01"
-              className="w-24 px-2 py-1 border rounded bg-transparent outline-none"
-              style={{ borderColor: colors.border, color: colors.text }}
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-            />
-          </label>
-          <label className="flex flex-col gap-0.5">
-            <span className="text-[9px]" style={{ color: colors.textSecondary }}>
-              Exit date
-            </span>
-            <input
-              type="date"
-              className="px-2 py-1 border rounded bg-transparent outline-none"
-              style={{ borderColor: colors.border, color: colors.text }}
-              value={when}
-              onChange={(e) => setWhen(e.target.value)}
-            />
-          </label>
-          <label className="flex flex-col gap-0.5">
-            <span className="text-[9px]" style={{ color: colors.textSecondary }}>
-              Fees
-            </span>
-            <input
-              type="number"
-              step="0.01"
-              className="w-20 px-2 py-1 border rounded bg-transparent outline-none"
-              style={{ borderColor: colors.border, color: colors.text }}
-              value={fees}
-              onChange={(e) => setFees(e.target.value)}
-            />
-          </label>
-          <label className="flex flex-col gap-0.5">
-            <span className="text-[9px]" style={{ color: colors.textSecondary }}>
-              Reason
-            </span>
-            <select
-              className="px-2 py-1 border rounded bg-transparent outline-none"
-              style={{ borderColor: colors.border, color: colors.text, background: colors.bg }}
-              value={reason}
-              onChange={(e) => setReason(e.target.value as CloseReason)}
-            >
-              {CLOSE_REASONS.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-          </label>
-          {realized !== null && (
-            <span style={{ color: pnlColor(realized) }}>
-              realized {realized >= 0 ? "+" : "-"}
-              {lot.currency === "USD" ? "$" : ""}
-              {fmt(Math.abs(realized), 0)}
-            </span>
-          )}
-          <button
-            type="button"
-            disabled={!qtyValid}
-            onClick={() =>
-              onConfirm({
-                quantity: qtyNum,
-                exitPrice: valid ? parsed : null,
-                exitDate: when,
-                fees: feesNum,
-                closeReason: reason,
-              })
-            }
-            className="px-3 py-1 text-[9px] font-bold border rounded disabled:opacity-40"
-            style={{ borderColor: colors.accent, color: colors.accent }}
-          >
-            CONFIRM
-          </button>
-          <button
-            type="button"
-            onClick={onCancel}
-            className="px-2 py-1 text-[9px] border rounded opacity-60 hover:opacity-100"
-            style={{ borderColor: colors.border, color: colors.textSecondary }}
-          >
-            CANCEL
-          </button>
-          {!qtyValid && (
-            <span className="text-[9px]" style={{ color: "#FF4444" }}>
-              Enter 1–{remaining} contracts. Closing more than the lot holds is refused rather than
-              opening a short by accident.
-            </span>
-          )}
-          {qtyValid && qtyNum < remaining && (
-            <span className="text-[9px]" style={{ color: colors.textSecondary }}>
-              Partial — {remaining - qtyNum} contract{remaining - qtyNum > 1 ? "s" : ""} stay open
-            </span>
-          )}
-          {!valid && (
-            <span className="text-[9px]" style={{ color: "#f59e0b" }}>
-              Without an exit premium the lot closes with unknown P&amp;L — it contributes 0, not
-              break-even.
-            </span>
-          )}
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-/** One raw greek. `null` means the chain gave no IV, so the greek is undefined —
- *  rendered as an em dash, never as 0, because 0 reads as "no exposure". */
 function Greek({
   value,
   digits,
@@ -734,18 +176,18 @@ function PositionRow({
       </td>
       <td className="px-2 py-1.5 text-right" style={{ color: colors.text }}>
         {nativeSym}
-        {fmt(lot.strike)}
+        {fmtPx(lot.strike)}
       </td>
       <td className="px-2 py-1.5 text-right" style={{ color: expiryColor }}>
         {lot.expiry}
         <span className="ml-1 text-[8px]">{lot.expired ? "EXP" : `${dte}d`}</span>
       </td>
       <td className="px-2 py-1.5 text-right" style={{ color: colors.text }}>
-        {lot.quantity}
+        {fmtQty(lot.quantity)}
       </td>
       <td className="px-2 py-1.5 text-right" style={{ color: colors.textSecondary }}>
         {nativeSym}
-        {fmt(lot.entry_price, 2)}
+        {fmtPx(lot.entry_price)}
       </td>
       <td className="px-2 py-1.5 text-right">
         <span
@@ -753,16 +195,16 @@ function PositionRow({
           title={MARK_LABEL[lot.mark_source]}
         >
           {nativeSym}
-          {fmt(lot.mark, 2)}
+          {fmtPx(lot.mark)}
         </span>
       </td>
       <td className="px-2 py-1.5 text-right" style={{ color: colors.text }}>
-        {fmtK(lot.market_value_usd)}
+        {fmtAmt(lot.market_value_usd)}
       </td>
       <td className="px-2 py-1.5 text-right">
         <span style={{ color: pnlColor(lot.unrealized_pnl_usd) }}>
           {lot.unrealized_pnl_usd >= 0 ? "+" : "-"}
-          {fmtK(Math.abs(lot.unrealized_pnl_usd))}
+          {fmtAmt(Math.abs(lot.unrealized_pnl_usd))}
           {lot.unrealized_pct_usd !== null && (
             <span className="text-[9px] ml-1">
               ({lot.unrealized_pct_usd >= 0 ? "+" : ""}
@@ -783,7 +225,7 @@ function PositionRow({
             —
           </span>
         ) : (
-          <span style={{ color: colors.textSecondary }}>{fmtK(lot.delta_exp_usd)}</span>
+          <span style={{ color: colors.textSecondary }}>{fmtAmt(lot.delta_exp_usd)}</span>
         )}
       </td>
       <td className="px-2 py-1.5 text-right">
@@ -862,12 +304,17 @@ export function OptionsTab({
   accountId,
   currency = "THB",
   colors,
-}: { accountId: string; currency?: string; colors: Colors }) {
+  onOpenEntry,
+}: {
+  accountId: string;
+  currency?: string;
+  colors: Colors;
+  /** ADD and CLOSE are entered in PORTFOLIO → ENTRY, the one place fills are typed. */
+  onOpenEntry: (p: OptionEntryPrefill) => void;
+}) {
   const [lots, setLots] = useState<OptionLot[]>([]);
   const [loading, setLoading] = useState(false);
-  const [showForm, setShowForm] = useState(false);
   const [seeding, setSeeding] = useState(false);
-  const [closingId, setClosingId] = useState<string | null>(null);
   // A lot IS its OPEN trade, so editing the lot edits that trade. The modal
   // wants the full trade row (greeks, action/side), which the lot view does not
   // carry — fetch it on click rather than half-building one here.
@@ -903,33 +350,6 @@ export function OptionsTab({
   useEffect(() => {
     load();
   }, [load]);
-
-  const handleClose = async (
-    id: string,
-    args: {
-      quantity: number;
-      exitPrice: number | null;
-      exitDate: string;
-      fees: number;
-      closeReason: string;
-    }
-  ) => {
-    await fetch(`/api/options/positions/${id}/close`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        quantity: args.quantity,
-        exit_price: args.exitPrice,
-        exit_date: args.exitDate,
-        fees: args.fees,
-        // An unpriced close is recorded as UNKNOWN, not as a $0 trade — the
-        // difference is "we don't know" versus "it went to zero".
-        close_reason: args.exitPrice === null ? "UNKNOWN" : args.closeReason,
-      }),
-    });
-    setClosingId(null);
-    load();
-  };
 
   const openEditor = async (lotId: string) => {
     setEditLoading(true);
@@ -1041,7 +461,13 @@ export function OptionsTab({
           </button>
           <button
             type="button"
-            onClick={() => setShowForm((v) => !v)}
+            onClick={() =>
+              onOpenEntry({
+                account_id: accountId !== "all" ? accountId : "",
+                action: "OPEN",
+                side: "BUY",
+              })
+            }
             className="flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold border rounded"
             style={{ borderColor: colors.accent, color: colors.accent }}
           >
@@ -1085,16 +511,16 @@ export function OptionsTab({
           style={{ borderColor: colors.border }}
         >
           {[
-            { label: "COST", value: `$${fmtK(totalCost)}`, color: colors.text, title: undefined },
+            { label: "COST", value: `$${fmtAmt(totalCost)}`, color: colors.text, title: undefined },
             {
               label: "MARKET VALUE",
-              value: `$${fmtK(totalMv)}`,
+              value: `$${fmtAmt(totalMv)}`,
               color: colors.text,
               title: undefined,
             },
             {
               label: "UNREALIZED",
-              value: `${totalUnreal >= 0 ? "+" : "-"}$${fmtK(Math.abs(totalUnreal))}`,
+              value: `${totalUnreal >= 0 ? "+" : "-"}$${fmtAmt(Math.abs(totalUnreal))}`,
               color: pnlColor(totalUnreal),
               title: undefined,
             },
@@ -1116,14 +542,14 @@ export function OptionsTab({
             },
             {
               label: "DELTA EXP",
-              value: `$${fmtK(totalDeltaExp)}`,
+              value: `$${fmtAmt(totalDeltaExp)}`,
               color: colors.textSecondary,
               title:
                 "Δ × qty × 100 × spot — dollars this book moves for a 100% move in the underlying",
             },
             {
               label: "GAMMA EXP / 1%",
-              value: `$${fmtK(totalGammaExp)}`,
+              value: `$${fmtAmt(totalGammaExp)}`,
               color: colors.textSecondary,
               title:
                 "Γ × qty × 100 × spot² × 1% — dollar delta gained per 1% move in the underlying (desk convention, not the exact derivative)",
@@ -1178,17 +604,6 @@ export function OptionsTab({
         </div>
       )}
 
-      {showForm && (
-        <AddPositionForm
-          accountId={accountId}
-          colors={colors}
-          onAdded={() => {
-            load();
-            setShowForm(false);
-          }}
-        />
-      )}
-
       {view === "lots" && lots.length === 0 && !loading ? (
         <div className="text-center py-8 text-[10px]" style={{ color: colors.textSecondary }}>
           No open option positions
@@ -1234,19 +649,25 @@ export function OptionsTab({
                     lot={lot}
                     colors={colors}
                     pct={navPct}
-                    onClose={() => setClosingId(lot.id)}
+                    onClose={() =>
+                      onOpenEntry({
+                        account_id: lot.account_id,
+                        underlying: lot.underlying,
+                        expiry: lot.expiry,
+                        strike: lot.strike,
+                        option_type: lot.option_type,
+                        multiplier: lot.multiplier,
+                        action: "CLOSE",
+                        side: lot.quantity > 0 ? "SELL" : "BUY",
+                        lot_id: lot.id,
+                        quantity: Math.abs(lot.quantity),
+                        price: lot.expired ? null : lot.mark,
+                      })
+                    }
                     onEdit={() => openEditor(lot.id)}
                     onPayoff={() => setPayoffLot(lot)}
                     onDelete={() => handleDelete(lot.id)}
                   />
-                  {closingId === lot.id && (
-                    <ClosePrompt
-                      lot={lot}
-                      colors={colors}
-                      onCancel={() => setClosingId(null)}
-                      onConfirm={(args) => handleClose(lot.id, args)}
-                    />
-                  )}
                 </React.Fragment>
               ))}
             </tbody>

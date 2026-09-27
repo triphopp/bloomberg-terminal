@@ -102,6 +102,29 @@ be negative-cached, or "empty = expired" re-fires them on every request.
 - Never reintroduce `@upstash/redis`, `yahoo-finance2`, or any top-level scheduler singleton
 - Backend is modular: `main.py` (app init) + `config.py` + `db.py` + `routers/*.py`
 - State lives in Jotai atoms (`components/bloomberg/atoms/index.ts`) + React Query for server data
+- Native `<select>` menus must use the app-wide popup palette in `styles/globals.css` (`color-scheme` plus explicit `<option>` foreground/background, with light/forced-colors variants). Do not style only the closed select with light text on a transparent background: Windows can render its popup with a light system background. Verify new selectors in DCF/IV-style panels on Windows and Mac when available.
+
+## Number format (house rule, 2026-09-26)
+
+| What | Decimals | Helper |
+|------|----------|--------|
+| Any displayed **price**, whole app | **min 2**, never rounded to a whole number however large (51,828.60 not 51,829); below 1 → up to 4 | `lib/number-format.ts` `fmtPriceStd` |
+| PORT **trade prices** — entry, exit, current, target, S/L, strike, premium | **2–4** | `views/portfolio/helpers.ts` `fmtPx` |
+| PORT **volume / quantity** | **up to 7**, none when whole (3,000 · 0.0012345 · 27.295) | `fmtQty` |
+| PORT **money** — cost, MV, NAV, P&L, cash | exactly 2, no K/M | `fmtAmt` |
+
+- K/M/B suffixes only on chart **axis ticks** (`fmtAxis`) — never on a value a person reads as a price or amount.
+- Never `toLocaleString()` bare on a quantity (stops at 3 dp) or `maximumFractionDigits: 0` / `toFixed(0|1)` on a price.
+- New price display → use the helper; don't write another local `fmtPrice`.
+
+## Chart indicators — performance rules (2026-09-26)
+
+`compute()` runs on every live tick over the whole loaded history. Rules are in the header of
+`components/bloomberg/chart/indicators/index.ts` and enforced by `chart/__tests__/indicator-rules.test.ts`
+(part of `npm run test:chart`): window statistics go through `chart/rolling.ts` (never re-slice / re-sort /
+re-loop the last k bars per bar), no `Math.max(...arr)`, no `shift()` in loops, expensive fits cached on
+closed-bar content (not array identity). Exceptions need `// perf-ok: <reason>`. Same rules for
+`lib/volume-stats.ts`, `lib/volume-events.ts`, `lib/bb-volume.ts`.
 
 ## Memory Maintenance — What to Update After Each Change
 
@@ -206,7 +229,7 @@ async def get_x():
 | `2` | NEWS  | news-view → `views/news/` | WATCHLIST tab (ข่าวรายหุ้นจาก watchlist, 7 แหล่ง, แบ่งตาม SECTOR) · NEWSFEED (topic) · SOCIAL · Polymarket column (right 256px: watchlist markets + macro signals) |
 | `h` / `heatmap(MKT)` | HMAP (no nav button) | `views/heatmap-view.tsx` | One equity market as a sector-grouped treemap sized by market cap (~275 names, 25/sector). Command `heatmap(TH)`, `heatmap(US, 52w)`, bare `HMAP` = last market; `h` reopens it. Metrics 1D · 52W · 50D · 200D · HIGH · RVOL switch with no request; sector strip = zoom; hover line = all metrics; click → equity, shift-click → chart window. `/api/market-heatmap` (`routers/market_heatmap.py`, Yahoo screener, 11 parallel sector calls, 90s cache + last-good) |
 | `5` / `t` | TAIL  | tail-risk-view | MARKET EVENTS (named: Rates Volatility Shock, Treasury Selloff — Bear Flattening … from z of 1d/5d changes; SEVERE raises composite; ribbon shows top 2) + 6 risk dimensions (composite) + MACRO CONTEXT (not in composite): event strip FOMC/SEP/CPI/NFP/PCE/GDP + EVENT WINDOW tag on VIX signals, Fed rate/stance, 10Y−2Y/10Y−3M, regime, latest prints, event markers on 90D chart · MACRO READ (inflation/growth/rates-vol) · SECTOR ROTATION (turnover tilt, ไม่ใช่ fund flow) · **POSITIONING** (CFTC COT crowding flags + table; `cot_crowding` signal shown with CTX tag, `counted: False`, backtest WEAK) |
-| `3` / `b` | BOND  | `views/bonds/` | 2 tabs (Alt+1/2). **MARKET** — price vs supply: KPI strip · TREASURY LEG (2/10/30Y, real, term premium) · CREDIT LEG (IG/HY OAS, Baa−Aaa, BBB yield) · CORPORATE ISSUANCE/WEEK = SEC EFTS 424B2/424B5 deals ex-bank (SIC-classified, 365d backfill into SQLite) + EVENT STUDY (heavy days vs rest, Δ10Y/ΔIG OAS t..t+3) + RECENT DEALS · TREASURY AUCTIONS (fiscaldata) · DEBT STOCK (Z.1, C&I, SLOOS). Counts deals, not $ — no free daily $ source. **CONDITIONS** (ex-CRDT, `/api/crisis`) — crisis level L0–3 (also in status bar) · STL FSI/NFCI · 5Y/10Y breakeven · 30Y mortgage · CC/mortgage delinquency. IG/HY trigger lines (2%/5%) on CREDIT LEG. **CFTC** (`/api/cot/basis`): TREASURY FUTURES POSITIONING · BASIS TRADE (MARKET, DV01 10Y-eq) + DEALER BALANCE SHEET (CONDITIONS) |
+| `3` / `b` | BOND  | `views/bonds/` | 2 tabs (Alt+1/2). **MARKET** — price vs supply: KPI strip · **10Y YIELD DECOMPOSITION** (expected real + breakeven + term premium via NY Fed ACM; 20D driver REAL/TP/BE; Δ attribution 1/5/20/60D; tripwires TP>10y high · BE≥2.5→20y high · 10Y 5.5%; `/api/bonds/decomposition`, `backend/bond_decomposition.py`) · TREASURY LEG (2/10/30Y, real, term premium) · CREDIT LEG (IG/HY OAS, Baa−Aaa, BBB yield) · CORPORATE ISSUANCE/WEEK = SEC EFTS 424B2/424B5 deals ex-bank (SIC-classified, 365d backfill into SQLite) + EVENT STUDY (heavy days vs rest, Δ10Y/ΔIG OAS t..t+3) + RECENT DEALS · TREASURY AUCTIONS (fiscaldata) · DEBT STOCK (Z.1, C&I, SLOOS). Counts deals, not $ — no free daily $ source. **CONDITIONS** (ex-CRDT, `/api/crisis`) — crisis level L0–3 (also in status bar) · STL FSI/NFCI · 5Y/10Y breakeven · 30Y mortgage · CC/mortgage delinquency. IG/HY trigger lines (2%/5%) on CREDIT LEG. **CFTC** (`/api/cot/basis`): TREASURY FUTURES POSITIONING · BASIS TRADE (MARKET, DV01 10Y-eq) + DEALER BALANCE SHEET (CONDITIONS) |
 | `4` / `p` | PORT  | portfolio-view | 5 top-level: PORTFOLIO (sub: POSITIONS·OPTIONS·TRADES·CASH·ENTRY) · ANALYTICS (sub: P&L·BACKTEST) · RISK · TOOLS (sub: THESES·IMPORT) · PAPER (sub: DASHBOARD·TRADE·POSITIONS·OPTIONS·HISTORY) |
 
 **TICK DATA board** (MKT right panel): 7 collapsible sections — AMERICAS · EMEA · ASIA PACIFIC (`/api/market-data`, 6 incl. KOSPI) · RATES·US (11 UST tenors, FRED daily) · RATES·JP (15 JGB tenors, MOF CSV) · VOLATILITY (19 VIX-family, `/api/volatility`, sub-grouped S&P TERM / VOL OF VOL / EQUITY / GLOBAL / COMMOD·RATES) · FX (`/api/fx`). Collapse state in `localStorage["bloomberg_tickdata_sections"]`. ▲/▼ tally counts indices + FX only — a green VIX is a bad day, and a rising yield is a falling bond, so neither belongs in it. แถบบนสุดของ board = `UsMarketClock` (นาฬิกา ET + phase PRE/OPEN/AFTER/CLOSED + timeline + นับถอยหลัง). **ตลาดสหรัฐไม่มีพักกลางวัน** — เทรดต่อเนื่อง 09:30–16:00 ET (ที่พักเที่ยงคือ SET 12:30–14:30, TSE 11:30–12:30, HKEX 12:00–13:00). Logic อยู่ใน `components/bloomberg/lib/us-market-session.ts` (pure, test ได้) — วันหยุด NYSE + half-day 13:00 ET hardcode ถึงปี 2027 เท่านั้น เกินนั้น widget ขึ้นเตือนตัวเอง. Yield rows show bp, not %chg, and only 4 tenors (`^IRX ^FVX ^TNX ^TYX`) can drive the chart.

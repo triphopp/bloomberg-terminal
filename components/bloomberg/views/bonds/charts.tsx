@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import {
   Bar,
   CartesianGrid,
@@ -9,11 +9,12 @@ import {
   Line,
   LineChart,
   ReferenceLine,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
+// Charts below the fold mount when scrolled near — see LazyResponsiveContainer.
+import { LazyResponsiveContainer as ResponsiveContainer } from "../../ui/LazyResponsiveContainer";
 
 import type { BondHistoryRow, BondSupply, IssuanceWeek, SlowSeries } from "./types";
 import { C, Panel, fmtDate } from "./ui";
@@ -40,7 +41,7 @@ export interface LineDef {
   threshold?: number;
 }
 
-export function HistoryChart({
+function HistoryChartView({
   title,
   note,
   rows,
@@ -253,7 +254,7 @@ export function TreasurySupplyChart({
 
 // ── Slow stock series (quarterly / monthly) ───────────────────────────────────
 
-export function SlowCard({ s }: { s: SlowSeries }) {
+function SlowCardView({ s }: { s: SlowSeries }) {
   const last = s.points[s.points.length - 1];
   // $ series read as growth; SLOOS is already a net % and reads as a level
   const metric: "yoy_pct" | "value" = s.unit === "$bn" ? "yoy_pct" : "value";
@@ -297,3 +298,8 @@ export function SlowCard({ s }: { s: SlowSeries }) {
     </div>
   );
 }
+
+// Memoised: BondsView re-renders on every query that lands; unchanged props now
+// skip this chart's Recharts re-layout.
+export const HistoryChart = memo(HistoryChartView);
+export const SlowCard = memo(SlowCardView);

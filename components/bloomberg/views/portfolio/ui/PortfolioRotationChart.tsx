@@ -1,18 +1,11 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { useMemo, useState } from "react";
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import { type Colors, fmtK } from "../helpers";
+import { memo, useMemo, useState } from "react";
+import { Area, AreaChart, CartesianGrid, ReferenceLine, Tooltip, XAxis, YAxis } from "recharts";
+// Charts below the fold mount when scrolled near — see LazyResponsiveContainer.
+import { LazyResponsiveContainer as ResponsiveContainer } from "../../../ui/LazyResponsiveContainer";
+import { type Colors, fmtAmt, fmtAxis } from "../helpers";
 
 // The book's own rotation map: entry cost of every lot still open at each
 // week-end, stacked by bucket. A band that thickens is money moving in; one
@@ -76,7 +69,7 @@ const PALETTE = [
   "#fbbf24",
 ];
 
-export function PortfolioRotationChart({
+function PortfolioRotationChartView({
   accountId,
   currency,
   group,
@@ -180,7 +173,7 @@ export function PortfolioRotationChart({
               domain={mode === "SHARE" ? [0, 100] : [0, "auto"]}
               ticks={mode === "SHARE" ? [0, 25, 50, 75, 100] : undefined}
               allowDataOverflow={mode === "SHARE"}
-              tickFormatter={(v: number) => (mode === "SHARE" ? `${Math.round(v)}%` : fmtK(v))}
+              tickFormatter={(v: number) => (mode === "SHARE" ? `${Math.round(v)}%` : fmtAxis(v))}
             />
             <Tooltip
               content={({ active, payload, label }) => {
@@ -203,12 +196,12 @@ export function PortfolioRotationChart({
                   >
                     <div className="mb-1">
                       week to {label} · open cost {sym}
-                      {fmtK(row.__total)}
+                      {fmtAmt(row.__total)}
                     </div>
                     {items.map(({ s, v }) => (
                       <div key={s.key} className="flex justify-between gap-3">
                         <span style={{ color: colorOf[s.key] }}>■ {s.key}</span>
-                        <span>{mode === "SHARE" ? `${v.toFixed(1)}%` : `${sym}${fmtK(v)}`}</span>
+                        <span>{mode === "SHARE" ? `${v.toFixed(1)}%` : `${sym}${fmtAmt(v)}`}</span>
                       </div>
                     ))}
                   </div>
@@ -256,7 +249,7 @@ export function PortfolioRotationChart({
           <span>NOW · {data.weeks.at(-1)}</span>
           <span>
             {sym}
-            {fmtK(latestTotal)}
+            {fmtAmt(latestTotal)}
           </span>
         </div>
         {[...series]
@@ -273,7 +266,7 @@ export function PortfolioRotationChart({
                 onMouseLeave={() => setHover(null)}
                 className="flex items-center gap-1.5 w-full py-[2px] text-left"
                 style={{ color: off ? "#444" : s.latest > 0 ? colors.text : "#777" }}
-                title={`${s.open_symbols.length ? `Open: ${s.open_symbols.join(", ")}` : "No open lots"} · peak ${sym}${fmtK(s.peak)} · click to hide/show`}
+                title={`${s.open_symbols.length ? `Open: ${s.open_symbols.join(", ")}` : "No open lots"} · peak ${sym}${fmtAmt(s.peak)} · click to hide/show`}
               >
                 <span
                   data-frame
@@ -282,7 +275,7 @@ export function PortfolioRotationChart({
                 />
                 <span className="flex-1 truncate">{s.key}</span>
                 <span className="tabular-nums">
-                  {s.latest > 0 ? `${sym}${fmtK(s.latest)}` : "—"}
+                  {s.latest > 0 ? `${sym}${fmtAmt(s.latest)}` : "—"}
                 </span>
                 <span className="w-10 text-right tabular-nums" style={{ color: "#777" }}>
                   {s.latest > 0 ? `${share.toFixed(0)}%` : ""}
@@ -304,3 +297,7 @@ export function PortfolioRotationChart({
     </div>
   );
 }
+
+// Memoised: its parent re-renders on every data load (AnalyticsTab mounts in ~7
+// passes) with the same props; without memo each pass re-laid-out this chart.
+export const PortfolioRotationChart = memo(PortfolioRotationChartView);

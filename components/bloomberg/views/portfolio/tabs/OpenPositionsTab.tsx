@@ -1,7 +1,9 @@
 "use client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ChevronDown, ChevronRight, Clock, Loader2, RefreshCw } from "lucide-react";
 import React, { useState, useCallback, useEffect, useMemo } from "react";
+import { useLiveQuery } from "../../../hooks/useLiveQuery";
+import { type QuoteTick, useQuoteStream } from "../../../hooks/useQuoteStream";
 import {
   ALL_COLS,
   type ColName,
@@ -10,17 +12,30 @@ import {
   GROUP_COLORS,
   SUBPORT_COLORS,
 } from "../constants";
-import { type Colors, fmt, fmtK, fmtPct, groupKey, pnlColor, subPortLabel } from "../helpers";
+import {
+  type Colors,
+  fmt,
+  fmtAmt,
+  fmtPct,
+  fmtPx,
+  fmtQty,
+  groupKey,
+  pnlColor,
+  subPortLabel,
+} from "../helpers";
+import { applyTicks } from "../live-patch";
 import { AvgCostModal } from "../modals/AvgCostModal";
 import { SellModal } from "../modals/SellModal";
 import { StockCardModal } from "../modals/StockCardModal";
 import { TradeEditModal } from "../modals/TradeEditModal";
-import { portfolioQueries } from "../queries";
+import { type OpenPositionsPayload, portfolioQueries } from "../queries";
 import type { Trade } from "../types";
 import { AccBadge } from "../ui/AccBadge";
 import { usePortfolioNav } from "../ui/usePortfolioNav";
 import { fmtWeight } from "../weights";
 import type { OptionLot } from "./OptionsTab";
+
+const NO_POSITIONS: never[] = [];
 
 // ── Inline derivatives summary (read-only, no form) ──────────────────────────
 
@@ -97,16 +112,16 @@ function DerivativesSection({
         DERIVATIVES · OPTIONS
         <span className="font-normal text-[8px] opacity-60">{lots.length} open · USD</span>
         <span className="font-normal text-[8px]" style={{ color: colors.text }}>
-          ${fmtK(totalMv)}
+          ${fmtAmt(totalMv)}
         </span>
         <span className="font-normal text-[8px]" style={{ color: pnlColor(totalUnreal) }}>
-          {totalUnreal >= 0 ? "+" : "-"}${fmtK(Math.abs(totalUnreal))}
+          {totalUnreal >= 0 ? "+" : "-"}${fmtAmt(Math.abs(totalUnreal))}
         </span>
         <span
           className="font-normal text-[8px] opacity-60"
           title="Δ × qty × 100 × spot — dollars this book moves for a 100% move in the underlying, as opposed to what it cost"
         >
-          Δexp ${fmtK(totalDelta)}
+          Δexp ${fmtAmt(totalDelta)}
         </span>
         <span
           className="font-normal text-[8px]"
@@ -180,7 +195,7 @@ function DerivativesSection({
                   </td>
                   <td className="px-2 py-1 text-right" style={{ color: colors.text }}>
                     {nativeSym}
-                    {fmt(l.strike)}
+                    {fmtPx(l.strike)}
                   </td>
                   <td
                     className="px-2 py-1 text-right"
@@ -189,11 +204,11 @@ function DerivativesSection({
                     {l.expiry}
                   </td>
                   <td className="px-2 py-1 text-right" style={{ color: colors.text }}>
-                    {l.quantity}
+                    {fmtQty(l.quantity)}
                   </td>
                   <td className="px-2 py-1 text-right" style={{ color: colors.textSecondary }}>
                     {nativeSym}
-                    {fmt(l.entry_price, 2)}
+                    {fmtPx(l.entry_price)}
                   </td>
                   <td
                     className="px-2 py-1 text-right"
@@ -201,15 +216,15 @@ function DerivativesSection({
                     title={l.mark_stale ? "No quote — held at entry cost" : undefined}
                   >
                     {nativeSym}
-                    {fmt(l.mark, 2)}
+                    {fmtPx(l.mark)}
                   </td>
                   <td className="px-2 py-1 text-right" style={{ color: colors.text }}>
-                    {fmtK(l.market_value_usd)}
+                    {fmtAmt(l.market_value_usd)}
                   </td>
                   <td className="px-2 py-1 text-right">
                     <span style={{ color: pnlColor(l.unrealized_pnl_usd) }}>
                       {l.unrealized_pnl_usd >= 0 ? "+" : "-"}
-                      {fmtK(Math.abs(l.unrealized_pnl_usd))}
+                      {fmtAmt(Math.abs(l.unrealized_pnl_usd))}
                       {l.unrealized_pct_usd !== null && (
                         <span className="text-[8px] ml-0.5">
                           ({l.unrealized_pct_usd >= 0 ? "+" : ""}
@@ -236,7 +251,7 @@ function DerivativesSection({
                         —
                       </span>
                     ) : (
-                      fmtK(l.delta_exp_usd)
+                      fmtAmt(l.delta_exp_usd)
                     )}
                   </td>
                   <td className="px-2 py-1 text-right" style={{ color: colors.text }}>
@@ -390,6 +405,28 @@ function mergePositions(positions: Trade[]): MergedPosition[] {
   return result;
 }
 
+/** Right-aligned so digits line up by place value down the column. */
+const NUMERIC_COLS = new Set<DisplayCol>([
+  "ENTRY",
+  "CURRENT",
+  "PRE/POST",
+  "VOL",
+  "COST",
+  "% PORT",
+  "DAY P&L",
+  "UNREAL",
+  "% RTN",
+  "TARGET",
+  "S/L",
+]);
+
+/** Column-header row height — the sticky account rows park right under it. */
+const HEAD_H = 16;
+
+/** Row actions: hidden until the row is hovered; always shown on touch screens. */
+const ROW_ACTION =
+  "opacity-0 group-hover:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100";
+
 /** Stable fallbacks — a fresh `{}` each render would re-run every memo below. */
 const EMPTY_THESES: Record<string, { count: number; status: string }> = {};
 const EMPTY_SESSION: Record<string, SessionQuote> = {};
@@ -410,13 +447,35 @@ export function OpenPositionsTab({
     data = null,
     isFetching: loading,
     refetch: reloadPositions,
-  } = useQuery({
-    ...portfolioQueries.openPositions(currency, accountId),
+  } = useLiveQuery<OpenPositionsPayload>({
+    // Live cadence like MKT — current price, day P&L and unrealized all move
+    // with the market. Stops when the tab unmounts.
+    queryKey: portfolioQueries.openPositions(currency, accountId).queryKey,
+    queryFn: portfolioQueries.openPositions(currency, accountId).queryFn,
     placeholderData: (prev) => prev,
   });
   const load = useCallback(() => {
     void reloadPositions();
   }, [reloadPositions]);
+
+  // Live prices between polls: each tick moves the cached payload by its price
+  // delta, so this table, NAV (usePortfolioNav) and anything else reading the
+  // same query update together. The 60s refetch still lands on top as truth.
+  const qc = useQueryClient();
+  const streamSymbols = useMemo(
+    () => (data?.positions ?? []).map((p) => p.yf_symbol).filter((s): s is string => !!s),
+    [data]
+  );
+  const onTicks = useCallback(
+    (ticks: Record<string, QuoteTick>) => {
+      qc.setQueryData<OpenPositionsPayload>(
+        portfolioQueries.openPositions(currency, accountId).queryKey,
+        (prev) => (prev ? applyTicks(prev, ticks, currency) : prev)
+      );
+    },
+    [qc, currency, accountId]
+  );
+  useQuoteStream(streamSymbols, onTicks);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [expandedLots, setExpandedLots] = useState<Record<string, boolean>>({});
   const [dense, setDense] = useState(false);
@@ -470,8 +529,9 @@ export function OpenPositionsTab({
   // Hangs off the positions list and is slow on a cold backend (~4s), which is
   // exactly why the terminal shell warms it in the background — see
   // `prewarmPortfolio`.
-  const { data: premarketData } = useQuery({
-    ...portfolioQueries.premarket(accountId),
+  const { data: premarketData } = useLiveQuery({
+    queryKey: portfolioQueries.premarket(accountId).queryKey,
+    queryFn: portfolioQueries.premarket(accountId).queryFn,
     enabled: symbols.length > 0,
   });
   const session = (premarketData?.quotes ?? EMPTY_SESSION) as Record<string, SessionQuote>;
@@ -493,7 +553,7 @@ export function OpenPositionsTab({
     }
   }, [showCols]);
 
-  const positions = data?.positions ?? [];
+  const positions = data?.positions ?? NO_POSITIONS; // stable while loading — `?? []` re-ran the memos below every render
   const thb_per_usd = data?.thb_per_usd ?? 33.5;
   const { breakdown: navParts, pct: navPct } = usePortfolioNav(accountId, currency);
   const csym = currency === "THB" ? "฿" : "$";
@@ -647,8 +707,8 @@ export function OpenPositionsTab({
     return a + toBase(p.price_entry * p.volume, posCcy(p));
   }, 0);
 
-  const py = dense ? "py-0.5" : "py-1";
-  const rowH = dense ? "18px" : undefined;
+  const py = dense ? "py-0" : "py-0.5";
+  const rowH = dense ? "16px" : undefined;
 
   return (
     <div className="flex flex-col" style={{ height: "100%" }}>
@@ -657,35 +717,28 @@ export function OpenPositionsTab({
         className="flex-shrink-0 border-b"
         style={{ borderColor: colors.border, background: "#080808" }}
       >
-        {/* Summary bar */}
-        <div
-          className="flex items-center gap-4 px-3 py-1 border-b text-[9px] font-mono"
-          style={{ borderColor: colors.border }}
-        >
-          <span className="font-bold tracking-widest" style={{ color: colors.accent }}>
-            POSITIONS
-          </span>
-          <span style={{ color: colors.textSecondary }}>
+        {/* One row: book stats left, table controls right */}
+        <div className="flex flex-wrap items-center gap-x-4 px-3 py-0.5 text-[9px] font-mono">
+          <span style={{ color: colors.textSecondary }} title={`${groups.length} accounts`}>
             {filtered.length}
-            {filter ? `/${merged.length}` : ""} symbols · {positions.length} lots · {groups.length}{" "}
-            accounts
+            {filter ? `/${merged.length}` : ""} sym · {positions.length} lots
           </span>
           <span style={{ color: colors.textSecondary }}>
             Cost{" "}
             <span className="font-bold" style={{ color: colors.text }}>
               {csym}
-              {fmtK(totalCost)}
+              {fmtAmt(totalCost)}
             </span>
           </span>
           {navParts && navParts.nav > 0 && (
             <span
               style={{ color: colors.textSecondary }}
-              title={`NAV = equities ${csym}${fmtK(navParts.equity)} + options ${csym}${fmtK(navParts.options)} + cash ${csym}${fmtK(navParts.cash)}${accountId === "all" ? " (all accounts)" : ""}. Every % PORT is a share of this.${navParts.cashKnown ? "" : " Cash not loaded yet — counted as 0."}${navParts.unpriced ? ` ${navParts.unpriced} position(s) have no price and are left out.` : ""}`}
+              title={`NAV = equities ${csym}${fmtAmt(navParts.equity)} + options ${csym}${fmtAmt(navParts.options)} + cash ${csym}${fmtAmt(navParts.cash)}${accountId === "all" ? " (all accounts)" : ""}. Every % PORT is a share of this.${navParts.cashKnown ? "" : " Cash not loaded yet — counted as 0."}${navParts.unpriced ? ` ${navParts.unpriced} position(s) have no price and are left out.` : ""}`}
             >
               NAV{" "}
               <span className="font-bold" style={{ color: colors.text }}>
                 {csym}
-                {fmtK(navParts.nav)}
+                {fmtAmt(navParts.nav)}
               </span>
               <span className="ml-1">
                 EQ {fmtWeight(navPct(navParts.equity))}
@@ -705,7 +758,7 @@ export function OpenPositionsTab({
               <span className="font-bold" style={{ color: pnlColor(totalDayPnl) }}>
                 {totalDayPnl >= 0 ? "+" : "-"}
                 {csym}
-                {fmtK(Math.abs(totalDayPnl))}
+                {fmtAmt(Math.abs(totalDayPnl))}
               </span>
               {dayReturnPct != null && (
                 <span
@@ -733,29 +786,89 @@ export function OpenPositionsTab({
               Unreal{" "}
               <span className="font-bold" style={{ color: pnlColor(totalUnreal) }}>
                 {csym}
-                {fmtK(Math.abs(totalUnreal))} {totalUnreal >= 0 ? "▲" : "▼"}
+                {fmtAmt(Math.abs(totalUnreal))} {totalUnreal >= 0 ? "▲" : "▼"}
               </span>
             </span>
           )}
-          <div className="flex gap-1 ml-auto">
-            {groups.map(([gk]: [string, Trade[]]) => (
-              <span
-                key={gk}
-                className="text-[7px] px-1 border"
-                style={{
-                  borderColor: GROUP_COLORS[gk] ?? "#555",
-                  color: GROUP_COLORS[gk] ?? "#555",
-                }}
+          <div className="ml-auto flex items-center gap-2">
+            <input
+              className="text-[8px] px-1.5 py-0.5 border-b outline-none font-mono w-[110px]"
+              style={{ background: "transparent", borderColor: colors.border, color: colors.text }}
+              placeholder="filter sym / sector"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={() =>
+                setDense((d) => {
+                  const next = !d;
+                  setShowCols(next ? DENSE_COLS : DEFAULT_COLS);
+                  return next;
+                })
+              }
+              className="text-[8px] font-bold"
+              style={{ color: dense ? colors.accent : colors.textSecondary }}
+            >
+              DENSE
+            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowColPicker((v) => !v)}
+                className="text-[8px] font-bold"
+                style={{ color: showColPicker ? colors.accent : colors.textSecondary }}
               >
-                {gk.replace("Finansia ", "F")}
-              </span>
-            ))}
+                COLS ▾
+              </button>
+              {showColPicker && (
+                <div
+                  className="absolute top-full right-0 z-50 mt-0.5 border p-2 flex flex-col gap-0.5"
+                  style={{ background: "#0a0a0a", borderColor: colors.border, minWidth: 130 }}
+                >
+                  {ALL_COLS.map((col) => (
+                    <label
+                      key={col}
+                      className="flex items-center gap-1.5 cursor-pointer text-[8px] font-mono hover:opacity-80"
+                      style={{ color: showCols.includes(col) ? colors.text : colors.textSecondary }}
+                    >
+                      <input
+                        type="checkbox"
+                        className="w-2.5 h-2.5"
+                        checked={showCols.includes(col)}
+                        onChange={(e) =>
+                          setShowCols((prev) => {
+                            return e.target.checked
+                              ? [...prev, col]
+                              : prev.filter((c) => c !== col);
+                          })
+                        }
+                      />
+                      {col}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => load()}
+              disabled={loading}
+              className="p-0.5 hover:opacity-70"
+              title="Refresh positions"
+            >
+              {loading ? (
+                <Loader2 className="h-2.5 w-2.5 animate-spin" style={{ color: colors.accent }} />
+              ) : (
+                <RefreshCw className="h-2.5 w-2.5" style={{ color: colors.textSecondary }} />
+              )}
+            </button>
           </div>
         </div>
 
         {takeoverMemo && (
           <div
-            className="flex items-center gap-4 px-3 py-1 border-b text-[9px] font-mono"
+            className="flex items-center gap-4 px-3 py-0.5 border-t text-[9px] font-mono"
             style={{ borderColor: colors.border }}
             title="Fund practice: lots received in kind are carried at fair value on the transfer date, so every return in PORT starts there. The previous owner's cost is memo only."
           >
@@ -766,14 +879,14 @@ export function OpenPositionsTab({
               Prior cost{" "}
               <span style={{ color: colors.text }}>
                 {csym}
-                {fmtK(takeoverMemo.original_cost)}
+                {fmtAmt(takeoverMemo.original_cost)}
               </span>
             </span>
             <span style={{ color: colors.textSecondary }}>
               Value at transfer{" "}
               <span style={{ color: colors.text }}>
                 {csym}
-                {fmtK(takeoverMemo.transfer_value)}
+                {fmtAmt(takeoverMemo.transfer_value)}
               </span>
             </span>
             <span
@@ -784,7 +897,7 @@ export function OpenPositionsTab({
               <span className="font-bold" style={{ color: pnlColor(takeoverMemo.inherited_pnl) }}>
                 {takeoverMemo.inherited_pnl >= 0 ? "+" : "-"}
                 {csym}
-                {fmtK(Math.abs(takeoverMemo.inherited_pnl))}
+                {fmtAmt(Math.abs(takeoverMemo.inherited_pnl))}
               </span>
             </span>
             <span
@@ -795,7 +908,7 @@ export function OpenPositionsTab({
               <span className="font-bold" style={{ color: pnlColor(takeoverMemo.since) }}>
                 {takeoverMemo.since >= 0 ? "+" : "-"}
                 {csym}
-                {fmtK(Math.abs(takeoverMemo.since))}
+                {fmtAmt(Math.abs(takeoverMemo.since))}
               </span>
             </span>
             <span
@@ -806,91 +919,11 @@ export function OpenPositionsTab({
               <span className="font-bold" style={{ color: pnlColor(takeoverMemo.total) }}>
                 {takeoverMemo.total >= 0 ? "+" : "-"}
                 {csym}
-                {fmtK(Math.abs(takeoverMemo.total))}
+                {fmtAmt(Math.abs(takeoverMemo.total))}
               </span>
             </span>
           </div>
         )}
-
-        {/* Controls row */}
-        <div className="flex items-center gap-2 px-3 py-1">
-          <button
-            type="button"
-            onClick={() =>
-              setDense((d) => {
-                const next = !d;
-                setShowCols(next ? DENSE_COLS : DEFAULT_COLS);
-                return next;
-              })
-            }
-            className="text-[8px] px-1.5 py-0.5 border font-bold"
-            style={{
-              borderColor: dense ? colors.accent : colors.border,
-              color: dense ? colors.accent : colors.textSecondary,
-              background: dense ? `${colors.accent}22` : "transparent",
-            }}
-          >
-            DENSE
-          </button>
-
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowColPicker((v) => !v)}
-              className="text-[8px] px-1.5 py-0.5 border font-bold"
-              style={{ borderColor: colors.border, color: colors.textSecondary }}
-            >
-              COLS ▾
-            </button>
-            {showColPicker && (
-              <div
-                className="absolute top-full left-0 z-50 mt-0.5 border p-2 flex flex-col gap-0.5"
-                style={{ background: "#0a0a0a", borderColor: colors.border, minWidth: 130 }}
-              >
-                {ALL_COLS.map((col) => (
-                  <label
-                    key={col}
-                    className="flex items-center gap-1.5 cursor-pointer text-[8px] font-mono hover:opacity-80"
-                    style={{ color: showCols.includes(col) ? colors.text : colors.textSecondary }}
-                  >
-                    <input
-                      type="checkbox"
-                      className="w-2.5 h-2.5"
-                      checked={showCols.includes(col)}
-                      onChange={(e) =>
-                        setShowCols((prev) => {
-                          return e.target.checked ? [...prev, col] : prev.filter((c) => c !== col);
-                        })
-                      }
-                    />
-                    {col}
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <input
-            className="text-[8px] px-1.5 py-0.5 border outline-none font-mono flex-1 max-w-[120px]"
-            style={{ background: "transparent", borderColor: colors.border, color: colors.text }}
-            placeholder="Filter symbol / sector"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
-
-          <button
-            type="button"
-            onClick={() => load()}
-            disabled={loading}
-            className="ml-auto p-0.5 hover:opacity-70"
-          >
-            {loading ? (
-              <Loader2 className="h-2.5 w-2.5 animate-spin" style={{ color: colors.accent }} />
-            ) : (
-              <RefreshCw className="h-2.5 w-2.5" style={{ color: colors.textSecondary }} />
-            )}
-          </button>
-        </div>
       </div>
 
       {/* Scrollable positions zone */}
@@ -906,6 +939,30 @@ export function OpenPositionsTab({
           role="presentation"
         >
           <table className="w-full text-[10px] font-mono" style={{ borderCollapse: "collapse" }}>
+            {/* One header for every account — repeating it under each group
+                header cost a row per account and said nothing new. */}
+            <thead>
+              <tr
+                style={{
+                  background: "#0a0a0a",
+                  position: "sticky",
+                  top: 0,
+                  zIndex: 11,
+                  height: HEAD_H,
+                }}
+              >
+                {displayCols.map((h) => (
+                  <th
+                    key={h}
+                    className={`px-2 whitespace-nowrap text-[7px] font-bold tracking-wider border-b ${NUMERIC_COLS.has(h) ? "text-right" : "text-left"}`}
+                    style={{ color: colors.textSecondary, borderColor: colors.border }}
+                  >
+                    {h}
+                  </th>
+                ))}
+                <th className="border-b" style={{ borderColor: colors.border }} />
+              </tr>
+            </thead>
             {groups.map(([gk, groupPositions]: [string, MergedPosition[]]) => {
               const groupColor = GROUP_COLORS[gk] ?? colors.accent;
               const isCollapsed = !!collapsed[gk];
@@ -934,7 +991,7 @@ export function OpenPositionsTab({
                       background: "#060606",
                       cursor: "pointer",
                       position: "sticky",
-                      top: 0,
+                      top: HEAD_H,
                       zIndex: 10,
                     }}
                     onClick={() => setCollapsed((c) => ({ ...c, [gk]: !isCollapsed }))}
@@ -951,86 +1008,51 @@ export function OpenPositionsTab({
                         borderLeftColor: groupColor,
                       }}
                     >
-                      <div className="flex items-center gap-3 py-1">
-                        <span className="text-[8px]" style={{ color: "#555" }}>
+                      <div className="flex items-center gap-3 py-0.5 text-[9px]">
+                        <span className="text-[7px] w-2" style={{ color: "#555" }}>
                           {isCollapsed ? "▶" : "▼"}
                         </span>
+                        <span className="font-bold tracking-wider" style={{ color: groupColor }}>
+                          {gk.toUpperCase()}
+                        </span>
+                        <span style={{ color: colors.textSecondary }}>{groupPositions.length}</span>
+                        {/* MV next to the weight because the weight is computed
+                            from IT, not from cost. Two accounts that paid ฿1.0M and
+                            ฿1.85M can carry the same weight today. */}
                         <span
-                          className="text-[10px] font-bold tracking-wider"
-                          style={{ color: groupColor }}
+                          style={{ color: colors.textSecondary }}
+                          title="Market value today ÷ NAV of the selected scope — weight is what you hold TODAY, not what you paid for it"
                         >
-                          {gk}
-                        </span>
-                        <span className="text-[8px]" style={{ color: colors.textSecondary }}>
-                          {groupPositions.length} pos
+                          MV{" "}
+                          <span style={{ color: colors.text }}>
+                            {csym}
+                            {fmtAmt(groupMv)}
+                          </span>
+                          {navPct(groupMv) != null && (
+                            <span className="ml-1 font-bold" style={{ color: colors.text }}>
+                              {fmtWeight(navPct(groupMv))}
+                            </span>
+                          )}
                         </span>
                         <span
-                          className="text-[8px]"
                           style={{ color: colors.textSecondary }}
                           title="What this account paid for the positions it still holds"
                         >
-                          Cost {csym}
-                          {fmtK(groupCost)}
+                          cost {csym}
+                          {fmtAmt(groupCost)}
                         </span>
-                        {/* MV is printed next to cost because the weight below is
-                            computed from IT, not from cost. Two accounts that paid
-                            ฿1.0M and ฿1.85M can carry the same weight today, and
-                            without this number in between that reads as a bug. */}
                         <span
-                          className="text-[8px]"
-                          style={{ color: colors.textSecondary }}
-                          title="Market value today — what the weight below is computed from"
-                        >
-                          MV {csym}
-                          {fmtK(groupMv)}
-                        </span>
-                        {navPct(groupMv) != null && (
-                          <span
-                            className="text-[8px]"
-                            style={{ color: colors.textSecondary }}
-                            title="Market value ÷ NAV of the selected scope — weight is what you hold TODAY, not what you paid for it"
-                          >
-                            <span className="font-bold" style={{ color: colors.text }}>
-                              {fmtWeight(navPct(groupMv))}
-                            </span>{" "}
-                            of NAV <span style={{ color: "#555" }}>(MV)</span>
-                          </span>
-                        )}
-                        <span
-                          className="ml-auto text-[9px] font-bold"
+                          className="ml-auto font-bold"
                           style={{ color: pnlColor(groupPnl) }}
+                          title="Unrealized P&L of this account"
                         >
                           {groupPnl !== 0
-                            ? `${csym}${fmtK(Math.abs(groupPnl))} ${groupPnl >= 0 ? "▲" : "▼"}`
+                            ? `${groupPnl >= 0 ? "+" : "-"}${csym}${fmtAmt(Math.abs(groupPnl))}`
                             : "—"}
                         </span>
                       </div>
                     </td>
                   </tr>
-
-                  {/* Column header */}
-                  {!isCollapsed && (
-                    <tr
-                      style={{
-                        background: "#0a0a0a",
-                        borderBottom: `1px solid ${colors.border}`,
-                        position: "sticky",
-                        top: 28,
-                        zIndex: 9,
-                      }}
-                    >
-                      {displayCols.map((h) => (
-                        <th
-                          key={h}
-                          className="px-2 py-0.5 text-left whitespace-nowrap text-[7px] font-bold tracking-wider"
-                          style={{ color: colors.textSecondary }}
-                        >
-                          {h}
-                        </th>
-                      ))}
-                      <th />
-                    </tr>
-                  )}
 
                   {/* Position rows */}
                   {!isCollapsed &&
@@ -1068,6 +1090,7 @@ export function OpenPositionsTab({
                       const hasMultiLots = p.lots.length > 1;
                       const lotKey = p.rowKey;
                       const lotsExpanded = !!expandedLots[lotKey];
+                      const thesis = theses[p.symbol.toUpperCase()];
 
                       const cellMap: Record<DisplayCol, React.ReactNode> = {
                         SYMBOL: (
@@ -1094,71 +1117,31 @@ export function OpenPositionsTab({
                                 )}
                               </button>
                             )}
-                            <span className="font-bold" style={{ color: groupColor }}>
+                            <span
+                              className="font-bold"
+                              style={{ color: groupColor }}
+                              title={`${p.symbol} · priced in ${acc}${thesis ? ` · ${thesis.count} thesis (${thesis.status})` : ""}`}
+                            >
                               {p.symbol}
                             </span>
-                            <button
-                              type="button"
-                              className="text-[7px] px-1 border"
-                              style={{ borderColor: colors.border, color: colors.textSecondary }}
-                              title="Stock card: compare AVCO and FIFO"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setStockCard({ accountId: p.account_id, symbol: p.symbol });
-                              }}
-                            >
-                              CARD
-                            </button>
-                            {onOpenThesis && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onOpenThesis(p.symbol);
-                                }}
-                                className="text-[7px] px-1 border font-mono"
-                                style={{
-                                  borderColor: theses[p.symbol.toUpperCase()]
-                                    ? "#a78bfa88"
-                                    : "#33333388",
-                                  color: theses[p.symbol.toUpperCase()] ? "#a78bfa" : "#555",
-                                }}
-                                title={
-                                  theses[p.symbol.toUpperCase()]
-                                    ? `${theses[p.symbol.toUpperCase()].count} thesis — status ${theses[p.symbol.toUpperCase()].status}`
-                                    : "No thesis yet — write one"
-                                }
-                              >
-                                {theses[p.symbol.toUpperCase()] ? "TH" : "+TH"}
-                              </button>
-                            )}
-                            <span
-                              className="text-[7px] px-1 border font-mono"
-                              style={{
-                                borderColor: acc === "THB" ? "#22c55e55" : "#38bdf855",
-                                color: acc === "THB" ? "#4ade80" : "#7dd3fc",
-                              }}
-                              title={`Instrument currency: ${acc}`}
-                            >
-                              {acc === "THB" ? "฿" : "$"} {acc}
-                            </span>
                             {hasMultiLots && (
-                              <span
-                                className="text-[7px] px-0.5 rounded"
-                                style={{ background: `${groupColor}22`, color: groupColor }}
-                              >
-                                {p.lots.length}
+                              <span className="text-[8px]" style={{ color: colors.textSecondary }}>
+                                ×{p.lots.length}
                               </span>
                             )}
                             {subPortLabel(p) && (
                               <span
-                                className="text-[7px] px-1 rounded font-mono"
+                                className="text-[7px]"
                                 style={{
-                                  background: `${SUBPORT_COLORS[subPortLabel(p) as string] ?? "#555"}22`,
                                   color: SUBPORT_COLORS[subPortLabel(p) as string] ?? "#555",
                                 }}
                               >
                                 {subPortLabel(p)}
+                              </span>
+                            )}
+                            {thesis && (
+                              <span className="text-[7px]" style={{ color: "#a78bfa" }}>
+                                TH
                               </span>
                             )}
                           </div>
@@ -1167,30 +1150,25 @@ export function OpenPositionsTab({
                           <span style={{ color: colors.textSecondary }}>{p.sector || "—"}</span>
                         ),
                         ENTRY: (
-                          <span className="flex items-center gap-1">
+                          <span
+                            title={
+                              overrideNative
+                                ? "Manual cost override"
+                                : hasMultiLots
+                                  ? "Volume-weighted average of the lots"
+                                  : undefined
+                            }
+                          >
                             {sym}
-                            {fmt(entryNative)}
-                            {hasMultiLots && !overrideNative && (
-                              <span className="text-[7px] opacity-50">avg</span>
-                            )}
-                            {overrideNative && (
-                              <span
-                                className="text-[7px] px-0.5 rounded"
-                                style={{ background: "#f59e0b22", color: "#f59e0b" }}
-                              >
-                                override
-                              </span>
-                            )}
+                            {fmtPx(entryNative)}
+                            {overrideNative && <span style={{ color: "#f59e0b" }}>*</span>}
                           </span>
                         ),
                         CURRENT:
                           curNative != null ? (
-                            <span
-                              className="font-bold"
-                              style={{ color: curNative >= entryNative ? "#4ade80" : "#f87171" }}
-                            >
+                            <span style={{ color: colors.text }}>
                               {sym}
-                              {fmt(curNative)}
+                              {fmtPx(curNative)}
                             </span>
                           ) : (
                             <Loader2 className="h-2 w-2 animate-spin inline" />
@@ -1209,10 +1187,10 @@ export function OpenPositionsTab({
                           const labelColor = isPre ? "#f59e0b" : "#38bdf8";
                           const pxNative = toBase(px, acc);
                           return (
-                            <span className="flex items-center gap-1">
+                            <span className="inline-flex items-center gap-1">
                               <span
-                                className="text-[7px] px-0.5 rounded font-bold"
-                                style={{ background: `${labelColor}22`, color: labelColor }}
+                                className="text-[7px] font-bold"
+                                style={{ color: labelColor }}
                                 title={`marketState: ${s.market_state ?? "?"}`}
                               >
                                 {label}
@@ -1222,7 +1200,7 @@ export function OpenPositionsTab({
                                 style={{ color: pct != null ? pnlColor(pct) : colors.text }}
                               >
                                 {sym}
-                                {fmt(pxNative)}
+                                {fmtPx(pxNative)}
                                 {pct != null && (
                                   <span className="text-[8px] ml-0.5 font-normal">
                                     ({pct >= 0 ? "+" : ""}
@@ -1233,11 +1211,11 @@ export function OpenPositionsTab({
                             </span>
                           );
                         })(),
-                        VOL: <>{p.volume.toLocaleString()}</>,
+                        VOL: <>{fmtQty(p.volume)}</>,
                         COST: (
                           <span style={{ color: colors.textSecondary }}>
                             {sym}
-                            {fmtK(costVal)}
+                            {fmtAmt(costVal)}
                           </span>
                         ),
                         "% PORT": (() => {
@@ -1247,8 +1225,8 @@ export function OpenPositionsTab({
                             return <span style={{ color: colors.textSecondary }}>—</span>;
                           return (
                             <span
-                              className="flex items-center gap-1"
-                              title={`${csym}${fmtK(mv)} market value ÷ NAV ${csym}${fmtK(navParts?.nav ?? 0)}`}
+                              className="inline-flex items-center gap-1"
+                              title={`${csym}${fmtAmt(mv)} market value ÷ NAV ${csym}${fmtAmt(navParts?.nav ?? 0)}`}
                             >
                               <span
                                 className="inline-block h-1.5"
@@ -1286,19 +1264,19 @@ export function OpenPositionsTab({
                               const extColor = ext.label === "PRE" ? "#f59e0b" : "#38bdf8";
                               return (
                                 <span
-                                  className="flex items-center gap-1"
+                                  className="inline-flex items-center gap-1"
                                   title={`${ext.label}-market move — the regular session has not opened yet (last close ${p.day_session_date ?? "unknown"})`}
                                 >
                                   <span
-                                    className="text-[7px] px-0.5 rounded font-bold"
-                                    style={{ background: `${extColor}22`, color: extColor }}
+                                    className="text-[7px] font-bold"
+                                    style={{ color: extColor }}
                                   >
                                     {ext.label}
                                   </span>
                                   <span className="font-bold" style={{ color: pnlColor(extPnl) }}>
                                     {extPnl >= 0 ? "+" : "-"}
                                     {sym}
-                                    {fmtK(Math.abs(extPnl))}
+                                    {fmtAmt(Math.abs(extPnl))}
                                     {ext.pct != null && (
                                       <span className="text-[8px] ml-0.5 font-normal">
                                         ({ext.pct >= 0 ? "+" : ""}
@@ -1316,15 +1294,15 @@ export function OpenPositionsTab({
                               : undefined;
                             return (
                               <span style={{ color: colors.textSecondary }} title={staleHint}>
-                                {p.day_stale ? "· ·" : "—"}
+                                —
                               </span>
                             );
                           }
                           return (
-                            <span className="font-bold" style={{ color: pnlColor(dayPnl) }}>
+                            <span style={{ color: pnlColor(dayPnl) }}>
                               {dayPnl >= 0 ? "+" : "-"}
                               {sym}
-                              {fmtK(Math.abs(dayPnl))}
+                              {fmtAmt(Math.abs(dayPnl))}
                               {p.day_pct != null && (
                                 <span className="text-[8px] ml-0.5 font-normal">
                                   ({p.day_pct >= 0 ? "+" : ""}
@@ -1337,8 +1315,9 @@ export function OpenPositionsTab({
                         UNREAL:
                           pnl != null ? (
                             <span className="font-bold" style={{ color: pnlColor(pnl) }}>
+                              {pnl >= 0 ? "+" : "-"}
                               {sym}
-                              {fmtK(Math.abs(pnl))} {pnl >= 0 ? "▲" : "▼"}
+                              {fmtAmt(Math.abs(pnl))}
                             </span>
                           ) : (
                             <span style={{ color: colors.textSecondary }}>—</span>
@@ -1355,7 +1334,7 @@ export function OpenPositionsTab({
                           targetNative != null ? (
                             <span style={{ color: "#4ade80" }}>
                               {sym}
-                              {fmt(targetNative)}
+                              {fmtPx(targetNative)}
                             </span>
                           ) : (
                             <span style={{ color: colors.textSecondary }}>—</span>
@@ -1364,7 +1343,7 @@ export function OpenPositionsTab({
                           slNative != null ? (
                             <span style={{ color: "#f87171" }}>
                               {sym}
-                              {fmt(slNative)}
+                              {fmtPx(slNative)}
                             </span>
                           ) : (
                             <span style={{ color: colors.textSecondary }}>—</span>
@@ -1379,18 +1358,48 @@ export function OpenPositionsTab({
                       return (
                         <React.Fragment key={p.rowKey}>
                           <tr
-                            className="hover:bg-[#111]"
+                            className="group hover:bg-[#111]"
                             style={{ borderBottom: "1px solid #141414", height: rowH }}
                           >
                             {displayCols.map((col) => (
-                              <td key={col} className={`px-2 ${py} whitespace-nowrap`}>
+                              <td
+                                key={col}
+                                className={`px-2 ${py} whitespace-nowrap ${NUMERIC_COLS.has(col) ? "text-right" : ""}`}
+                              >
                                 {cellMap[col]}
                               </td>
                             ))}
-                            <td className={`px-1 ${py}`}>
-                              <div className="flex gap-0.5">
+                            <td className={`px-2 ${py} whitespace-nowrap text-right`}>
+                              <div
+                                className={`inline-flex gap-2 text-[8px] font-bold ${ROW_ACTION}`}
+                              >
                                 <button
                                   type="button"
+                                  style={{ color: colors.textSecondary }}
+                                  title="Stock card: compare AVCO and FIFO"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setStockCard({ accountId: p.account_id, symbol: p.symbol });
+                                  }}
+                                >
+                                  CARD
+                                </button>
+                                {onOpenThesis && (
+                                  <button
+                                    type="button"
+                                    style={{ color: thesis ? "#a78bfa" : colors.textSecondary }}
+                                    title={thesis ? "Open thesis" : "No thesis yet — write one"}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onOpenThesis(p.symbol);
+                                    }}
+                                  >
+                                    {thesis ? "THESIS" : "+THESIS"}
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  style={{ color: "#ff9900" }}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setEditTarget(p.lots[0]);
@@ -1400,17 +1409,12 @@ export function OpenPositionsTab({
                                       costOverride: costOverrides[p.symbol],
                                     });
                                   }}
-                                  className="text-[7px] px-1 py-0.5 border font-bold hover:opacity-80 whitespace-nowrap"
-                                  style={{
-                                    borderColor: "#ff990055",
-                                    color: "#ff9900",
-                                    background: "#ff990010",
-                                  }}
                                 >
                                   EDIT
                                 </button>
                                 <button
                                   type="button"
+                                  style={{ color: "#f87171" }}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setSellCtx({
@@ -1418,12 +1422,6 @@ export function OpenPositionsTab({
                                       avgEntry: costOverrides[p.symbol] ?? p.avg_entry,
                                       allLots: p.lots,
                                     });
-                                  }}
-                                  className="text-[7px] px-2 py-0.5 border font-bold hover:opacity-80 whitespace-nowrap"
-                                  style={{
-                                    borderColor: "#ef444466",
-                                    color: "#f87171",
-                                    background: "#ef444410",
                                   }}
                                 >
                                   SELL
@@ -1445,6 +1443,7 @@ export function OpenPositionsTab({
                               return (
                                 <tr
                                   key={`${lot.id}_lot`}
+                                  className="group"
                                   style={{
                                     background: "#0a0a0a",
                                     borderBottom: "1px solid #0f0f0f",
@@ -1458,51 +1457,41 @@ export function OpenPositionsTab({
                                       </span>
                                       <span>
                                         {sym}
-                                        {fmt(lotEntry)} × {lot.volume.toLocaleString()}
+                                        {fmtPx(lotEntry)} × {fmtQty(lot.volume)}
                                       </span>
                                       <span style={{ color: colors.textSecondary }}>
                                         Cost {sym}
-                                        {fmtK(lotEntry * lot.volume)}
+                                        {fmtAmt(lotEntry * lot.volume)}
                                       </span>
                                       {lotPnl != null && (
                                         <span style={{ color: pnlColor(lotPnl) }}>
-                                          {lotPnl >= 0 ? "+" : ""}
+                                          {lotPnl >= 0 ? "+" : "-"}
                                           {sym}
-                                          {fmtK(Math.abs(lotPnl))}
+                                          {fmtAmt(Math.abs(lotPnl))}
                                           {lot.unrealized_pct != null &&
                                             ` (${lot.unrealized_pct >= 0 ? "+" : ""}${lot.unrealized_pct.toFixed(2)}%)`}
                                         </span>
                                       )}
-                                      <div className="flex gap-0.5 ml-auto">
+                                      <div className={`ml-auto flex gap-2 font-bold ${ROW_ACTION}`}>
                                         <button
                                           type="button"
+                                          style={{ color: "#ff9900" }}
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             setEditTarget(lot);
-                                          }}
-                                          className="text-[7px] px-1 py-0.5 border font-bold hover:opacity-80"
-                                          style={{
-                                            borderColor: "#ff990055",
-                                            color: "#ff9900",
-                                            background: "#ff990010",
                                           }}
                                         >
                                           EDIT
                                         </button>
                                         <button
                                           type="button"
+                                          style={{ color: "#f87171" }}
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             setSellCtx({
                                               target: lot,
                                               avgEntry: costOverrides[lot.symbol] ?? undefined,
                                             });
-                                          }}
-                                          className="text-[7px] px-1 py-0.5 border font-bold hover:opacity-80"
-                                          style={{
-                                            borderColor: "#ef444466",
-                                            color: "#f87171",
-                                            background: "#ef444410",
                                           }}
                                         >
                                           SELL

@@ -1,6 +1,6 @@
 "use client";
 import { Loader2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -11,12 +11,13 @@ import {
   ComposedChart,
   Line,
   ReferenceLine,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { type Colors, fmtK, pnlColor } from "../helpers";
+// Charts below the fold mount when scrolled near — see LazyResponsiveContainer.
+import { LazyResponsiveContainer as ResponsiveContainer } from "../../../ui/LazyResponsiveContainer";
+import { type Colors, fmtAmt, fmtAxis, pnlColor } from "../helpers";
 import type { Dividend, Summary, Trade } from "../types";
 import { AccBadge } from "../ui/AccBadge";
 import { AllocationBasisCard } from "../ui/AllocationBasisCard";
@@ -231,7 +232,7 @@ type NavRow = { date: string; value: number; holdings: number; cash: number; cos
  *  blue, which made the card unreadable — hence the legend, which doubles as
  *  the on/off switch (CASH next to a 2M NAV is a flat line at the floor until
  *  you hide the big series and let the axis rescale to it). */
-function NavValueChart({
+function NavValueChartView({
   data,
   colors,
   sym,
@@ -285,7 +286,7 @@ function NavValueChart({
               {last && (
                 <span style={{ color: off ? "#555" : colors.text }}>
                   {sym}
-                  {fmtK(Math.abs(last[s.key]))}
+                  {fmtAmt(Math.abs(last[s.key]))}
                 </span>
               )}
             </button>
@@ -297,7 +298,7 @@ function NavValueChart({
             <span style={{ color: pnlColor(navChange) }}>
               {navChange >= 0 ? "+" : "−"}
               {sym}
-              {fmtK(Math.abs(navChange))}
+              {fmtAmt(Math.abs(navChange))}
             </span>
           </span>
         )}
@@ -318,7 +319,7 @@ function NavValueChart({
             tick={{ fill: "#666", fontSize: 8 }}
             tickLine={false}
             axisLine={false}
-            tickFormatter={(v) => fmtK(v)}
+            tickFormatter={(v) => fmtAxis(v)}
           />
           <Tooltip
             content={({ active, payload, label }) => {
@@ -332,13 +333,13 @@ function NavValueChart({
                     <div key={s.key} style={{ color: s.color }}>
                       {s.label} {row[s.key] < 0 ? "−" : ""}
                       {sym}
-                      {fmtK(Math.abs(row[s.key]))}
+                      {fmtAmt(Math.abs(row[s.key]))}
                     </div>
                   ))}
                   <div style={{ color: pnlColor(unreal), marginTop: 2 }}>
                     ยังไม่ขาย (HOLDINGS − COST) {unreal >= 0 ? "+" : "−"}
                     {sym}
-                    {fmtK(Math.abs(unreal))}
+                    {fmtAmt(Math.abs(unreal))}
                   </div>
                 </div>
               );
@@ -380,7 +381,7 @@ function NavValueChart({
  *  therefore not comparable with an index. This chart answers "how did the
  *  money that WAS in here do" — the backend nets each day's external flow out
  *  of that day's return and links the rest geometrically. */
-function NavIndexChart({
+function NavIndexChartView({
   data,
   loading,
   colors,
@@ -561,7 +562,7 @@ function periodView(p?: PeriodReturn, digits = 1) {
   const est = p.estimated ? "~" : "";
   const title = [
     `${p.period}${p.ytd ? " YTD" : ""}: ${p.start} → ${p.end} (${p.days}d)`,
-    `NAV ${fmtK(p.start_nav)} → ${fmtK(p.end_nav)}, net flows ${fmtK(p.net_flow)}`,
+    `NAV ${fmtAmt(p.start_nav)} → ${fmtAmt(p.end_nav)}, net flows ${fmtAmt(p.net_flow)}`,
     `Period return ${sgnPct(p.period_pct, 2)}${p.xirr_pct != null ? ` · annualised ${sgnPct(p.xirr_pct, 2)}` : " · too short to annualise"}`,
     "Starts from the NAV already in the book, so history before the period cannot distort it.",
     p.estimated ? "~ part of the period is rebuilt from closing prices (backfill)." : "",
@@ -761,6 +762,11 @@ function LedgerRow({
     </div>
   );
 }
+
+// Memoised chart panels: AnalyticsTab re-renders once per data load while it
+// mounts (~7 passes); unchanged props now skip the chart re-layout.
+const NavValueChart = memo(NavValueChartView);
+const NavIndexChart = memo(NavIndexChartView);
 
 export function AnalyticsTab({
   accountId,
@@ -1249,7 +1255,7 @@ export function AnalyticsTab({
   ];
 
   const money = (v: number, signed = false) =>
-    `${signed ? (v >= 0 ? "+" : "−") : v < 0 ? "−" : ""}${sym}${fmtK(Math.abs(v))}`;
+    `${signed ? (v >= 0 ? "+" : "−") : v < 0 ? "−" : ""}${sym}${fmtAmt(Math.abs(v))}`;
   const capBase = capital.invested > 0 ? capital.invested : capital.openCost;
   const capBaseLabel = capital.invested > 0 ? "invested" : "cost basis";
   const totalReturnAmt = capital.totalPnl + capital.dividends;
@@ -1707,11 +1713,11 @@ export function AnalyticsTab({
                       <td className={`${td} font-bold`} style={{ color: pnlColor(s.pnl_native) }}>
                         {s.pnl_native >= 0 ? "+" : "−"}
                         {ccy}
-                        {fmtK(Math.abs(s.pnl_native))}
+                        {fmtAmt(Math.abs(s.pnl_native))}
                       </td>
                       <td className={td} style={{ color: "#4ade80" }}>
                         {ccy}
-                        {fmtK(s.total_dividends)}
+                        {fmtAmt(s.total_dividends)}
                       </td>
                       <td className={`${td} font-bold`} style={{ color: pnlColor(r.totalPnl) }}>
                         {sgnPct(r.pct)}
@@ -1734,7 +1740,7 @@ export function AnalyticsTab({
                       >
                         {s.ytd_realized_native == null
                           ? "—"
-                          : `${s.ytd_realized_native >= 0 ? "+" : "−"}${ccy}${fmtK(Math.abs(s.ytd_realized_native))}`}
+                          : `${s.ytd_realized_native >= 0 ? "+" : "−"}${ccy}${fmtAmt(Math.abs(s.ytd_realized_native))}`}
                       </td>
                       <td
                         className={td}
@@ -1888,7 +1894,7 @@ export function AnalyticsTab({
                         (min: number) => Math.min(0, min),
                         (max: number) => Math.max(0, max),
                       ]}
-                      tickFormatter={(v) => fmtK(v)}
+                      tickFormatter={(v) => fmtAxis(v)}
                     />
                     <YAxis
                       yAxisId="c"
@@ -1900,7 +1906,7 @@ export function AnalyticsTab({
                         (min: number) => Math.min(0, min),
                         (max: number) => Math.max(0, max),
                       ]}
-                      tickFormatter={(v) => fmtK(v)}
+                      tickFormatter={(v) => fmtAxis(v)}
                     />
                     <Tooltip
                       content={({ active, payload, label }) => {
@@ -2401,11 +2407,11 @@ export function AnalyticsTab({
                       style={{ color: colors.textSecondary }}
                       title={
                         row.market_value
-                          ? `${sym}${fmtK(row.market_value)} market value × β`
+                          ? `${sym}${fmtAmt(row.market_value)} market value × β`
                           : undefined
                       }
                     >
-                      {row.hedge_notional == null ? "—" : `${sym}${fmtK(row.hedge_notional)}`}
+                      {row.hedge_notional == null ? "—" : `${sym}${fmtAmt(row.hedge_notional)}`}
                     </td>
                     <td
                       className="text-right py-0.5"
@@ -2417,7 +2423,7 @@ export function AnalyticsTab({
                         row.first_date ?? "—"
                       }. Cost-based CAGR: ${row.return_cagr_pct ?? "—"}% — that one divides by ${
                         row.invested_gross
-                          ? `${sym}${fmtK(row.invested_gross)} of gross buys`
+                          ? `${sym}${fmtAmt(row.invested_gross)} of gross buys`
                           : "every buy ever made"
                       }, so it understates an account that recycles capital.`}
                     >
@@ -2527,14 +2533,14 @@ export function AnalyticsTab({
                   axisLine={false}
                   // Dividends are always positive — pin the axis to zero so bars are honest
                   domain={[0, "auto"]}
-                  tickFormatter={(v) => fmtK(v)}
+                  tickFormatter={(v) => fmtAxis(v)}
                 />
                 <Tooltip
                   contentStyle={tooltipContentStyle}
                   labelStyle={tooltipLabelStyle}
                   itemStyle={tooltipItemStyle}
                   // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
-                  formatter={(v: any) => [`${sym}${fmtK(v)}`, "Dividend"]}
+                  formatter={(v: any) => [`${sym}${fmtAmt(v)}`, "Dividend"]}
                 />
                 <Bar dataKey="total" fill="#4ade80" radius={[2, 2, 0, 0]} maxBarSize={28} />
               </BarChart>
@@ -2586,7 +2592,7 @@ export function AnalyticsTab({
                           style={{ color: pnlColor(r.pnl) }}
                         >
                           {r.pnl >= 0 ? "+" : "−"}
-                          {fmtK(Math.abs(r.pnl))}
+                          {fmtAmt(Math.abs(r.pnl))}
                         </td>
                       </tr>
                     ))}

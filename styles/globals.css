@@ -14,6 +14,30 @@
   100% { transform: translateX(-50%); }
 }
 
+/* Native select popups are OS/browser UI. Keep their palette explicit across
+ * every view (DCF, IV, portfolio, etc.), while leaving the closed control's
+ * border, fill and foreground to each component. */
+select {
+  color-scheme: dark;
+}
+select option {
+  color: #f1f1f1;
+  background-color: #161616;
+}
+body.light select {
+  color-scheme: light;
+}
+body.light select option {
+  color: #111;
+  background-color: #fff;
+}
+@media (forced-colors: active) {
+  select option {
+    color: CanvasText !important;
+    background-color: Canvas !important;
+  }
+}
+
 @layer base {
   :root {
     --font-mono: "Courier New", Courier, monospace;

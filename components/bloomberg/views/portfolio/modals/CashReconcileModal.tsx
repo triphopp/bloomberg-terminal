@@ -2,7 +2,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { type Colors, fmtK, pnlColor } from "../helpers";
+import { type Colors, fmtAmt, pnlColor } from "../helpers";
 import type { CashAdjustment, Summary } from "../types";
 
 interface Props {
@@ -37,7 +37,7 @@ export function CashReconcileModal({ summary, currency, colors, accountId, onClo
   const [history, setHistory] = useState<CashAdjustment[]>([]);
   const sym = currency === "THB" ? "฿" : "$";
   const money = (n: number, ccy = currency) =>
-    `${n < 0 ? "-" : ""}${ccy === "THB" ? "฿" : "$"}${fmtK(Math.abs(n))}`;
+    `${n < 0 ? "-" : ""}${ccy === "THB" ? "฿" : "$"}${fmtAmt(Math.abs(n))}`;
 
   const loadHistory = useCallback(async () => {
     if (!selected) return;
@@ -152,7 +152,7 @@ export function CashReconcileModal({ summary, currency, colors, accountId, onClo
           {accounts.map((a) => (
             <option key={a.account.id} value={a.account.id}>
               {a.account.name} · {sym}
-              {fmtK(a.cash_base ?? 0)}
+              {fmtAmt(a.cash_base ?? 0)}
             </option>
           ))}
         </select>

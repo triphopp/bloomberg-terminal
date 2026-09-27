@@ -1,4 +1,5 @@
 "use client";
+import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle, Loader2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { type FeeEstimate, feeBreakdown, fetchFeeEstimate } from "../accounting-types";
@@ -9,8 +10,18 @@ import {
   STRATEGIES,
   TH_SECTORS,
 } from "../constants";
-import { type Colors, composeNote, splitNote } from "../helpers";
-import type { Account } from "../types";
+import { type Colors, composeNote, fmtQty, splitNote } from "../helpers";
+import { SellModal } from "../modals/SellModal";
+import { portfolioQueries } from "../queries";
+import type { Account, Trade } from "../types";
+import { OptionEntryForm, type OptionEntryPrefill } from "../ui/OptionEntryForm";
+import {
+  type OptionSlipForm,
+  type SlipForm,
+  SlipReader,
+  type SlipResult,
+  isOptionSlip,
+} from "../ui/SlipReader";
 import { SubPortSelect } from "../ui/SubPortSelect";
 import { ExtraFieldToggles, useEntryExtras } from "../ui/useEntryExtras";
 
@@ -53,9 +64,28 @@ type ResolveState =
 export function ImportTab({
   colors,
   variant = "full",
-}: { colors: Colors; variant?: "full" | "manual" | "excel" }) {
+  optionPrefill = null,
+}: {
+  colors: Colors;
+  variant?: "full" | "manual" | "excel";
+  /** OPTIONS → ADD / CLOSE lands here with the contract filled in. */
+  optionPrefill?: (OptionEntryPrefill & { seq: number }) | null;
+}) {
   const [mode, setMode] = useState<"excel" | "manual">(variant === "manual" ? "manual" : "excel");
   const [side, setSide] = useState<"buy" | "sell">("buy");
+  // ENTRY is the one place a fill is typed in: a stock trade or an option fill.
+  const [instrument, setInstrument] = useState<"stock" | "option">(
+    optionPrefill ? "option" : "stock"
+  );
+  const [optionSlip, setOptionSlip] = useState<{
+    form: OptionSlipForm;
+    shas: string[];
+    seq: number;
+  } | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on seq — each OPTIONS click switches once
+  useEffect(() => {
+    if (optionPrefill) setInstrument("option");
+  }, [optionPrefill?.seq]);
   const [accounts, setAccounts] = useState<Account[]>(FALLBACK_ACCOUNTS);
 
   useEffect(() => {
@@ -83,6 +113,16 @@ export function ImportTab({
   const [saveOk, setSaveOk] = useState(false);
   const [saveErr, setSaveErr] = useState("");
   const [resolve, setResolve] = useState<ResolveState>({ status: "idle" });
+  // Line items of the slip that filled the form; sent only while the fee the
+  // slip filled is still the one in the field.
+  const [slipFees, setSlipFees] = useState<{
+    fee: string;
+    side: "buy" | "sell";
+    items: Record<string, string>;
+  } | null>(null);
+  // The slip the form came from: saved with the trade as its evidence (order
+  // number, fill time, image) while the symbol is still the slip's.
+  const [slipSrc, setSlipSrc] = useState<{ sha: string; symbol: string } | null>(null);
   // Optional fields start hidden: a trade needs account, symbol, date, price,
   // volume and strategy, and showing the other seven at once buries those six.
   const { extras, toggleExtra, showExtra } = useEntryExtras();
@@ -122,20 +162,6 @@ export function ImportTab({
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
       setForm((f) => ({ ...f, [k]: e.target.value }));
 
-  const toggleOption = (checked: boolean) =>
-    setForm((f) => ({
-      ...f,
-      is_option: checked,
-      sector: checked ? `Option — ${f.option_direction} ${f.option_type}` : "",
-    }));
-
-  const setOptionAttr = (key: "option_type" | "option_direction", val: string) =>
-    setForm((f) => {
-      const next = { ...f, [key]: val };
-      next.sector = `Option — ${next.option_direction} ${next.option_type}`;
-      return next;
-    });
-
   // Broker fee estimate for what is typed. The backend applies the same
   // estimate when a fee field is left blank, so the placeholder is exactly
   // what will be charged; a typed number (from the confirmation) wins.
@@ -149,7 +175,7 @@ export function ImportTab({
     const vol = Number.parseFloat(form.volume);
     const pe = Number.parseFloat(form.price_entry);
     const px = Number.parseFloat(form.price_exit);
-    if (!form.account_id || !form.symbol || !(vol > 0) || form.is_option) {
+    if (!form.account_id || !form.symbol || !(vol > 0)) {
       setFeeEst({ buy: null, sell: null });
       return;
     }
@@ -180,7 +206,6 @@ export function ImportTab({
     form.volume,
     form.price_entry,
     form.price_exit,
-    form.is_option,
     side,
     pickedMarket,
     pickedCcy,
@@ -233,13 +258,17 @@ export function ImportTab({
     }
   };
 
-  const handleSymbolBlur = async () => {
-    const sym = form.symbol.trim().toUpperCase();
-    if (!sym || form.is_option) return;
+  const handleSymbolBlur = () => {
+    resolveSymbol(form.symbol, form.account_id);
+  };
+
+  const resolveSymbol = async (raw: string, accountId: string) => {
+    const sym = raw.trim().toUpperCase();
+    if (!sym) return;
     setResolve({ status: "loading" });
     try {
       const r = await fetch(
-        `/api/v2/portfolio/resolve-symbol?q=${encodeURIComponent(sym)}&account_id=${encodeURIComponent(form.account_id)}`
+        `/api/v2/portfolio/resolve-symbol?q=${encodeURIComponent(sym)}&account_id=${encodeURIComponent(accountId)}`
       );
       const d = await r.json();
       const matches: ResolveMatch[] = Array.isArray(d.matches) ? d.matches : [];
@@ -257,6 +286,65 @@ export function ImportTab({
       autoFillSector(sym);
     }
   };
+
+  const fillFromSlip = (res: SlipResult) => {
+    if (isOptionSlip(res.form)) {
+      setInstrument("option");
+      setOptionSlip({
+        form: res.form,
+        shas: res.image_sha256s ?? (res.image_sha256 ? [res.image_sha256] : []),
+        seq: Date.now(),
+      });
+      return;
+    }
+    const s = res.form as SlipForm | null;
+    if (!s) return;
+    setInstrument("stock");
+    const accountId =
+      s.account_hint && accounts.some((a) => a.id === s.account_hint)
+        ? s.account_hint
+        : form.account_id;
+    setSide(s.side);
+    setForm({
+      ...BLANK_FORM,
+      account_id: accountId,
+      symbol: s.symbol,
+      volume: s.volume,
+      note: s.note,
+      date_entry: s.date_entry ?? "",
+      price_entry: s.price_entry ?? "",
+      fee_entry: s.fee_entry ?? "",
+      date_exit: s.date_exit ?? "",
+      price_exit: s.price_exit ?? "",
+      fee_exit: s.fee_exit ?? "",
+    });
+    const fee = (s.side === "buy" ? s.fee_entry : s.fee_exit) ?? "";
+    setSlipFees(s.fee_breakdown && fee ? { fee, side: s.side, items: s.fee_breakdown } : null);
+    setSlipSrc(res.image_sha256 ? { sha: res.image_sha256, symbol: s.symbol } : null);
+    setSaveOk(false);
+    setSaveErr("");
+    // What the slip filled is on screen to be checked, not behind a toggle.
+    if (fee) showExtra("vat");
+    if (s.note) showExtra("note");
+    if (s.symbol) resolveSymbol(s.symbol, accountId);
+  };
+
+  // A stock SELL of something the account holds is a sale from its lots —
+  // the same /sell path as POSITIONS, so average cost and the lot history stay
+  // one story. Typing the whole round trip is only for a position the book
+  // never had.
+  const heldQ = useQuery({
+    ...portfolioQueries.openPositions("USD", form.account_id),
+    enabled: instrument === "stock" && side === "sell" && !!form.symbol,
+  });
+  const heldLots: Trade[] = (heldQ.data?.positions ?? []).filter(
+    (t) => t.symbol.toUpperCase() === form.symbol.trim().toUpperCase()
+  );
+  const heldQty = heldLots.reduce((s, l) => s + l.volume, 0);
+  const heldAvg = heldQty
+    ? heldLots.reduce((s, l) => s + l.volume * l.price_entry, 0) / heldQty
+    : undefined;
+  const [sellFromLots, setSellFromLots] = useState(false);
 
   const pickMatch = (m: ResolveMatch) => {
     setResolve((r) => ({
@@ -298,11 +386,11 @@ export function ImportTab({
       setSaveErr("SELL trade requires Date Exit and Price Exit");
       return;
     }
-    if (!form.is_option && resolve.status === "multi") {
+    if (resolve.status === "multi") {
       setSaveErr("Symbol พบหลายตลาด — เลือกตัวที่ถูกต้องก่อนบันทึก");
       return;
     }
-    if (!form.is_option && resolve.status === "none" && !resolve.override) {
+    if (resolve.status === "none" && !resolve.override) {
       setSaveErr("Symbol ไม่พบในตลาดของบัญชี — กด 'ใช้ตามที่พิมพ์' เพื่อยืนยัน");
       return;
     }
@@ -338,6 +426,15 @@ export function ImportTab({
         ...(side === "sell" && form.fee_exit !== ""
           ? { fee_exit: Number.parseFloat(form.fee_exit) || 0 }
           : {}),
+        ...(slipFees?.side === "buy" && slipFees.fee === form.fee_entry
+          ? { fee_entry_breakdown: slipFees.items }
+          : {}),
+        ...(slipFees?.side === "sell" && side === "sell" && slipFees.fee === form.fee_exit
+          ? { fee_exit_breakdown: slipFees.items }
+          : {}),
+        ...(slipSrc && slipSrc.symbol === form.symbol.toUpperCase()
+          ? { slip_sha256: slipSrc.sha }
+          : {}),
       };
       const r = await fetch("/api/v2/portfolio/trades", {
         method: "POST",
@@ -352,6 +449,8 @@ export function ImportTab({
       setSaveOk(true);
       setForm({ ...BLANK_FORM, account_id: form.account_id });
       setResolve({ status: "idle" });
+      setSlipFees(null);
+      setSlipSrc(null);
     } catch (e: unknown) {
       setSaveErr(e instanceof Error ? e.message : "Network error");
     } finally {
@@ -486,744 +585,694 @@ export function ImportTab({
             กรอกข้อมูล trade ทีละรายการ — P&amp;L คำนวณอัตโนมัติเมื่อกรอก Entry/Exit/Volume
           </div>
 
-          {/* BUY / SELL side toggle */}
-          <div className="flex items-center gap-1">
-            {(["buy", "sell"] as const).map((s) => {
-              const active = side === s;
-              const c = s === "buy" ? "#4ade80" : "#f87171";
-              return (
-                <button
-                  type="button"
-                  key={s}
-                  onClick={() => switchSide(s)}
-                  className="text-[10px] px-4 py-1 border font-bold tracking-widest"
-                  style={{
-                    borderColor: active ? c : colors.border,
-                    color: active ? c : colors.textSecondary,
-                    background: active ? `${c}18` : "transparent",
-                  }}
-                >
-                  {s === "buy" ? "▲ BUY — เปิดสถานะ" : "▼ SELL — ปิดสถานะ"}
-                </button>
-              );
-            })}
-            <span className="text-[8px] ml-2" style={{ color: colors.textSecondary }}>
-              {side === "buy"
-                ? "บันทึกซื้อ — ช่อง exit ถูกซ่อน"
-                : "บันทึกรอบเทรดที่ปิดแล้ว — ต้องมี Date/Price Exit"}
-            </span>
+          <SlipReader colors={colors} onFill={fillFromSlip} />
+
+          {/* What is being entered — one form per instrument, one place */}
+          <div className="flex items-center gap-3">
+            {(["stock", "option"] as const).map((k) => (
+              <button
+                type="button"
+                key={k}
+                onClick={() => setInstrument(k)}
+                className="text-[10px] font-bold tracking-widest"
+                style={{
+                  color: instrument === k ? colors.accent : colors.textSecondary,
+                  textDecoration: instrument === k ? "underline" : "none",
+                  textUnderlineOffset: 3,
+                }}
+              >
+                {k === "stock" ? "หุ้น / ETF / CRYPTO" : "ออปชัน"}
+              </button>
+            ))}
           </div>
 
-          <ExtraFieldToggles extras={extras} onToggle={toggleExtra} colors={colors} />
+          {instrument === "option" && (
+            <OptionEntryForm
+              colors={colors}
+              accounts={accounts}
+              defaultAccountId={accounts.find((a) => a.currency === "USD")?.id ?? form.account_id}
+              slip={optionSlip}
+              prefill={optionPrefill}
+            />
+          )}
 
-          <div
-            className="grid gap-2"
-            style={{
-              gridTemplateColumns: `repeat(${2 + (extras.sector || form.is_option ? 1 : 0)}, minmax(0, 1fr))${
-                side === "sell" ? " 80px" : ""
-              }`,
-            }}
-          >
-            <div>
-              <div
-                className="text-[8px] mb-0.5 font-bold tracking-wider"
-                style={{ color: colors.textSecondary }}
-              >
-                ACCOUNT *
+          {instrument === "stock" && (
+            <>
+              {/* BUY / SELL side toggle */}
+              <div className="flex items-center gap-1">
+                {(["buy", "sell"] as const).map((s) => {
+                  const active = side === s;
+                  const c = s === "buy" ? "#4ade80" : "#f87171";
+                  return (
+                    <button
+                      type="button"
+                      key={s}
+                      onClick={() => switchSide(s)}
+                      className="text-[10px] px-4 py-1 border font-bold tracking-widest"
+                      style={{
+                        borderColor: active ? c : colors.border,
+                        color: active ? c : colors.textSecondary,
+                        background: active ? `${c}18` : "transparent",
+                      }}
+                    >
+                      {s === "buy" ? "▲ BUY — เปิดสถานะ" : "▼ SELL — ปิดสถานะ"}
+                    </button>
+                  );
+                })}
+                <span className="text-[8px] ml-2" style={{ color: colors.textSecondary }}>
+                  {side === "buy"
+                    ? "บันทึกซื้อ — ช่อง exit ถูกซ่อน"
+                    : heldQty > 0
+                      ? "ขายจากล็อตที่ถืออยู่ — หรือบันทึกรอบเทรดย้อนหลังด้านล่าง"
+                      : "บันทึกรอบเทรดที่ปิดแล้ว — ต้องมี Date/Price Exit"}
+                </span>
               </div>
-              <select
-                className={inputCls}
-                style={iStyle}
-                value={form.account_id}
-                onChange={(e) => {
-                  setResolve({ status: "idle" });
-                  set("account_id")(e);
-                }}
-              >
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {COUNTRY_FLAG[a.country] ?? "🌐"} {a.name.toUpperCase()}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <div
-                className="text-[8px] mb-0.5 font-bold tracking-wider"
-                style={{ color: colors.textSecondary }}
-              >
-                SYMBOL *
-              </div>
-              <input
-                className={inputCls}
-                style={iStyle}
-                placeholder="e.g. SCB, AAPL, BTCTHB"
-                value={form.symbol}
-                onChange={(e) => {
-                  setResolve({ status: "idle" });
-                  set("symbol")(e);
-                }}
-                onBlur={handleSymbolBlur}
-              />
-            </div>
-            {(extras.sector || form.is_option) && (
-              <div>
-                <div
-                  className="text-[8px] mb-0.5 font-bold tracking-wider"
-                  style={{ color: colors.textSecondary }}
-                >
-                  SECTOR
-                </div>
-                {form.is_option ? (
-                  <div
-                    className="text-[9px] px-2 py-1 border font-mono"
-                    style={{ ...iStyle, border: `1px solid ${colors.border}`, color: "#ff9900" }}
+
+              {side === "sell" && heldQty > 0 && (
+                <div className="flex items-center gap-3 text-[9px] font-mono">
+                  <span style={{ color: colors.text }}>
+                    ถือ {form.symbol.toUpperCase()} อยู่ {fmtQty(heldQty)} หน่วย · {heldLots.length} ล็อต
+                  </span>
+                  <button
+                    type="button"
+                    className="font-bold hover:opacity-80"
+                    style={{ color: "#f87171" }}
+                    onClick={() => setSellFromLots(true)}
                   >
-                    {form.sector || "Option — ?"}
+                    ▼ ขายจากล็อตที่ถืออยู่
+                  </button>
+                </div>
+              )}
+              {sellFromLots && heldLots.length > 0 && (
+                <SellModal
+                  target={heldLots[0]}
+                  avgEntry={heldAvg}
+                  allLots={heldLots}
+                  colors={colors}
+                  onClose={() => setSellFromLots(false)}
+                  onSold={() => {
+                    setSellFromLots(false);
+                    heldQ.refetch();
+                    setSaveOk(true);
+                  }}
+                />
+              )}
+
+              <ExtraFieldToggles extras={extras} onToggle={toggleExtra} colors={colors} />
+
+              <div
+                className="grid gap-2"
+                style={{
+                  gridTemplateColumns: `repeat(${2 + (extras.sector ? 1 : 0)}, minmax(0, 1fr))${
+                    side === "sell" ? " 80px" : ""
+                  }`,
+                }}
+              >
+                <div>
+                  <div
+                    className="text-[8px] mb-0.5 font-bold tracking-wider"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    ACCOUNT *
                   </div>
-                ) : (
                   <select
                     className={inputCls}
                     style={iStyle}
-                    value={form.sector}
-                    onChange={set("sector")}
+                    value={form.account_id}
+                    onChange={(e) => {
+                      setResolve({ status: "idle" });
+                      set("account_id")(e);
+                    }}
+                  >
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {COUNTRY_FLAG[a.country] ?? "🌐"} {a.name.toUpperCase()}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <div
+                    className="text-[8px] mb-0.5 font-bold tracking-wider"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    SYMBOL *
+                  </div>
+                  <input
+                    className={inputCls}
+                    style={iStyle}
+                    placeholder="e.g. SCB, AAPL, BTCTHB"
+                    value={form.symbol}
+                    onChange={(e) => {
+                      setResolve({ status: "idle" });
+                      set("symbol")(e);
+                    }}
+                    onBlur={handleSymbolBlur}
+                  />
+                </div>
+                {extras.sector && (
+                  <div>
+                    <div
+                      className="text-[8px] mb-0.5 font-bold tracking-wider"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      SECTOR
+                    </div>
+                    <select
+                      className={inputCls}
+                      style={iStyle}
+                      value={form.sector}
+                      onChange={set("sector")}
+                    >
+                      <option value="">— select —</option>
+                      {sectorList.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {side === "sell" && (
+                  <div>
+                    <div
+                      className="text-[8px] mb-0.5 font-bold tracking-wider"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      W/L/P *
+                    </div>
+                    <select
+                      className={inputCls}
+                      style={iStyle}
+                      value={form.win_loss}
+                      onChange={set("win_loss")}
+                    >
+                      <option value="P">P — Open</option>
+                      <option value="W">W — Win</option>
+                      <option value="L">L — Loss</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* Symbol resolver status */}
+              {resolve.status !== "idle" && (
+                <div className="space-y-1">
+                  {resolve.status === "loading" && (
+                    <span
+                      className="inline-flex items-center gap-1 text-[9px]"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      <Loader2 className="h-3 w-3 animate-spin" /> resolving symbol…
+                    </span>
+                  )}
+                  {resolve.status === "resolved" && (
+                    <span
+                      className="inline-flex items-center gap-1.5 text-[9px] font-mono px-2 py-0.5 border"
+                      style={{
+                        borderColor: "#22c55e44",
+                        background: "#22c55e10",
+                        color: "#4ade80",
+                      }}
+                    >
+                      <CheckCircle className="h-3 w-3" />
+                      {resolve.picked.resolved_symbol} · {resolve.picked.market}
+                      {resolve.picked.currency ? ` · ${resolve.picked.currency}` : ""}
+                      {resolve.picked.name ? ` — ${resolve.picked.name}` : ""}
+                    </span>
+                  )}
+                  {resolve.status === "multi" && (
+                    <div className="border" style={{ borderColor: colors.border, maxWidth: 420 }}>
+                      <div
+                        className="text-[8px] px-2 py-1 font-bold"
+                        style={{ color: "#facc15", borderBottom: `1px solid ${colors.border}` }}
+                      >
+                        พบ {resolve.matches.length} ตลาด — เลือกตัวที่ถูกต้อง
+                      </div>
+                      {resolve.matches.map((m) => (
+                        <button
+                          type="button"
+                          key={m.resolved_symbol}
+                          onClick={() => pickMatch(m)}
+                          className="flex w-full items-center justify-between px-2 py-1 text-[9px] font-mono hover:opacity-70"
+                          style={{ color: colors.text, borderBottom: `1px solid ${colors.border}` }}
+                        >
+                          <span>
+                            {m.resolved_symbol}
+                            <span className="ml-2" style={{ color: colors.textSecondary }}>
+                              {m.name}
+                            </span>
+                          </span>
+                          <span style={{ color: colors.textSecondary }}>
+                            {m.exchange || m.market}
+                            {m.currency ? ` · ${m.currency}` : ""}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {resolve.status === "none" && (
+                    <span className="inline-flex items-center gap-2 text-[9px]">
+                      <span
+                        className="inline-flex items-center gap-1 px-2 py-0.5 border"
+                        style={{
+                          borderColor: "#facc1544",
+                          background: "#facc1510",
+                          color: "#facc15",
+                        }}
+                      >
+                        <AlertTriangle className="h-3 w-3" />
+                        {resolve.override
+                          ? `จะบันทึกเป็น "${form.symbol.toUpperCase()}" ตามที่พิมพ์`
+                          : "ไม่พบ symbol ในตลาดของบัญชีนี้"}
+                      </span>
+                      {!resolve.override && (
+                        <button
+                          type="button"
+                          className="px-2 py-0.5 border text-[9px] hover:opacity-80"
+                          style={{ borderColor: colors.border, color: colors.textSecondary }}
+                          onClick={() => setResolve({ status: "none", override: true })}
+                        >
+                          ใช้ตามที่พิมพ์
+                        </button>
+                      )}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {extras.sub_port && (
+                <div style={{ maxWidth: 220 }}>
+                  <div
+                    className="text-[8px] mb-0.5 font-bold tracking-wider"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    SUB-PORT
+                  </div>
+                  <SubPortSelect
+                    accountId={form.account_id}
+                    value={splitNote(form.note).subPort}
+                    onChange={(v) =>
+                      setForm((f) => ({ ...f, note: composeNote(v, splitNote(f.note).rest) }))
+                    }
+                    colors={colors}
+                    inputStyle={{
+                      ...iStyle,
+                      padding: "3px 6px",
+                      fontSize: 10,
+                      width: "100%",
+                      border: `1px solid ${colors.border}`,
+                    }}
+                  />
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 flex-wrap">
+                <label
+                  className="flex items-center gap-1.5 cursor-pointer text-[9px] font-bold select-none"
+                  style={{ color: form.is_reinvest ? "#c084fc" : colors.textSecondary }}
+                  title="Mark this trade as a dividend reinvestment — shows in CASH → REINVEST"
+                >
+                  <input
+                    type="checkbox"
+                    className="w-3 h-3 accent-purple-400"
+                    checked={form.is_reinvest}
+                    onChange={(e) => setForm((f) => ({ ...f, is_reinvest: e.target.checked }))}
+                  />
+                  REINVEST?
+                </label>
+              </div>
+
+              <div className={`grid gap-2 grid-cols-2 ${side === "sell" ? "md:grid-cols-4" : ""}`}>
+                <div>
+                  <div
+                    className="text-[8px] mb-0.5 font-bold tracking-wider"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    DATE ENTRY *
+                  </div>
+                  <input
+                    type="date"
+                    className={inputCls}
+                    style={iStyle}
+                    value={form.date_entry}
+                    onChange={set("date_entry")}
+                  />
+                </div>
+                {side === "sell" && (
+                  <div>
+                    <div
+                      className="text-[8px] mb-0.5 font-bold tracking-wider"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      DATE EXIT *
+                    </div>
+                    <input
+                      type="date"
+                      className={inputCls}
+                      style={iStyle}
+                      value={form.date_exit}
+                      onChange={set("date_exit")}
+                    />
+                  </div>
+                )}
+                <div>
+                  <div
+                    className="text-[8px] mb-0.5 font-bold tracking-wider"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    PRICE ENTRY *
+                  </div>
+                  <input
+                    className={inputCls}
+                    style={iStyle}
+                    placeholder="0.00"
+                    type="number"
+                    step="any"
+                    value={form.price_entry}
+                    onChange={set("price_entry")}
+                    onBlur={handleNumBlur}
+                  />
+                </div>
+                {side === "sell" && (
+                  <div>
+                    <div
+                      className="text-[8px] mb-0.5 font-bold tracking-wider"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      PRICE EXIT *
+                    </div>
+                    <input
+                      className={inputCls}
+                      style={iStyle}
+                      placeholder="0.00"
+                      type="number"
+                      step="any"
+                      value={form.price_exit}
+                      onChange={set("price_exit")}
+                      onBlur={handleNumBlur}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div
+                className="grid gap-2"
+                style={{
+                  gridTemplateColumns: `repeat(${
+                    1 +
+                    (side === "sell" ? 1 : 0) +
+                    (extras.stop_loss ? 1 : 0) +
+                    (extras.target ? 1 : 0) +
+                    (extras.vat ? (side === "sell" ? 2 : 1) : 0)
+                  }, minmax(0, 1fr))`,
+                }}
+              >
+                <div>
+                  <div
+                    className="text-[8px] mb-0.5 font-bold tracking-wider"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    VOLUME *
+                  </div>
+                  <input
+                    className={inputCls}
+                    style={iStyle}
+                    placeholder="0"
+                    type="number"
+                    step="any"
+                    value={form.volume}
+                    onChange={set("volume")}
+                    onBlur={handleNumBlur}
+                  />
+                </div>
+                {side === "sell" && (
+                  <div>
+                    <div
+                      className="text-[8px] mb-0.5 font-bold tracking-wider"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      P&L AMOUNT
+                    </div>
+                    <input
+                      className={inputCls}
+                      style={{
+                        ...iStyle,
+                        color: form.pnl_amount
+                          ? Number.parseFloat(form.pnl_amount) >= 0
+                            ? "#4ade80"
+                            : "#f87171"
+                          : colors.text,
+                      }}
+                      placeholder="auto"
+                      type="number"
+                      step="any"
+                      value={form.pnl_amount}
+                      onChange={set("pnl_amount")}
+                    />
+                  </div>
+                )}
+                {extras.stop_loss && (
+                  <div>
+                    <div
+                      className="text-[8px] mb-0.5 font-bold tracking-wider"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      STOP LOSS
+                    </div>
+                    <input
+                      className={inputCls}
+                      style={{ ...iStyle, color: "#f87171" }}
+                      placeholder="0.00"
+                      type="number"
+                      step="any"
+                      value={form.price_stoploss}
+                      onChange={set("price_stoploss")}
+                    />
+                  </div>
+                )}
+                {extras.target && (
+                  <div>
+                    <div
+                      className="text-[8px] mb-0.5 font-bold tracking-wider"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      TARGET
+                    </div>
+                    <input
+                      className={inputCls}
+                      style={{ ...iStyle, color: "#4ade80" }}
+                      placeholder="0.00"
+                      type="number"
+                      step="any"
+                      value={form.price_target}
+                      onChange={set("price_target")}
+                    />
+                  </div>
+                )}
+                {extras.vat && (
+                  <div>
+                    <div
+                      className="text-[8px] mb-0.5 font-bold tracking-wider"
+                      style={{ color: "#facc15" }}
+                      title={feeBreakdown(feeEst.buy)}
+                    >
+                      BUY FEE
+                    </div>
+                    <input
+                      className={inputCls}
+                      style={{ ...iStyle, color: "#facc15" }}
+                      placeholder={feePlaceholder(feeEst.buy)}
+                      type="number"
+                      step="any"
+                      value={form.fee_entry}
+                      onChange={set("fee_entry")}
+                    />
+                  </div>
+                )}
+                {extras.vat && side === "sell" && (
+                  <div>
+                    <div
+                      className="text-[8px] mb-0.5 font-bold tracking-wider"
+                      style={{ color: "#facc15" }}
+                      title={feeBreakdown(feeEst.sell)}
+                    >
+                      SELL FEE
+                    </div>
+                    <input
+                      className={inputCls}
+                      style={{ ...iStyle, color: "#facc15" }}
+                      placeholder={feePlaceholder(feeEst.sell)}
+                      type="number"
+                      step="any"
+                      value={form.fee_exit}
+                      onChange={set("fee_exit")}
+                    />
+                  </div>
+                )}
+              </div>
+              {(feeEst.buy?.total != null || feeEst.sell?.total != null) && (
+                <div className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
+                  FEES · {feeEst.buy?.basis ?? feeEst.sell?.basis}
+                  {feeEst.buy?.total != null &&
+                    ` · buy ${(form.fee_entry !== "" ? Number.parseFloat(form.fee_entry) || 0 : feeEst.buy.total).toFixed(2)} (${form.fee_entry !== "" ? "typed" : feeBreakdown(feeEst.buy)})`}
+                  {side === "sell" &&
+                    feeEst.sell?.total != null &&
+                    ` · sell ${(form.fee_exit !== "" ? Number.parseFloat(form.fee_exit) || 0 : feeEst.sell.total).toFixed(2)} (${form.fee_exit !== "" ? "typed" : feeBreakdown(feeEst.sell)})`}
+                  {" · "}not in cost basis; P&amp;L is shown net of the sell fee
+                </div>
+              )}
+
+              <div
+                className="grid gap-2"
+                style={{
+                  gridTemplateColumns: `repeat(${
+                    1 + (extras.entry_trigger ? 1 : 0) + (side === "sell" ? 1 : 0)
+                  }, minmax(0, 1fr))`,
+                }}
+              >
+                <div>
+                  <div
+                    className="text-[8px] mb-0.5 font-bold tracking-wider"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    STRATEGY
+                  </div>
+                  <select
+                    className={inputCls}
+                    style={iStyle}
+                    value={form.strategy_name}
+                    onChange={set("strategy_name")}
                   >
                     <option value="">— select —</option>
-                    {sectorList.map((s) => (
+                    {STRATEGIES.map((s) => (
                       <option key={s} value={s}>
                         {s}
                       </option>
                     ))}
                   </select>
+                </div>
+                {extras.entry_trigger && (
+                  <div>
+                    <div
+                      className="text-[8px] mb-0.5 font-bold tracking-wider"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      ENTRY TRIGGER
+                    </div>
+                    <input
+                      className={inputCls}
+                      style={iStyle}
+                      placeholder="e.g. Breakout above 52W high"
+                      value={form.entry_trigger}
+                      onChange={set("entry_trigger")}
+                    />
+                  </div>
+                )}
+                {side === "sell" && (
+                  <div>
+                    <div
+                      className="text-[8px] mb-0.5 font-bold tracking-wider"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      EXIT TRIGGER
+                    </div>
+                    <input
+                      className={inputCls}
+                      style={iStyle}
+                      placeholder="e.g. Target hit, SL hit"
+                      value={form.exit_trigger}
+                      onChange={set("exit_trigger")}
+                    />
+                  </div>
                 )}
               </div>
-            )}
-            {side === "sell" && (
-              <div>
-                <div
-                  className="text-[8px] mb-0.5 font-bold tracking-wider"
-                  style={{ color: colors.textSecondary }}
-                >
-                  {form.is_option ? "STATUS *" : "W/L/P *"}
-                </div>
-                <select
-                  className={inputCls}
-                  style={iStyle}
-                  value={form.win_loss}
-                  onChange={set("win_loss")}
-                >
-                  {form.is_option ? (
-                    <>
-                      <option value="P">Open</option>
-                      <option value="W">Exercised</option>
-                      <option value="L">Expired</option>
-                    </>
-                  ) : (
-                    <>
-                      <option value="P">P — Open</option>
-                      <option value="W">W — Win</option>
-                      <option value="L">L — Loss</option>
-                    </>
-                  )}
-                </select>
-              </div>
-            )}
-          </div>
 
-          {/* Symbol resolver status */}
-          {!form.is_option && resolve.status !== "idle" && (
-            <div className="space-y-1">
-              {resolve.status === "loading" && (
-                <span
-                  className="inline-flex items-center gap-1 text-[9px]"
-                  style={{ color: colors.textSecondary }}
-                >
-                  <Loader2 className="h-3 w-3 animate-spin" /> resolving symbol…
-                </span>
-              )}
-              {resolve.status === "resolved" && (
-                <span
-                  className="inline-flex items-center gap-1.5 text-[9px] font-mono px-2 py-0.5 border"
-                  style={{ borderColor: "#22c55e44", background: "#22c55e10", color: "#4ade80" }}
-                >
-                  <CheckCircle className="h-3 w-3" />
-                  {resolve.picked.resolved_symbol} · {resolve.picked.market}
-                  {resolve.picked.currency ? ` · ${resolve.picked.currency}` : ""}
-                  {resolve.picked.name ? ` — ${resolve.picked.name}` : ""}
-                </span>
-              )}
-              {resolve.status === "multi" && (
-                <div className="border" style={{ borderColor: colors.border, maxWidth: 420 }}>
+              {extras.note && (
+                <div>
                   <div
-                    className="text-[8px] px-2 py-1 font-bold"
-                    style={{ color: "#facc15", borderBottom: `1px solid ${colors.border}` }}
+                    className="text-[8px] mb-0.5 font-bold tracking-wider"
+                    style={{ color: colors.textSecondary }}
                   >
-                    พบ {resolve.matches.length} ตลาด — เลือกตัวที่ถูกต้อง
+                    NOTE
                   </div>
-                  {resolve.matches.map((m) => (
-                    <button
-                      type="button"
-                      key={m.resolved_symbol}
-                      onClick={() => pickMatch(m)}
-                      className="flex w-full items-center justify-between px-2 py-1 text-[9px] font-mono hover:opacity-70"
-                      style={{ color: colors.text, borderBottom: `1px solid ${colors.border}` }}
-                    >
-                      <span>
-                        {m.resolved_symbol}
-                        <span className="ml-2" style={{ color: colors.textSecondary }}>
-                          {m.name}
-                        </span>
-                      </span>
-                      <span style={{ color: colors.textSecondary }}>
-                        {m.exchange || m.market}
-                        {m.currency ? ` · ${m.currency}` : ""}
-                      </span>
-                    </button>
-                  ))}
+                  <textarea
+                    className="text-[10px] font-mono px-2 py-1 border outline-none w-full resize-none"
+                    style={{ ...iStyle, height: 48 }}
+                    placeholder="บันทึกเพิ่มเติม…"
+                    value={splitNote(form.note).rest}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        note: composeNote(splitNote(f.note).subPort, e.target.value),
+                      }))
+                    }
+                  />
                 </div>
               )}
-              {resolve.status === "none" && (
-                <span className="inline-flex items-center gap-2 text-[9px]">
-                  <span
-                    className="inline-flex items-center gap-1 px-2 py-0.5 border"
-                    style={{
-                      borderColor: "#facc1544",
-                      background: "#facc1510",
-                      color: "#facc15",
-                    }}
-                  >
-                    <AlertTriangle className="h-3 w-3" />
-                    {resolve.override
-                      ? `จะบันทึกเป็น "${form.symbol.toUpperCase()}" ตามที่พิมพ์`
-                      : "ไม่พบ symbol ในตลาดของบัญชีนี้"}
-                  </span>
-                  {!resolve.override && (
-                    <button
-                      type="button"
-                      className="px-2 py-0.5 border text-[9px] hover:opacity-80"
-                      style={{ borderColor: colors.border, color: colors.textSecondary }}
-                      onClick={() => setResolve({ status: "none", override: true })}
-                    >
-                      ใช้ตามที่พิมพ์
-                    </button>
+
+              {form.pnl_amount && (
+                <div
+                  className="text-[10px] font-mono text-right"
+                  style={{ color: Number.parseFloat(form.pnl_amount) >= 0 ? "#4ade80" : "#f87171" }}
+                >
+                  P&L: {Number.parseFloat(form.pnl_amount) >= 0 ? "+" : ""}
+                  {Number.parseFloat(form.pnl_amount).toFixed(2)}
+                  {form.pnl_percent &&
+                    ` (${Number.parseFloat(form.pnl_percent) >= 0 ? "+" : ""}${Number.parseFloat(form.pnl_percent).toFixed(2)}%)`}
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={doSave}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 text-[10px] px-4 py-1.5 border font-bold hover:opacity-80 disabled:opacity-40"
+                  style={{
+                    borderColor: colors.accent,
+                    color: colors.accent,
+                    background: `${colors.accent}18`,
+                  }}
+                >
+                  {saving ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <CheckCircle className="h-3 w-3" />
                   )}
-                </span>
-              )}
-            </div>
-          )}
-
-          {extras.sub_port && (
-            <div style={{ maxWidth: 220 }}>
-              <div
-                className="text-[8px] mb-0.5 font-bold tracking-wider"
-                style={{ color: colors.textSecondary }}
-              >
-                SUB-PORT
-              </div>
-              <SubPortSelect
-                accountId={form.account_id}
-                value={splitNote(form.note).subPort}
-                onChange={(v) =>
-                  setForm((f) => ({ ...f, note: composeNote(v, splitNote(f.note).rest) }))
-                }
-                colors={colors}
-                inputStyle={{
-                  ...iStyle,
-                  padding: "3px 6px",
-                  fontSize: 10,
-                  width: "100%",
-                  border: `1px solid ${colors.border}`,
-                }}
-              />
-            </div>
-          )}
-
-          {/* Option toggle + attributes */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <label
-              className="flex items-center gap-1.5 cursor-pointer text-[9px] font-bold select-none"
-              style={{ color: form.is_option ? "#ff9900" : colors.textSecondary }}
-            >
-              <input
-                type="checkbox"
-                className="w-3 h-3 accent-orange-400"
-                checked={form.is_option}
-                onChange={(e) => toggleOption(e.target.checked)}
-              />
-              IS OPTION?
-            </label>
-
-            <label
-              className="flex items-center gap-1.5 cursor-pointer text-[9px] font-bold select-none"
-              style={{ color: form.is_reinvest ? "#c084fc" : colors.textSecondary }}
-              title="Mark this trade as a dividend reinvestment — shows in CASH → REINVEST"
-            >
-              <input
-                type="checkbox"
-                className="w-3 h-3 accent-purple-400"
-                checked={form.is_reinvest}
-                onChange={(e) => setForm((f) => ({ ...f, is_reinvest: e.target.checked }))}
-              />
-              REINVEST?
-            </label>
-
-            {form.is_option && (
-              <>
-                {/* Direction: Long / Short */}
-                <div className="flex items-center gap-1">
-                  <span className="text-[8px]" style={{ color: colors.textSecondary }}>
-                    DIR:
-                  </span>
-                  {(["Long", "Short"] as const).map((d) => (
-                    <button
-                      type="button"
-                      key={d}
-                      className="text-[8px] px-2 py-0.5 border font-bold"
-                      style={{
-                        borderColor:
-                          form.option_direction === d
-                            ? d === "Long"
-                              ? "#60a5fa"
-                              : "#c084fc"
-                            : colors.border,
-                        color:
-                          form.option_direction === d
-                            ? d === "Long"
-                              ? "#60a5fa"
-                              : "#c084fc"
-                            : colors.textSecondary,
-                        background:
-                          form.option_direction === d
-                            ? d === "Long"
-                              ? "#60a5fa18"
-                              : "#c084fc18"
-                            : "transparent",
-                      }}
-                      onClick={() => setOptionAttr("option_direction", d)}
-                    >
-                      {d}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Type: Call / Put */}
-                <div className="flex items-center gap-1">
-                  <span className="text-[8px]" style={{ color: colors.textSecondary }}>
-                    TYPE:
-                  </span>
-                  {(["Call", "Put"] as const).map((t) => (
-                    <button
-                      type="button"
-                      key={t}
-                      className="text-[8px] px-2 py-0.5 border font-bold"
-                      style={{
-                        borderColor:
-                          form.option_type === t
-                            ? t === "Call"
-                              ? "#4ade80"
-                              : "#f87171"
-                            : colors.border,
-                        color:
-                          form.option_type === t
-                            ? t === "Call"
-                              ? "#4ade80"
-                              : "#f87171"
-                            : colors.textSecondary,
-                        background:
-                          form.option_type === t
-                            ? t === "Call"
-                              ? "#4ade8018"
-                              : "#f8717118"
-                            : "transparent",
-                      }}
-                      onClick={() => setOptionAttr("option_type", t)}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Sector preview */}
-                <span
-                  className="text-[8px] font-mono px-2 py-0.5 rounded"
-                  style={{
-                    background: "#ff990015",
-                    color: "#ff9900",
-                    border: "1px solid #ff990033",
+                  {saving ? "SAVING…" : "SAVE TRADE"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForm({ ...BLANK_FORM, account_id: form.account_id });
+                    setResolve({ status: "idle" });
+                    setSlipFees(null);
+                    setSlipSrc(null);
+                    setSaveOk(false);
+                    setSaveErr("");
                   }}
+                  className="text-[9px] px-3 py-1.5 border hover:opacity-80"
+                  style={{ borderColor: colors.border, color: colors.textSecondary }}
                 >
-                  {form.sector || "Option — ?"}
-                </span>
-              </>
-            )}
-          </div>
-
-          <div className={`grid gap-2 grid-cols-2 ${side === "sell" ? "md:grid-cols-4" : ""}`}>
-            <div>
-              <div
-                className="text-[8px] mb-0.5 font-bold tracking-wider"
-                style={{ color: colors.textSecondary }}
-              >
-                DATE ENTRY *
+                  CLEAR
+                </button>
+                {saveOk && (
+                  <span
+                    className="text-[10px] font-bold flex items-center gap-1"
+                    style={{ color: "#4ade80" }}
+                  >
+                    <CheckCircle className="h-3 w-3" /> Saved!
+                  </span>
+                )}
+                {saveErr && (
+                  <span className="text-[9px] flex items-center gap-1" style={{ color: "#f87171" }}>
+                    <AlertTriangle className="h-3 w-3" /> {saveErr}
+                  </span>
+                )}
               </div>
-              <input
-                type="date"
-                className={inputCls}
-                style={iStyle}
-                value={form.date_entry}
-                onChange={set("date_entry")}
-              />
-            </div>
-            {side === "sell" && (
-              <div>
-                <div
-                  className="text-[8px] mb-0.5 font-bold tracking-wider"
-                  style={{ color: colors.textSecondary }}
-                >
-                  DATE EXIT *
-                </div>
-                <input
-                  type="date"
-                  className={inputCls}
-                  style={iStyle}
-                  value={form.date_exit}
-                  onChange={set("date_exit")}
-                />
-              </div>
-            )}
-            <div>
-              <div
-                className="text-[8px] mb-0.5 font-bold tracking-wider"
-                style={{ color: colors.textSecondary }}
-              >
-                PRICE ENTRY *
-              </div>
-              <input
-                className={inputCls}
-                style={iStyle}
-                placeholder="0.00"
-                type="number"
-                step="any"
-                value={form.price_entry}
-                onChange={set("price_entry")}
-                onBlur={handleNumBlur}
-              />
-            </div>
-            {side === "sell" && (
-              <div>
-                <div
-                  className="text-[8px] mb-0.5 font-bold tracking-wider"
-                  style={{ color: colors.textSecondary }}
-                >
-                  PRICE EXIT *
-                </div>
-                <input
-                  className={inputCls}
-                  style={iStyle}
-                  placeholder="0.00"
-                  type="number"
-                  step="any"
-                  value={form.price_exit}
-                  onChange={set("price_exit")}
-                  onBlur={handleNumBlur}
-                />
-              </div>
-            )}
-          </div>
-
-          <div
-            className="grid gap-2"
-            style={{
-              gridTemplateColumns: `repeat(${
-                1 +
-                (side === "sell" ? 1 : 0) +
-                (extras.stop_loss ? 1 : 0) +
-                (extras.target ? 1 : 0) +
-                (extras.vat ? (side === "sell" ? 2 : 1) : 0)
-              }, minmax(0, 1fr))`,
-            }}
-          >
-            <div>
-              <div
-                className="text-[8px] mb-0.5 font-bold tracking-wider"
-                style={{ color: colors.textSecondary }}
-              >
-                VOLUME *
-              </div>
-              <input
-                className={inputCls}
-                style={iStyle}
-                placeholder="0"
-                type="number"
-                step="any"
-                value={form.volume}
-                onChange={set("volume")}
-                onBlur={handleNumBlur}
-              />
-            </div>
-            {side === "sell" && (
-              <div>
-                <div
-                  className="text-[8px] mb-0.5 font-bold tracking-wider"
-                  style={{ color: colors.textSecondary }}
-                >
-                  P&L AMOUNT
-                </div>
-                <input
-                  className={inputCls}
-                  style={{
-                    ...iStyle,
-                    color: form.pnl_amount
-                      ? Number.parseFloat(form.pnl_amount) >= 0
-                        ? "#4ade80"
-                        : "#f87171"
-                      : colors.text,
-                  }}
-                  placeholder="auto"
-                  type="number"
-                  step="any"
-                  value={form.pnl_amount}
-                  onChange={set("pnl_amount")}
-                />
-              </div>
-            )}
-            {extras.stop_loss && (
-              <div>
-                <div
-                  className="text-[8px] mb-0.5 font-bold tracking-wider"
-                  style={{ color: colors.textSecondary }}
-                >
-                  STOP LOSS
-                </div>
-                <input
-                  className={inputCls}
-                  style={{ ...iStyle, color: "#f87171" }}
-                  placeholder="0.00"
-                  type="number"
-                  step="any"
-                  value={form.price_stoploss}
-                  onChange={set("price_stoploss")}
-                />
-              </div>
-            )}
-            {extras.target && (
-              <div>
-                <div
-                  className="text-[8px] mb-0.5 font-bold tracking-wider"
-                  style={{ color: colors.textSecondary }}
-                >
-                  TARGET
-                </div>
-                <input
-                  className={inputCls}
-                  style={{ ...iStyle, color: "#4ade80" }}
-                  placeholder="0.00"
-                  type="number"
-                  step="any"
-                  value={form.price_target}
-                  onChange={set("price_target")}
-                />
-              </div>
-            )}
-            {extras.vat && (
-              <div>
-                <div
-                  className="text-[8px] mb-0.5 font-bold tracking-wider"
-                  style={{ color: "#facc15" }}
-                  title={feeBreakdown(feeEst.buy)}
-                >
-                  BUY FEE
-                </div>
-                <input
-                  className={inputCls}
-                  style={{ ...iStyle, color: "#facc15" }}
-                  placeholder={feePlaceholder(feeEst.buy)}
-                  type="number"
-                  step="any"
-                  value={form.fee_entry}
-                  onChange={set("fee_entry")}
-                />
-              </div>
-            )}
-            {extras.vat && side === "sell" && (
-              <div>
-                <div
-                  className="text-[8px] mb-0.5 font-bold tracking-wider"
-                  style={{ color: "#facc15" }}
-                  title={feeBreakdown(feeEst.sell)}
-                >
-                  SELL FEE
-                </div>
-                <input
-                  className={inputCls}
-                  style={{ ...iStyle, color: "#facc15" }}
-                  placeholder={feePlaceholder(feeEst.sell)}
-                  type="number"
-                  step="any"
-                  value={form.fee_exit}
-                  onChange={set("fee_exit")}
-                />
-              </div>
-            )}
-          </div>
-          {(feeEst.buy?.total != null || feeEst.sell?.total != null) && (
-            <div className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
-              FEES · {feeEst.buy?.basis ?? feeEst.sell?.basis}
-              {feeEst.buy?.total != null &&
-                ` · buy ${(form.fee_entry !== "" ? Number.parseFloat(form.fee_entry) || 0 : feeEst.buy.total).toFixed(2)} (${form.fee_entry !== "" ? "typed" : feeBreakdown(feeEst.buy)})`}
-              {side === "sell" &&
-                feeEst.sell?.total != null &&
-                ` · sell ${(form.fee_exit !== "" ? Number.parseFloat(form.fee_exit) || 0 : feeEst.sell.total).toFixed(2)} (${form.fee_exit !== "" ? "typed" : feeBreakdown(feeEst.sell)})`}
-              {" · "}not in cost basis; P&amp;L is shown net of the sell fee
-            </div>
+            </>
           )}
-
-          <div
-            className="grid gap-2"
-            style={{
-              gridTemplateColumns: `repeat(${
-                1 + (extras.entry_trigger ? 1 : 0) + (side === "sell" ? 1 : 0)
-              }, minmax(0, 1fr))`,
-            }}
-          >
-            <div>
-              <div
-                className="text-[8px] mb-0.5 font-bold tracking-wider"
-                style={{ color: colors.textSecondary }}
-              >
-                STRATEGY
-              </div>
-              <select
-                className={inputCls}
-                style={iStyle}
-                value={form.strategy_name}
-                onChange={set("strategy_name")}
-              >
-                <option value="">— select —</option>
-                {STRATEGIES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {extras.entry_trigger && (
-              <div>
-                <div
-                  className="text-[8px] mb-0.5 font-bold tracking-wider"
-                  style={{ color: colors.textSecondary }}
-                >
-                  ENTRY TRIGGER
-                </div>
-                <input
-                  className={inputCls}
-                  style={iStyle}
-                  placeholder="e.g. Breakout above 52W high"
-                  value={form.entry_trigger}
-                  onChange={set("entry_trigger")}
-                />
-              </div>
-            )}
-            {side === "sell" && (
-              <div>
-                <div
-                  className="text-[8px] mb-0.5 font-bold tracking-wider"
-                  style={{ color: colors.textSecondary }}
-                >
-                  EXIT TRIGGER
-                </div>
-                <input
-                  className={inputCls}
-                  style={iStyle}
-                  placeholder="e.g. Target hit, SL hit"
-                  value={form.exit_trigger}
-                  onChange={set("exit_trigger")}
-                />
-              </div>
-            )}
-          </div>
-
-          {extras.note && (
-            <div>
-              <div
-                className="text-[8px] mb-0.5 font-bold tracking-wider"
-                style={{ color: colors.textSecondary }}
-              >
-                NOTE
-              </div>
-              <textarea
-                className="text-[10px] font-mono px-2 py-1 border outline-none w-full resize-none"
-                style={{ ...iStyle, height: 48 }}
-                placeholder="บันทึกเพิ่มเติม…"
-                value={splitNote(form.note).rest}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    note: composeNote(splitNote(f.note).subPort, e.target.value),
-                  }))
-                }
-              />
-            </div>
-          )}
-
-          {form.pnl_amount && (
-            <div
-              className="text-[10px] font-mono text-right"
-              style={{ color: Number.parseFloat(form.pnl_amount) >= 0 ? "#4ade80" : "#f87171" }}
-            >
-              P&L: {Number.parseFloat(form.pnl_amount) >= 0 ? "+" : ""}
-              {Number.parseFloat(form.pnl_amount).toFixed(2)}
-              {form.pnl_percent &&
-                ` (${Number.parseFloat(form.pnl_percent) >= 0 ? "+" : ""}${Number.parseFloat(form.pnl_percent).toFixed(2)}%)`}
-            </div>
-          )}
-
-          <div className="flex items-center gap-2 pt-1">
-            <button
-              type="button"
-              onClick={doSave}
-              disabled={saving}
-              className="flex items-center gap-1.5 text-[10px] px-4 py-1.5 border font-bold hover:opacity-80 disabled:opacity-40"
-              style={{
-                borderColor: colors.accent,
-                color: colors.accent,
-                background: `${colors.accent}18`,
-              }}
-            >
-              {saving ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <CheckCircle className="h-3 w-3" />
-              )}
-              {saving ? "SAVING…" : "SAVE TRADE"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setForm({ ...BLANK_FORM, account_id: form.account_id });
-                setResolve({ status: "idle" });
-                setSaveOk(false);
-                setSaveErr("");
-              }}
-              className="text-[9px] px-3 py-1.5 border hover:opacity-80"
-              style={{ borderColor: colors.border, color: colors.textSecondary }}
-            >
-              CLEAR
-            </button>
-            {saveOk && (
-              <span
-                className="text-[10px] font-bold flex items-center gap-1"
-                style={{ color: "#4ade80" }}
-              >
-                <CheckCircle className="h-3 w-3" /> Saved!
-              </span>
-            )}
-            {saveErr && (
-              <span className="text-[9px] flex items-center gap-1" style={{ color: "#f87171" }}>
-                <AlertTriangle className="h-3 w-3" /> {saveErr}
-              </span>
-            )}
-          </div>
         </div>
       )}
     </div>

@@ -70,7 +70,7 @@ from analytics.regime_v2 import ensure_v2_fresh
 from contextlib import asynccontextmanager
 
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, bonds, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, graphs, series, ir_stress, market_state, dcf, discover, market_heatmap, cot
+from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, bonds, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, graphs, series, ir_stress, market_state, dcf, discover, market_heatmap, cot, stream
 from routers import health as upstream_health_router
 from routers import dev as dev_router
 import sync
@@ -183,6 +183,8 @@ app.include_router(circuit_breaker.router)
 app.include_router(listing_gate.router)
 app.include_router(sectors.router)
 app.include_router(portfolio_v2.router)
+from routers import slip_ocr as slip_ocr_router  # noqa: E402  (engine in backend/slip_ocr/)
+app.include_router(slip_ocr_router.router, tags=["Slip OCR"])
 app.include_router(theses.router, tags=["Theses"])
 app.include_router(zettel.router, tags=["Zettel"])
 app.include_router(graphs.router, tags=["Graphs"])
@@ -211,6 +213,7 @@ app.include_router(watchlist_signals.router)
 app.include_router(discover.router, tags=["Discover"])
 app.include_router(market_heatmap.router, tags=["Heatmap"])
 app.include_router(cot.router, tags=["COT"])
+app.include_router(stream.router, tags=["Stream"])
 
 
 # ── Sync gate ─────────────────────────────────────────────────────────────────

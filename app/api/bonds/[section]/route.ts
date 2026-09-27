@@ -2,9 +2,9 @@ import { NextResponse } from "next/server";
 
 import { PYTHON_API } from "@/lib/constants";
 
-const SECTIONS = new Set(["overview", "supply", "issuance"]);
+const SECTIONS = new Set(["overview", "supply", "issuance", "decomposition"]);
 
-// GET /api/bonds/overview · /api/bonds/supply · /api/bonds/issuance
+// GET /api/bonds/overview · /api/bonds/supply · /api/bonds/issuance · /api/bonds/decomposition
 export async function GET(_req: Request, { params }: { params: Promise<{ section: string }> }) {
   const { section } = await params;
   if (!SECTIONS.has(section)) {

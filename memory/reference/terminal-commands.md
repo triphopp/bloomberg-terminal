@@ -39,6 +39,12 @@ Keyboard equivalents: `1` MKT · `2` NEWS · `3`/`b` BOND · `4`/`p` PORT · `5`
 | `LIGHT` | Switch to light mode |
 | `YTD ON` | Show YTD % column in market table |
 | `YTD OFF` | Show Daily % column in market table |
+| `compare(AAPL, MSFT, BTC-USD)` | Open MKT comparison chart, 2–10 distinct symbols; each series starts at 0% on the first common date |
+| `btc_scaling` | Express the MKT candle chart in BTC units using historical BTC/USD closes |
+| `usd_scaling` | Express the MKT candle chart in USD; on USD-quoted assets this equals the normal chart |
+| `X_scaling` | Change chart unit using a three-letter code (USD, BTC, ETH, EUR, GBP, JPY, THB, etc.); source must have historical USD rates; active unit shows an `X ×` reset button |
+
+`btc_scaling` puts the unit first, matching the other `<unit>_scaling` commands. The active-unit `×` button returns to the symbol's native quote currency. Compare and scaling are separate chart modes. Both use `/api/stock` through the Python backend.
 
 ---
 

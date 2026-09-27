@@ -43,6 +43,8 @@ export interface Trade {
   /** Broker fees on the sale (commission, VAT, SEC, TAF). Already inside pnl_amount. */
   fee_exit?: number | null;
   current_price?: number;
+  /** Yahoo symbol the price comes from — the key for the live quote stream. */
+  yf_symbol?: string | null;
   unrealized_pnl?: number;
   unrealized_pct?: number;
   unrealized_pnl_thb?: number;

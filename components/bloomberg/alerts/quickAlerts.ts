@@ -15,6 +15,7 @@ import type { Calibration } from "@/lib/alerts/calibrate";
 import { CONCEPT_META } from "@/lib/alerts/concepts";
 import { type AlertLabel, defaultLabelParams, resolveCalibration } from "@/lib/alerts/labels";
 import type { IndicatorSpec } from "../atoms";
+import { BB_VOLUME_PARAM_KEYS } from "../chart/bb-volume-overlay";
 import { INDICATOR_REGISTRY, getIndicatorEntry } from "../chart/indicators";
 import type { IndicatorRegistryEntry } from "../chart/types";
 import type { AlertScope, CreateAlertRuleInput } from "../hooks/useAlertRules";
@@ -97,6 +98,7 @@ export function itemsFromActiveIndicators(
     const indParams: Record<string, number> = {};
     for (const p of entry.defaultParams) {
       if (p.key === "fitCostBps") continue; // simulation assumption, not a signal parameter
+      if (BB_VOLUME_PARAM_KEYS.has(p.key)) continue; // display only
       const v = spec.params?.[p.key] ?? p.default;
       if (typeof v === "number") indParams[p.key] = v;
     }
@@ -141,7 +143,7 @@ export function allQuickAlertItems(signal: WatchlistSignal | undefined): QuickAl
     if (!entry.alertLabels?.length) continue;
     const indParams: Record<string, number> = {};
     for (const p of entry.defaultParams) {
-      if (p.key === "fitCostBps") continue;
+      if (p.key === "fitCostBps" || BB_VOLUME_PARAM_KEYS.has(p.key)) continue;
       if (typeof p.default === "number") indParams[p.key] = p.default;
     }
     for (const label of entry.alertLabels) {

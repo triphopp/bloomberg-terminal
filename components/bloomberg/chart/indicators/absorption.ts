@@ -19,6 +19,7 @@
  * in the middle of nowhere is usually just noise.
  */
 
+import { SortedWindow } from "../rolling.ts";
 import type {
   ChartIndicator,
   HistogramDataPoint,
@@ -31,13 +32,6 @@ const VOL_MULT = 1.5; // volume ≥ 1.5× median = abnormal effort
 const RANGE_MULT = 0.9; // range ≤ 0.9× median = compressed result
 const COMP_CAP = 5; // cap compression so zero-range bars don't explode the scale
 
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
 interface AbsorptionPoint {
   score: number;
   flagged: boolean;
@@ -47,23 +41,37 @@ interface AbsorptionPoint {
 function calcAbsorption(data: OhlcvBar[], window: number): (AbsorptionPoint | null)[] {
   const result: (AbsorptionPoint | null)[] = new Array(data.length).fill(null);
 
+  // Positive volumes / ranges of bars [i - window, i), kept sorted as the
+  // window slides — the median is a lookup, not a sort per bar.
+  const vols = new SortedWindow(window);
+  const ranges = new SortedWindow(window);
+  const volAt = (j: number) => data[j].volume ?? 0;
+  const rangeAt = (j: number) => data[j].high - data[j].low;
+  for (let j = 0; j < Math.min(window, data.length); j++) {
+    if (volAt(j) > 0) vols.insert(volAt(j));
+    if (rangeAt(j) > 0) ranges.insert(rangeAt(j));
+  }
+
   for (let i = window; i < data.length; i++) {
+    if (i > window) {
+      // Slide: bar i-1 enters, bar i-1-window leaves.
+      const inV = volAt(i - 1);
+      const inR = rangeAt(i - 1);
+      const outV = volAt(i - 1 - window);
+      const outR = rangeAt(i - 1 - window);
+      if (outV > 0) vols.remove(outV);
+      if (outR > 0) ranges.remove(outR);
+      if (inV > 0) vols.insert(inV);
+      if (inR > 0) ranges.insert(inR);
+    }
     const bar = data[i];
     const vol = bar.volume ?? 0;
     if (vol <= 0) continue;
 
-    const priorVols: number[] = [];
-    const priorRanges: number[] = [];
-    for (let j = i - window; j < i; j++) {
-      const v = data[j].volume ?? 0;
-      const r = data[j].high - data[j].low;
-      if (v > 0) priorVols.push(v);
-      if (r > 0) priorRanges.push(r);
-    }
-    if (priorVols.length < window / 2 || priorRanges.length < window / 2) continue;
+    if (vols.size < window / 2 || ranges.size < window / 2) continue;
 
-    const medVol = median(priorVols);
-    const medRange = median(priorRanges);
+    const medVol = vols.median();
+    const medRange = ranges.median();
     if (medVol <= 0 || medRange <= 0) continue;
 
     const range = bar.high - bar.low;

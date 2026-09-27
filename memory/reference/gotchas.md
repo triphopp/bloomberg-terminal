@@ -7,6 +7,13 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### Native select popup text disappears on Windows (IV / DCF; fixed 2026-09-26)
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| A native `<select>` looks fine when closed, but popup options in IV, DCF or another view become unreadable on Windows while Mac works | The closed control can have light foreground and transparent background while the popup uses a light OS/browser palette | `styles/globals.css` now sets `color-scheme: dark` and explicit option foreground/background for every native select; `body.light` and forced-colors have their own palettes. New selects must rely on this shared rule or supply an equally complete palette. |
+
+
 ### Historical portfolio Excel import (2026-09-26)
 | Symptom | Root cause | Fix / status |
 |---|---|---|
@@ -322,6 +329,7 @@ HTTP 200 / `status: ok`; live SNDK 2026-10-16 SVI returned `ok` for 56 call and
 | Missing env var | What breaks |
 |----------------|-------------|
 | `FRED_API_KEY` | MACRO view + CRDT (crisis) fail silently — no data shown |
+| `QUOTE_STREAM_MAX_SYMBOLS` (optional, default 900) | Too low → rows past the budget stay on REST (listed in `/api/stream/status` `denied`, SSE `coverage`); too high → more Yahoo sockets (400 tested clean) |
 | `YAHOO_MAX_CONCURRENT` (optional, default 6) | Too high → page-load burst returns (100+ sockets, Yahoo 429, home net drop); too low → cold TAIL > 60s (proxy now 180s) |
 | `ANTHROPIC_API_KEY` | Portfolio AI analysis tab fails |
 | `OLLAMA_URL` (wrong) | Clippings AI panel fails (default: `http://localhost:11434`) |
@@ -1946,3 +1954,78 @@ Dime shows cost = qty × price (GOOGL/COST/UNH broker cost = DB lots exactly), s
 
 ## A portfolio taken over is a transfer in kind, not a buy (2026-09-26)
 Finansia 6065151/6065157 (AJ, DCON×2, DMT, LOXLEY, OR×2, TASCO×2, XPG) were handed over for management on 2026-02-08, but were booked as 2025-01-01 buys at the previous owner's cost (฿1,457,602) with the ฿1.88M funding moved to 2025-12-31 → NAV negative through 2025 and the owner's −฿872K pre-takeover loss counted as ours. Fund practice (GIPS): `acquisition_type='TRANSFER_IN'`, `price_entry` = close on/before the transfer date, capital in = fair value (+ cash brought in), prior cost kept in `original_price_entry` (memo, `/takeover`). Applied by `backend/scripts/apply_portfolio_takeover.py` (also re-bases live NAV snapshots' `open_cost_basis` by the same delta and deletes `source='backfill'` rows → rebuild with `scripts/backfill_nav.py`). A same-day TWR with a weekend/in-kind flow must put that flow in the base (`before` in `/nav-index`) or the first Monday shows +10% on a ฿106K base. TTW/ICHI/BH on 6065151 were real buys after takeover (2026-02-20 / 03-05) — not transfer lots. Broker statements still show the previous owner's average cost for the transfer lots.
+
+## Live number lags 20s–3min at random / LAST and CHG disagree (2026-09-26)
+- **Cause 1 — query never polls.** `useMarketDataQuery` and `useFxTicks` had `refetchInterval: false`; the index/FX rows refreshed only when something remounted them. Any quote query must poll on the real-time cadence (60s / 5m) — grep for `refetchInterval: false` on price data.
+- **Cause 2 — rounding.** TICK DATA `fmtPrice` dropped decimals ≥10,000, so the board read 51,829 against the chart's 51,828.62 and a sub-point move changed CHG with LAST frozen. Prices: always 2dp.
+- **Fix in place:** Yahoo stream (`/api/stream/quotes`, `useQuoteStream`, one shared EventSource) patches every quote cache via `lib/live-quotes.ts`, so LAST and CHG move from ONE tick. New price panel → add its symbols to a `useQuoteStream` call and patch with those helpers; never open a second EventSource.
+
+## Yahoo WebSocket: 100 symbols per connection, silently (measured 2026-09-26)
+`wss://streamer.finance.yahoo.com` (yfinance 1.3 `WebSocket`) serves only the first **100 unique symbols** a connection subscribes — across messages, first-come. #101+ get no ticks, no error, no close; unsubscribing frees a slot but an overflowed symbol is not promoted; invalid symbols take slots too. No per-IP cap seen (400 conns, 833 msg/s). Malformed JSON or `subscribe` as a string → server closes the socket. **FIXED 2026-09-26** — `quote_stream.py` shards ≤90 symbols per socket (`plans/completed/quote-stream-sharding.md`). Decode: read the protobuf fields directly (MessageToDict was 97% of tick CPU) — `price`/`change` are **float32**, pass through `ToShortestFloat` or 0.26961 becomes 0.2696099877; proto3 has no presence, so change 0 must go out as `null` (frontend derives it from previous close). **Also fixed 2026-09-26:** `routers/stream.py` cut each request at 200 symbols of an alphabetically sorted union, so late-alphabet symbols silently never streamed — now one process budget (`QUOTE_STREAM_MAX_SYMBOLS`) with priority tiers and an SSE `coverage` event naming denied symbols. full numbers `memory/sessions/reports/yf-websocket-limits-report.md`.
+
+## torch/easyocr cannot load inside the backend process on Windows (2026-09-26)
+`import torch` after `main`'s modules → `WinError 1114 … c10.dll` (DLL init clash); a bare `python -c "import torch"` works, so it looks random. Fix: run anything torch-based in a **spawned** process — `slip_ocr/ocr.py` uses `ProcessPoolExecutor(max_workers=1, mp_context=spawn)`; decode the image in the parent so a bad file is a 422, not a worker crash. Don't catch `OSError` as "bad image" — the DLL error is an `OSError` too.
+
+## `--reload` hangs at "Waiting for connections to close" (2026-09-26)
+A long-lived connection (the frontend's stream) keeps the old worker alive; `/api/dev/status` shows `stale: true` forever and RESTART does not help. Stop the old `spawn_main` child (its parent is the reloader) and the reloader starts a fresh one.
+
+## Dime slip: shown price is rounded, value is not (2026-09-26)
+COST 2.0751791 × 914.11 = 1,896.94 but the slip's มูลค่าหุ้น is 1,896.96 → true fill 914.1187. Book `price_entry = value / qty` (4 dp) or qty × price drifts from the broker by cents. Dime commission 2.84 where the schedule rounds 2.85 — the slip wins (`broker_fees` is ±1¢).
+
+## FRED `THREEFFTP10` is not "the 10Y term premium" (2026-09-26)
+Kim-Wright on FRED has two lookalikes: `THREEFYTP10` = TP on the 10Y zero (the number people quote) and `THREEFFTP10` = *instantaneous forward* TP 10 years hence (runs higher, moves differently). BOND showed the forward one labelled "10Y TERM PREMIUM" from 2026-09-25. Check `fred/series` title before wiring a FRED id. And KW ≠ ACM: the level commentary quotes (0.645%, 10y high 0.895% May-2025) is NY Fed ACM — `/api/bonds/decomposition` reads the ACM `.xls`; the KPI strip's TP is KW and labelled so.
+
+## Broker order number: unique on evidence, not on trades (2026-09-26)
+A partial sell INSERTs the sold piece by copying the lot, so two `trades` rows legitimately share one buy order. A UNIQUE index on `trades.broker_order_ref` would break every partial sell. Uniqueness lives on `broker_executions(account_id, order_ref)`; `create_trade` refuses (409) an order ref already on any trade row. Any new code that splits a trade row must copy `broker_order_ref, executed_at, entry_source, source_sha256`.
+
+## onnxruntime segfaults inside the backend process too (2026-09-26)
+Same class as the torch WinError 1114: `import main; import onnxruntime` → exit 139, no traceback. The slip OCR worker is a spawned process for this reason; the parent only uses `importlib.util.find_spec` to pick a backend. Never `import onnxruntime`/`rapidocr`/`torch` at module level in anything the backend imports. A spawned worker also needs a real `__main__` file — `python - <<EOF` scripts crash it (`<stdin>` path).
+
+## Slip OCR speed: it is the model, not the code (2026-09-26)
+COST sample: parse ≈ 30 ms, worker round-trip ≈ 20 ms, OCR = the rest. easyocr (torch CRAFT+CRNN) 12–25 s → rapidocr PP-OCRv5 mobile Thai on ONNX Runtime 1.5–1.9 s end-to-end, and more accurate (Thai marks, Latin case). Downscaling the image or batching rec did not help. A C/Rust rewrite of the parser would save ~30 ms.
+
+## slip_ocr must stay host-free (2026-09-26)
+`backend/slip_ocr/` is kept ready to become its own repo: never import backend modules (`broker_fees`, `db`, `config`, account ids) inside it. Host knowledge goes in through parameters (`fee_schedule`) or is added by the router after the call (`account_hint`). Engine tests live in `slip_ocr/tests/` (package-relative fixtures); tests that need the DB stay in `backend/tests/`.
+
+## Option P&L left out every opening fee (fixed 2026-09-26)
+`option_trade_matches.realized_pnl` subtracted only the CLOSE fill's fees; the OPEN fill's `fees` were never charged to P&L, so they never reached derived cash either. All three close paths (`/close`, `/close-fifo`, `_rematch_trade`) now go through `portfolio_options.match_realized()` — each match carries its quantity share of both legs. Any new close path must use it. Existing matches before the fix had 0 fees, so no restatement was needed.
+
+## Option close at price NULL ≠ sale at 0 (fixed 2026-09-26)
+`close_reason='UNKNOWN'` rows have `price NULL`; `ledger_backfill` read them as `_f(None) = 0` — a 100% loss that never happened. Now it raises `B_OPTION_PRICE` and posts nothing. A worthless expiry is `close_reason='EXPIRED'` with `price 0` (a real loss) — keep the two distinct.
+
+## Dime option slips: fees are estimates; Excel dates are Thai-time and sometimes wrong (2026-09-26)
+The slip's "ค่าธรรมเนียมรอตัดชำระโดยประมาณ" (OCC, ORF, TAF) is an estimate; Dime debits the real amount later as separate cash lines, sometimes a daily total (ORF −0.04 against 0.02 estimated) — hence `trade_fee_items.basis ESTIMATED|POSTED`. Commission is shown and cancelled by the "เทรดออปชันฟรีจุก ๆ" coupon: book COMMISSION + a negative COMMISSION_DISCOUNT, not 0. Per-contract rates moved between Jan and Apr 2026 (OCC 0.02→0.025, ORF ≈0.0026→0.023) — don't fit one schedule. The Excel option rows had dates off by days (weekends, MLK Day) and paired two different strikes as one contract — trust the slip.
+
+## Dime option slip OCR quirks (2026-09-26)
+The order number `OPTBLO…`/`OPTSLO…` comes back as `OPTBL0…` (letter O read as zero) — `dime_option.parse` restores it. A sale slip prints commission as `-55.00` and the promo as `+55.00` (a buy the other way round): read magnitudes, store COMMISSION positive and COMMISSION_DISCOUNT negative. A "Dime! Fast" chip pushes the วันที่ส่งคำสั่ง date onto the next line. The option layout also contains the stock layout's labels (ราคาที่ได้จริง, ค่าคอมมิชชัน, เลขที่คำสั่ง), so `dime_option` must stay ahead of `dime` in `PARSERS`. Test fixtures: `slip_ocr/tests/fixtures/dime_option/` (account number masked to 80000001234).
+
+
+## Chart auto-extend climbed the history ladder with nobody zooming (fixed 2026-09-26)
+`fitContent()` lands the viewport on the oldest bar, and `visibleLogicalRange` fires for fits, resizes, `setData()` refills and restores the same as for a wheel. `needsExtend` (`from <= 2`) read every load as "zoomed out to the edge": 3M → YTD, 1Y → 5Y on open. Plus the settle-time prefetch warmed 5Y for every 1Y chart, and the extended period leaked one render into the next symbol (a 5Y request fired + aborted — the backend still ran it). Fix: `watchLogicalRange(..., inputTarget)` reports only ranges within 800 ms of wheel/drag/touch/key on the chart; settle prefetch capped at 400 days (`SETTLE_PREFETCH_MAX_SPAN_DAYS`); `useAutoExtendRange` tags the extended period with its `viewportKey`. Anything new that listens for range changes to fetch data must filter to user input the same way.
+
+## Indicators: O(N·k) window loops ran on every tick (fixed 2026-09-26)
+Per-bar `slice(i-k…)`/inner loops/`sort` for median/`shift()`/`Math.min(...spread)` made cost grow with the window param: absorption window 100 = 405 ms at 20k bars, rv-rank lookback 1250 = 246 ms, and the BB volume overlay (`lib/bb-volume.ts` + `volume-stats` + `volume-events`, run in the canvas draw path on every new data array = every tick) 12–116 ms per tick on a 5Y daily chart. All moved to `chart/rolling.ts` (outputs identical: no structural change, ≤6e-11 relative, volume libs bit-identical). Guard: `chart/__tests__/indicator-rules.test.ts` (source rules + measured window-independence/linearity). Exception = `// perf-ok: reason`.
+
+## Caches keyed on array identity miss on every tick (fixed 2026-09-26)
+Every tick replaces the bars array, so a `WeakMap<data, …>` / `if (data !== cacheKey)` cache recomputes each tick. `fitBollingerSharpe` (209 backtests, ~4 ms at 1Y, ~18–22 ms at 5k bars) re-ran per tick; now keyed on an FNV hash of the CLOSED bars (open/close bits + time), LRU 16. Same trap remains in `bb-volume-overlay.ts` draw cache (now cheap, ~1 ms) — any new expensive derived value: key on closed-bar content.
+
+## Interval switch left the period on MAX (fixed 2026-09-26)
+`applyInterval("1wk", "3m")` forces MAX (1W's default), and `applyInterval("1d", "max")` kept it because MAX is valid for 1D — so 1D→1W→1D left a 3M chart pulling decades of daily bars. `applyInterval(iv, period, preferred)` now restores the last hand-picked period. Test: `chart/__tests__/timeframe.test.ts`.
+
+## "2 GB memory" = `next dev`, not the browser tab (2026-09-26)
+Measured: Next dev server (Turbopack) ~1.4 GB working set / 3.2 GB private after ~11 h of HMR recompiles; flat under an 11-cycle MAX/1W/1H/5Y × 6-symbol stress (no route leak). Browser tab heap 70–240 MB sawtooth, 7 canvases steady. Restart the frontend (launcher tray / RESTART strip) to reclaim; production `next start` does not carry the dev compiler cache.
+
+## `toLocale*String(locale, opts)` in a per-row/per-bar path = a new Intl formatter per call (fixed 2026-09-26)
+`Date#toLocaleDateString("en-US", {...})` / `Number#toLocaleString("en-US", {...})` construct an Intl formatter every call (~20–60 µs). MKT `fmtDateLabel` ran it per bar per tick: 77 ms/tick at 5Y, 275 ms at MAX. Hoist a module-level `new Intl.DateTimeFormat(...)` / `Intl.NumberFormat(...)` and call `.format()` — identical output. Rule: any formatter called per bar, per row or per cell must be a cached Intl instance. Careful: `Intl.DateTimeFormat#format(invalidDate)` THROWS RangeError, while `toLocaleDateString()` returned the text "Invalid Date" — guard `Number.isNaN(d.getTime())` to keep the old output.
+
+## `data?.x ?? []` in effect deps = infinite render loop while loading (fixed 2026-09-26)
+`const xs = data?.xs ?? []` makes a NEW array each render while `data` is undefined. Put it in a useEffect dep that sets (parent) state — especially state set to another fresh `[]` — and it loops every render: NEWS › WATCHLIST ran ~15 renders/s ("Maximum update depth exceeded") until the first response, and forever if the request failed or the query was disabled. Fix: module-level `const NO_XS: X[] = []` and `data?.xs ?? NO_XS`. Repro trick: override `window.fetch` to never resolve for that endpoint. Same class, worse: an inline `[]` / default-param `= []` for a prop that is a dep of a BUILD effect — MKT passed `indicators={…: []}` under a scaling unit and ModularChart rebuilt the whole chart every render. Pass `NO_INDICATORS / NO_OVERLAYS / NO_EVENT_MARKERS` from `chart/ModularChart.tsx`. Detect: MutationObserver counting `<canvas>` insertions while poking re-renders.
+
+## `localhost` = +2 s per Python HTTP call on Windows (fixed for MCP 2026-09-26)
+uvicorn binds 127.0.0.1 only; `localhost` resolves to ::1 first and Python `requests`/urllib wait ~2 s for that connect to fail before trying IPv4 (curl: ~210 ms). Browsers and Node `fetch` race both families, so the app itself never shows it — scripts, the MCP server and Python→Ollama do. Use `127.0.0.1` for any Python client of a local service (`mcp_server._ipv4_loopback`), and a `requests.Session` for repeated calls. Test: `curl -w "%{time_connect}" http://localhost:9317/...` vs `127.0.0.1`.
+
+## lightweight-charts mutates the points you pass it (found 2026-09-26)
+After `series.setData(bars)` / `series.update(bar)` each point's `"YYYY-MM-DD"` `time` has been rewritten IN PLACE to `{day, month, year}` and `_internal_originalTime` added. Any code that reuses the same array after pushing it (ModularChart's refill hands the same `bars` to the candle series, then to every indicator and overlay) sees object times, not strings. Consequences: comparing "previous vs next" points must use a copy taken before the push (`chart/series-data.ts`); `series.data()` returns whichever time shape was pushed. If you need pristine bars after a push, pass LW a copy. **Resolved 2026-09-26:** every ModularChart push now goes through `chart/series-data.ts` `setSeriesData`, which hands LW copies — bars keep string times for the 12+ consumers that assume them (`volume-event-overlay` `bar.time !== event.time`, `event-reaction` `String(time) >= target`, `price-grid-overlay` `periodKey`, `sd-heatmap` `barDate`, `bb-volume` `toSec`, VP/VWAP `typeof time`) — under the old in-place mutation any of them that ran after the first `setData` saw `{day,month,year}`. It also pushes only the changed tail via `update()`: tick refill 5.6 → 2.4 ms p50 (5Y MKT, dev), and tail vs full `setData` proven pixel-identical on all 11 canvases with VP + volume events + event rail on. Never call `series.setData`/`update` directly in ModularChart.
+
+## Sync `def` route waiting on a future = thread starvation (fixed for history 2026-09-26)
+FastAPI runs `def` routes in anyio's worker pool (40 threads). `/api/stock/history` blocked on `future.result(timeout=22)` for the Yahoo fetch, so a burst of chart requests held every worker and unrelated sync routes queued — BOND's endpoints took 60–82 s. Now `stock_history_route` is `async`: cache hit → no thread; miss → `await asyncio.wrap_future(history_future(...))` first, then the unchanged sync body in the threadpool finds a finished fetch. Measured: BOND 40–620 ms while 40 uncached history requests are in flight. Other sync routes that wait on `market_requests` futures (quote, snapshots) have the same shape. Report: `reports/history-bk-retry-risk-report.md` (pre-existing `.BK` retry miss found alongside).

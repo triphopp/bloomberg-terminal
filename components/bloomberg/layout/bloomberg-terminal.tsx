@@ -26,6 +26,7 @@ import { ChartWindowLayer } from "../chart/ChartWindowLayer";
 import { BackendStatusBanner } from "../core/backend-status-banner";
 import { ConfirmationModal } from "../core/confirmation-modal";
 import { ShortcutsHelp } from "../core/keyboard-shortcuts";
+import { TickFlash } from "../core/tick-flash";
 import { ViewSkeleton } from "../core/view-skeleton";
 import { Watchlist } from "../core/watchlist";
 import { usePortfolioPrewarm, useTerminalUI, useViewPrefetch } from "../hooks";
@@ -338,14 +339,19 @@ function BloombergTerminal() {
       {/* Dev only: says when the backend is not the code on disk, so a stale
           server is never mistaken for a bug. Stripped from production builds. */}
       {process.env.NODE_ENV === "development" && <BackendStatusBanner />}
+      <TickFlash />
       {headerBlock}
       <div className="flex-1 min-h-0 overflow-hidden">
         <Suspense fallback={<ViewSkeleton />}>{renderView()}</Suspense>
       </div>
       {/* Ribbon + crawl are desktop furniture: on a phone they eat ~40px of a
           ~700px screen for text too small to read, and the TAIL view has it all. */}
-      {!isMobile && <TailRiskRibbon />}
-      {!isMobile && <AlertTicker />}
+      {!isMobile && (
+        <div className="flex h-[24px] shrink-0 min-w-0 overflow-hidden border-t border-[#292929] bg-black">
+          <TailRiskRibbon />
+          <AlertTicker />
+        </div>
+      )}
       {isMobile && (
         <MobileNav currentView={currentView} navItems={navItems} colors={headerColors} />
       )}
