@@ -61,7 +61,12 @@ mcp = MCPServer(
         "ladder, a cross-company comparison — goes in graph_create as one "
         "self-contained HTML page attached to the thesis (graph_list first). "
         "Never rewrite the thesis body or change status/conviction unless asked, and "
-        "always give a reason."
+        "always give a reason. "
+        "Fundamental analysis (\"วิเคราะห์พื้นฐาน\" a ticker): follow "
+        "memory/reference/fundamental-analysis.md in the repo — pull financials, "
+        "balance-sheet, ratios, quality, estimates, management (get_stock_data), "
+        "10-K/20-F (get_filings), news, plus the earnings call; answer in its 12 "
+        "Thai sections, facts only, say unclear when unclear."
     ),
 )
 

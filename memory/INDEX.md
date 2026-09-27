@@ -198,6 +198,7 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 | **TICK DATA board** (7 sections, ยุบและจัดลำดับเองได้, จำลำดับ, bp vs %chg) | `reference/frontend-structure.md` → "MKT — TICK DATA board" |
 | **Ctrl+C แล้ว dev:all ขึ้น traceback** | `reference/gotchas.md` → "npm run dev:all dumps a scary traceback" |
 | Data catalog — ข้อมูลทั้งหมดที่ดึงได้ 17 หมวด | `reference/data-catalog.md` |
+| **วิเคราะห์พื้นฐาน [ticker]** — data ที่ต้องหา + 12 หัวข้อ report มือใหม่ + กฎ fact-only | `reference/fundamental-analysis.md` |
 | **SEC Thailand API** — endpoints, key config, One Report structure (old portal closed 2026-06-30) | `reference/api-endpoints.md` → SEC sections |
 | International sectors (TH/CN/KR/EU) + sector constituents (ทำเสร็จแล้ว) | `plans/completed/international-sectors.md` |
 | Market session (pre/post/after-hours) (ทำเสร็จแล้ว) | `plans/completed/market-session-workflow.md` |
