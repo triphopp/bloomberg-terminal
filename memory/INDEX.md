@@ -71,6 +71,7 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 
 - [ANALYTICS INDEX drawdown pane](sessions/2026-09-27-analytics-index-drawdown-pane.md) — underwater chart for portfolio and SPY beneath the equity curve; verified in browser.
 - [ANALYTICS INDEX risk metrics](sessions/2026-09-27-analytics-index-risk-metrics.md) — portfolio/SPY max drawdown and annualized standard deviation alongside EXCESS; chart style retained.
+- [ENTRY slip control](sessions/2026-09-27-entry-slip-control.md) — compact image upload cue and drag overlay in place of the full-width strip.
 - [PORT symbol to MKT chart](sessions/2026-09-27-port-to-mkt-symbol.md) — fixed 2026-09-27; MKT uses the requested quote symbol instead of the default instrument.
 
 - [Chart Compare and Price Scaling](plans/completed/chart-compare-and-scaling.md) — ✅ done 2026-09-26; COMPARE icon, `compare(...)` ≤10, `<unit>_scaling` and reset control
