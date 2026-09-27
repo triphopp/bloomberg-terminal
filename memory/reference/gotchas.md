@@ -20,6 +20,12 @@
 | A native `<select>` looks fine when closed, but popup options in IV, DCF or another view become unreadable on Windows while Mac works | The closed control can have light foreground and transparent background while the popup uses a light OS/browser palette | `styles/globals.css` now sets `color-scheme: dark` and explicit option foreground/background for every native select; `body.light` and forced-colors have their own palettes. New selects must rely on this shared rule or supply an equally complete palette. |
 
 
+### Benchmark (SPY) line missing on ANALYTICS INDEX / `benchmark_available:false` (fixed 2026-09-27)
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| EQUITY CURVE vs SPY shows no SPY line for minutes at a time; `nav-index` returns `bench_index: null` though Yahoo is healthy | `yf.download()` resets yfinance's module-global result dicts on every call, so a concurrent download in another router (here the heatmap's failing `DX=F`) wiped SPY → a 64×0 frame that `_fetch_close_frame` cached for 5 min | `_fetch_close_frame` retries once and never caches a frame with none of the requested columns. 25 other `yf.download` call sites remain exposed — `memory/reports/yf-download-global-state-race-risk-report.md` |
+
 ### Historical portfolio Excel import (2026-09-26)
 | Symptom | Root cause | Fix / status |
 |---|---|---|

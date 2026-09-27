@@ -135,7 +135,8 @@ def _fetch_close_frame(symbols: list[str], days: int = 252) -> "pd.DataFrame":
     # 1.5x for weekends/holidays + fixed cushion so short windows (e.g. 21d ≈ 1M)
     # still clear the observation gates below.
     start = end - timedelta(days=int(days * 1.5) + 14)
-    try:
+
+    def _download() -> "pd.DataFrame":
         df = yf.download(
             symbols, start=start.strftime("%Y-%m-%d"),
             end=end.strftime("%Y-%m-%d"),
@@ -146,8 +147,23 @@ def _fetch_close_frame(symbols: list[str], days: int = 252) -> "pd.DataFrame":
         close = df["Close"] if "Close" in df.columns else df
         if not hasattr(close, "columns"):          # single symbol → Series
             close = close.to_frame(name=symbols[0])
-        close = close.reindex(columns=[s for s in symbols if s in close.columns])
-        _returns_cache.set(cache_key, close)
+        return close.reindex(columns=[s for s in symbols if s in close.columns])
+
+    # yf.download() resets yfinance's MODULE-GLOBAL result dicts on every call
+    # (yfinance/multi.py: shared._DFS = {}), so a download running at the same
+    # moment in another router can wipe ours: 2026-09-27 the heatmap's failing
+    # DX=F download left nav-index a 64×0 frame, which was then cached for 5
+    # minutes and the SPY line vanished from ANALYTICS INDEX. A wipe loses
+    # every column, so a frame with NONE of our symbols is retried once and never
+    # cached. A partial frame is kept as before: one holding with no Yahoo data
+    # must not turn every CAPM call into two downloads.
+    try:
+        close = _download()
+        if close.shape[1] == 0:
+            time.sleep(0.4)
+            close = _download()
+        if close.shape[1] > 0:
+            _returns_cache.set(cache_key, close)
         return close
     except Exception:
         return pd.DataFrame()
