@@ -151,7 +151,7 @@ def pull() -> dict:
             rebuilt = rebuild_all(conn)
             # The rows now name every analysis page this device should hold;
             # fetch the HTML files those rows point at (sync/files.py).
-            pages = pull_files(d["base"], live_slugs(conn))
+            pages = pull_files(d["base"], live_slugs(conn), device)
 
         # The merge result is now the state this device has seen — next merge
         # compares against it. Saved after restore so a crash mid-restore leaves

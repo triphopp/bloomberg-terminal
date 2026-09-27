@@ -633,6 +633,37 @@ def sync_once(conn: sqlite3.Connection, device: str, root: Path) -> dict:
     return {"flushed": made, "exported": sent, **got}
 
 
+def sync_pages(conn: sqlite3.Connection, base: Path, device: str) -> dict:
+    """Carry the analysis-page HTML files (sync/files.py) that `graphs` rows name.
+
+    The op-log moves the ROWS; the page file is not a row, and until 2026-09-27
+    only the snapshot sync (manager.py) moved it — so with OPLOG_ENABLED a page
+    made on one machine was listed on the other and rendered 404. `base` is the
+    sync root the snapshot sync used (<SYNC_DIR>, not <SYNC_DIR>/oplog), so both
+    modes share one `graphs/` folder and manifest. Pull first: push refuses a
+    slug whose cloud copy changed since we last saw it, and pull is what takes it.
+    """
+    from .files import live_slugs, pull_files, push_files
+    slugs = live_slugs(conn)
+    got = pull_files(base, slugs, device)
+    put = push_files(base, slugs, device)
+    return {"taken": got["taken"], "sent": put["sent"], "skipped": got["skipped"] + put["skipped"]}
+
+
+def run_round(conn: sqlite3.Connection, device: str, root: Path) -> dict:
+    """What the worker runs: the op-log round, then the page files beside it.
+
+    A page failure is reported in the result, never raised — it must not stop
+    the row sync that the portfolio depends on."""
+    result = sync_once(conn, device, root)
+    try:
+        result["pages"] = sync_pages(conn, root.parent, device)
+    except Exception as e:
+        logger.warning("oplog page sync failed: %s", e)
+        result["pages"] = {"error": str(e)}
+    return result
+
+
 # ── conflict review ──────────────────────────────────────────────────────────
 def conflicts(conn, open_only: bool = True) -> list[dict]:
     q = "SELECT * FROM sync_conflicts" + (" WHERE resolved_at IS NULL" if open_only else "") + " ORDER BY detected_at"
@@ -695,7 +726,7 @@ def _worker(interval: float) -> None:
         try:
             conn = connect()
             try:
-                _state["last_result"] = sync_once(conn, device_id(), root)
+                _state["last_result"] = run_round(conn, device_id(), root)
                 _state["last_sync"] = datetime.now(timezone.utc).isoformat()
                 _state["last_error"] = None
             finally:
