@@ -112,3 +112,6 @@ backend/tmp*.tmp
 
 # Broker slip screenshots (slip_evidence.py) — hold account numbers; never commit
 backend/evidence/
+
+# sync device id — machine-local (backend/sync/oplog.py)
+backend/.oplog_device_*

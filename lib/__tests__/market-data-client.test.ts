@@ -3,8 +3,10 @@ import { afterEach, test } from "node:test";
 import { QueryClient } from "@tanstack/react-query";
 import {
   MarketDataError,
+  QUOTE_FUNDAMENTALS_MS,
   RequestQueue,
   SymbolBatcher,
+  fetchQuote,
   quoteQueryOptions,
   retryAfterSeconds,
 } from "../market-data-client.ts";
@@ -174,4 +176,56 @@ test("quotes jump queued optional work without starving that work", async () => 
     );
   await Promise.all(jobs);
   assert.deepEqual(order.slice(0, 4), ["quote0", "quote1", "quote2", "optional"]);
+});
+
+test("fetchQuote: full first, then lite merged over it; full again once fundamentals age out", async () => {
+  const calls: string[] = [];
+  let px = 100;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input), "http://localhost");
+    const lite = url.searchParams.get("fields") === "price";
+    calls.push(lite ? "lite" : "full");
+    const sym = requestedSymbols(input)[0];
+    px += 1;
+    const quote = lite
+      ? { symbol: sym, regularMarketPrice: px, postMarketPrice: null }
+      : {
+          symbol: sym,
+          regularMarketPrice: px,
+          postMarketPrice: 99,
+          sector: "Tech",
+          longName: "Full Co",
+        };
+    return Response.json({ quotes: { [sym]: quote } });
+  };
+  const realNow = Date.now;
+  let now = 1_000_000;
+  Date.now = () => now;
+  try {
+    const a = await fetchQuote("fq1");
+    assert.equal(a.sector, "Tech");
+    now += 60_000;
+    const b = await fetchQuote("FQ1");
+    assert.equal(b.regularMarketPrice, a.regularMarketPrice + 1, "lite price wins");
+    assert.equal(b.sector, "Tech", "fundamentals kept from the full quote");
+    assert.equal(b.postMarketPrice, null, "stale session value overwritten by lite null");
+    now += QUOTE_FUNDAMENTALS_MS;
+    await fetchQuote("fq1");
+    assert.deepEqual(calls, ["full", "lite", "full"]);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("fetchQuote: a lite failure surfaces as the query error, no silent stale price", async () => {
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input), "http://localhost");
+    if (url.searchParams.get("fields") === "price") {
+      return Response.json({ detail: "limited" }, { status: 429, headers: { "Retry-After": "1" } });
+    }
+    const sym = requestedSymbols(input)[0];
+    return Response.json({ quotes: { [sym]: { symbol: sym, regularMarketPrice: 1 } } });
+  };
+  await fetchQuote("fq2");
+  await assert.rejects(() => fetchQuote("fq2"));
 });

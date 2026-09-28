@@ -72,5 +72,5 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Invalid type" }, { status: 400 });
   }
 
-  return marketDataProxy(pythonUrl.slice(PYTHON_API.length), request.signal);
+  return marketDataProxy(pythonUrl.slice(PYTHON_API.length), request.signal, request);
 }

@@ -117,6 +117,9 @@ def report(rows: list[dict], hours: float) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows consoles default to cp1252, which has no "→" — the report died there.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--hours", type=float, default=6)
     ap.add_argument("--source", help="only this source (Yahoo, FRED, CBOE, …)")

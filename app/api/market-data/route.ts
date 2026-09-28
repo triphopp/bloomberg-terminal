@@ -1,4 +1,5 @@
 import { marketData as fallbackData } from "@/components/bloomberg/lib/marketData";
+import { etagJson } from "@/lib/etag";
 import { NextResponse } from "next/server";
 
 import { PYTHON_API } from "@/lib/constants";
@@ -16,15 +17,15 @@ async function fetchFromPython() {
   return res.json();
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   if (dataCache && Date.now() - dataCache.ts < CACHE_TTL) {
-    return NextResponse.json(dataCache.data);
+    return etagJson(request, dataCache.data);
   }
 
   try {
     const data = await fetchFromPython();
     dataCache = { data, ts: Date.now() };
-    return NextResponse.json(data);
+    return etagJson(request, data);
   } catch (err) {
     console.error("Python backend unavailable:", err);
     // Graceful fallback — app stays usable without the Python server

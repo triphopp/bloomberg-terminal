@@ -12,10 +12,10 @@ export const dynamic = "force-dynamic";
  * disconnect, and without this they would pile up until the socket timed out.
  */
 export async function GET(request: Request) {
-  // symbols / focus / mounted (priority tiers) pass through as sent.
+  // symbols / focus / mounted (priority tiers) and session pass through as sent.
   const { searchParams } = new URL(request.url);
   const qs = new URLSearchParams();
-  for (const k of ["symbols", "focus", "mounted"]) {
+  for (const k of ["symbols", "focus", "mounted", "session"]) {
     const v = searchParams.get(k);
     if (v) qs.set(k, v);
   }

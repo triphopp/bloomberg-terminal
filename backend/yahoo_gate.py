@@ -59,7 +59,7 @@ def install() -> bool:
         # 401 = Yahoo's "Invalid Crumb": yfinance fetches a new crumb and
         # retries on its own. Routine, not a failure.
         kind = None if code == 401 else uh.classify_status(code)
-        uh.record(src, kind, target=uh.target_of(url) if kind else None)
+        uh.record(src, kind, target=uh.target_of(url))
         return resp
 
     gated._yahoo_gated = True  # type: ignore[attr-defined]

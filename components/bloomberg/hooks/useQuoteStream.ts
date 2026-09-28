@@ -1,88 +1,47 @@
 "use client";
 
 import { useAtom } from "jotai";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isRealTimeEnabledAtom } from "../atoms";
+import {
+  type QuoteStreamClient,
+  type QuoteTick,
+  createQuoteStreamClient,
+} from "../lib/quote-stream-client";
+import { pollInterval, symbolKey } from "../lib/stream-cadence";
 
-export interface QuoteTick {
-  price: number;
-  change?: number | null;
-  change_pct?: number | null;
-  /** Exchange time of the trade, epoch ms (UTC). */
-  ts?: number;
+export type { QuoteTick };
+
+/** The page's one stream client (lib/quote-stream-client.ts), made on first use. */
+let client: QuoteStreamClient | null = null;
+
+function getClient(): QuoteStreamClient {
+  client ??= createQuoteStreamClient({
+    EventSource: EventSource,
+    fetch: (url, init) => fetch(url, init),
+    sessionId:
+      globalThis.crypto?.randomUUID?.() ??
+      `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`,
+  });
+  return client;
 }
 
-type Listener = { symbols: Set<string>; cb: (ticks: Record<string, QuoteTick>) => void };
-
-/**
- * ONE EventSource for the whole page, shared by every `useQuoteStream`.
- *
- * A page can hold several consumers at once — PORT's table, the MKT chart, a
- * floating chart window, stock-view's four history queries — and a browser
- * allows six HTTP/1.1 connections per origin. One stream each would starve the
- * ordinary fetches of connections. So listeners register here, the stream is
- * opened for the union of their symbols, and each tick batch is split back out
- * to whoever asked for those symbols.
- *
- * Membership changes are coalesced (one reopen per 250ms) so a view mounting
- * ten consumers in one render reopens the stream once, not ten times.
- */
-const listeners = new Set<Listener>();
-let es: EventSource | null = null;
-let openKey = "";
-let reopenTimer: ReturnType<typeof setTimeout> | null = null;
-
-function unionKey(): string {
-  const all = new Set<string>();
-  for (const l of listeners) for (const s of l.symbols) all.add(s);
-  return [...all].sort().join(",");
-}
-
-function sync() {
-  reopenTimer = null;
-  const key = unionKey();
-  if (key === openKey) return;
-  es?.close();
-  es = null;
-  openKey = key;
-  if (!key) return;
-  es = new EventSource(`/api/stream/quotes?symbols=${encodeURIComponent(key)}`);
-  es.onmessage = (e) => {
-    let ticks: Record<string, QuoteTick>;
-    try {
-      ticks = JSON.parse(e.data) as Record<string, QuoteTick>;
-    } catch {
-      return; // malformed frame — the next one is a second away
-    }
-    for (const l of listeners) {
-      let mine: Record<string, QuoteTick> | null = null;
-      for (const s of l.symbols) {
-        const t = ticks[s];
-        if (!t) continue;
-        mine ??= {};
-        mine[s] = t;
-      }
-      if (mine) l.cb(mine);
-    }
-  };
-}
-
-function scheduleSync() {
-  if (reopenTimer == null) reopenTimer = setTimeout(sync, 250);
-}
+const noopUnsubscribe = () => {};
 
 /**
  * Live quotes pushed from the backend's Yahoo stream (`/api/stream/quotes`).
  * `onTicks` gets at most one batch a second, holding only its own symbols that
- * traded since the last batch.
+ * traded since the last batch — plus, when a symbol is first added, the hub's
+ * last tick for it.
  *
  * This is the push side of the seam `useLiveQuery` describes: callers write
  * ticks into their React Query cache, and the REST poll keeps running
  * underneath as the source of truth. Stream down = the poll is all there is;
  * nothing on screen depends on the stream being up.
  *
- * Runs only while real-time is ON (same switch as the polling cadence) and the
- * tab is visible. EventSource reconnects on its own after a drop.
+ * All consumers share one EventSource per page; changing the set sends a diff
+ * instead of reopening (lib/quote-stream-client.ts). Runs only while real-time
+ * is ON (same switch as the polling cadence) and the tab is visible.
  *
  * @param symbols Yahoo symbols (AAPL, PTT.BK, BTC-USD). Order does not matter.
  */
@@ -109,15 +68,37 @@ export function useQuoteStream(
 
   useEffect(() => {
     if (!active || !isRealTime || !visible || !key || typeof EventSource === "undefined") return;
-    const listener: Listener = {
-      symbols: new Set(key.split(",")),
-      cb: (t) => handler.current(t),
-    };
-    listeners.add(listener);
-    scheduleSync();
-    return () => {
-      listeners.delete(listener);
-      scheduleSync();
-    };
+    return getClient().listen(key.split(","), (t) => handler.current(t));
   }, [key, active, isRealTime, visible]);
+}
+
+function subscribeStore(cb: () => void) {
+  return typeof EventSource === "undefined" ? noopUnsubscribe : getClient().subscribe(cb);
+}
+
+/**
+ * REST poll interval that backs off while the stream is doing the work.
+ *
+ * `openSymbols` are the ones whose market is trading, per the caller's own
+ * REST data (`openSymbolsOf` in lib/stream-cadence.ts); `null` = no data yet
+ * (not loaded, error, empty payload) → `base`, since unknown is not closed.
+ * None open → `QUIET_BACKOFF_MS` (bounded, so an opening market is noticed
+ * within 2 min). All of them holding a slot on a connected stream and ticked
+ * within `STREAM_TICK_FRESH_MS` → `STREAM_BACKOFF_MS`. Otherwise `base`: a
+ * symbol that is open but silent (Yahoo does not stream it, or it lost its
+ * slot) keeps the whole query at its old cadence, so nothing on screen gets
+ * staler than before. The slower poll still lands as truth for the fields
+ * ticks do not carry (volume, YTD, session flags).
+ */
+export function useStreamPollInterval(
+  openSymbols: readonly string[] | null,
+  base: number | false
+): number | false {
+  const key = openSymbols ? symbolKey(openSymbols) : null;
+  const cadence = useSyncExternalStore(
+    subscribeStore,
+    () => (key === null || typeof EventSource === "undefined" ? null : getClient().cadence(key)),
+    () => null
+  );
+  return pollInterval(base, cadence);
 }

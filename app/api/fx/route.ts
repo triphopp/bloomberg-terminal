@@ -1,3 +1,4 @@
+import { etagJson } from "@/lib/etag";
 import { NextResponse } from "next/server";
 
 import { PYTHON_API } from "@/lib/constants";
@@ -32,11 +33,11 @@ export async function GET(request: Request) {
       const err = await res.json().catch(() => ({}));
       return NextResponse.json(
         { error: (err as { detail?: string }).detail ?? `Backend error ${res.status}` },
-        { status: res.status },
+        { status: res.status }
       );
     }
     const data = await res.json();
-    return NextResponse.json(data);
+    return etagJson(request, data);
   } catch (err) {
     console.error(`[fx/${type}]:`, err);
     return NextResponse.json({ error: "Backend unavailable" }, { status: 503 });

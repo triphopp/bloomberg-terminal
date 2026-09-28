@@ -360,6 +360,10 @@ HTTP client over the running backend (`PYTHON_API_URL`, default :9317) — never
   ref-counted across clients, dropped on disconnect. Regular-session ticks only (`market_hours == 1`).
   .BK quotes are Yahoo-delayed (~15m) like everywhere else.
 - Proxy: `app/api/stream/quotes/route.ts` (forwards `symbols`/`focus`/`mounted`, passes `request.signal` so a closed tab closes the backend stream).
+- **Sessions (2026-09-28, `backend/stream_sessions.py`):** `&session=<8–64 [A-Za-z0-9-]>` makes the stream resumable; first frame `event: ready {session, resumed}`. `POST /api/stream/interest {session, symbols[], focus?[], mounted?[]}` → `{ok, symbols}` replaces the session's set by diff (acquire before release; new symbols get the hub's cached tick next frame); 404 = unknown/expired session → client reopens. Disconnected sessions are kept 30 s (reconnect resumes, `resumed: true` → client resends), then released. Proxy `app/api/stream/interest/route.ts`. `/api/stream/status` adds `sessions {sessions, attached, grace_s}`.
+- `event: coverage` carries `connected` (all Yahoo shards up) since 2026-09-28 — the frontend backs off REST polls only while it is true (`lib/stream-cadence.ts`).
+
+**Conditional GET (ETag/304, 2026-09-28):** `lib/etag.ts` (`etagJson` / `etagResponse`) tags 200s of the polled proxies — `market-data`, `volatility`, `fx`, `rates`, `alerts/events`, `ticker`, `crisis`, `macro`, `bonds/[section]`, `tail-risk/*`, and everything through `marketDataProxy` (`stock`, `watchlist/{quotes,sparklines,signals}`, `polymarket/stocks`). `Cache-Control: private, no-cache` → the browser revalidates with `If-None-Match` and an unchanged payload costs a bodiless 304. Client fetches of these must not use `cache: "no-store"`.
 - Consumers (one shared EventSource per page, `hooks/useQuoteStream.ts`): PORT positions (`live-patch.ts` `applyTicks`, price deltas) · every chart via `useStockHistory` (`chartkit/live-bars.ts` `applyTickToBars`: moves last candle, opens a new one past it) · chart header via `useStockQuote` · watchlist via `useWatchlistQuotes` · TICK DATA board: indices (`useMarketDataQuery`), FX (`useFxTicks`), volatility (market-view) — all through `lib/live-quotes.ts`.
 
 ### COT (`routers/cot.py`) — CFTC Commitments of Traders (2026-09-25)
@@ -639,7 +643,7 @@ try/except instead is what killed the scanner for three weeks —
 
 ## Quote Providers (`routers/providers.py`)
 Controls the live-quote registry (manual switch + auto-failover, capability-scoped).
-- `GET /api/providers` — `{active, providers: [{name, label, healthy, active, auto_failover, last_served}]}`
+- `GET /api/providers` — `{active, providers: [{name, label, healthy, active, auto_failover, last_served}]}` (UI reads it through `/api/heartbeat` since 2026-09-28)
 - `POST /api/providers/active` — body `{name}` — pin active provider (404 if unknown)
 - `POST /api/providers/auto-failover` — body `{enabled}` — toggle failover to next healthy
 
@@ -801,6 +805,8 @@ Router `backend/routers/slip_ocr.py` (adds `form.account_hint` from its `ACCOUNT
 ## Cloud sync (`routers/sync_router.py`)
 
 Two engines. Legacy snapshot merge (`sync/manager.py`, `SYNC_ENABLED`) or the **op log** (`sync/oplog.py`, `OPLOG_ENABLED=true`, 2026-09-27) — the op log switches the snapshot merge off.
+- `GET /api/changes` (`routers/changes.py`, 2026-09-28) — `{tables: {chart_drawings: <seq>}}` from `table_versions`, bumped by DB triggers on every write (`backend/change_feed.py`). Read through the heartbeat.
+- `GET /api/heartbeat` (Next-only, `app/api/heartbeat/route.ts`, 2026-09-28) — the header's background state in ONE browser poll (15s): `{dev, sync, providers, changes, errors}` = `/api/dev/status` (dev only, else `null`) + `/api/sync/status` + `/api/providers`, fetched in parallel over loopback; a failed part is `null` + `errors.<part>`, never a failed heartbeat. Read by `useHeartbeat` (`useSync`, `useProviders`, `BackendStatusBanner`). The three proxies stay for curl/diagnostics.
 - `GET /api/sync/status` — snapshot engine: `{enabled, device, sync_dir, reachable, last_pull, last_push, last_conflicts}`. Op log adds `{mode:"oplog", root, pending, ops, open_conflicts, peers:[{device, at, state: in_sync|catching_up|DIVERGED}], diverged, last_sync, last_error, last_result}` and maps `last_pull/last_push = last_sync`, `last_conflicts = open_conflicts` for the header chip.
 - `POST /api/sync/pull` · `POST /api/sync/push` — snapshot engine; with the op log both run one full round (`sync_once`).
 - `POST /api/sync/now` — op log only: flush → export → pull/apply → publish state. 409 when the op log is off.

@@ -1,7 +1,8 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
+import { HEARTBEAT_KEY, type Heartbeat, useHeartbeat } from "./useHeartbeat";
 
 /** Server-state keys whose rows come from SYNC_TABLES — refreshed after a pull. */
 const SYNCED_KEYS = ["openPositions", "trades", "accounts", "pins", "paper"];
@@ -35,11 +36,7 @@ export interface SyncConflict {
   detected_at: string;
 }
 
-async function fetchSyncStatus(): Promise<SyncStatus> {
-  const r = await fetch("/api/sync/status");
-  if (!r.ok) throw new Error("sync status fetch failed");
-  return r.json();
-}
+const selectSync = (h: Heartbeat) => (h.sync ?? null) as SyncStatus | null;
 
 function invalidateSynced(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({
@@ -49,22 +46,25 @@ function invalidateSynced(qc: ReturnType<typeof useQueryClient>) {
 
 /**
  * Cloud-sync status + manual pull/push for the header chip.
- * Polls status every 15s. A `last_pull` that moved on its own means the backend
- * worker merged a peer's push — the local rows changed underneath React Query,
- * so synced server state is invalidated exactly as if the user had hit PULL.
+ * Status rides the 15s heartbeat (`useHeartbeat`). A `last_pull` that moved on
+ * its own means the backend worker merged a peer's push — the local rows
+ * changed underneath React Query, so synced server state is invalidated
+ * exactly as if the user had hit PULL.
  */
 export function useSync() {
   const qc = useQueryClient();
 
-  const query = useQuery({
-    queryKey: ["sync-status"],
-    queryFn: fetchSyncStatus,
-    refetchInterval: 15_000,
-    staleTime: 10_000,
-  });
+  const query = useHeartbeat(selectSync);
+  // A heartbeat whose sync part failed keeps the last good status on screen
+  // (as the old per-endpoint query did on error) instead of hiding the chip.
+  const lastGood = useRef<SyncStatus | undefined>(undefined);
+  useEffect(() => {
+    if (query.data) lastGood.current = query.data;
+  }, [query.data]);
+  const status = query.data ?? lastGood.current;
 
   const seenPull = useRef<string | null | undefined>(undefined);
-  const lastPull = query.data?.last_pull;
+  const lastPull = status?.last_pull;
   useEffect(() => {
     if (lastPull === undefined) return;
     if (seenPull.current === undefined) {
@@ -84,7 +84,7 @@ export function useSync() {
       return r.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["sync-status"] });
+      qc.invalidateQueries({ queryKey: HEARTBEAT_KEY });
       invalidateSynced(qc);
     },
   });
@@ -95,11 +95,11 @@ export function useSync() {
       if (!r.ok) throw new Error("push failed");
       return r.json();
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["sync-status"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: HEARTBEAT_KEY }),
   });
 
   return {
-    status: query.data,
+    status,
     isLoading: query.isLoading,
     pull: pull.mutate,
     push: push.mutate,

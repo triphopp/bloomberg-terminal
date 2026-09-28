@@ -17,6 +17,7 @@ from config import (
 )
 from db import get_symbol_list, get_heatmap_groups
 from market_session import is_today_at, local_date_of
+from market_snapshots import get_raw_fast_info, v7_quotes
 
 router = APIRouter()
 
@@ -52,6 +53,12 @@ def fetch_etf_size(etf_symbol: str) -> float:
     cached = _etf_size_cache.get(etf_symbol)
     if cached is not None:
         return cached
+    q = v7_quotes([etf_symbol]).get(etf_symbol.upper())
+    aum = q and (q.get("netAssets") or q.get("marketCap"))
+    if aum and aum > 0:
+        size = round(aum / 1e9, 4)
+        _etf_size_cache.set(etf_symbol, size)
+        return size
     try:
         fi = market_data.get_fast_info(etf_symbol)
         mc = getattr(fi, "market_cap", None)
@@ -87,7 +94,66 @@ def compute_ytd(symbol: str, current_price: float) -> float:
     return round((current_price - start) / start * 100, 2)
 
 
+def _row_from_v7(cfg: dict, q: dict) -> dict | None:
+    """fetch_one's row from a batched v7 quote — the same Yahoo fields
+    ticker.info reads for price/change/session, without 3–5 calls per row."""
+    price = q.get("regularMarketPrice")
+    if not price:
+        return None
+    change = q.get("regularMarketChange")
+    if change is not None:
+        change = round(change, 2)
+        pct_change = round(q.get("regularMarketChangePercent") or 0, 4)
+    else:
+        prev = q.get("regularMarketPreviousClose") or price
+        change = round(price - prev, 2)
+        pct_change = round((change / prev) * 100, 4) if prev else 0.0
+    volume = q.get("regularMarketVolume") or q.get("averageDailyVolume3Month") or 0
+    etf_sym = INDEX_ETF_MAP.get(cfg["symbol"])
+    if etf_sym:
+        size = fetch_etf_size(etf_sym)
+    else:
+        mc = q.get("marketCap") or q.get("netAssets")
+        avg = q.get("averageDailyVolume3Month") or 0
+        size = round(mc / 1e9, 4) if mc and mc > 0 else (
+            round(avg * price / 1e9, 4) if avg > 0 else 1.0)
+    ytd = compute_ytd(cfg["symbol"], price)
+    tz_name = q.get("exchangeTimezoneName")
+    market_time = q.get("regularMarketTime")
+    return {
+        "id": cfg["id"],
+        "symbol": cfg["symbol"],
+        "num": cfg["num"],
+        "rmi": "□",
+        "value": round(price, 2),
+        "change": change,
+        "pctChange": pct_change,
+        "avat": round(volume / 1_000_000, 2),
+        "quoteDate": local_date_of(market_time, tz_name),
+        "isCurrentSession": is_today_at(market_time, tz_name),
+        "marketState": q.get("marketState"),
+        "time": datetime.now().strftime("%H:%M"),
+        "ytd": ytd,
+        "ytdCur": ytd,
+        "size": size,
+    }
+
+
 def fetch_one(cfg: dict) -> dict | None:
+    """Latest quote row for one symbol — batched v7 quote first (the caller
+    prefetches the whole list in one request), per-symbol yfinance fallback."""
+    q = v7_quotes([cfg["symbol"]]).get(cfg["symbol"].upper())
+    if q is not None:
+        try:
+            row = _row_from_v7(cfg, q)
+            if row is not None:
+                return row
+        except Exception as exc:  # noqa: BLE001 — fall through to the slow path
+            print(f"[v7-quote] {cfg['symbol']}: {exc}")
+    return _fetch_one_slow(cfg)
+
+
+def _fetch_one_slow(cfg: dict) -> dict | None:
     """Fetch latest quote for a single symbol.
 
     Uses ticker.info for accurate change data (fast_info.previous_close
@@ -162,6 +228,14 @@ def fetch_one(cfg: dict) -> dict | None:
         return None
 
 
+def _prefetch(cfgs: list[dict]) -> None:
+    """One batched quote request for a whole section (plus the ETFs that size
+    its index tiles) before the per-row workers read from the cache."""
+    syms = [c["symbol"] for c in cfgs]
+    syms += [INDEX_ETF_MAP[s] for s in syms if s in INDEX_ETF_MAP]
+    v7_quotes(syms)
+
+
 def build_market_data() -> dict:
     """Fetch all indices concurrently and group by region."""
     indices = get_symbol_list("indices")
@@ -172,6 +246,7 @@ def build_market_data() -> dict:
             "dataSource": "yfinance",
         }
     regions: dict[str, list] = {"americas": [], "emea": [], "asiaPacific": []}
+    _prefetch(indices)
 
     with ThreadPoolExecutor(max_workers=10) as pool:
         future_to_cfg = {pool.submit(fetch_one, cfg): cfg for cfg in indices}
@@ -209,6 +284,7 @@ def build_volatility_data() -> dict:
         return {"items": [], "lastUpdated": datetime.utcnow().isoformat() + "Z"}
 
     items: list[dict] = []
+    _prefetch(defs)
     with ThreadPoolExecutor(max_workers=10) as pool:
         future_to_cfg = {pool.submit(fetch_one, cfg): cfg for cfg in defs}
         for future in as_completed(future_to_cfg):
@@ -231,11 +307,11 @@ def build_volatility_data() -> dict:
 def fetch_heatmap_item(cfg: dict) -> dict | None:
     """Fetch a single quote for a heatmap tile (sectors, commodities, bonds, indicators)."""
     try:
-        ticker = market_data.get_ticker(cfg["symbol"])
-        fi = ticker.fast_info
+        # Shared loader: batched v7 row first, fast_info only as the fallback.
+        fi = get_raw_fast_info(cfg["symbol"])
 
         price = fi.last_price
-        prev_close = fi.previous_close
+        prev_close = fi.regular_market_previous_close or fi.previous_close
 
         if price is None or price == 0:
             return None
@@ -459,6 +535,7 @@ def get_heatmap(group: str = Query("sectors")):
     def _build() -> dict:
         configs = get_symbol_list(f"heatmap_{group}")
         tiles: list[dict] = []
+        _prefetch(configs)
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             future_to_cfg = {pool.submit(fetch_heatmap_item, cfg): cfg for cfg in configs}

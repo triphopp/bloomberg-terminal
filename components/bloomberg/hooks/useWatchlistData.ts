@@ -14,7 +14,8 @@ import { useAtomValue } from "jotai";
 import { useCallback, useMemo } from "react";
 import { isRealTimeEnabledAtom } from "../atoms";
 import { patchQuote } from "../lib/live-quotes";
-import { type QuoteTick, useQuoteStream } from "./useQuoteStream";
+import { isOpenMarketState } from "../lib/stream-cadence";
+import { type QuoteTick, useQuoteStream, useStreamPollInterval } from "./useQuoteStream";
 
 export function useWatchlistQuotes(symbols: string[], enabled = true) {
   const live = useAtomValue(isRealTimeEnabledAtom);
@@ -42,7 +43,14 @@ export function useWatchlistQuotes(symbols: string[], enabled = true) {
     }),
     [unique]
   );
-  const results = useMarketQueryResults(options, enabled ? (live ? 60_000 : 300_000) : false);
+  // Symbols that should be ticking, from the cached quotes: open session, or
+  // not loaded yet (conservative). All ticking on the stream → poll backs off.
+  const openSymbols = unique.filter((s) => {
+    const q = client.getQueryData<StockQuote>(quoteQueryOptions(s).queryKey);
+    return !q || q.marketState == null || isOpenMarketState(q.marketState);
+  });
+  const pollMs = useStreamPollInterval(openSymbols, enabled ? (live ? 60_000 : 300_000) : false);
+  const results = useMarketQueryResults(options, pollMs);
   const combined = useMemo(() => combine(results), [combine, results]);
 
   // Live LAST/CHG between polls — one tick moves both, so they never disagree.

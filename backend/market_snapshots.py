@@ -6,6 +6,8 @@ is never silently substituted. Consumers must not mutate cached DataFrames.
 """
 from datetime import datetime, timezone
 from typing import Any
+import threading
+import time
 from types import SimpleNamespace
 import math
 from numbers import Real
@@ -24,19 +26,143 @@ def _safe_float(val: Any):
 
 
 
-def get_raw_info(symbol: str):
+def get_raw_info(symbol: str, ttl: float = 60):
+    """ttl is how old an answer this caller accepts — one shared cache entry,
+    so a fundamentals reader (long ttl) reuses any fresh fetch."""
     symbol = symbol.strip().upper()
     def load():
         info = market_data.get_ticker(symbol).info
         if not info:
             raise HTTPException(502, f"Quote details unavailable for {symbol}", headers={"Retry-After": "5"})
         return info
-    return market_requests.get("yfinance", ("info", symbol), load, ttl=60)
+    return market_requests.get("yfinance", ("info", symbol), load, ttl=ttl)
+
+
+# ── Batched Yahoo quote (/v7/finance/quote) ─────────────────────────────────
+# One request answers up to 50 symbols. yfinance's fast_info costs 3–5
+# requests PER symbol (chart for price, chart metadata for timezone, and
+# fundamentals-timeseries for `shares`/`market_cap` — even on FX pairs and VIX,
+# where there are no shares). At ~150 symbols polled every minute that was
+# ~150 Yahoo calls/min (logs/upstream.jsonl, 2026-09-28). Every price field the
+# app reads from fast_info is in the v7 payload, so fast_info is the fallback.
+_V7_URL = "https://query1.finance.yahoo.com/v7/finance/quote"
+_V7_CHUNK = 50
+_V7_TTL = 30.0
+_V7_MISS_TTL = 300.0  # Yahoo answered without this symbol — don't re-ask every poll
+_V7_WAIT_S = 12.0     # longest a caller waits on another caller's batch
+_v7_cache: dict[str, tuple[float, dict | None]] = {}  # symbol → (expires_at, row | None)
+_v7_inflight: dict[str, threading.Event] = {}
+_v7_lock = threading.Lock()  # guards the two dicts only — never held across I/O
+
+
+def _v7_fetch(chunk: list[str]) -> list[dict]:
+    """The one network call — yfinance's session carries the cookie/crumb and
+    yahoo_gate records it in the upstream log. Tests stub this."""
+    from yfinance.data import YfData
+    raw = YfData().get_raw_json(
+        _V7_URL, params={"symbols": ",".join(chunk), "formatted": "false"}, timeout=10)
+    return (raw.get("quoteResponse") or {}).get("result") or []
+
+
+def _v7_load(chunk: list[str]) -> None:
+    """Fetch one chunk and publish it. A failed batch is a short (normal-TTL)
+    miss: callers fall back to fast_info now, the batch is retried in 30 s —
+    not once per symbol per request while Yahoo is down."""
+    got: dict[str, dict] = {}
+    ok = True
+    try:
+        for q in _v7_fetch(chunk):
+            sym = str(q.get("symbol") or "").upper()
+            if sym and q.get("regularMarketPrice") is not None:
+                got[sym] = q
+    except Exception as exc:  # noqa: BLE001 — callers fall back per symbol
+        ok = False
+        print(f"[v7-quote] batch of {len(chunk)} failed: {exc}")
+    now = time.monotonic()
+    with _v7_lock:
+        for s in chunk:
+            row = got.get(s)
+            ttl = _V7_TTL if (row is not None or not ok) else _V7_MISS_TTL
+            _v7_cache[s] = (now + ttl, row)
+            ev = _v7_inflight.pop(s, None)
+            if ev is not None:
+                ev.set()
+        if len(_v7_cache) > 5000:
+            for k in [k for k, (exp, _) in _v7_cache.items() if exp < now]:
+                _v7_cache.pop(k, None)
+
+
+def v7_quotes(symbols) -> dict[str, dict]:
+    """symbol → raw v7 quote dict, fetched in batches of 50 and cached ~30 s.
+
+    Concurrent callers share work: a symbol already being fetched by another
+    thread is waited on, not fetched again, and no lock is held during I/O.
+    Symbols Yahoo does not answer are absent from the result (caller falls back)."""
+    syms = list(dict.fromkeys(s.strip().upper() for s in symbols if s and s.strip()))
+    if not syms:
+        return {}
+    mine: list[str] = []
+    waits: list[threading.Event] = []
+    with _v7_lock:
+        now = time.monotonic()
+        for s in syms:
+            hit = _v7_cache.get(s)
+            if hit is not None and hit[0] > now:
+                continue
+            ev = _v7_inflight.get(s)
+            if ev is not None:
+                waits.append(ev)
+            else:
+                _v7_inflight[s] = threading.Event()
+                mine.append(s)
+    try:
+        for start in range(0, len(mine), _V7_CHUNK):
+            _v7_load(mine[start:start + _V7_CHUNK])
+    finally:
+        # Never strand a waiter, whatever happened above.
+        with _v7_lock:
+            for s in mine:
+                ev = _v7_inflight.pop(s, None)
+                if ev is not None:
+                    ev.set()
+    deadline = time.monotonic() + _V7_WAIT_S
+    for ev in waits:
+        ev.wait(max(0.0, deadline - time.monotonic()))
+    with _v7_lock:
+        out: dict[str, dict] = {}
+        for s in syms:
+            hit = _v7_cache.get(s)
+            if hit is not None and hit[1] is not None:
+                out[s] = hit[1]
+        return out
+
+
+def _fast_info_from_v7(q: dict) -> SimpleNamespace:
+    """The fast_info fields fast_info_future exposes, from one v7 row."""
+    prev = q.get("regularMarketPreviousClose")
+    return SimpleNamespace(
+        last_price=q.get("regularMarketPrice"),
+        previous_close=prev,
+        regular_market_previous_close=prev,
+        timezone=q.get("exchangeTimezoneName"),
+        exchange=q.get("exchange"),
+        regular_market_volume=q.get("regularMarketVolume"),
+        three_month_average_volume=q.get("averageDailyVolume3Month"),
+        # ETFs carry AUM as netAssets and no marketCap.
+        market_cap=q.get("marketCap") or q.get("netAssets"),
+        year_high=q.get("fiftyTwoWeekHigh"),
+        year_low=q.get("fiftyTwoWeekLow"),
+        open=q.get("regularMarketOpen"),
+        shares=q.get("sharesOutstanding"),
+    )
 
 
 def fast_info_future(symbol: str):
     symbol = symbol.strip().upper()
     def load():
+        q = v7_quotes([symbol]).get(symbol)
+        if q is not None:
+            return _fast_info_from_v7(q)
         fi = market_data.get_ticker(symbol).fast_info
         # Materialize lazy fields INSIDE the bounded provider worker.
         fields = ("last_price", "previous_close", "regular_market_previous_close",
@@ -69,7 +195,39 @@ class _FastInfoFallback:
         return getattr(self.value, name, None)
 
 
-def _load_quote(symbol: str):
+# Session fields: the ones a 30-minute-old `info` would get wrong.
+_SESSION_PREFIXES = ("regularMarket", "preMarket", "postMarket")
+_SESSION_KEYS = frozenset({"previousClose", "currentPrice", "open", "dayLow", "dayHigh",
+                           "volume", "bid", "ask", "bidSize", "askSize", "marketState"})
+FUNDAMENTALS_TTL = 1800
+
+
+def _quote_info(symbol: str, fundamentals: bool = True) -> dict:
+    """`info`-shaped dict for the rich quote at a fraction of the calls.
+
+    `ticker.info` = quoteSummary (fundamentals) + v7 quote (price/session), two
+    requests per symbol. Price and session come from the batched v7 row (30 s);
+    fundamentals — margins, debt, sector — move quarterly, so the quoteSummary
+    half is reused for 30 min. Its session fields are dropped, never shown: a
+    stale previousClose would print yesterday's move as today's. Fundamentals
+    failing (even 429) leaves a price-only quote rather than no quote.
+    No v7 row → the plain 60 s `info`, exactly as before.
+    `fundamentals=False` (lite quote): the v7 row alone."""
+    row = v7_quotes([symbol]).get(symbol)
+    if row is None:
+        return get_raw_info(symbol)
+    if not fundamentals:
+        return dict(row)
+    try:
+        slow = get_raw_info(symbol, ttl=FUNDAMENTALS_TTL)
+    except Exception:  # noqa: BLE001 — incl. 429: the price is in hand, serve it
+        slow = {}
+    base = {k: v for k, v in slow.items()
+            if k not in _SESSION_KEYS and not k.startswith(_SESSION_PREFIXES)}
+    return {**base, **row}
+
+
+def _load_quote(symbol: str, lite: bool = False):
     try:
 
         # ── Prefer ticker.info for accurate price & change data ──────────
@@ -78,7 +236,7 @@ def _load_quote(symbol: str):
         # Yahoo's own computed change values which match external sources.
         info: dict = {}
         try:
-            info = get_raw_info(symbol)
+            info = _quote_info(symbol, fundamentals=not lite)
         except HTTPException as exc:
             if exc.status_code == 429:
                 raise
@@ -184,6 +342,11 @@ def _load_quote(symbol: str):
         data = {k: None if isinstance(v, Real) and not math.isfinite(v) else v for k, v in data.items()}
         data["source"] = "yfinance"
         data["fetchedAt"] = datetime.now(timezone.utc).isoformat()
+        if lite:
+            # Every LITE key present (None included): the client merges this
+            # over its cached full quote, so a pre/post price that went stale
+            # must arrive as null, not be missing and keep the old value.
+            return {k: data.get(k) for k in LITE_QUOTE_KEYS}
         return data
 
     except HTTPException:
@@ -191,6 +354,29 @@ def _load_quote(symbol: str):
     except Exception as exc:
         print(f"[quote] {symbol}: {exc}")
         raise as_http_error(exc) from exc
+
+
+# The rich quote's fields that move within a session — what a poll needs.
+# Everything else (names, margins, debt, sector…) comes with the full quote,
+# which clients refresh on a slow clock (lib/market-data-client.ts).
+LITE_QUOTE_KEYS = (
+    "symbol", "regularMarketPrice", "regularMarketChange", "regularMarketChangePercent",
+    "regularMarketTime", "quoteDate", "isCurrentSession", "exchangeTimezone",
+    "regularMarketVolume", "regularMarketOpen", "regularMarketPreviousClose",
+    "marketState", "marketCap", "trailingPE", "forwardPE", "priceToBook", "dividendYield",
+    "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "averageDailyVolume3Month",
+    "preMarketPrice", "preMarketChange", "preMarketChangePercent",
+    "postMarketPrice", "postMarketChange", "postMarketChangePercent",
+    "source", "fetchedAt",
+)
+
+
+def lite_quote_future(symbol: str):
+    """Price/session subset of the rich quote from the batched v7 row only —
+    no quoteSummary call, about half the payload."""
+    symbol = symbol.strip().upper()
+    return market_requests.submit("quote-build", ("quote-lite", symbol),
+                                  lambda: _load_quote(symbol, lite=True), ttl=60)
 
 
 def quote_future(symbol: str):

@@ -1,8 +1,9 @@
+import { etagJson } from "@/lib/etag";
 import { NextResponse } from "next/server";
 
 import { PYTHON_API } from "@/lib/constants";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const res = await fetch(`${PYTHON_API}/api/rates/curve`, {
       cache: "no-store",
@@ -16,7 +17,7 @@ export async function GET() {
         { status: res.status }
       );
     }
-    return NextResponse.json(await res.json());
+    return etagJson(request, await res.json());
   } catch (err) {
     console.error("[rates/curve]:", err);
     return NextResponse.json({ error: "Backend unavailable" }, { status: 503 });

@@ -7,7 +7,8 @@ import { useCallback, useMemo } from "react";
 import { isRealTimeEnabledAtom } from "../atoms";
 import { patchRowGroups } from "../lib/live-quotes";
 import { marketData as staticData } from "../lib/marketData";
-import { type QuoteTick, useQuoteStream } from "./useQuoteStream";
+import { openSymbolsOf } from "../lib/stream-cadence";
+import { type QuoteTick, useQuoteStream, useStreamPollInterval } from "./useQuoteStream";
 
 export const MARKET_DATA_KEY = "marketData";
 
@@ -19,8 +20,19 @@ async function fetchMarketData() {
 
 const REGIONS = ["americas", "emea", "asiaPacific"] as const;
 
+type Row = { symbol?: string; marketState?: string | null };
+
 export function useMarketDataQuery() {
   const isRealTime = useAtomValue(isRealTimeEnabledAtom);
+  const qc = useQueryClient();
+  // Rows whose market is open, from the last payload — the poll slows to the
+  // stream's pace only while every one of them is ticking on the stream.
+  const cached = qc.getQueryData<Record<string, unknown>>([MARKET_DATA_KEY]);
+  const openSymbols = useMemo(() => {
+    const rows = REGIONS.flatMap((r) => (cached?.[r] ?? []) as Row[]);
+    return rows.length ? openSymbolsOf(rows) : null; // no rows yet = unknown, not closed
+  }, [cached]);
+  const pollMs = useStreamPollInterval(openSymbols, isRealTime ? 60_000 : 300_000);
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: [MARKET_DATA_KEY],
     queryFn: fetchMarketData,
@@ -29,13 +41,12 @@ export function useMarketDataQuery() {
     // remount them, which read as a random 20s–3min lag on the TICK DATA board.
     // Same cadence as every other live panel now; the stream below fills in
     // between polls.
-    refetchInterval: isRealTime ? 60_000 : 300_000,
+    refetchInterval: pollMs,
     refetchOnWindowFocus: true,
     gcTime: 5 * 60_000,
     retry: QUERY_RETRY_ONCE,
   });
 
-  const qc = useQueryClient();
   const symbols = useMemo(
     () =>
       REGIONS.flatMap((r) =>

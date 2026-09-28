@@ -348,6 +348,13 @@ def coverage(symbols: list[str]) -> tuple[list[str], list[str]]:
     return [s for s in symbols if s in live], [s for s in symbols if s in seen and s not in live]
 
 
+def connected() -> bool:
+    """Every open shard holds a live Yahoo socket. False with no shards: the
+    stream is not delivering anything, whatever the allocator says."""
+    shards = list(_shards)
+    return bool(shards) and all(sh.ws is not None for sh in shards)
+
+
 def snapshot(symbols: list[str], since: int = 0) -> tuple[int, dict[str, dict[str, Any]]]:
     """Ticks for `symbols` newer than version `since`, and the current version."""
     with _lock:

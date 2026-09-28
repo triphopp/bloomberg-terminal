@@ -252,10 +252,11 @@ class YFinanceSource(MarketDataSource):
 
     def download_quotes(self, symbols: list[str]) -> BatchQuoteResult:
         """Share fast-info leaf work with rich quotes, portfolio and other lists."""
-        from market_snapshots import fast_info_future
+        from market_snapshots import fast_info_future, v7_quotes
         from market_requests import collect
         out: dict[str, QuoteSnapshot] = {}
         unique = list(dict.fromkeys(symbols))
+        v7_quotes(unique)  # one batched request warms every per-symbol load below
         for start in range(0, len(unique), 60):
             batch = unique[start:start + 60]
             values, _ = collect({s: fast_info_future(s) for s in batch})

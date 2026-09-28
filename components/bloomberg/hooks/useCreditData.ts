@@ -45,7 +45,7 @@ export type CreditData = {
 // ── Fetch ─────────────────────────────────────────────────────────────────────
 
 async function fetchCredit(): Promise<CreditData> {
-  const res = await fetch("/api/crisis", { cache: "no-store" });
+  const res = await fetch("/api/crisis", { cache: "no-cache" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`);
