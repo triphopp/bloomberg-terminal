@@ -41,11 +41,7 @@ export function IntervalPicker({
   const { open, setOpen, toggle, pos, wrapRef, triggerRef } = useAnchoredPanel();
 
   return (
-    <div
-      className="shrink-0 ml-2 pl-2 flex items-center gap-1"
-      style={{ borderLeft: `1px solid ${colors.border}` }}
-      ref={wrapRef}
-    >
+    <div className="shrink-0 ml-1.5 flex items-center gap-1" ref={wrapRef}>
       <span className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
         TF
       </span>
@@ -70,6 +66,7 @@ export function IntervalPicker({
           style={{
             left: pos.left,
             top: pos.top,
+            bottom: pos.bottom,
             background: colors.surface,
             borderColor: colors.border,
           }}
@@ -122,38 +119,20 @@ export interface TimeframeRowProps {
   trailing?: React.ReactNode;
 }
 
-export function TimeframeRow({
+/**
+ * Period buttons + interval picker with no row of their own, so a host can seat
+ * them in any bar — the MKT chart puts them in its footer, under the date axis.
+ */
+export function TimeframeControls({
   colors,
   timePeriod,
   barInterval,
   chartType = "candle",
   onPeriodChange,
   onIntervalChange,
-  middle,
-  trailing,
-}: TimeframeRowProps) {
-  const rowRef = useRef<HTMLDivElement>(null);
-  const [stacked, setStacked] = useState(false);
-  // Only whether a middle slot exists matters here, not its element identity
-  // (a new node every render would re-attach the observer each time).
-  const hasMiddle = middle != null && middle !== false;
-
-  useEffect(() => {
-    if (!hasMiddle || !rowRef.current) return;
-    const observer = new ResizeObserver(([entry]) => {
-      setStacked(entry.contentRect.width < 950);
-    });
-    observer.observe(rowRef.current);
-    return () => observer.disconnect();
-  }, [hasMiddle]);
-
+}: Omit<TimeframeRowProps, "middle" | "trailing">) {
   return (
-    // Hide horizontal scrollbars: a classic scrollbar would waste chart height.
-    <div
-      ref={rowRef}
-      className={`flex items-center gap-0 px-1 py-0.5 shrink-0 ${middle ? "min-w-0 flex-wrap" : "flex-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"}`}
-      style={{ background: "#050505", borderBottom: `1px solid ${colors.border}` }}
-    >
+    <div className="flex items-center shrink-0">
       {TIME_PERIODS.map((p) => {
         const active = p === timePeriod;
         const validRanges = chartType === "candle" ? INTERVAL_VALID_RANGES[barInterval] : null;
@@ -187,6 +166,50 @@ export function TimeframeRow({
           onChange={onIntervalChange}
         />
       )}
+    </div>
+  );
+}
+
+export function TimeframeRow({
+  colors,
+  timePeriod,
+  barInterval,
+  chartType = "candle",
+  onPeriodChange,
+  onIntervalChange,
+  middle,
+  trailing,
+}: TimeframeRowProps) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [stacked, setStacked] = useState(false);
+  // Only whether a middle slot exists matters here, not its element identity
+  // (a new node every render would re-attach the observer each time).
+  const hasMiddle = middle != null && middle !== false;
+
+  useEffect(() => {
+    if (!hasMiddle || !rowRef.current) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setStacked(entry.contentRect.width < 950);
+    });
+    observer.observe(rowRef.current);
+    return () => observer.disconnect();
+  }, [hasMiddle]);
+
+  return (
+    // Hide horizontal scrollbars: a classic scrollbar would waste chart height.
+    <div
+      ref={rowRef}
+      className={`flex items-center gap-0 px-1 py-0.5 shrink-0 ${middle ? "min-w-0 flex-wrap" : "flex-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"}`}
+      style={{ background: "#050505", borderBottom: `1px solid ${colors.border}` }}
+    >
+      <TimeframeControls
+        colors={colors}
+        timePeriod={timePeriod}
+        barInterval={barInterval}
+        chartType={chartType}
+        onPeriodChange={onPeriodChange}
+        onIntervalChange={onIntervalChange}
+      />
       {middle && (
         <div
           className={`${stacked ? "order-last basis-full mt-0.5 pt-0.5 border-t" : "ml-2 pl-2 flex-1 border-l"} min-w-0 flex items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}

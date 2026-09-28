@@ -13,6 +13,11 @@
  *
  * Endpoints on bars that are not loaded on the current timeframe hide the line
  * rather than guessing where it would go.
+ *
+ * Each line is its own object: clicking it selects it (thicker, hollow handles,
+ * a × box at its middle), and the × — or Delete — removes that line alone. The
+ * overlay records where it painted each line into a `TrendHitMap` so a click can
+ * be matched to a line in the same pane coordinates it was drawn in.
  */
 
 import { fmtPriceStd } from "../../lib/number-format";
@@ -34,6 +39,52 @@ export interface StoredTrendLine {
 
 export const TREND_LINE_COLOR = "#4fc3f7";
 
+/** Where the overlay last painted each line — rewritten on every draw. */
+export interface TrendHitMap {
+  segments: { id: string; ax: number; ay: number; bx: number; by: number }[];
+  deleteBox: { id: string; x: number; y: number; size: number } | null;
+}
+
+export function createTrendHitMap(): TrendHitMap {
+  return { segments: [], deleteBox: null };
+}
+
+/** Pixels from the line that still count as clicking it. */
+const HIT_TOLERANCE = 8;
+const DELETE_BOX = 13;
+
+function distToSegment(px: number, py: number, s: TrendHitMap["segments"][number]): number {
+  const dx = s.bx - s.ax;
+  const dy = s.by - s.ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - s.ax) * dx + (py - s.ay) * dy) / len2));
+  return Math.hypot(px - (s.ax + t * dx), py - (s.ay + t * dy));
+}
+
+/**
+ * What a click at `p` (price-pane coordinates) landed on: the selected line's
+ * × box, else the nearest line within tolerance, else nothing.
+ */
+export function hitTestTrendLines(
+  hits: TrendHitMap,
+  p: { x: number; y: number }
+): { id: string; onDelete: boolean } | null {
+  const box = hits.deleteBox;
+  if (
+    box &&
+    Math.abs(p.x - box.x) <= box.size / 2 + 2 &&
+    Math.abs(p.y - box.y) <= box.size / 2 + 2
+  ) {
+    return { id: box.id, onDelete: true };
+  }
+  let best: { id: string; d: number } | null = null;
+  for (const seg of hits.segments) {
+    const d = distToSegment(p.x, p.y, seg);
+    if (d <= HIT_TOLERANCE && (!best || d < best.d)) best = { id: seg.id, d };
+  }
+  return best ? { id: best.id, onDelete: false } : null;
+}
+
 function indexOfTime(data: OhlcvBar[], t: string | number): number {
   const want = String(t);
   for (let i = data.length - 1; i >= 0; i--) {
@@ -48,7 +99,9 @@ function indexOfTime(data: OhlcvBar[], t: string | number): number {
  */
 export function createTrendLineOverlay(
   lines: StoredTrendLine[],
-  pending: TrendPoint | null
+  pending: TrendPoint | null,
+  selectedId: string | null = null,
+  hits: TrendHitMap | null = null
 ): CanvasOverlay {
   return {
     id: "trend-lines",
@@ -57,6 +110,10 @@ export function createTrendLineOverlay(
     width: 0,
 
     draw(ctx, chart, mainSeries, data, isDark, rect) {
+      if (hits) {
+        hits.segments = [];
+        hits.deleteBox = null;
+      }
       if (data.length === 0) return;
       const timeScale = chart.timeScale();
       const toXY = (p: TrendPoint): [number, number] | null => {
@@ -73,18 +130,48 @@ export function createTrendLineOverlay(
         const pa = toXY(line.a);
         const pb = toXY(line.b);
         if (!pa || !pb) continue;
+        const selected = line.id === selectedId;
+        hits?.segments.push({ id: line.id, ax: pa[0], ay: pa[1], bx: pb[0], by: pb[1] });
         ctx.save();
         ctx.strokeStyle = line.color;
         ctx.fillStyle = line.color;
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = selected ? 2.5 : 1.5;
         ctx.beginPath();
         ctx.moveTo(pa[0], pa[1]);
         ctx.lineTo(pb[0], pb[1]);
         ctx.stroke();
         for (const [x, y] of [pa, pb]) {
           ctx.beginPath();
-          ctx.arc(x, y, 2.5, 0, Math.PI * 2);
-          ctx.fill();
+          if (selected) {
+            // Hollow handles mark the selected line.
+            ctx.arc(x, y, 4, 0, Math.PI * 2);
+            ctx.fillStyle = bg;
+            ctx.fill();
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            ctx.fillStyle = line.color;
+          } else {
+            ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        if (selected) {
+          // × box just above the line's midpoint: click it (or press Delete).
+          const size = DELETE_BOX;
+          const x = Math.max(size, Math.min(rect.width - size, (pa[0] + pb[0]) / 2));
+          const y = Math.max(size, (pa[1] + pb[1]) / 2 - size);
+          ctx.fillStyle = "#c62828";
+          ctx.fillRect(x - size / 2, y - size / 2, size, size);
+          ctx.strokeStyle = "#fff";
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(x - 3, y - 3);
+          ctx.lineTo(x + 3, y + 3);
+          ctx.moveTo(x + 3, y - 3);
+          ctx.lineTo(x - 3, y + 3);
+          ctx.stroke();
+          if (hits) hits.deleteBox = { id: line.id, x, y, size };
+          ctx.strokeStyle = line.color;
         }
 
         // Readout at the right-hand end: a flat line reads as a level, a

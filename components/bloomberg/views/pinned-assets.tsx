@@ -23,7 +23,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AlertBellCell } from "../alerts/AlertBellCell";
 import { SymbolContextMenu } from "../alerts/SymbolContextMenu";
 import { WatchlistAlertsBadge } from "../alerts/WatchlistAlertsBadge";
@@ -546,6 +546,31 @@ function MiniSparkline({ prices, isUp }: { prices: number[]; isUp: boolean }) {
   );
 }
 
+/**
+ * Pins a manager panel under its trigger with `position: fixed`, clamped to the
+ * viewport. As an `absolute` child it was clipped by the watchlist column's
+ * `overflow: hidden` and, right-aligned to a button near the left edge, opened
+ * off-screen — the name field, colours and CREATE were cut off.
+ */
+function useViewportAnchoredPanel(width: number) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const anchor = ref.current?.parentElement?.getBoundingClientRect();
+    if (!anchor) return;
+    const maxLeft = window.innerWidth - width - 4;
+    setPos({ left: Math.max(4, Math.min(anchor.left, maxLeft)), top: anchor.bottom + 2 });
+  }, [width]);
+  return {
+    ref,
+    /** Positioned and visible — only now can the panel's input take focus. */
+    ready: pos != null,
+    style: pos
+      ? { position: "fixed" as const, left: pos.left, top: pos.top, width }
+      : { position: "fixed" as const, visibility: "hidden" as const, width },
+  };
+}
+
 // ── GroupManagerPanel ─────────────────────────────────────────────────────────
 
 /** One row of the group list: shows the group, switches to an inline editor on
@@ -677,7 +702,10 @@ function GroupManagerPanel({
   const [name, setName] = useState("");
   const [color, setColor] = useState(PALETTE[0].hex);
   const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => inputRef.current?.focus(), []);
+  const panel = useViewportAnchoredPanel(224);
+  useEffect(() => {
+    if (panel.ready) inputRef.current?.focus();
+  }, [panel.ready]);
 
   const counts = useMemo(() => {
     const m: Record<string, number> = {};
@@ -694,8 +722,9 @@ function GroupManagerPanel({
 
   return (
     <div
-      className="absolute right-0 top-6 z-20 w-56 border p-2 text-xs space-y-1.5"
-      style={{ background: colors.surface, borderColor: colors.border }}
+      ref={panel.ref}
+      className="z-50 border p-2 text-xs space-y-1.5"
+      style={{ ...panel.style, background: colors.surface, borderColor: colors.border }}
     >
       <div className="flex items-center justify-between">
         <span className="font-bold tracking-widest text-[9px]" style={{ color: colors.accent }}>
@@ -772,7 +801,10 @@ function TagManagerPanel({
   const [name, setName] = useState("");
   const [color, setColor] = useState(PALETTE[7].hex);
   const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => inputRef.current?.focus(), []);
+  const panel = useViewportAnchoredPanel(224);
+  useEffect(() => {
+    if (panel.ready) inputRef.current?.focus();
+  }, [panel.ready]);
 
   const submit = () => {
     const n = name.trim();
@@ -783,8 +815,9 @@ function TagManagerPanel({
 
   return (
     <div
-      className="absolute right-0 top-6 z-20 w-56 border p-2 text-xs space-y-1.5"
-      style={{ background: colors.surface, borderColor: colors.border }}
+      ref={panel.ref}
+      className="z-50 border p-2 text-xs space-y-1.5"
+      style={{ ...panel.style, background: colors.surface, borderColor: colors.border }}
     >
       <div className="flex items-center justify-between">
         <span className="font-bold tracking-widest text-[9px]" style={{ color: colors.accent }}>

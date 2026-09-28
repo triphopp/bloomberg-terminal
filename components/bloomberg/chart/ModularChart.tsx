@@ -83,6 +83,11 @@ export interface ChartClickContext {
   events?: ChartEventMarker[];
   /** Price under the cursor — only when the click landed on the price pane. */
   price?: number;
+  /**
+   * Click position in the price pane's own coordinates — the frame overlays
+   * draw in, so drawings can hit-test against what they painted. Price pane only.
+   */
+  panePoint?: { x: number; y: number };
   /** Shift held during the click (trend line: snap horizontal). */
   shiftKey?: boolean;
 }
@@ -829,6 +834,7 @@ export function ModularChart({
         point,
         events,
         price: price ?? undefined,
+        panePoint: param.point && (param.paneIndex ?? 0) === 0 ? param.point : undefined,
         shiftKey: param.sourceEvent?.shiftKey ?? false,
       });
     };

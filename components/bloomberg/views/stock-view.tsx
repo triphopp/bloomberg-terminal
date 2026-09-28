@@ -4398,8 +4398,6 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
     trendArmed,
     trendPending,
     toggleTrendLine,
-    removeLastTrendLine,
-    clearTrendLines,
     drawingArmed,
     handleChartClick,
     toggleVolumeProfile,
@@ -5131,8 +5129,6 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                       armed={trendArmed}
                       pending={trendPending}
                       onToggle={toggleTrendLine}
-                      onUndo={removeLastTrendLine}
-                      onClear={clearTrendLines}
                       border={colors.border}
                       muted={colors.textSecondary}
                     />
