@@ -28,7 +28,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from cache import TTLCache
 from market_requests import collect, error_item, parse_symbols
-from market_snapshots import daily_frames, history_future, quote_future
+from market_snapshots import daily_frames, history_future, lite_quote_future, quote_future, v7_quotes
 
 logger = logging.getLogger(__name__)
 
@@ -280,9 +280,14 @@ def _download(symbols: list[str]) -> dict[str, pd.DataFrame]:
 
 
 @router.get("/quotes")
-def get_watchlist_quotes(symbols: str = Query(...)):
+def get_watchlist_quotes(symbols: str = Query(...), fields: str = Query("full")):
+    """`fields=price` → only the fields that move in a session
+    (market_snapshots.LITE_QUOTE_KEYS); the client keeps names/fundamentals from
+    its last full quote and asks for a full one every 30 min."""
     syms = parse_symbols(symbols, limit=MAX_SYMBOLS)
-    quotes, statuses = collect({s: quote_future(s) for s in syms})
+    v7_quotes(syms)  # one batched request; each quote future below reads it
+    loader = lite_quote_future if fields == "price" else quote_future
+    quotes, statuses = collect({s: loader(s) for s in syms})
     return {"quotes": quotes, "statuses": statuses, "requestedCount": len(syms), "count": len(quotes)}
 
 

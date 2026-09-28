@@ -74,7 +74,7 @@ import {
   NO_OVERLAYS,
   PERIOD_LABEL,
   TIME_PERIODS,
-  TimeframeRow,
+  TimeframeControls,
   useAnchoredPanel,
   useChartIndicators,
   useChartTimeframe,
@@ -100,7 +100,7 @@ import { UsMarketClock } from "../core/us-market-clock";
 import { type CotFlag, cotKeyFor, useCotSnapshot } from "../hooks/useCot";
 import { type FxPair, useFxTicks } from "../hooks/useFxTicks";
 import { useMarketDataQuery } from "../hooks/useMarketDataQuery";
-import { type QuoteTick, useQuoteStream } from "../hooks/useQuoteStream";
+import { type QuoteTick, useQuoteStream, useStreamPollInterval } from "../hooks/useQuoteStream";
 import { type RateRowData, useRatesCurve } from "../hooks/useRatesCurve";
 import {
   usePrefetchStockHistory,
@@ -112,6 +112,7 @@ import { patchRowGroups } from "../lib/live-quotes";
 import { calcHurst } from "../lib/market-utils";
 import { fmtPriceStd } from "../lib/number-format";
 import { recordSearchHit } from "../lib/search-stats";
+import { openSymbolsOf } from "../lib/stream-cadence";
 import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import { displayName, displaySymbol } from "../lib/symbol-display";
 import { bloombergColors } from "../lib/theme-config";
@@ -853,6 +854,7 @@ function QuoteStatsPopover({
           style={{
             left: pos.left,
             top: pos.top,
+            bottom: pos.bottom,
             background: colors.surface,
             borderColor: colors.border,
             gridTemplateColumns: "repeat(2, max-content)",
@@ -1068,6 +1070,13 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
   // VIX-family "fear" gauges. Own endpoint rather than a region inside
   // /api/market-data: they are not a region, and that payload's shape is
   // consumed by GMOV, the ticker strip and the heatmap.
+  // Poll slows to the stream's pace while every open VIX-family row ticks on it.
+  const volCached = queryClient.getQueryData<{ items?: VolatilityItem[] }>(["volatility"]);
+  const volOpen = useMemo(
+    () => (volCached?.items?.length ? openSymbolsOf(volCached.items) : null),
+    [volCached]
+  );
+  const volPollMs = useStreamPollInterval(volOpen, 60_000);
   const { data: volData, isLoading: volLoading } = useQuery<{
     items?: VolatilityItem[];
     error?: string;
@@ -1075,7 +1084,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     queryKey: ["volatility"],
     queryFn: () => fetch("/api/volatility").then((r) => r.json()),
     staleTime: 55_000,
-    refetchInterval: 60_000,
+    refetchInterval: volPollMs,
   });
   const volSymbols = useMemo(
     () => (volData?.items ?? []).map((v) => v.symbol).filter((s): s is string => !!s),
@@ -1413,8 +1422,6 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     trendArmed: mktTrendArmed,
     trendPending: mktTrendPending,
     toggleTrendLine: toggleMktTrendLine,
-    removeLastTrendLine: removeLastMktTrendLine,
-    clearTrendLines: clearMktTrendLines,
     drawingArmed: mktDrawingArmed,
     toggleVolumeProfile: toggleHeatmapVP,
     showVolumeEvents: heatmapShowVolumeEvents,
@@ -2199,70 +2206,207 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     </button>
   );
 
+  /** Range stats for the chart footer — null while there is nothing charted. */
+  const renderChartFooterStats = () => {
+    if (compareSymbols.length >= 2 || !selectedSymbol || historyQuery.isLoading) return null;
+    if (scalingUnit !== "NATIVE") {
+      if (scalingLoading || scalingError || scaledOhlcv.length === 0) return null;
+      return (
+        <div
+          className="ml-auto min-w-0 flex items-center gap-3 whitespace-nowrap"
+          style={{ color: colors.textSecondary }}
+        >
+          <span>
+            {selectedSymbol} / {scalingUnit}
+          </span>
+          <span>O {scaledOhlcv[0]?.open.toPrecision(6)}</span>
+          <span>H {Math.max(...scaledOhlcv.map((bar) => bar.high)).toPrecision(6)}</span>
+          <span>L {Math.min(...scaledOhlcv.map((bar) => bar.low)).toPrecision(6)}</span>
+          <span>C {scaledOhlcv[scaledOhlcv.length - 1]?.close.toPrecision(6)}</span>
+        </div>
+      );
+    }
+    if (chartData.length === 0) return null;
+    const stat = (label: string, value: string) => (
+      <span>
+        {label}
+        <span style={{ color: colors.text }}>{value}</span>
+      </span>
+    );
+    return (
+      <div
+        className="ml-auto min-w-0 flex items-center gap-3 whitespace-nowrap overflow-hidden"
+        style={{ color: colors.textSecondary }}
+      >
+        {stat("O:", fmtQuote(selectedSymbol, chartData[0]?.price))}
+        {stat(
+          "H:",
+          fmtQuote(selectedSymbol, Math.max(...chartData.map((d: { price: number }) => d.price)))
+        )}
+        {stat(
+          "L:",
+          fmtQuote(selectedSymbol, Math.min(...chartData.map((d: { price: number }) => d.price)))
+        )}
+        {stat("C:", fmtQuote(selectedSymbol, chartData[chartData.length - 1]?.price))}
+        {heatmapChartType === "area" &&
+          showVolume &&
+          avgVolume > 0 &&
+          stat("AvgVol:", fmtVolShort(avgVolume))}
+        <span style={{ color: chartColor }}>
+          {chartTrend ? "▲" : "▼"}
+          {Math.abs(
+            ((chartData[chartData.length - 1].price - chartData[0].price) / chartData[0].price) *
+              100
+          ).toFixed(2)}
+          %
+        </span>
+      </div>
+    );
+  };
+
   const renderChartPanel = (_isCollapsed: boolean) => (
     <div className="flex flex-col h-full">
-      {/* Search bar */}
+      {/* Search + symbol header share one row: a compact search at the left,
+          the symbol's price and details beside it. The dropdown hangs off the
+          outer (unclipped) wrapper, since the row itself clips to stay one line. */}
       <div className="relative shrink-0">
         <div
-          className="flex items-center gap-1 px-1 py-0.5"
-          style={{ background: "#0a0a0a", borderBottom: `1px solid ${colors.border}` }}
+          className="flex flex-nowrap items-center gap-2 px-1 py-0.5 overflow-hidden"
+          style={{ background: "#050505", borderBottom: `1px solid ${colors.border}` }}
         >
           {collapsedLeft.map((id) => renderRestoreChip(id, "left"))}
-          <Search className="h-2.5 w-2.5" style={{ color: colors.accent }} />
-          <input
-            ref={searchRef}
-            className="text-[10px] font-mono font-bold px-1 py-0.5 border outline-none flex-1 uppercase"
-            style={{
-              background: "#000",
-              color: colors.accent,
-              borderColor: showDropdown ? colors.accent : colors.border,
-            }}
-            placeholder="SYMBOL <GO>"
-            value={searchInput}
-            onChange={(e) => {
-              setSearchInput(e.target.value.toUpperCase());
-              setShowDropdown(true);
-            }}
-            onFocus={() => setShowDropdown(true)}
-            onBlur={() =>
-              setTimeout(() => {
-                setShowDropdown(false);
-                setDropdownIdx(-1);
-              }, 150)
-            }
-            onKeyDown={(e) => {
-              const apiItems: any[] = (searchResult.data as any[]) ?? [];
-              const items =
-                searchInput.length > 0
-                  ? apiItems
-                  : recentSymbols.map((r) => ({ symbol: r.symbol, shortname: r.name }));
-              if (e.key === "ArrowDown") {
-                e.preventDefault();
-                setDropdownIdx((i) => Math.min(i + 1, items.length - 1));
-              } else if (e.key === "ArrowUp") {
-                e.preventDefault();
-                setDropdownIdx((i) => Math.max(i - 1, -1));
-              } else if (e.key === "Enter") {
-                if (dropdownIdx >= 0 && items[dropdownIdx]) {
-                  const it = items[dropdownIdx];
-                  handleSelectSuggestion(it.symbol, it.shortname);
-                } else {
-                  handleSearchSubmit();
-                }
-              } else if (e.key === "Escape") {
-                setShowDropdown(false);
-                setDropdownIdx(-1);
+          <div className="shrink-0 flex items-center gap-1">
+            <Search className="h-2.5 w-2.5" style={{ color: colors.accent }} />
+            <input
+              ref={searchRef}
+              className="text-[10px] font-mono font-bold px-1 py-0 border outline-none w-24 focus:w-40 transition-[width] uppercase"
+              style={{
+                background: "#000",
+                color: colors.accent,
+                borderColor: showDropdown ? colors.accent : colors.border,
+              }}
+              placeholder="SYMBOL <GO>"
+              value={searchInput}
+              onChange={(e) => {
+                setSearchInput(e.target.value.toUpperCase());
+                setShowDropdown(true);
+              }}
+              onFocus={() => setShowDropdown(true)}
+              onBlur={() =>
+                setTimeout(() => {
+                  setShowDropdown(false);
+                  setDropdownIdx(-1);
+                }, 150)
               }
-            }}
-          />
-          <button
-            className="text-[9px] px-1.5 py-0.5 font-bold"
-            style={{ background: colors.accent, color: "#000" }}
-            onClick={handleSearchSubmit}
-          >
-            GO
-          </button>
-          {collapsedRight.map((id) => renderRestoreChip(id, "right"))}
+              onKeyDown={(e) => {
+                const apiItems: any[] = (searchResult.data as any[]) ?? [];
+                const items =
+                  searchInput.length > 0
+                    ? apiItems
+                    : recentSymbols.map((r) => ({ symbol: r.symbol, shortname: r.name }));
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setDropdownIdx((i) => Math.min(i + 1, items.length - 1));
+                } else if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setDropdownIdx((i) => Math.max(i - 1, -1));
+                } else if (e.key === "Enter") {
+                  if (dropdownIdx >= 0 && items[dropdownIdx]) {
+                    const it = items[dropdownIdx];
+                    handleSelectSuggestion(it.symbol, it.shortname);
+                  } else {
+                    handleSearchSubmit();
+                  }
+                } else if (e.key === "Escape") {
+                  setShowDropdown(false);
+                  setDropdownIdx(-1);
+                }
+              }}
+            />
+            <button
+              className="text-[9px] px-1.5 py-0.5 font-bold"
+              style={{ background: colors.accent, color: "#000" }}
+              onClick={handleSearchSubmit}
+            >
+              GO
+            </button>
+          </div>
+          {compareSymbols.length >= 2 ? (
+            <span
+              className="text-[11px] font-bold font-mono truncate"
+              style={{ color: colors.accent }}
+            >
+              COMPARE · {compareSymbols.join(" / ")}
+            </span>
+          ) : selectedSymbol ? (
+            <>
+              <span
+                className="text-sm font-bold font-mono whitespace-nowrap shrink-0"
+                style={{ color: colors.accent }}
+              >
+                {selectedLabel || selectedSymbol}
+              </span>
+              {quote && (
+                <>
+                  <span
+                    className="text-sm font-bold font-mono whitespace-nowrap shrink-0"
+                    style={{ color: colors.text }}
+                  >
+                    {fmtQuote(selectedSymbol, quote.regularMarketPrice)}
+                  </span>
+                  <span
+                    className="text-xs font-bold font-mono whitespace-nowrap shrink-0"
+                    style={{
+                      color: (quote.regularMarketChangePercent ?? 0) >= 0 ? "#00FF00" : "#FF0000",
+                    }}
+                  >
+                    {(quote.regularMarketChangePercent ?? 0) >= 0 ? "▲" : "▼"}
+                    {fmtPct(quote.regularMarketChangePercent ?? 0)}
+                  </span>
+                  {/* The live quote fields (CHG, VOL) — the only ones that move
+                      intraday, so the only ones worth permanent space. Clips
+                      rather than pushing the row wider. */}
+                  <span className="flex items-center gap-2 text-[9px] font-mono min-w-0 overflow-hidden">
+                    {quoteFields.live.map((f) => (
+                      <FieldChip key={f.label} field={f} colors={colors} />
+                    ))}
+                  </span>
+                  <QuoteStatsPopover fields={quoteFields.stat} colors={colors} />
+                  <MarketSessionBadge state={quote.marketState as string | undefined} compact />
+                  {/* Pre/after-hours price folded into the header instead of its own
+                      full-width row below — it's only relevant outside regular hours,
+                      so a dedicated row sat empty (or absent, shifting layout) most
+                      of the trading day. */}
+                  <ExtendedHoursPrice
+                    quote={quote}
+                    positiveColor="#00FF00"
+                    negativeColor="#FF0000"
+                    hideLabel
+                  />
+                  {/* Gives up width first (flexShrink far above the default 1) and
+                      truncates — the one field cheap enough to lose characters.
+                      Everything left of it keeps its digits intact. */}
+                  {quote.shortName && (
+                    <span
+                      className="text-[9px] truncate flex-1 min-w-0"
+                      style={{ color: colors.textSecondary, flexShrink: 100 }}
+                    >
+                      {quote.shortName}
+                    </span>
+                  )}
+                </>
+              )}
+            </>
+          ) : (
+            <span className="text-[10px]" style={{ color: colors.textSecondary }}>
+              Select an index or search a symbol
+            </span>
+          )}
+          {collapsedRight.length > 0 && (
+            <div className="ml-auto shrink-0 flex items-center gap-1">
+              {collapsedRight.map((id) => renderRestoreChip(id, "right"))}
+            </div>
+          )}
         </div>
 
         {/* Dropdown */}
@@ -2281,7 +2425,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
             if (!showRecent && !showResults && !showLoading && !showEmpty) return null;
             return (
               <div
-                className="absolute top-full left-0 right-0 z-50 border border-t-0 shadow-xl"
+                className="absolute top-full left-0 z-50 w-80 max-w-full border border-t-0 shadow-xl"
                 style={{ backgroundColor: "#050505", borderColor: `${colors.accent}66` }}
               >
                 {/* Recent searches */}
@@ -2418,422 +2562,327 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
           })()}
       </div>
 
-      {/* Symbol header — price, the live quote fields, and everything else behind
-          DETAILS. This absorbed what used to be two more full-width rows (the
-          quote summary bar and the extended-hours strip). Height is fixed at one
-          line: every child is nowrap/shrink-0 except the company name, which
-          takes the slack and truncates, so the row can never wrap or scroll. */}
+      {/* Chart tools — one row, analysis tools left, view toggles right. The
+          timeframe lives in the footer under the date axis. Wraps (rather than
+          scrolls) when narrow so every control stays reachable. */}
       <div
-        className="px-1 py-0.5 shrink-0 flex flex-nowrap items-center gap-2 overflow-hidden"
+        className="shrink-0 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 py-0.5"
         style={{ background: "#050505", borderBottom: `1px solid ${colors.border}` }}
       >
-        {compareSymbols.length >= 2 ? (
-          <span
-            className="text-[11px] font-bold font-mono truncate"
-            style={{ color: colors.accent }}
-          >
-            COMPARE · {compareSymbols.join(" / ")}
-          </span>
-        ) : selectedSymbol ? (
-          <>
-            <span
-              className="text-sm font-bold font-mono whitespace-nowrap shrink-0"
-              style={{ color: colors.accent }}
-            >
-              {selectedLabel || selectedSymbol}
-            </span>
-            {quote && (
-              <>
-                <span
-                  className="text-sm font-bold font-mono whitespace-nowrap shrink-0"
-                  style={{ color: colors.text }}
-                >
-                  {fmtQuote(selectedSymbol, quote.regularMarketPrice)}
-                </span>
-                <span
-                  className="text-xs font-bold font-mono whitespace-nowrap shrink-0"
-                  style={{
-                    color: (quote.regularMarketChangePercent ?? 0) >= 0 ? "#00FF00" : "#FF0000",
-                  }}
-                >
-                  {(quote.regularMarketChangePercent ?? 0) >= 0 ? "▲" : "▼"}
-                  {fmtPct(quote.regularMarketChangePercent ?? 0)}
-                </span>
-                {/* The live quote fields (CHG, VOL) — the only ones that move
-                    intraday, so the only ones worth permanent space. Clips
-                    rather than pushing the row wider. */}
-                <span className="flex items-center gap-2 text-[9px] font-mono min-w-0 overflow-hidden">
-                  {quoteFields.live.map((f) => (
-                    <FieldChip key={f.label} field={f} colors={colors} />
-                  ))}
-                </span>
-                <QuoteStatsPopover fields={quoteFields.stat} colors={colors} />
-                <MarketSessionBadge state={quote.marketState as string | undefined} compact />
-                {/* Pre/after-hours price folded into the header instead of its own
-                    full-width row below — it's only relevant outside regular hours,
-                    so a dedicated row sat empty (or absent, shifting layout) most
-                    of the trading day. */}
-                <ExtendedHoursPrice
-                  quote={quote}
-                  positiveColor="#00FF00"
-                  negativeColor="#FF0000"
-                  hideLabel
-                />
-                {/* Gives up width first (flexShrink far above the default 1) and
-                    truncates — the one field cheap enough to lose characters.
-                    Everything left of it keeps its digits intact. */}
-                {quote.shortName && (
-                  <span
-                    className="text-[9px] truncate flex-1 min-w-0"
-                    style={{ color: colors.textSecondary, flexShrink: 100 }}
+        {heatmapChartType === "candle" && (
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 min-w-0 whitespace-nowrap">
+            <IndicatorPicker
+              data={heatmapOhlcv}
+              colors={colors}
+              activeIndicators={heatmapIndicators}
+              onAdd={addHeatmapIndicator}
+              onRemove={removeHeatmapIndicator}
+              windowUnit={heatmapWindowUnit}
+              onToggleWindowUnit={toggleHeatmapWindowUnit}
+              compact
+              chipsTarget={indicatorLegendEl}
+            />
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                className="flex items-center gap-0.5 px-1 text-[8px] font-normal"
+                style={{ color: compareSymbols.length ? colors.accent : colors.textSecondary }}
+                title="Compare 2–10 symbols on this chart"
+                aria-label="Compare symbols"
+                onClick={(event) => {
+                  setCompareInput(compareSymbols.join(", "));
+                  setCompareError("");
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setComparePos({
+                    left: Math.min(rect.left, window.innerWidth - 296),
+                    top: rect.bottom + 2,
+                  });
+                  setCompareEditorOpen((open) => !open);
+                }}
+              >
+                <GitCompareArrows className="h-3 w-3" /> COMPARE
+              </button>
+              {compareEditorOpen &&
+                comparePos &&
+                createPortal(
+                  <form
+                    className="fixed z-50 w-72 border p-2 shadow-xl font-mono"
+                    style={{
+                      background: "#0b0b0b",
+                      borderColor: colors.border,
+                      left: comparePos.left,
+                      top: comparePos.top,
+                    }}
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const symbols = [
+                        ...new Set(
+                          compareInput
+                            .toUpperCase()
+                            .split(/[\s,]+/)
+                            .filter(Boolean)
+                        ),
+                      ];
+                      if (
+                        symbols.length < 2 ||
+                        symbols.length > 10 ||
+                        symbols.some((s) => !/^[A-Z0-9^.=_-]+$/.test(s))
+                      ) {
+                        setCompareError("Enter 2–10 valid symbols, separated by commas.");
+                        return;
+                      }
+                      setCompareSymbols(symbols);
+                      setScalingUnit("NATIVE");
+                      setCompareEditorOpen(false);
+                    }}
                   >
-                    {quote.shortName}
-                  </span>
-                )}
-              </>
-            )}
-          </>
-        ) : (
-          <span className="text-[10px]" style={{ color: colors.textSecondary }}>
-            Select an index or search a symbol
-          </span>
-        )}
-      </div>
-
-      {/* Chart controls share one row when the panel is wide. In a narrow panel,
-          indicators move beneath the timeframe so each control stays reachable. */}
-      <TimeframeRow
-        colors={colors}
-        timePeriod={timePeriod as TimePeriod}
-        barInterval={barInterval as BarInterval}
-        chartType={heatmapChartType}
-        onPeriodChange={(p) => handleHeatmapPeriod(p, heatmapChartType)}
-        onIntervalChange={(iv) => handleHeatmapInterval(iv)}
-        middle={
-          heatmapChartType === "candle" ? (
-            <div className="flex items-center gap-1 min-w-0 flex-1 whitespace-nowrap">
-              <IndicatorPicker
-                data={heatmapOhlcv}
-                colors={colors}
-                activeIndicators={heatmapIndicators}
-                onAdd={addHeatmapIndicator}
-                onRemove={removeHeatmapIndicator}
-                windowUnit={heatmapWindowUnit}
-                onToggleWindowUnit={toggleHeatmapWindowUnit}
-                compact
-                chipsTarget={indicatorLegendEl}
-              />
-              <div className="relative shrink-0">
-                <button
-                  type="button"
-                  className="flex items-center gap-0.5 px-1 text-[8px] font-normal"
-                  style={{ color: compareSymbols.length ? colors.accent : colors.textSecondary }}
-                  title="Compare 2–10 symbols on this chart"
-                  aria-label="Compare symbols"
-                  onClick={(event) => {
-                    setCompareInput(compareSymbols.join(", "));
-                    setCompareError("");
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    setComparePos({
-                      left: Math.min(rect.left, window.innerWidth - 296),
-                      top: rect.bottom + 2,
-                    });
-                    setCompareEditorOpen((open) => !open);
-                  }}
-                >
-                  <GitCompareArrows className="h-3 w-3" /> COMPARE
-                </button>
-                {compareEditorOpen &&
-                  comparePos &&
-                  createPortal(
-                    <form
-                      className="fixed z-50 w-72 border p-2 shadow-xl font-mono"
-                      style={{
-                        background: "#0b0b0b",
-                        borderColor: colors.border,
-                        left: comparePos.left,
-                        top: comparePos.top,
-                      }}
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        const symbols = [
-                          ...new Set(
-                            compareInput
-                              .toUpperCase()
-                              .split(/[\s,]+/)
-                              .filter(Boolean)
-                          ),
-                        ];
-                        if (
-                          symbols.length < 2 ||
-                          symbols.length > 10 ||
-                          symbols.some((s) => !/^[A-Z0-9^.=_-]+$/.test(s))
-                        ) {
-                          setCompareError("Enter 2–10 valid symbols, separated by commas.");
-                          return;
-                        }
-                        setCompareSymbols(symbols);
-                        setScalingUnit("NATIVE");
-                        setCompareEditorOpen(false);
-                      }}
-                    >
-                      <div className="text-[9px] mb-1" style={{ color: colors.textSecondary }}>
-                        COMPARE SYMBOLS · 2–10
-                      </div>
-                      <input
-                        value={compareInput}
-                        onChange={(event) => setCompareInput(event.target.value)}
-                        placeholder="AAPL, MSFT, BTC-USD"
-                        className="w-full border px-1 py-1 text-[10px] outline-none"
-                        style={{
-                          background: "#000",
-                          borderColor: colors.border,
-                          color: colors.text,
+                    <div className="text-[9px] mb-1" style={{ color: colors.textSecondary }}>
+                      COMPARE SYMBOLS · 2–10
+                    </div>
+                    <input
+                      value={compareInput}
+                      onChange={(event) => setCompareInput(event.target.value)}
+                      placeholder="AAPL, MSFT, BTC-USD"
+                      className="w-full border px-1 py-1 text-[10px] outline-none"
+                      style={{ background: "#000", borderColor: colors.border, color: colors.text }}
+                    />
+                    {compareError && (
+                      <div className="text-[9px] mt-1 text-red-400">{compareError}</div>
+                    )}
+                    <div className="flex justify-between gap-2 mt-2 text-[9px]">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCompareSymbols([]);
+                          setCompareEditorOpen(false);
                         }}
-                      />
-                      {compareError && (
-                        <div className="text-[9px] mt-1 text-red-400">{compareError}</div>
-                      )}
-                      <div className="flex justify-between gap-2 mt-2 text-[9px]">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCompareSymbols([]);
-                            setCompareEditorOpen(false);
-                          }}
-                          style={{ color: colors.textSecondary }}
-                        >
-                          CLEAR
-                        </button>
-                        <button type="submit" style={{ color: colors.accent }}>
-                          APPLY ↵
-                        </button>
-                      </div>
-                    </form>,
-                    document.body
-                  )}
-              </div>
-              {scalingUnit !== "NATIVE" && (
-                <button
-                  type="button"
-                  className="shrink-0 text-[8px] font-normal"
-                  style={{ color: colors.accent }}
-                  title="Return chart to its normal quote currency"
-                  onClick={() => setScalingUnit("NATIVE")}
-                >
-                  {scalingUnit} ×
-                </button>
-              )}
-              {(() => {
-                // Volume Profile needs traded volume, and several things reachable
-                // from this view report none: calculated indices (^VIX, ^OVX — a
-                // formula over option prices, nothing actually trades), yields
-                // (^TNX) and FX (=X). Cash indices like ^GSPC/^DJI DO carry volume
-                // (Yahoo sums the constituents), so this can't key off "is an index".
-                // Show the button greyed out with a reason rather than unmounting
-                // it, which reads as "the indicator vanished".
-                const hasVolume = heatmapOhlcv.some((d) => (d.volume ?? 0) > 0);
-                return (
-                  <button
-                    className="text-[8px] px-1 py-0 font-normal border"
-                    style={{
-                      borderColor: heatmapShowVP && hasVolume ? colors.accent : colors.border,
-                      color: !hasVolume
-                        ? colors.border
-                        : heatmapShowVP
-                          ? colors.accent
-                          : colors.textSecondary,
-                      background: heatmapShowVP && hasVolume ? `${colors.accent}15` : "transparent",
-                      cursor: hasVolume ? "pointer" : "not-allowed",
-                    }}
-                    disabled={!hasVolume}
-                    title={
-                      hasVolume
-                        ? "Volume Profile"
-                        : "Volume Profile — this symbol reports no volume (calculated indices like VIX, plus yields and FX, quote a level with nothing trading behind it)"
-                    }
-                    onClick={toggleHeatmapVP}
-                  >
-                    VP
-                  </button>
-                );
-              })()}
-              {(() => {
-                const hasVolume = heatmapOhlcv.some((d) => (d.volume ?? 0) > 0);
-                return (
-                  <button
-                    className="text-[8px] px-1 py-0 font-normal border"
-                    style={{
-                      borderColor: heatmapShowVolumeEvents && hasVolume ? "#26a69a" : colors.border,
-                      color: !hasVolume
-                        ? colors.border
-                        : heatmapShowVolumeEvents
-                          ? "#26a69a"
-                          : colors.textSecondary,
-                      background:
-                        heatmapShowVolumeEvents && hasVolume ? "#26a69a15" : "transparent",
-                      cursor: hasVolume ? "pointer" : "not-allowed",
-                    }}
-                    disabled={!hasVolume}
-                    title={
-                      hasVolume
-                        ? "Volume Events — classify each bar's participation against its result (climax / absorption / vacuum / breakout / no-demand / dry-up) as chips on the bars plus a list below"
-                        : "Volume Events — this symbol reports no volume, so there is nothing to classify"
-                    }
-                    onClick={toggleHeatmapVolumeEvents}
-                  >
-                    VEVT
-                  </button>
-                );
-              })()}
-              <RegressionControls
-                channels={mktRegressionChannels}
-                activeId={mktActiveRegressionId}
-                armed={mktRegressionArmed}
-                pending={mktRegressionPending}
-                options={mktRegressionOpts}
-                onToggle={toggleMktRegression}
-                onSelect={selectMktRegression}
-                onRemove={removeMktRegression}
-                onModeChange={setMktRegressionMode}
-                border={colors.border}
-                muted={colors.textSecondary}
-              />
-              <TrendLineControls
-                count={mktTrendLines.length}
-                armed={mktTrendArmed}
-                pending={mktTrendPending}
-                onToggle={toggleMktTrendLine}
-                onUndo={removeLastMktTrendLine}
-                onClear={clearMktTrendLines}
-                border={colors.border}
-                muted={colors.textSecondary}
-              />
-              {heatmapSupportsEvents && (
-                <button
-                  className="text-[8px] px-1 py-0 font-normal border"
-                  style={{
-                    borderColor: heatmapShowPE ? "#ba68c8" : colors.border,
-                    color: heatmapShowPE ? "#ba68c8" : colors.textSecondary,
-                    background: heatmapShowPE ? "#ba68c815" : "transparent",
-                  }}
-                  onClick={toggleHeatmapPE}
-                  title="Toggle Trailing P/E history pane"
-                >
-                  P/E{heatmapShowPE && heatmapPeLoading ? "…" : ""}
-                </button>
-              )}
-              {isCryptoSymbol && (
-                <button
-                  className="text-[8px] px-1 py-0 font-normal border"
-                  style={{
-                    borderColor: showFootprint ? "#ff9800" : colors.border,
-                    color: showFootprint ? "#ff9800" : colors.textSecondary,
-                    background: showFootprint ? "#ff980015" : "transparent",
-                  }}
-                  onClick={toggleFootprint}
-                >
-                  FP{footprintLoading ? "…" : ""}
-                </button>
-              )}
+                        style={{ color: colors.textSecondary }}
+                      >
+                        CLEAR
+                      </button>
+                      <button type="submit" style={{ color: colors.accent }}>
+                        APPLY ↵
+                      </button>
+                    </div>
+                  </form>,
+                  document.body
+                )}
             </div>
-          ) : null
-        }
-        trailing={
-          <>
-            {/* The period buttons keep showing what the user picked; this says
+            {scalingUnit !== "NATIVE" && (
+              <button
+                type="button"
+                className="shrink-0 text-[8px] font-normal"
+                style={{ color: colors.accent }}
+                title="Return chart to its normal quote currency"
+                onClick={() => setScalingUnit("NATIVE")}
+              >
+                {scalingUnit} ×
+              </button>
+            )}
+            {(() => {
+              // Volume Profile needs traded volume, and several things reachable
+              // from this view report none: calculated indices (^VIX, ^OVX — a
+              // formula over option prices, nothing actually trades), yields
+              // (^TNX) and FX (=X). Cash indices like ^GSPC/^DJI DO carry volume
+              // (Yahoo sums the constituents), so this can't key off "is an index".
+              // Show the button greyed out with a reason rather than unmounting
+              // it, which reads as "the indicator vanished".
+              const hasVolume = heatmapOhlcv.some((d) => (d.volume ?? 0) > 0);
+              return (
+                <button
+                  className="text-[8px] px-1 py-0 font-normal border"
+                  style={{
+                    borderColor: heatmapShowVP && hasVolume ? colors.accent : colors.border,
+                    color: !hasVolume
+                      ? colors.border
+                      : heatmapShowVP
+                        ? colors.accent
+                        : colors.textSecondary,
+                    background: heatmapShowVP && hasVolume ? `${colors.accent}15` : "transparent",
+                    cursor: hasVolume ? "pointer" : "not-allowed",
+                  }}
+                  disabled={!hasVolume}
+                  title={
+                    hasVolume
+                      ? "Volume Profile"
+                      : "Volume Profile — this symbol reports no volume (calculated indices like VIX, plus yields and FX, quote a level with nothing trading behind it)"
+                  }
+                  onClick={toggleHeatmapVP}
+                >
+                  VP
+                </button>
+              );
+            })()}
+            {(() => {
+              const hasVolume = heatmapOhlcv.some((d) => (d.volume ?? 0) > 0);
+              return (
+                <button
+                  className="text-[8px] px-1 py-0 font-normal border"
+                  style={{
+                    borderColor: heatmapShowVolumeEvents && hasVolume ? "#26a69a" : colors.border,
+                    color: !hasVolume
+                      ? colors.border
+                      : heatmapShowVolumeEvents
+                        ? "#26a69a"
+                        : colors.textSecondary,
+                    background: heatmapShowVolumeEvents && hasVolume ? "#26a69a15" : "transparent",
+                    cursor: hasVolume ? "pointer" : "not-allowed",
+                  }}
+                  disabled={!hasVolume}
+                  title={
+                    hasVolume
+                      ? "Volume Events — classify each bar's participation against its result (climax / absorption / vacuum / breakout / no-demand / dry-up) as chips on the bars plus a list below"
+                      : "Volume Events — this symbol reports no volume, so there is nothing to classify"
+                  }
+                  onClick={toggleHeatmapVolumeEvents}
+                >
+                  VEVT
+                </button>
+              );
+            })()}
+            <RegressionControls
+              channels={mktRegressionChannels}
+              activeId={mktActiveRegressionId}
+              armed={mktRegressionArmed}
+              pending={mktRegressionPending}
+              options={mktRegressionOpts}
+              onToggle={toggleMktRegression}
+              onSelect={selectMktRegression}
+              onRemove={removeMktRegression}
+              onModeChange={setMktRegressionMode}
+              border={colors.border}
+              muted={colors.textSecondary}
+            />
+            <TrendLineControls
+              count={mktTrendLines.length}
+              armed={mktTrendArmed}
+              pending={mktTrendPending}
+              onToggle={toggleMktTrendLine}
+              border={colors.border}
+              muted={colors.textSecondary}
+            />
+            {heatmapSupportsEvents && (
+              <button
+                className="text-[8px] px-1 py-0 font-normal border"
+                style={{
+                  borderColor: heatmapShowPE ? "#ba68c8" : colors.border,
+                  color: heatmapShowPE ? "#ba68c8" : colors.textSecondary,
+                  background: heatmapShowPE ? "#ba68c815" : "transparent",
+                }}
+                onClick={toggleHeatmapPE}
+                title="Toggle Trailing P/E history pane"
+              >
+                P/E{heatmapShowPE && heatmapPeLoading ? "…" : ""}
+              </button>
+            )}
+            {isCryptoSymbol && (
+              <button
+                className="text-[8px] px-1 py-0 font-normal border"
+                style={{
+                  borderColor: showFootprint ? "#ff9800" : colors.border,
+                  color: showFootprint ? "#ff9800" : colors.textSecondary,
+                  background: showFootprint ? "#ff980015" : "transparent",
+                }}
+                onClick={toggleFootprint}
+              >
+                FP{footprintLoading ? "…" : ""}
+              </button>
+            )}
+          </div>
+        )}
+        <div className="ml-auto shrink-0 flex items-center gap-1.5">
+          {/* The period buttons keep showing what the user picked; this says
               how far the chart has actually loaded after zooming out past it. */}
-            {chartExtended && (
-              <span
-                className="px-1 py-0 text-[8px] font-mono border"
-                title={`Zoomed out past ${timePeriod.toUpperCase()} — history auto-extended to ${effectivePeriod.toUpperCase()}`}
-                style={{ borderColor: colors.border, color: colors.textSecondary }}
-              >
-                {effectivePeriod.toUpperCase()}·AUTO
-              </span>
-            )}
-            {/* Pop the current symbol into a free-floating window — the panel
-              chart stays put, so this is "add a chart", not "move the chart". */}
-            <button
-              type="button"
-              disabled={
-                !selectedSymbol ||
-                (chartWindows.length >= MAX_CHART_WINDOWS &&
-                  !chartWindows.some((w) => w.symbol === selectedSymbol))
-              }
-              title={
-                chartWindows.length >= MAX_CHART_WINDOWS
-                  ? `Chart window limit reached (${MAX_CHART_WINDOWS})`
-                  : "Pop out into a floating chart window"
-              }
-              className="flex items-center gap-0.5 px-1 py-0 text-[8px] font-mono border disabled:opacity-40"
+          {chartExtended && (
+            <span
+              className="px-1 py-0 text-[8px] font-mono border"
+              title={`Zoomed out past ${timePeriod.toUpperCase()} — history auto-extended to ${effectivePeriod.toUpperCase()}`}
               style={{ borderColor: colors.border, color: colors.textSecondary }}
-              onClick={() =>
-                selectedSymbol &&
-                openChartWindow({
-                  symbol: selectedSymbol,
-                  label: selectedLabel,
-                  timePeriod,
-                  barInterval,
-                })
-              }
             >
-              <PictureInPicture2 className="h-2 w-2" /> POP
+              {effectivePeriod.toUpperCase()}·AUTO
+            </span>
+          )}
+          {/* Pop the current symbol into a free-floating window — the panel
+              chart stays put, so this is "add a chart", not "move the chart". */}
+          <button
+            type="button"
+            disabled={
+              !selectedSymbol ||
+              (chartWindows.length >= MAX_CHART_WINDOWS &&
+                !chartWindows.some((w) => w.symbol === selectedSymbol))
+            }
+            title={
+              chartWindows.length >= MAX_CHART_WINDOWS
+                ? `Chart window limit reached (${MAX_CHART_WINDOWS})`
+                : "Pop out into a floating chart window"
+            }
+            className="flex items-center gap-0.5 px-1 py-0 text-[8px] font-mono border disabled:opacity-40"
+            style={{ borderColor: colors.border, color: colors.textSecondary }}
+            onClick={() =>
+              selectedSymbol &&
+              openChartWindow({
+                symbol: selectedSymbol,
+                label: selectedLabel,
+                timePeriod,
+                barInterval,
+              })
+            }
+          >
+            <PictureInPicture2 className="h-2 w-2" /> POP
+          </button>
+          {/* Chart type toggle */}
+          <div className="flex border overflow-hidden" style={{ borderColor: colors.border }}>
+            <button
+              className="flex items-center gap-0.5 px-1 py-0 text-[8px] font-mono transition-colors"
+              style={{
+                backgroundColor: heatmapChartType === "area" ? colors.accent : "transparent",
+                color: heatmapChartType === "area" ? "#000" : colors.textSecondary,
+              }}
+              onClick={() => setHeatmapChartType("area")}
+            >
+              <LineChart className="h-2 w-2" /> AREA
             </button>
-            {/* Chart type toggle */}
-            <div className="flex border overflow-hidden" style={{ borderColor: colors.border }}>
-              <button
-                className="flex items-center gap-0.5 px-1 py-0 text-[8px] font-mono transition-colors"
-                style={{
-                  backgroundColor: heatmapChartType === "area" ? colors.accent : "transparent",
-                  color: heatmapChartType === "area" ? "#000" : colors.textSecondary,
-                }}
-                onClick={() => setHeatmapChartType("area")}
-              >
-                <LineChart className="h-2 w-2" /> AREA
-              </button>
-              <button
-                className="flex items-center gap-0.5 px-1 py-0 text-[8px] font-mono transition-colors border-l"
-                style={{
-                  borderColor: colors.border,
-                  backgroundColor: heatmapChartType === "candle" ? colors.accent : "transparent",
-                  color: heatmapChartType === "candle" ? "#000" : colors.textSecondary,
-                }}
-                onClick={() => setHeatmapChartType("candle")}
-              >
-                <BarChart2 className="h-2 w-2" /> CANDLE
-              </button>
-            </div>
-            {heatmapChartType === "area" && (
-              <button
-                className="text-[8px] px-1 py-0 font-bold"
-                style={{
-                  color: showVolume ? "#00FFFF" : colors.textSecondary,
-                  background: showVolume ? "#00FFFF15" : "transparent",
-                }}
-                onClick={() => setShowVolume((v) => !v)}
-              >
-                VOL
-              </button>
-            )}
-            {heatmapChartType === "area" && (
-              <button
-                className="text-[8px] px-1 py-0 font-bold"
-                style={{
-                  color: showMACD ? "#ff9800" : colors.textSecondary,
-                  background: showMACD ? "#ff980015" : "transparent",
-                }}
-                onClick={() => setShowMACD((v) => !v)}
-              >
-                MACD
-              </button>
-            )}
-            {quoteQuery.isLoading && (
-              <Loader2 className="h-2.5 w-2.5 animate-spin" style={{ color: colors.accent }} />
-            )}
-          </>
-        }
-      />
+            <button
+              className="flex items-center gap-0.5 px-1 py-0 text-[8px] font-mono transition-colors border-l"
+              style={{
+                borderColor: colors.border,
+                backgroundColor: heatmapChartType === "candle" ? colors.accent : "transparent",
+                color: heatmapChartType === "candle" ? "#000" : colors.textSecondary,
+              }}
+              onClick={() => setHeatmapChartType("candle")}
+            >
+              <BarChart2 className="h-2 w-2" /> CANDLE
+            </button>
+          </div>
+          {heatmapChartType === "area" && (
+            <button
+              className="text-[8px] px-1 py-0 font-bold"
+              style={{
+                color: showVolume ? "#00FFFF" : colors.textSecondary,
+                background: showVolume ? "#00FFFF15" : "transparent",
+              }}
+              onClick={() => setShowVolume((v) => !v)}
+            >
+              VOL
+            </button>
+          )}
+          {heatmapChartType === "area" && (
+            <button
+              className="text-[8px] px-1 py-0 font-bold"
+              style={{
+                color: showMACD ? "#ff9800" : colors.textSecondary,
+                background: showMACD ? "#ff980015" : "transparent",
+              }}
+              onClick={() => setShowMACD((v) => !v)}
+            >
+              MACD
+            </button>
+          )}
+          {quoteQuery.isLoading && (
+            <Loader2 className="h-2.5 w-2.5 animate-spin" style={{ color: colors.accent }} />
+          )}
+        </div>
+      </div>
 
       {/* Chart area */}
       <div
@@ -2969,65 +3018,6 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 <VolumeEventPanel data={heatmapOhlcv} colors={colors} />
               </div>
             )}
-            {/* Chart footer stats */}
-            <div
-              className="shrink-0 flex justify-between text-[9px] font-mono px-1 py-0.5"
-              style={{ borderTop: "1px solid #1a1a1a", color: colors.textSecondary }}
-            >
-              {scalingUnit !== "NATIVE" ? (
-                <>
-                  <span>
-                    {selectedSymbol} / {scalingUnit}
-                  </span>
-                  <span>O {scaledOhlcv[0]?.open.toPrecision(6)}</span>
-                  <span>H {Math.max(...scaledOhlcv.map((bar) => bar.high)).toPrecision(6)}</span>
-                  <span>L {Math.min(...scaledOhlcv.map((bar) => bar.low)).toPrecision(6)}</span>
-                  <span>C {scaledOhlcv[scaledOhlcv.length - 1]?.close.toPrecision(6)}</span>
-                </>
-              ) : (
-                <>
-                  <span>
-                    O:
-                    <span style={{ color: colors.text }}>
-                      {fmtQuote(selectedSymbol, chartData[0]?.price)}
-                    </span>
-                  </span>
-                  <span>
-                    H:
-                    <span style={{ color: colors.text }}>
-                      {fmtQuote(
-                        selectedSymbol,
-                        Math.max(...chartData.map((d: { price: number }) => d.price))
-                      )}
-                    </span>
-                  </span>
-                  <span>
-                    L:
-                    <span style={{ color: colors.text }}>
-                      {fmtQuote(
-                        selectedSymbol,
-                        Math.min(...chartData.map((d: { price: number }) => d.price))
-                      )}
-                    </span>
-                  </span>
-                  <span>
-                    C:
-                    <span style={{ color: colors.text }}>
-                      {fmtQuote(selectedSymbol, chartData[chartData.length - 1]?.price)}
-                    </span>
-                  </span>
-                  <span style={{ color: chartColor }}>
-                    {chartTrend ? "▲" : "▼"}
-                    {Math.abs(
-                      ((chartData[chartData.length - 1].price - chartData[0].price) /
-                        chartData[0].price) *
-                        100
-                    ).toFixed(2)}
-                    %
-                  </span>
-                </>
-              )}
-            </div>
           </div>
         ) : (
           <div className="h-full flex flex-col">
@@ -3151,10 +3141,12 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                     {macdData.length > 0 && macdData[macdData.length - 1].macd != null && (
                       <>
                         <span className="text-[7px] font-mono" style={{ color: "#42a5f5" }}>
-                          MACD:{macdData[macdData.length - 1].macd?.toFixed(2)}
+                          MACD:
+                          {macdData[macdData.length - 1].macd?.toFixed(2)}
                         </span>
                         <span className="text-[7px] font-mono" style={{ color: "#ff9800" }}>
-                          SIG:{macdData[macdData.length - 1].signal?.toFixed(2) ?? "—"}
+                          SIG:
+                          {macdData[macdData.length - 1].signal?.toFixed(2) ?? "—"}
                         </span>
                         <span
                           className="text-[7px] font-mono"
@@ -3165,7 +3157,8 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                                 : "#ef5350",
                           }}
                         >
-                          HIST:{macdData[macdData.length - 1].histogram?.toFixed(2) ?? "—"}
+                          HIST:
+                          {macdData[macdData.length - 1].histogram?.toFixed(2) ?? "—"}
                         </span>
                       </>
                     )}
@@ -3265,59 +3258,24 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
               )}
             </div>
             {/* end charts wrapper */}
-
-            {/* Chart footer stats */}
-            <div
-              className="shrink-0 flex justify-between text-[9px] font-mono px-1 py-0.5"
-              style={{ borderTop: "1px solid #1a1a1a", color: colors.textSecondary }}
-            >
-              <span>
-                O:
-                <span style={{ color: colors.text }}>
-                  {fmtQuote(selectedSymbol, chartData[0]?.price)}
-                </span>
-              </span>
-              <span>
-                H:
-                <span style={{ color: colors.text }}>
-                  {fmtQuote(
-                    selectedSymbol,
-                    Math.max(...chartData.map((d: { price: number }) => d.price))
-                  )}
-                </span>
-              </span>
-              <span>
-                L:
-                <span style={{ color: colors.text }}>
-                  {fmtQuote(
-                    selectedSymbol,
-                    Math.min(...chartData.map((d: { price: number }) => d.price))
-                  )}
-                </span>
-              </span>
-              <span>
-                C:
-                <span style={{ color: colors.text }}>
-                  {fmtQuote(selectedSymbol, chartData[chartData.length - 1]?.price)}
-                </span>
-              </span>
-              {showVolume && avgVolume > 0 && (
-                <span>
-                  AvgVol:<span style={{ color: colors.text }}>{fmtVolShort(avgVolume)}</span>
-                </span>
-              )}
-              <span style={{ color: chartColor }}>
-                {chartTrend ? "▲" : "▼"}
-                {Math.abs(
-                  ((chartData[chartData.length - 1].price - chartData[0].price) /
-                    chartData[0].price) *
-                    100
-                ).toFixed(2)}
-                %
-              </span>
-            </div>
           </div>
         )}
+      </div>
+
+      {/* Footer under the date axis: timeframe left, range stats right. */}
+      <div
+        className="shrink-0 flex flex-nowrap items-center gap-2 px-1 py-0.5 text-[9px] font-mono overflow-hidden"
+        style={{ background: "#050505", borderTop: `1px solid ${colors.border}` }}
+      >
+        <TimeframeControls
+          colors={colors}
+          timePeriod={timePeriod as TimePeriod}
+          barInterval={barInterval as BarInterval}
+          chartType={heatmapChartType}
+          onPeriodChange={(p) => handleHeatmapPeriod(p, heatmapChartType)}
+          onIntervalChange={(iv) => handleHeatmapInterval(iv)}
+        />
+        {renderChartFooterStats()}
       </div>
     </div>
   );

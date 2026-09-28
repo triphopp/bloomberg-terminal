@@ -49,6 +49,7 @@ import dev_status  # noqa: F401 — snapshots source mtimes; must load before ro
 from config import CORS_ORIGINS
 import upstream_health  # noqa: F401 — observes every outbound call; must load before routers
 import yahoo_gate  # noqa: F401 — caps concurrent Yahoo requests app-wide; must load before routers
+import http_tls  # noqa: F401 — one preloaded TLS context for requests (was 0.3 s CPU per connection)
 from db import (
     init_db,
     init_portfolio_v2,
@@ -74,6 +75,8 @@ from analytics.bc_calibration import ensure_calibrated
 from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, bonds, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, graphs, series, ir_stress, market_state, dcf, discover, market_heatmap, cot, stream
 from routers import health as upstream_health_router
 from routers import chart_drawings
+from routers import changes as changes_router
+from change_feed import init_change_feed
 from routers.chart_drawings import init_chart_drawings_schema
 from routers import dev as dev_router
 import sync
@@ -124,6 +127,7 @@ init_sync_layer()
 init_audit_layer()     # after sync layer: needs _sync_guard + final column set
 init_alerts_schema()
 init_oplog_layer()     # last: its capture triggers cover every synced table
+init_change_feed()     # table_versions + bump triggers on change_feed.WATCHED (after every schema)
 seed_symbol_lists()
 sync_symbol_lists()
 
@@ -199,6 +203,7 @@ app.include_router(zettel.router, tags=["Zettel"])
 app.include_router(graphs.router, tags=["Graphs"])
 app.include_router(series.router, tags=["Series"])
 app.include_router(chart_drawings.router)
+app.include_router(changes_router.router, tags=["Changes"])
 app.include_router(backtest_v2.router)
 app.include_router(risk.router)
 app.include_router(allocation.router)

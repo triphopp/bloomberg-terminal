@@ -7,8 +7,6 @@ interface TrendLineControlsProps {
   armed: boolean;
   pending: boolean;
   onToggle: () => void;
-  onUndo: () => void;
-  onClear: () => void;
   border: string;
   muted: string;
 }
@@ -29,8 +27,6 @@ export function TrendLineControls({
   armed,
   pending,
   onToggle,
-  onUndo,
-  onClear,
   border,
   muted,
 }: TrendLineControlsProps) {
@@ -50,40 +46,14 @@ export function TrendLineControls({
             ? pending
               ? "Click the second point (hold Shift for a horizontal line) — click here to cancel"
               : "Click the first point on the price pane — click here to cancel"
-            : "Trend line: click two points on the chart (Shift on the 2nd = horizontal)"
+            : "Trend line: click two points on the chart (Shift on the 2nd = horizontal). Click a line to select it, then × or Delete removes it"
         }
         aria-label="Draw trend line"
         aria-pressed={armed}
         onClick={onToggle}
       >
         <LineIcon />
-        {/* Reserved width, so arming never reflows the toolbar (and resizes the chart). */}
-        <span className="inline-block text-left" style={{ minWidth: "3ch" }}>
-          {armed ? (pending ? "2/2" : "1/2") : count > 0 ? count : ""}
-        </span>
-      </button>
-      {/* Always laid out (hidden when empty) so the first line never reflows the toolbar. */}
-      <button
-        type="button"
-        className="shrink-0 border px-0.5 py-0"
-        style={{ borderColor: border, color: muted, visibility: count > 0 ? "visible" : "hidden" }}
-        title="Remove the last trend line"
-        aria-label="Remove the last trend line"
-        disabled={count === 0}
-        onClick={onUndo}
-      >
-        ↶
-      </button>
-      <button
-        type="button"
-        className="shrink-0 border px-0.5 py-0"
-        style={{ borderColor: border, color: muted, visibility: count > 0 ? "visible" : "hidden" }}
-        title="Remove all trend lines on this chart"
-        aria-label="Remove all trend lines on this chart"
-        disabled={count === 0}
-        onClick={onClear}
-      >
-        ×
+        {armed ? (pending ? "2/2" : "1/2") : count > 0 ? count : null}
       </button>
     </div>
   );

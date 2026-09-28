@@ -734,21 +734,15 @@ def _fetch_acm() -> dict[str, dict[str, float]]:
 
     One ~10 MB .xls, updated about weekly — cached a day, and a failure is
     negative-cached (see get_decomposition) so it is not re-pulled per request.
+    Parsing it is 2–3 s of pure-Python xlrd, so it runs in the process pool
+    (cpu_pool.py) instead of holding the GIL over every other request.
     """
-    import io
-
-    import pandas as pd
+    import cpu_pool
+    from cpu_tasks import parse_acm_xls
 
     r = requests.get(_ACM_URL, timeout=45, headers={"User-Agent": "Mozilla/5.0"})
     r.raise_for_status()
-    df = pd.read_excel(io.BytesIO(r.content), sheet_name="ACM Daily",
-                       usecols=["DATE", "ACMY10", "ACMTP10", "ACMRNY10"])
-    df["DATE"] = pd.to_datetime(df["DATE"], format="%d-%b-%Y", errors="coerce")
-    df = df.dropna()
-    df = df[df["DATE"] >= _DECOMP_START]
-    ds = df["DATE"].dt.strftime("%Y-%m-%d").tolist()
-    return {col: dict(zip(ds, (round(float(v), 4) for v in df[col]))) for col in
-            ("ACMY10", "ACMTP10", "ACMRNY10")}
+    return cpu_pool.run(parse_acm_xls, r.content, _DECOMP_START)
 
 
 def _build_decomposition() -> dict:

@@ -141,7 +141,9 @@ class _Source:
     last_kind: str | None = None
     consecutive: int = 0
     fails: deque = field(default_factory=lambda: deque(maxlen=200))  # (ts, kind)
-    calls: deque = field(default_factory=lambda: deque(maxlen=2000))  # ts
+    # 20k: a 2k cap flattened every busy Yahoo summary to exactly "2000 calls"
+    calls: deque = field(default_factory=lambda: deque(maxlen=20000))  # ts
+    targets: deque = field(default_factory=lambda: deque(maxlen=20000))  # (ts, target)
     retries: deque = field(default_factory=lambda: deque(maxlen=500))  # ts
     retry_log: deque = field(default_factory=lambda: deque(maxlen=20))
     status: str = "OK"
@@ -217,6 +219,8 @@ def _record(source, kind, now, target, elapsed) -> None:
     with _lock:
         s = _sources.setdefault(source, _Source(source))
         s.calls.append(now)
+        if target:
+            s.targets.append((now, target))
         if kind is None:
             s.last_ok = now
             s.consecutive = 0
@@ -269,6 +273,7 @@ def _after_record(now: float) -> None:
                     "fails": sum(1 for t, _ in s.fails if now - t <= SUMMARY_EVERY_S),
                     "retries": sum(1 for t in s.retries if now - t <= SUMMARY_EVERY_S),
                     "status": _source_status(s, now),
+                    "top_targets": _top_targets(s, now, SUMMARY_EVERY_S, 8),
                 }
                 for s in _sources.values()
             }
@@ -276,6 +281,15 @@ def _after_record(now: float) -> None:
         _event("network" if down else "network_ok", now, sources=sorted(dns))
     if snap is not None:
         _event("summary", now, window_s=SUMMARY_EVERY_S, sources=snap)
+
+
+def _top_targets(s: "_Source", now: float, window: float, n: int) -> dict[str, int]:
+    """Busiest targets in the window — who is spending the call volume."""
+    counts: dict[str, int] = {}
+    for t, tgt in s.targets:
+        if now - t <= window:
+            counts[tgt] = counts.get(tgt, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: -kv[1])[:n])
 
 
 def mark_stale(key: str, label: str, age_s: float, source: str | None = None) -> None:
@@ -326,6 +340,7 @@ def snapshot(now: float | None = None) -> dict:
                 "failures_window": len(recent),
                 "failure_kinds": kinds,
                 "calls_per_min": sum(1 for t in s.calls if now - t <= 60),
+                "top_targets_10m": _top_targets(s, now, SUMMARY_EVERY_S, 15),
                 "retries_window": sum(1 for t in s.retries if now - t <= WINDOW_S),
                 "recent_retries": [
                     {**r, "ago_s": round(now - r["ts"])} for r in list(s.retry_log)[-8:]
@@ -497,7 +512,7 @@ def install() -> bool:
                 resp.close()
                 time.sleep(backoff[attempt])
                 continue
-            record(src, kind, target=tgt if kind else None, elapsed=time.time() - t_start if kind else None)
+            record(src, kind, target=tgt, elapsed=time.time() - t_start if kind else None)
             try:
                 resp.url = redact(resp.url)  # raise_for_status() quotes it
             except Exception:  # pragma: no cover

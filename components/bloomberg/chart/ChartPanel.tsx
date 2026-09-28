@@ -153,8 +153,6 @@ export function ChartPanel({
     trendArmed,
     trendPending,
     toggleTrendLine,
-    removeLastTrendLine,
-    clearTrendLines,
     drawingArmed,
     handleChartClick,
     supportsEvents,
@@ -378,8 +376,6 @@ export function ChartPanel({
               armed={trendArmed}
               pending={trendPending}
               onToggle={toggleTrendLine}
-              onUndo={removeLastTrendLine}
-              onClear={clearTrendLines}
               border={colors.border}
               muted={colors.textSecondary}
             />

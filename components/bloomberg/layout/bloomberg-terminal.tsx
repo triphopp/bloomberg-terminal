@@ -31,6 +31,7 @@ import { ViewSkeleton } from "../core/view-skeleton";
 import { Watchlist } from "../core/watchlist";
 import { usePortfolioPrewarm, useTerminalUI, useViewPrefetch } from "../hooks";
 import { useMarketDataQuery } from "../hooks";
+import { useChangeFeed } from "../hooks/useChangeFeed";
 import { AlertTicker } from "../layout/alert-ticker";
 import { MobileNav } from "../layout/mobile-nav";
 import { TailRiskRibbon } from "../layout/tail-risk-ribbon";
@@ -119,6 +120,8 @@ function BloombergTerminal() {
 
   // …and the data behind the slowest view, so opening PORT is not a 10s wait.
   usePortfolioPrewarm();
+  // Refetch edit-driven data (chart drawings…) when its DB version moves.
+  useChangeFeed();
 
   // Jotai atoms
   const [isConfirmModalOpen] = useAtom(isConfirmModalOpenAtom);

@@ -1,3 +1,4 @@
+import { etagJson } from "@/lib/etag";
 import { NextResponse } from "next/server";
 
 import { PYTHON_API } from "@/lib/constants";
@@ -5,7 +6,7 @@ import { PYTHON_API } from "@/lib/constants";
 const SECTIONS = new Set(["overview", "supply", "issuance", "decomposition"]);
 
 // GET /api/bonds/overview · /api/bonds/supply · /api/bonds/issuance · /api/bonds/decomposition
-export async function GET(_req: Request, { params }: { params: Promise<{ section: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ section: string }> }) {
   const { section } = await params;
   if (!SECTIONS.has(section)) {
     return NextResponse.json({ error: `Unknown section ${section}` }, { status: 404 });
@@ -18,6 +19,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ section
       signal: AbortSignal.timeout(60_000),
     });
     const body = await res.json().catch(() => ({}));
+    if (res.status === 200) return etagJson(req, body);
     return NextResponse.json(body, { status: res.status });
   } catch (err) {
     console.error("[bonds]", err);

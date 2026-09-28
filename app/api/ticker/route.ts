@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
 import { PYTHON_API } from "@/lib/constants";
+import { etagJson } from "@/lib/etag";
+import { type NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
   try {
@@ -13,10 +14,10 @@ export async function GET(req: NextRequest) {
       const text = await res.text().catch(() => "");
       return NextResponse.json(
         { error: `Backend ${res.status}`, detail: text },
-        { status: res.status },
+        { status: res.status }
       );
     }
-    return NextResponse.json(await res.json());
+    return etagJson(req, await res.json());
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 502 });
   }

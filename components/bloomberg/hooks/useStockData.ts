@@ -8,7 +8,8 @@ import { useCallback } from "react";
 import { isRealTimeEnabledAtom } from "../atoms";
 import { applyTickToBars } from "../chartkit/live-bars";
 import { patchQuote } from "../lib/live-quotes";
-import { type QuoteTick, useQuoteStream } from "./useQuoteStream";
+import { isOpenMarketState } from "../lib/stream-cadence";
+import { type QuoteTick, useQuoteStream, useStreamPollInterval } from "./useQuoteStream";
 
 async function stockFetch(params: Record<string, string>, signal?: AbortSignal) {
   // biome-ignore lint/suspicious/noExplicitAny: stock proxy serves search, history and financial response shapes
@@ -37,17 +38,24 @@ export function useStockSearch(query: string) {
 export function useStockQuote(symbol: string | null) {
   const isRealTimeEnabled = useAtomValue(isRealTimeEnabledAtom);
   const options = quoteQueryOptions(symbol ?? "");
+  const qc = useQueryClient();
+  const cached = symbol ? qc.getQueryData<StockQuote>(options.queryKey) : undefined;
+  const headerSymbol = symbol ? String(cached?.symbol ?? symbol).toUpperCase() : "";
+  const watch =
+    headerSymbol && (!cached || cached.marketState == null || isOpenMarketState(cached.marketState))
+      ? [headerSymbol]
+      : [];
+  const pollMs = useStreamPollInterval(watch, isRealTimeEnabled ? 60_000 : 300_000);
   const query = useQuery({
     ...options,
     enabled: !!symbol,
-    refetchInterval: isRealTimeEnabled ? 60_000 : 300_000,
+    refetchInterval: pollMs,
     refetchOnWindowFocus: true,
   });
 
   // Live header price, in step with the chart's last candle (useStockHistory
   // takes the same ticks) — otherwise the axis label moves and the header sits
   // on the last 60s poll, and the two disagree on screen.
-  const qc = useQueryClient();
   const streamSymbol = symbol ? String(query.data?.symbol ?? symbol).toUpperCase() : "";
   const onTicks = useCallback(
     (ticks: Record<string, QuoteTick>) => {

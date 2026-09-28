@@ -189,7 +189,8 @@ export class SymbolBatcher<T> {
         entry.started = true;
         entry.cancelBatch = cancelBatch;
       }
-      const url = `${this.endpoint}?symbols=${encodeURIComponent(batch.map((e) => e.symbol).join(","))}`;
+      const sep = this.endpoint.includes("?") ? "&" : "?";
+      const url = `${this.endpoint}${sep}symbols=${encodeURIComponent(batch.map((e) => e.symbol).join(","))}`;
       void this.requestQueue
         .run(
           () => marketJson<BatchPayload>(url, controller.signal),
@@ -268,13 +269,47 @@ export interface StockQuote {
   [key: string]: any;
 }
 export const quoteBatcher = new SymbolBatcher<StockQuote>("/api/watchlist/quotes", "quotes");
+/** Price/session fields only (backend `LITE_QUOTE_KEYS`): what a poll needs. */
+export const quoteLiteBatcher = new SymbolBatcher<StockQuote>(
+  "/api/watchlist/quotes?fields=price",
+  "quotes"
+);
+
+/** How long names/fundamentals from a full quote are reused under lite polls. */
+export const QUOTE_FUNDAMENTALS_MS = 30 * 60_000;
+const FULL_QUOTES_MAX = 2_000;
+const fullQuotes = new Map<string, { data: StockQuote; at: number }>();
+
+/**
+ * One quote refresh: the full payload when this symbol's fundamentals are
+ * older than `QUOTE_FUNDAMENTALS_MS` (or never loaded), otherwise the lite one
+ * merged over the last full payload. Lite carries every session key — nulls
+ * included — so nothing time-sensitive survives from the older full quote.
+ * Callers and cache keys are unchanged; polls just get lighter.
+ */
+export async function fetchQuote(rawSymbol: string, signal?: AbortSignal): Promise<StockQuote> {
+  const symbol = rawSymbol.trim().toUpperCase();
+  const full = fullQuotes.get(symbol);
+  if (full && Date.now() - full.at < QUOTE_FUNDAMENTALS_MS) {
+    const lite = await quoteLiteBatcher.request(symbol, signal);
+    return { ...full.data, ...lite };
+  }
+  const data = await quoteBatcher.request(symbol, signal);
+  fullQuotes.delete(symbol); // re-insert: Map order = age, oldest evicted first
+  fullQuotes.set(symbol, { data, at: Date.now() });
+  if (fullQuotes.size > FULL_QUOTES_MAX) {
+    const oldest = fullQuotes.keys().next().value;
+    if (oldest !== undefined) fullQuotes.delete(oldest);
+  }
+  return data;
+}
 export const sparklineBatcher = new SymbolBatcher<number[]>(
   "/api/watchlist/sparklines",
   "sparklines"
 );
 export const quoteQueryOptions = (symbol: string) => ({
   queryKey: ["stock", "quote", symbol.trim().toUpperCase()],
-  queryFn: ({ signal }: { signal: AbortSignal }) => quoteBatcher.request(symbol, signal),
+  queryFn: ({ signal }: { signal: AbortSignal }) => fetchQuote(symbol, signal),
   staleTime: 55_000,
   gcTime: 30 * 60_000,
   retry: marketRetry,

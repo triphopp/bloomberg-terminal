@@ -15,13 +15,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
  */
 export function useAnchoredPanel() {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  // Exactly one of top/bottom is set: a trigger in the lower half of the
+  // viewport (the timeframe bar under the chart) opens its panel upward.
+  const [pos, setPos] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
   const place = useCallback(() => {
-    const r = triggerRef.current?.getBoundingClientRect();
-    if (r) setPos({ left: r.left, top: r.bottom + 2 });
+    const el = triggerRef.current;
+    const r = el?.getBoundingClientRect();
+    if (!r) return;
+    const vh = el?.ownerDocument.defaultView?.innerHeight ?? window.innerHeight;
+    setPos(
+      r.top > vh / 2
+        ? { left: r.left, bottom: vh - r.top + 2 }
+        : { left: r.left, top: r.bottom + 2 }
+    );
   }, []);
 
   const toggle = useCallback(() => {

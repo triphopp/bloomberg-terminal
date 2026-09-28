@@ -1,6 +1,7 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { HEARTBEAT_KEY, type Heartbeat, useHeartbeat } from "./useHeartbeat";
 
 export interface ProviderStatus {
   name: string;
@@ -16,25 +17,17 @@ interface ProvidersResponse {
   providers: ProviderStatus[];
 }
 
-async function fetchProviders(): Promise<ProvidersResponse> {
-  const r = await fetch("/api/providers");
-  if (!r.ok) throw new Error("providers fetch failed");
-  return r.json();
-}
+const selectProviders = (h: Heartbeat) => (h.providers ?? null) as ProvidersResponse | null;
 
 /**
  * Quote-provider status + controls for the header switch.
- * Polls health every 30s (matches backend health-cache TTL).
+ * Status rides the 15s heartbeat; the backend caches provider health for 30s,
+ * so the faster poll costs no extra vendor probes.
  */
 export function useProviders() {
   const qc = useQueryClient();
 
-  const query = useQuery({
-    queryKey: ["providers"],
-    queryFn: fetchProviders,
-    refetchInterval: 30_000,
-    staleTime: 25_000,
-  });
+  const query = useHeartbeat(selectProviders);
 
   const setActive = useMutation({
     mutationFn: async (name: string) => {
@@ -47,7 +40,7 @@ export function useProviders() {
       return r.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["providers"] });
+      qc.invalidateQueries({ queryKey: HEARTBEAT_KEY });
       // Refresh market data so the new provider's numbers show immediately.
       qc.invalidateQueries({ queryKey: ["marketData"] });
     },
@@ -63,7 +56,7 @@ export function useProviders() {
       if (!r.ok) throw new Error("toggle failed");
       return r.json();
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["providers"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: HEARTBEAT_KEY }),
   });
 
   return {

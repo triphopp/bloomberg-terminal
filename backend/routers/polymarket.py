@@ -278,32 +278,38 @@ def _discover_markets_for_signal(signal_type: str) -> list[dict]:
 
 
 def _register_slugs(signal_type: str, markets: list[dict]) -> int:
-    """Save discovered markets to slug registry. Returns count of upserted rows."""
-    count = 0
+    """Save discovered markets to slug registry. Returns count of upserted rows.
+
+    One executemany in one transaction: eight signal types register in
+    parallel threads and SQLite has one writer, so ~750 single-row statements
+    spent most of their time queued on the write lock (2.5 s, 2026-09-28)."""
+    rows = []
+    for m in markets:
+        slug = m.get("slug") or m.get("condition_id", "")
+        if not slug:
+            continue
+        try:
+            rows.append((
+                slug, signal_type,
+                (m.get("question") or "")[:500],
+                m.get("conditionId", m.get("condition_id", "")),
+                _extract_token_id(m),
+                float(m.get("volume", 0) or 0),
+            ))
+        except Exception:
+            pass  # a malformed market is skipped, as before
+    if not rows:
+        return 0
     with get_db() as conn:
-        for m in markets:
-            slug = m.get("slug") or m.get("condition_id", "")
-            if not slug:
-                continue
-            try:
-                conn.execute("""
-                    INSERT INTO pm_slug_registry (slug, signal_type, question, condition_id, token_id, volume)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(slug, signal_type) DO UPDATE SET
-                        volume   = excluded.volume,
-                        question = excluded.question,
-                        active   = 1
-                """, (
-                    slug, signal_type,
-                    m.get("question", "")[:500],
-                    m.get("conditionId", m.get("condition_id", "")),
-                    _extract_token_id(m),
-                    float(m.get("volume", 0) or 0),
-                ))
-                count += 1
-            except Exception:
-                pass
-    return count
+        conn.executemany("""
+            INSERT INTO pm_slug_registry (slug, signal_type, question, condition_id, token_id, volume)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(slug, signal_type) DO UPDATE SET
+                volume   = excluded.volume,
+                question = excluded.question,
+                active   = 1
+        """, rows)
+    return len(rows)
 
 
 def _extract_token_id(market: dict) -> str:

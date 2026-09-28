@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { type Heartbeat, useHeartbeat } from "../hooks/useHeartbeat";
 
 /**
  * Dev-only strip that says when the backend is NOT the code on disk.
@@ -9,7 +10,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * an edited router is then simply absent, and the result (404, a field dropped
  * by an old model) is indistinguishable from a coding bug. This names the
  * cause: "running old code — these files changed", or "down — read the log".
- * Silent when everything is current. Source: GET /api/dev/status.
+ * Silent when everything is current. Source: the `dev` part of GET
+ * /api/heartbeat (same data as /api/dev/status).
  */
 
 type Changed = { file: string; change: string; at: string };
@@ -29,43 +31,37 @@ const FAST_POLL_MS = 2_000;
 // One failed poll is usually a restart in progress; two in a row is an outage.
 const DOWN_AFTER = 2;
 
+const selectDev = (h: Heartbeat) => (h.dev ?? { state: "down" }) as DevStatus;
+
 export function BackendStatusBanner() {
-  const [status, setStatus] = useState<DevStatus | null>(null);
   const [downCount, setDownCount] = useState(0);
   const [restarting, setRestarting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const startedRef = useRef<string | undefined>(undefined);
 
-  const poll = useCallback(async () => {
-    try {
-      const r = await fetch("/api/dev/status", { cache: "no-store" });
-      const d: DevStatus = await r.json();
-      if (d.state === "down") {
-        setDownCount((n) => n + 1);
-        return;
-      }
-      setDownCount(0);
-      setStatus(d);
-      // A new process (different start time) that is current = restart done.
-      if (restarting && d.started_at && d.started_at !== restarting && d.state === "ok") {
-        setRestarting(null);
-      }
-      startedRef.current = d.started_at;
-    } catch {
-      setDownCount((n) => n + 1);
-    }
-  }, [restarting]);
+  // Rides the shared heartbeat (hidden tab → no polling, React Query's rule);
+  // polls it faster only while a restart is in flight.
+  const hb = useHeartbeat(selectDev, restarting ? FAST_POLL_MS : POLL_MS);
+  const d = hb.data;
+  const [status, setStatus] = useState<DevStatus | null>(null);
 
+  // One verdict per heartbeat answer (success or failure), not per render.
+  const answeredAt = Math.max(hb.dataUpdatedAt, hb.errorUpdatedAt);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the answer time on purpose
   useEffect(() => {
-    poll();
-    const id = setInterval(poll, restarting ? FAST_POLL_MS : POLL_MS);
-    const onFocus = () => poll();
-    window.addEventListener("focus", onFocus);
-    return () => {
-      clearInterval(id);
-      window.removeEventListener("focus", onFocus);
-    };
-  }, [poll, restarting]);
+    if (!answeredAt) return;
+    if (hb.isError || !d || d.state === "down") {
+      setDownCount((n) => n + 1);
+      return;
+    }
+    setDownCount(0);
+    setStatus(d);
+    // A new process (different start time) that is current = restart done.
+    if (restarting && d.started_at && d.started_at !== restarting && d.state === "ok") {
+      setRestarting(null);
+    }
+    startedRef.current = d.started_at;
+  }, [answeredAt]);
 
   // Give up waiting after a minute — the banner then shows whatever is true.
   useEffect(() => {

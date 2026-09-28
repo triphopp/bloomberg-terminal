@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { HEARTBEAT_KEY } from "../hooks/useHeartbeat";
 import type { SyncConflict } from "../hooks/useSync";
 import { bloombergColors } from "../lib/theme-config";
 
@@ -64,7 +65,7 @@ export function SyncConflicts({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["sync-conflicts"] });
       // useSync refreshes portfolio data when the next sync round lands
-      qc.invalidateQueries({ queryKey: ["sync-status"] });
+      qc.invalidateQueries({ queryKey: HEARTBEAT_KEY });
     },
   });
 

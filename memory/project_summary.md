@@ -438,6 +438,9 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 
 Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished plan becomes `- [x] … done YYYY-MM-DD` only with a Completion Evidence section.
 
+- [x] **CPU profile → process pool** — done 2026-09-28: shared TLS context (CA bundle was reloaded per connection, ~0.3 s CPU each), ACM xls parse in `cpu_pool`, polymarket batch upsert (`plans/completed/cpu-profile-process-pool.md`)
+- [x] **Stream sessions + change feed + lite quotes** — done 2026-09-28: one SSE session + interest diff, DB-trigger change feed, price-only polls, multi-instance/Postgres design (`plans/completed/stream-sessions-change-feed.md`)
+- [x] **Request optimization** — done 2026-09-28: batched v7 quotes, stream-aware polling, `/api/heartbeat`, ETag/304 (`plans/completed/request-optimization.md`)
 - [x] **Analytics INDEX underwater fill** — done 2026-09-27: blue portfolio drawdown area anchored at zero, SPY yellow line retained (`plans/completed/analytics-index-underwater-fill.md`)
 - [x] **Analytics INDEX drawdown pane** — done 2026-09-27: portfolio and benchmark underwater paths beneath the unchanged equity curve (`plans/completed/analytics-index-drawdown-pane.md`)
 

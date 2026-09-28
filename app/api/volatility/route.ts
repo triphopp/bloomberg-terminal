@@ -1,3 +1,4 @@
+import { etagJson } from "@/lib/etag";
 import { NextResponse } from "next/server";
 
 import { PYTHON_API } from "@/lib/constants";
@@ -12,9 +13,9 @@ import { PYTHON_API } from "@/lib/constants";
 let dataCache: { data: object; ts: number } | null = null;
 const CACHE_TTL = 55_000;
 
-export async function GET() {
+export async function GET(request: Request) {
   if (dataCache && Date.now() - dataCache.ts < CACHE_TTL) {
-    return NextResponse.json(dataCache.data);
+    return etagJson(request, dataCache.data);
   }
 
   try {
@@ -25,7 +26,7 @@ export async function GET() {
     if (!res.ok) throw new Error(`Python API ${res.status}`);
     const data = await res.json();
     dataCache = { data, ts: Date.now() };
-    return NextResponse.json(data);
+    return etagJson(request, data);
   } catch (err) {
     console.error("[volatility] Python backend unavailable:", err);
     // No static fallback: a stale VIX is worse than an empty section, since the

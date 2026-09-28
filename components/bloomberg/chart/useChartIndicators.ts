@@ -42,7 +42,9 @@ import {
   type StoredTrendLine,
   TREND_LINE_COLOR,
   type TrendPoint,
+  createTrendHitMap,
   createTrendLineOverlay,
+  hitTestTrendLines,
 } from "./indicators/trend-line";
 import type {
   BarInterval,
@@ -246,6 +248,10 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     trendPendingRef.current = p;
     setTrendPendingState(p);
   }, []);
+  // One line at a time can be selected; the overlay paints its × box and
+  // records where every line landed on screen into `trendHitsRef`.
+  const [selectedTrendId, setSelectedTrendId] = useState<string | null>(null);
+  const trendHitsRef = useRef(createTrendHitMap());
   const trendLines: StoredTrendLine[] = useMemo(() => {
     if (!symbol) return [];
     return drawings
@@ -497,7 +503,12 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
       })
     );
     if (trendLines.length > 0 || trendPending) {
-      parts.push(createTrendLineOverlay(trendLines, trendPending));
+      parts.push(
+        createTrendLineOverlay(trendLines, trendPending, selectedTrendId, trendHitsRef.current)
+      );
+    } else {
+      trendHitsRef.current.segments = [];
+      trendHitsRef.current.deleteBox = null;
     }
     if (parts.length === 0) return null;
     return {
@@ -509,7 +520,7 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
         for (const part of parts) part.draw(...args);
       },
     };
-  }, [regressionChannels, activeRegression?.id, trendLines, trendPending]);
+  }, [regressionChannels, activeRegression?.id, trendLines, trendPending, selectedTrendId]);
 
   // ── Toggles ──────────────────────────────────────────────────────────────
 
@@ -583,6 +594,20 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
         setRegressionArmed(false);
         return;
       }
+      // A trend line under the click: its × deletes it, the line itself selects
+      // it. Anything else deselects and falls through to the event rail.
+      const hit = ctx?.panePoint ? hitTestTrendLines(trendHitsRef.current, ctx.panePoint) : null;
+      if (hit) {
+        if (hit.onDelete) {
+          removeDrawings([hit.id]);
+          setSelectedTrendId(null);
+        } else {
+          setSelectedTrendId(hit.id);
+        }
+        setSelectedEvent(null);
+        return;
+      }
+      setSelectedTrendId(null);
       // Clicking a rail icon opens its detail card; clicking bare chart closes
       // whatever card is open.
       if (ctx?.events?.length && ctx.point) {
@@ -595,6 +620,7 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
       trendArmed,
       setTrendPending,
       saveDrawing,
+      removeDrawings,
       regressionArmed,
       setAnchor,
       saveRegression,
@@ -617,7 +643,35 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     setRegressionArmed(false);
     setTrendPending(null);
     setTrendArmed(false);
+    setSelectedTrendId(null);
   }, [symbol, barInterval, chartType]);
+
+  // Delete / Backspace removes the selected line, Escape lets go of it. Ignored
+  // while typing in a field, so editing a symbol can't delete a drawing.
+  useEffect(() => {
+    if (!selectedTrendId) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        removeDrawings([selectedTrendId]);
+        setSelectedTrendId(null);
+      } else if (e.key === "Escape") {
+        setSelectedTrendId(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedTrendId, removeDrawings]);
+
+  // A selected line deleted elsewhere (another chart, the other machine) drops
+  // its selection rather than pointing at nothing.
+  useEffect(() => {
+    if (selectedTrendId && !trendLines.some((l) => l.id === selectedTrendId)) {
+      setSelectedTrendId(null);
+    }
+  }, [selectedTrendId, trendLines]);
 
   /** Arm another range; existing channels stay visible. */
   const toggleRegression = useCallback(() => {
@@ -632,6 +686,7 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     setAnchor(null);
     setRegressionArmed(false);
     setTrendPending(null);
+    setSelectedTrendId(null);
     setTrendArmed((v) => !v);
   }, [setAnchor, setTrendPending]);
 

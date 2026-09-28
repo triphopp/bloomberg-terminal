@@ -7,6 +7,12 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### Watchlist pin on one machine never shows on the other, sync says in_sync (2026-09-28)
+
+| Symptom | Root cause | Fix |
+|---------|-----------|-----|
+| Mac has 5 pins in a group, Windows 4; `/api/sync/status` peer `in_sync` | Op-log ships only changes captured after it starts (no genesis for pre-cutover drift); `state.json` fingerprint covers money tables only, so pin drift is invisible. Pin from global search / stock-view ignores HTTP errors (`fetch().catch`) | Check peer's `oplog/<device>/*.jsonl` for `pinned_assets` ops. Heal: edit or re-pin on the machine that has it. [risk report](../reports/oplog-pins-divergence-risk-report.md) |
+
 ### PORT symbol opens MKT but charts the default instrument (fixed 2026-09-27)
 
 | Symptom | Root cause | Fix |
@@ -2096,3 +2102,46 @@ Tool buttons reserve their width (`minWidth` in ch; undo/× kept laid out with `
 A peer on older code stores ops for an unknown table as `"kept"` and never applies them later
 (`sync/oplog.py::_apply_one`, no replay after upgrade). Add the table → pull the code on the other
 machine and restart it before it syncs. Details: `memory/reports/oplog-kept-ops-never-replayed-risk-report.md`.
+
+## `fast_info` = 3–5 Yahoo calls per symbol — ~150 calls/min with the MKT view open (fixed 2026-09-28)
+**Symptom:** `logs/upstream.jsonl` summaries showed Yahoo at exactly `2000` calls every 10 min (the `calls`
+deque was capped at 2000 — the real number was higher); `/api/volatility` pending for seconds in DevTools.
+**Cause:** `yf.Ticker(s).fast_info` fans out: chart for price, chart metadata for timezone, and
+`fundamentals-timeseries` for `shares`/`market_cap` — even on FX pairs, futures and VIX. `routers/market.py`
+`fetch_one` added `ticker.info` on top (quoteSummary + v7 quote). ×(20 indices + 19 vol + 20 FX + watchlist) every 60 s.
+**Fix:** `market_snapshots.v7_quotes(symbols)` — one `/v7/finance/quote` request per 50 symbols, 30 s cache,
+misses negative-cached 5 min. `fast_info_future` reads it first (fast_info is the fallback); `download_quotes`
+and the MKT index/VIX builders prefetch the whole list. Steady state went ~148 → ~4 Yahoo calls/min.
+**Diagnose:** `curl -s localhost:9317/api/health/upstream` → each source's `top_targets_10m`; summaries in
+the log carry `top_targets` too. Tests: `tests/conftest.py` stubs `_v7_fetch` (no network) — stub it yourself to test v7.
+**Rule:** new per-symbol quote code → `v7_quotes` / `download_quotes`, never a loop over `fast_info` or `.info`.
+**Follow-up (same day):** rich quote (`_quote_info`) = v7 row (price/session, 30 s) + `info` reused 30 min for fundamentals with every session key dropped (`regularMarket*`, `pre/postMarket*`, `previousClose`, `marketState`…) — a 30-min-old previousClose would show yesterday's move. `v7_quotes` never holds its lock across I/O (in-flight events; a slow Yahoo call used to stall every quote path).
+
+## Quote stream: never reopen for a symbol change (2026-09-28)
+The page's one EventSource is a backend session (`lib/quote-stream-client.ts` ↔ `backend/stream_sessions.py`). Symbol-set changes go through `POST /api/stream/interest` (diff). Reopening re-subscribes every symbol and Yahoo sends no snapshot on subscribe — prices go quiet until the next trade. Don't POST before `event: ready` (headers arrive before the session is attached → 404 → reopen loop). A resumed session keeps its OLD set, not the URL's: `ready.resumed` → resend. Attach happens inside the SSE generator — a response that is never iterated never runs `finally` and would leak hub refs.
+
+## Edit-driven data: change feed, not a poll (2026-09-28)
+Tables that change only when someone edits them get a DB-trigger version (`change_feed.WATCHED` + `useChangeFeed` `CHANGE_KEYS`, keep both in step) instead of a `refetchInterval`. Triggers catch every writer (router, sync apply, MCP process, scripts); a Python-side counter would miss the other processes. New SQL there stays dialect-portable (`ON CONFLICT … DO NOTHING`, not `INSERT OR IGNORE`); SQLite-only bits live in `_table_exists` / `_triggers_sql`.
+
+## `cache: "no-store"` on a client fetch defeats the proxy's ETag (2026-09-28)
+Polled proxies answer `ETag` + `Cache-Control: private, no-cache` (`lib/etag.ts`); the browser only sends `If-None-Match` — and gets the bodiless 304 — when the fetch may use the HTTP cache. Use the default or `cache: "no-cache"`, never `"no-store"`, for those endpoints (`useCreditData` was switched). Only 200s are tagged.
+
+## Stream-aware polling: unknown ≠ closed (2026-09-28)
+`useStreamPollInterval(openSymbols, base)` backs a REST poll off (5 min streamed / 2 min nothing open). Pass `null` while the payload is missing or empty — `[]` means "nothing open" and would slow a query that has never loaded. A symbol whose market is open but that Yahoo does not stream keeps the whole query at `base`. The hook's snapshot uses a clock advanced on emit, not `Date.now()` (useSyncExternalStore must be stable between store changes).
+
+## "CPU-heavy endpoint" = TLS setup, not maths (fixed 2026-09-28)
+**Symptom:** cold `/api/tail-risk/signals` 10.9 s CPU, `/api/country-rotation/scores` 8.5 s — server stutters while a panel builds.
+**Cause:** `requests` sets `pool.ca_certs = certifi` and urllib3 loads the ~300 KB bundle into a fresh SSLContext on every new
+connection (0.24–0.38 s CPU on Windows, GIL held); each `requests.get()` = new Session = new connection.
+**Fix:** `backend/http_tls.py` — one preloaded context for `verify=True` pools with the default bundle only (urllib3 mutates
+`verify_mode` on the context it is given, so it must never reach a `verify=False` pool; `ssl_context` is in the PoolKey).
+**Rule:** profile before reaching for a process pool — `cProfile` + `threading.setprofile` for worker threads; CPU > wall means
+numpy threads, CPU ≪ wall means network. Pure-Python parsing of big files → `cpu_pool.run(cpu_tasks.fn, …)` (module-level,
+picklable, light imports; Windows spawns). `CPU_POOL_WORKERS=0` disables it.
+
+
+## Popover opens off-screen / clipped in the watchlist column (fixed 2026-09-28)
+**Symptom:** GRP (group manager) and TAG panels in `views/pinned-assets.tsx` opened with their left side cut off — name field, colours and CREATE unreachable.
+**Cause:** `absolute right-0 w-56` under a trigger near the column's left edge grows leftward past x=0, and the column's `overflow: hidden` clips whatever sticks out.
+**Fix:** `useViewportAnchoredPanel(width)` in the same file — `position: fixed` under the trigger, left clamped to `[4, innerWidth - width - 4]`; the input focuses once `ready` (it is `visibility: hidden` for the first render, where `focus()` fails).
+**Rule:** a popover inside a panel column must not be `absolute` right-aligned — use fixed + clamp (this hook, or `chart/useAnchoredPanel`).

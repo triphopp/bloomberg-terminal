@@ -56,7 +56,7 @@ export { ChartTimeframeBar } from "./ChartTimeframeBar";
 export type { ChartTimeframeBarProps } from "./ChartTimeframeBar";
 
 // Timeframe row shared by the MKT panel and the chart windows
-export { IntervalPicker, TimeframeRow } from "./TimeframeRow";
+export { IntervalPicker, TimeframeControls, TimeframeRow } from "./TimeframeRow";
 export type { TimeframeRowProps } from "./TimeframeRow";
 export { useAnchoredPanel } from "./useAnchoredPanel";
 

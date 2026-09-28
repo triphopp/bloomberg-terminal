@@ -1,3 +1,4 @@
+import { etagJson } from "@/lib/etag";
 import { type NextRequest, NextResponse } from "next/server";
 
 import { PYTHON_API as API } from "@/lib/constants";
@@ -10,6 +11,7 @@ export async function GET(req: NextRequest) {
       signal: AbortSignal.timeout(10_000),
     });
     const d = await r.json();
+    if (r.status === 200) return etagJson(req, d);
     return NextResponse.json(d, { status: r.status });
   } catch (err) {
     console.error("[alerts/events GET]", err);

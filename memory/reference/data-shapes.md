@@ -838,7 +838,15 @@ Flags: `TREND_UP`/`TREND_DOWN`, `GOLDEN_CROSS`/`DEATH_CROSS`, `RSI_OVERBOUGHT`/`
 ```
 `connected` = at least one shard and all shards connected. Shard ids only grow. `denied` = wanted but refused a slot (budget). No frontend consumer.
 
-SSE `event: coverage` on `/api/stream/quotes`: `{"live": 214, "denied": ["SLND-USD", …]}` — this client's symbols only, sent on change.
+SSE `event: coverage` on `/api/stream/quotes`: `{"live": 214, "denied": ["SLND-USD", …], "connected": true}` — this client's symbols only, sent on change. `connected` (2026-09-28) = every Yahoo shard has a socket.
+
+SSE `event: ready` (first frame): `{"session": "<id>" | null, "resumed": bool}`. `POST /api/stream/interest` → `{"ok": true, "symbols": N}` · 404 `{"detail": "Unknown stream session"}`.
+
+`GET /api/watchlist/quotes?fields=price` → same `{quotes, statuses, …}` envelope, each quote holds exactly `LITE_QUOTE_KEYS` (backend/market_snapshots.py; session keys present as null) — merged by the client over its last full quote.
+
+`GET /api/changes` → `{"tables": {"chart_drawings": 12}}`.
+
+`GET /api/heartbeat` (Next): `{"dev": DevStatus | null, "sync": SyncStatus | null, "providers": {active, providers[]} | null, "changes": {table: seq} | null, "errors": {"sync"?: str, "providers"?: str, "changes"?: str}}` — `dev` is the `/api/dev/status` proxy shape (`state` ok|stale|down …), `null` outside `next dev`.
 
 ## Upstream Health (`GET /api/health/upstream`)
 

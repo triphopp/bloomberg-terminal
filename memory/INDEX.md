@@ -49,6 +49,9 @@ memory/
 | [Analytics INDEX underwater fill](plans/completed/analytics-index-underwater-fill.md) | ✅ done 2026-09-27 |
 | [Analytics INDEX drawdown pane](plans/completed/analytics-index-drawdown-pane.md) | ✅ done 2026-09-27 |
 | [Analytics INDEX risk metrics](plans/completed/analytics-index-risk-metrics.md) | ✅ done 2026-09-27 |
+| [Stream sessions + change feed + lite quotes](plans/completed/stream-sessions-change-feed.md) | ✅ done 2026-09-28 |
+| [CPU profile → process pool](plans/completed/cpu-profile-process-pool.md) | ✅ done 2026-09-28 |
+| [Request optimization](plans/completed/request-optimization.md) | ✅ done 2026-09-28 |
 | [Central DB — Postgres primary + local mirrors](plans/central-db-cloud-primary.md) | 🔄 P0 done (PR #71); mac adopt pending; next P1 version/outbox on SQLite |
 | [Chart render performance](plans/chart-render-perf.md) | 📋 planning — tick O(1), columns, chunked history, cache tiers |
 | [Unified Trade Entry](plans/unified-trade-entry.md) | 🔄 ENTRY รวมหุ้น + option, สลิป option OCR |

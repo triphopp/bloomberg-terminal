@@ -1,4 +1,5 @@
 import { PYTHON_API } from "@/lib/constants";
+import { etagJson } from "@/lib/etag";
 import { type NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
@@ -21,7 +22,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
         { status: res.status }
       );
     }
-    return NextResponse.json(await res.json());
+    return etagJson(req, await res.json());
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 502 });
   }

@@ -174,3 +174,12 @@ URL carries the view (`?view=bonds`, `layout/view-navigation.ts`).
 `market_snapshots.py` owns the existing rich quote contract (regular/pre/post fields preserved), shared raw info/fast-info (60s), adjusted history (TTL based on caller), and daily frames for alerts. Yahoo adapter `get_info`, `get_fast_info`, `download_quotes`, `get_history` use these shared leaves, so Portfolio/FX and Watchlist can reuse compatible requests. Raw Ticker methods elsewhere, bulk historical `download`, option chains, other providers and NEWS source fetches are not all migrated; this is not a universal limiter for every external API. Registry provider selection remains intact; rich quotes retain their pre-existing Yahoo source.
 
 Signals cache per symbol900s; alert closed-bar trimming remains after the shared raw-history layer. Known absent history404 is skipped by alert frame conversion; transient failures do not become a cached successful scan. PM search/event-detail leaf requests share the coordinator, and confirmed no-market results alone get a900s negative cache. Instances are per Python process; multiple workers do not share memory/limits. No Redis dependency, DB migration or new background scheduler.
+
+## Request path & fan-out (2026-09-28)
+
+- **Vendor calls once:** `market_snapshots.v7_quotes` batches Yahoo quotes (≤50/request, 30 s, in-flight sharing, no lock across I/O); `fast_info` / rich quote / heatmap / FX / portfolio read it first. Rich quote = v7 row + `info` fundamentals reused 30 min.
+- **Push:** one SSE session per page (`stream_sessions.py`, `lib/quote-stream-client.ts`), interest by diff. REST polls back off while the stream carries every open symbol (`lib/stream-cadence.ts`).
+- **Polls that stay:** heartbeat (15 s: dev · sync · providers · change-feed versions), price-only quote polls (`fields=price`), slow panels with ETag/304 (`lib/etag.ts`).
+- **Edit-driven data:** DB-trigger change feed (`change_feed.py`) → heartbeat → `useChangeFeed` invalidation.
+- **CPU:** I/O-bound work stays on threads. `http_tls.py` shares one TLS context (no per-connection CA load); `cpu_pool.py` (spawn ProcessPool, 2 workers, inline fallback) runs pure-Python parses that would hold the GIL for seconds — today the NY Fed ACM `.xls` (`cpu_tasks.parse_acm_xls`).
+- **Multi-instance / Postgres:** design in `plans/completed/stream-sessions-change-feed.md` — feed leader via advisory lock, `NOTIFY market_ticks` fan-out, `stream_interest` table, per-instance sessions, change feed → plpgsql / `change_seq`.

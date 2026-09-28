@@ -18,3 +18,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["SYNC_ENABLED"] = "false"
 os.environ["SYNC_AUTODETECT"] = "false"
 os.environ["SYNC_DIR"] = ""  # empty, not unset: backend/.env sets it and would fill a gap
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_v7_quote_network(monkeypatch):
+    """The batched v7 quote runs ahead of every fast_info load. Tests that stub
+    `get_ticker` must not have it answered by real Yahoo first, so it answers
+    nothing (→ the per-symbol path) unless a test stubs `_v7_fetch` itself."""
+    import market_snapshots
+    monkeypatch.setattr(market_snapshots, "_v7_fetch", lambda chunk: [])
+    market_snapshots._v7_cache.clear()
+    market_snapshots._v7_inflight.clear()
+    yield
+    market_snapshots._v7_cache.clear()
+    market_snapshots._v7_inflight.clear()
