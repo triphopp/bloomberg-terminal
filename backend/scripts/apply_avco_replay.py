@@ -51,11 +51,11 @@ def _cash_delta(old: dict, new: dict) -> dict:
 
 
 def _backup() -> Path:
-    src = Path(db.DB_PATH)
     dst = Path(__file__).resolve().parent.parent / "backups" / (
         f"portfolio.db.bak-{datetime.now():%Y%m%d-%H%M%S}-pre-avco-replay")
     dst.parent.mkdir(exist_ok=True)
-    s, d = sqlite3.connect(src), sqlite3.connect(dst)
+    s = db.connect(readonly=True)
+    d = sqlite3.connect(dst)  # db-ok: fresh backup file, not the book
     s.backup(d)
     d.close(); s.close()
     return dst

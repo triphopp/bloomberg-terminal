@@ -2694,12 +2694,13 @@ def _backup_db(tag: str) -> str:
     import sqlite3
     from pathlib import Path
 
-    from config import DB_PATH
+    from db import connect
 
     dst = Path(__file__).resolve().parent.parent / "backups" / (
         f"portfolio.db.bak-{datetime.now():%Y%m%d-%H%M%S}-{tag}")
     dst.parent.mkdir(exist_ok=True)
-    src, out = sqlite3.connect(DB_PATH), sqlite3.connect(dst)
+    src = connect(readonly=True)
+    out = sqlite3.connect(dst)  # db-ok: fresh backup file, not the book
     try:
         src.backup(out)
     finally:
