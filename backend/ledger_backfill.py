@@ -169,11 +169,15 @@ def _thb_rate(conn, ccy: str, date: str, stored) -> Optional[float]:
 
 # ── build ────────────────────────────────────────────────────────────────────
 
-def build_events(conn) -> tuple[list[Event], list[Issue]]:
+def build_events(conn, scope: Optional[tuple[str, str]] = None) -> tuple[list[Event], list[Issue]]:
+    """All events, or with `scope=(account_id, symbol)` only that position's
+    BUY/SELL events (no cash, dividends or options) — what avco_replay needs."""
     issues: list[Issue] = []
     accounts = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM portfolio_accounts")}
     trades = {}
-    for r in conn.execute("SELECT * FROM trades"):
+    rows = (conn.execute("SELECT * FROM trades WHERE account_id = ? AND symbol = ?", scope)
+            if scope else conn.execute("SELECT * FROM trades"))
+    for r in rows:
         t = dict(r)
         t["acc_currency"] = (accounts.get(t["account_id"]) or {}).get("currency")
         trades[t["id"]] = t
@@ -208,13 +212,14 @@ def build_events(conn) -> tuple[list[Event], list[Issue]]:
         qty = sum(_f(trades[m]["volume"]) for m in members)
         ccy = trade_currency(root)
 
-        # Oldest pre-change price any system action recorded, on the root
-        # itself or on a split child (whose CREATED record snapshots the
-        # parent's price at that sale).
+        # lot_price, when set, IS the buy price (never rebased) — no need to dig.
+        # Otherwise: the oldest pre-change price any system action recorded, on
+        # the root itself or on a split child (whose CREATED record snapshots
+        # the parent's price at that sale).
         # A child's OTHER records (e.g. AVCO_REPAIR) hold the average it was
         # sold at, not what the lot was bought for — only its CREATED record
         # speaks for the parent.
-        evidence = sorted(
+        evidence = [] if root.get("lot_price") is not None else sorted(
             (a for m in members for a in by_trade.get(m, [])
              if (a["action"] in _SYSTEM_PRICE_ACTIONS if m == root_id
                  else a["action"] == "SELL_PARTIAL_CREATED")
@@ -222,7 +227,10 @@ def build_events(conn) -> tuple[list[Event], list[Issue]]:
              and a["fields"]["price_entry"].get("old") is not None),
             key=lambda a: a["id"],
         )
-        if evidence:
+        if root.get("lot_price") is not None:
+            price = _f(root["lot_price"])
+            confidence = "RECORDED"
+        elif evidence:
             price = _f(evidence[0]["fields"]["price_entry"]["old"])
             confidence = "AUDIT"
             first_sys = evidence[0]["id"]
@@ -250,17 +258,28 @@ def build_events(conn) -> tuple[list[Event], list[Issue]]:
                     f"lot {root_id[:8]}: rebuilt buy qty {qty:g} ≠ volume {logged:g} logged before its "
                     f"first partial sale — a split row is missing or volume was edited"))
 
-        gross = qty * price
-        events.append(Event(
-            id=_eid(f"buy|{root_id}"), account_id=acct, trade_date=_d(root["date_entry"]),
-            type="BUY", symbol=sym, qty=qty, price=price, gross=gross,
-            net_cash=-gross, currency=ccy,
-            fx_rate=_thb_rate(conn, ccy, _d(root["date_entry"]), root.get("exchange_rate")),
-            source="BACKFILL" if confidence != "ESTIMATE" else "BACKFILL_ESTIMATE",
-            source_ref=sorted(members), confidence=confidence,
-            trade_time=str(root.get("created_at") or ""),
-            note=f"lot {root_id[:8]}" + (f" + {len(members) - 1} split" if len(members) > 1 else ""),
-        ))
+        # With lot_price on every row, each row speaks for its own part of the
+        # lot: a price or date corrected on one split row moves that part only.
+        # Rows that still agree (the normal case) stay one BUY.
+        if all(trades[m].get("lot_price") is not None for m in members):
+            parts: dict[tuple, list[str]] = defaultdict(list)
+            for m in members:
+                parts[(_f(trades[m]["lot_price"]), _d(trades[m]["date_entry"]))].append(m)
+        else:
+            parts = {(price, _d(root["date_entry"])): members}
+        for i, ((p, day), part) in enumerate(sorted(parts.items(), key=lambda kv: kv[0][1])):
+            q = sum(_f(trades[m]["volume"]) for m in part)
+            gross = q * p
+            events.append(Event(
+                id=_eid(f"buy|{root_id}" + (f"|{i}" if i else "")), account_id=acct, trade_date=day,
+                type="BUY", symbol=sym, qty=q, price=p, gross=gross,
+                net_cash=-gross, currency=ccy,
+                fx_rate=_thb_rate(conn, ccy, day, root.get("exchange_rate")),
+                source="BACKFILL" if confidence != "ESTIMATE" else "BACKFILL_ESTIMATE",
+                source_ref=sorted(part), confidence=confidence,
+                trade_time=str(root.get("created_at") or ""),
+                note=f"lot {root_id[:8]}" + (f" + {len(part) - 1} split" if len(part) > 1 else ""),
+            ))
         # Buy commission + VAT: its own cash event, never in the cost basis
         # (brokers report cost as qty x price). Summed over the lot family,
         # since a partial sale leaves the fee on the row it was typed on.
@@ -322,6 +341,9 @@ def build_events(conn) -> tuple[list[Event], list[Issue]]:
             trade_time=min(stamps),
             note=f"{len(legs)} lot row(s)",
         ))
+
+    if scope:
+        return events, issues
 
     # ── options: each fill is a BUY/SELL of the contract ─────────────────────
     # Quantity in underlying units (contracts × multiplier) so price is the

@@ -423,6 +423,11 @@ def init_portfolio_v2() -> None:
         _ensure_column(conn, "trades", "acquisition_type", "acquisition_type TEXT")
         _ensure_column(conn, "trades", "original_price_entry", "original_price_entry REAL")
         _ensure_column(conn, "trades", "transfer_price_entry", "transfer_price_entry REAL")
+        # What the lot actually cost per unit when bought. price_entry is the
+        # pooled AVCO (rewritten by every sale); lot_price never is, so the
+        # position can be replayed by date (avco_replay.py). NULL on rows older
+        # than 2026-09-28 until the first replay backfills it from the audit log.
+        _ensure_column(conn, "trades", "lot_price", "lot_price REAL")
         # Provenance of a trade row. broker_order_ref is NOT unique here: a
         # partial sell splits one buy into two rows that share the order.
         # Uniqueness lives on broker_executions (one order = one evidence row);

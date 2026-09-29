@@ -54,6 +54,7 @@ export function TradeEditModal({
   mergedAvg,
   mergedVolume,
   costOverride,
+  siblingLotIds,
   onClose,
   onSaved,
 }: {
@@ -62,6 +63,11 @@ export function TradeEditModal({
   mergedAvg?: number;
   mergedVolume?: number;
   costOverride?: number;
+  /**
+   * The other lots of a merged position row. S/L and target are levels for the
+   * position, not the lot — the row shows lot 0's — so a change goes to every lot.
+   */
+  siblingLotIds?: string[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -122,6 +128,23 @@ export function TradeEditModal({
         body: JSON.stringify(patch),
       });
       if (!r.ok) throw new Error(await r.text());
+      const levels: Record<string, unknown> = {};
+      for (const k of ["price_stoploss", "price_target"] as const) {
+        if (k in patch) levels[k] = patch[k];
+      }
+      if (siblingLotIds?.length && Object.keys(levels).length > 0) {
+        const results = await Promise.all(
+          siblingLotIds.map((id) =>
+            fetch(`/api/v2/portfolio/trades/${id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(levels),
+            })
+          )
+        );
+        const bad = results.find((x) => !x.ok);
+        if (bad) throw new Error(`S/L / target saved on lot 1 only: ${await bad.text()}`);
+      }
       onSaved();
       onClose();
     } catch (e) {
@@ -191,6 +214,14 @@ export function TradeEditModal({
   const iSty = { borderColor: colors.border, color: colors.text, background: "#050505" };
   const lCls = "text-[8px] font-mono";
   const sectorList = SECTORS_BY_CURRENCY[isUSD ? "USD" : "THB"] ?? TH_SECTORS;
+  // Distance of a level from the entry price, shown beside S/L and TARGET.
+  const levelPct = (level: string) => {
+    const lv = Number.parseFloat(level);
+    const entry = Number.parseFloat(form.price_entry);
+    if (!(lv > 0) || !(entry > 0)) return null;
+    const pct = ((lv - entry) / entry) * 100;
+    return `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
+  };
 
   const handleSymbolBlur = async () => {
     const sym = form.symbol.trim().toUpperCase();
@@ -199,12 +230,13 @@ export function TradeEditModal({
       const r = await fetch(`/api/stock/sector/${encodeURIComponent(sym)}`);
       if (!r.ok) return;
       const d = await r.json();
-      const rawSector: string = d.sector ?? "";
-      if (!rawSector) return;
-      const match = sectorList.find((s) =>
-        s.toLowerCase().includes(rawSector.toLowerCase().split(" ")[0])
+      // Same rule as ENTRY: the backend answers in both lists (SET codes, GICS
+      // labels incl. ETF - Leveraged / Inverse); take whichever this list offers.
+      const candidates: string[] = [d.set_sector, d.us_sector].filter(
+        (x): x is string => typeof x === "string" && x.length > 0
       );
-      if (match) setForm((f) => ({ ...f, sector: match }));
+      const match = candidates.find((c) => sectorList.includes(c));
+      if (match && match !== "Other") setForm((f) => ({ ...f, sector: match }));
     } catch {
       /* silent */
     }
@@ -354,6 +386,47 @@ export function TradeEditModal({
               ))}
             </select>
           </div>
+          {isOpen && (
+            <>
+              <div>
+                <label htmlFor="te-sl" className={lCls} style={{ color: "#f87171" }}>
+                  S/L {levelPct(form.price_stoploss) ?? ""}
+                </label>
+                <input
+                  id="te-sl"
+                  type="number"
+                  step="any"
+                  inputMode="decimal"
+                  className={iCls}
+                  style={iSty}
+                  placeholder="—"
+                  value={form.price_stoploss}
+                  onChange={set("price_stoploss")}
+                />
+              </div>
+              <div>
+                <label htmlFor="te-target" className={lCls} style={{ color: "#4ade80" }}>
+                  TARGET {levelPct(form.price_target) ?? ""}
+                </label>
+                <input
+                  id="te-target"
+                  type="number"
+                  step="any"
+                  inputMode="decimal"
+                  className={iCls}
+                  style={iSty}
+                  placeholder="—"
+                  value={form.price_target}
+                  onChange={set("price_target")}
+                />
+              </div>
+              {(siblingLotIds?.length ?? 0) > 0 && (
+                <div className="col-span-2 text-[8px] font-mono" style={{ color: colors.textSecondary }}>
+                  S/L · TARGET apply to all {(siblingLotIds?.length ?? 0) + 1} lots of this position
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         {!isOpen && (
