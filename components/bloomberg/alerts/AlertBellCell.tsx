@@ -150,13 +150,16 @@ export function AlertBellCell({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <AlertPickerDialog
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
-        symbol={symbol}
-        targets={[symbol]}
-        colors={colors}
-      />
+      {/* Mounted only while open — one closed dialog per row was pure mount cost. */}
+      {pickerOpen && (
+        <AlertPickerDialog
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          symbol={symbol}
+          targets={[symbol]}
+          colors={colors}
+        />
+      )}
     </>
   );
 }

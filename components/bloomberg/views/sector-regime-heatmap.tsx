@@ -388,7 +388,8 @@ interface HeatmapSVGProps {
   colors: typeof bloombergColors.dark;
 }
 
-function HeatmapSVG({ data, svgW, svgH, compact, colors }: HeatmapSVGProps) {
+// memo: the parent re-renders on every MKT symbol change; the matrix does not.
+const HeatmapSVG = memo(function HeatmapSVG({ data, svgW, svgH, compact, colors }: HeatmapSVGProps) {
   const { matrix, abbrs, sectors, n } = data;
   const mode = data.mode as Mode;
 
@@ -496,7 +497,7 @@ function HeatmapSVG({ data, svgW, svgH, compact, colors }: HeatmapSVGProps) {
       />
     </svg>
   );
-}
+});
 
 // ── Color Legend ──────────────────────────────────────────────────────────────
 
