@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
 import { Loader2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { isDarkModeAtom } from "../../atoms";
+import { isDarkModeAtom, portfolioTabRequestAtom } from "../../atoms";
 import { useLiveQuery } from "../../hooks/useLiveQuery";
 import { useTabShortcuts } from "../../hooks/useTabShortcuts";
 import { bloombergColors } from "../../lib/theme-config";
@@ -116,7 +116,16 @@ export function PortfolioView() {
   // Gates the tab content: a tab mounted before the backend answers would fetch
   // once, get nothing, and sit blank.
 
-  const [topTab, setTopTab] = useState<TopTab>("portfolio");
+  const [tabRequest, setTabRequest] = useAtom(portfolioTabRequestAtom);
+  // Start on the requested tab (GUARD ribbon → RISK). Starting on "portfolio"
+  // and flipping in the effect mounted POSITIONS for one throwaway render inside
+  // the click — the bulk of that interaction's INP.
+  const [topTab, setTopTab] = useState<TopTab>(() => tabRequest ?? "portfolio");
+  useEffect(() => {
+    if (!tabRequest) return;
+    setTopTab(tabRequest);
+    setTabRequest(null);
+  }, [tabRequest, setTabRequest]);
   const [portfolioSub, setPortfolioSub] = useState<PortfolioSub>("positions");
   // OPTIONS → ADD / CLOSE hand the contract to ENTRY; seq makes a repeat click refill.
   const [optionPrefill, setOptionPrefill] = useState<(OptionEntryPrefill & { seq: number }) | null>(

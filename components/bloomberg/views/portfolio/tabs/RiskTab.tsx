@@ -13,6 +13,9 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { type Colors, fmt, fmtAmt, fmtPx, fmtQty, pnlColor } from "../helpers";
 import { CotCrowdingPanel } from "../ui/CotCrowdingPanel";
+import { TradeGuardCard } from "../ui/TradeGuardCard";
+import { VarValidationCard } from "../ui/VarValidationCard";
+import { WhatIfSimPanel } from "../ui/WhatIfSimPanel";
 
 type SubTab = "overview" | "options";
 
@@ -69,6 +72,16 @@ interface RiskMetrics {
   var_backtest_exceptions: number;
   var_backtest_rate: number;
   var_backtest_signal: "GREEN" | "YELLOW" | "RED" | "INSUFFICIENT_DATA";
+  /** Out-of-sample days scored (rolling window) — 2026-09-29. */
+  var_backtest_obs?: number;
+  var_backtest_method?: string;
+  // NAV basis — 2026-09-29
+  nav_value?: number;
+  cash_value?: number;
+  gross_exposure_pct?: number | null;
+  net_exposure_pct?: number | null;
+  short_value?: number;
+  option_delta_value?: number;
   // Vol regime
   vol_regime: "CALM" | "ELEVATED" | "STRESSED" | "UNKNOWN";
   volatility_daily_pct: number;
@@ -315,6 +328,13 @@ export function RiskTab({
         </button>
       </div>
 
+      {subTab === "overview" && (
+        <div className="space-y-2 mb-2">
+          <TradeGuardCard accountId={accountId} currency={currency} colors={colors} />
+          <WhatIfSimPanel accountId={accountId} colors={colors} erc={metrics?.trim_signals} />
+        </div>
+      )}
+
       {!metrics && loading && (
         <div className="flex items-center justify-center py-10">
           <Loader2 className="h-5 w-5 animate-spin" style={{ color: colors.accent }} />
@@ -349,6 +369,21 @@ export function RiskTab({
           sym={sym}
           riskColor={riskColor}
           accountId={accountId}
+          validation={
+            <VarValidationCard
+              accountId={accountId}
+              colors={colors}
+              sym={sym}
+              rolling={{
+                exceptions: metrics.var_backtest_exceptions,
+                obs: metrics.var_backtest_obs,
+                rate: metrics.var_backtest_rate,
+                signal: metrics.var_backtest_signal,
+                kupiec: metrics.kupiec_pvalue,
+              }}
+              nav={metrics}
+            />
+          }
         />
       )}
       {subTab === "overview" && (
@@ -731,6 +766,7 @@ function VaRBreachChecker({
     var_backtest_rate,
     lookback_days,
     var_backtest_signal,
+    var_backtest_obs,
     confidence,
   } = metrics;
 
@@ -898,7 +934,8 @@ function VaRBreachChecker({
         style={{ background: "#111", border: `1px solid ${colors.border}` }}
       >
         <div className="text-[8px] font-bold mb-1.5" style={{ color: colors.textSecondary }}>
-          STEP 3 — KUPIEC POF TEST (model validation, {lookback_days}d window)
+          STEP 3 — KUPIEC POF TEST (rolling out-of-sample: each day vs the VaR of the days
+          before it · current basket replayed · live log in VAR VALIDATION)
         </div>
 
         {var_backtest_signal === "INSUFFICIENT_DATA" ? (
@@ -913,7 +950,7 @@ function VaRBreachChecker({
                   Exceptions
                 </div>
                 <div className="text-[11px] font-bold font-mono" style={{ color: colors.text }}>
-                  {var_backtest_exceptions}/{lookback_days}
+                  {var_backtest_exceptions}/{var_backtest_obs ?? lookback_days}
                 </div>
               </div>
               <div className="p-1.5 rounded text-center" style={{ background: "#0a0a0a" }}>
@@ -1013,31 +1050,6 @@ function EnsembleSignalBadge({ signal }: { signal: RiskMetrics["ensemble_signal"
   );
 }
 
-function BacktestBadge({
-  signal,
-  exceptions,
-  rate,
-  lookback,
-}: {
-  signal: RiskMetrics["var_backtest_signal"];
-  exceptions: number;
-  rate: number;
-  lookback: number;
-}) {
-  if (signal === "INSUFFICIENT_DATA") return null;
-  const color = signal === "GREEN" ? "#00FF00" : signal === "YELLOW" ? "#ff9900" : "#FF4444";
-  const dot = signal === "GREEN" ? "🟢" : signal === "YELLOW" ? "🟡" : "🔴";
-  return (
-    <span
-      className="text-[7px] px-1 py-0.5 rounded font-mono"
-      title={`VaR Backtest: ${exceptions} exceptions / ${lookback}d (${rate.toFixed(1)}%)`}
-      style={{ background: "#111", border: `1px solid ${color}44`, color }}
-    >
-      {dot} BT {rate.toFixed(1)}%
-    </span>
-  );
-}
-
 function EnsembleRow({
   label,
   pct,
@@ -1110,12 +1122,15 @@ function OverviewSection({
   sym,
   riskColor,
   accountId,
+  validation,
 }: {
   metrics: RiskMetrics;
   colors: Colors;
   sym: string;
   riskColor: (s: number) => string;
   accountId: string;
+  /** VaR validation card — the ONE place backtest / Kupiec numbers are shown. */
+  validation?: React.ReactNode;
 }) {
   const [varHorizon, setVarHorizon] = useState<(typeof VAR_HORIZONS)[number]>(VAR_HORIZONS[0]);
   const [acctOpen, setAcctOpen] = useState(false);
@@ -1154,13 +1169,10 @@ function OverviewSection({
     return () => ac.abort();
   }, [chartView, accountId]);
   const scale = Math.sqrt(varHorizon.days);
-  const breachCount = [metrics.breach_hist, metrics.breach_cf, metrics.breach_mc].filter(
-    Boolean
-  ).length;
 
   return (
     <div className="space-y-1.5">
-      {/* ── HEADER: Score · Regime · Vol · Horizon · Today · Trim ── */}
+      {/* ── HEADER: Score · Regime · Vol · Horizon · Today · Stats ── */}
       <div
         className="flex flex-wrap items-center gap-2 px-2 py-1 rounded"
         style={{ background: "#111" }}
@@ -1228,251 +1240,33 @@ function OverviewSection({
             {metrics.today_return_pct.toFixed(2)}%
           </span>
         </div>
-        {/* Trim chips */}
-        {metrics.trim_signals.length > 0 && (
-          <>
-            <div className="w-px h-4 shrink-0" style={{ background: colors.border }} />
-            <div className="flex items-center gap-0.5 flex-wrap">
-              <AlertTriangle className="h-2.5 w-2.5 shrink-0" style={{ color: "#FF4444" }} />
-              {metrics.trim_signals.map((s) => (
-                <span
-                  key={s.symbol}
-                  className="text-[6px] px-1 py-0.5 rounded font-mono"
-                  style={{
-                    background: s.action === "TRIM" ? "#2a0000" : "#001a00",
-                    border: `1px solid ${s.action === "TRIM" ? "#FF444433" : "#00FF0033"}`,
-                    color: s.action === "TRIM" ? "#FF6666" : "#4ade80",
-                  }}
-                  title={s.reason}
-                >
-                  {s.action === "TRIM"
-                    ? `${s.symbol} −${s.suggested_trim_pct}%${s.shares_to_trim != null ? ` (${s.shares_to_trim}sh)` : ""}`
-                    : `${s.symbol} BUY${s.shares_to_buy != null ? ` +${s.shares_to_buy}sh` : ""}`}
-                </span>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* ── REBALANCE SIGNALS detail panel ── */}
-      {metrics.trim_signals.length > 0 &&
-        (() => {
-          const trimList = metrics.trim_signals.filter((s) => s.action === "TRIM");
-          const buyList = metrics.trim_signals.filter((s) => s.action === "BUY");
-          const rcTarget = (100 / metrics.n_positions).toFixed(1);
-          const rowBg = (action: string) => (action === "TRIM" ? "#140000" : "#001400");
-          const accentColor = (action: string) => (action === "TRIM" ? "#FF6666" : "#4ade80");
-          return (
-            <div className="rounded space-y-0" style={{ border: "1px solid #333" }}>
-              {/* Header */}
-              <div
-                className="flex items-center gap-2 px-2 py-1 rounded-t"
-                style={{ background: "#0d0d0d" }}
-              >
-                <AlertTriangle className="h-3 w-3" style={{ color: "#ff9900" }} />
-                <span className="text-[8px] font-bold" style={{ color: "#ff9900" }}>
-                  ERC REBALANCE SIGNALS
-                </span>
-                {trimList.length > 0 && (
-                  <span
-                    className="text-[7px] px-1 rounded font-bold"
-                    style={{
-                      background: "#2a0000",
-                      border: "1px solid #FF444433",
-                      color: "#FF4444",
-                    }}
-                  >
-                    {trimList.length} TRIM
-                  </span>
-                )}
-                {buyList.length > 0 && (
-                  <span
-                    className="text-[7px] px-1 rounded font-bold"
-                    style={{
-                      background: "#001a00",
-                      border: "1px solid #00FF0033",
-                      color: "#4ade80",
-                    }}
-                  >
-                    {buyList.length} BUY
-                  </span>
-                )}
-                <span className="ml-auto text-[7px]" style={{ color: "#555" }}>
-                  ERC target = {rcTarget}% · threshold ±5pp
-                </span>
-              </div>
-
-              {/* Table */}
-              <table className="w-full text-[8px] font-mono">
-                <thead>
-                  <tr style={{ color: "#555", background: "#0a0a0a" }}>
-                    <th className="text-left px-2 py-1 font-normal">Action</th>
-                    <th className="text-left px-2 py-1 font-normal">Symbol</th>
-                    <th className="text-right px-2 py-1 font-normal">RC now</th>
-                    <th className="text-right px-2 py-1 font-normal">RC target</th>
-                    <th className="text-right px-2 py-1 font-normal">Held shares</th>
-                    <th className="text-right px-2 py-1 font-normal">Trade shares</th>
-                    <th className="text-right px-2 py-1 font-normal">Mkt price</th>
-                    <th className="text-right px-2 py-1 font-normal">Avg cost</th>
-                    <th className="text-right px-2 py-1 font-normal">Trade value</th>
-                    <th className="text-right px-2 py-1 font-normal">P&amp;L if executed</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {metrics.trim_signals.map((s, i) => {
-                    const rcNow = (
-                      Math.abs(s.excess_rc_pct) +
-                      (s.action === "TRIM" ? Number.parseFloat(rcTarget) : 0) -
-                      (s.action === "BUY" ? Number.parseFloat(rcTarget) : 0) +
-                      Number.parseFloat(rcTarget)
-                    ).toFixed(1);
-                    const pnlColor =
-                      s.trim_pnl == null ? "#555" : s.trim_pnl >= 0 ? "#4ade80" : "#FF4444";
-                    return (
-                      <tr
-                        key={s.symbol}
-                        className="border-t"
-                        style={{ borderColor: "#222", background: rowBg(s.action) }}
-                      >
-                        <td
-                          className="px-2 py-1 font-bold"
-                          style={{ color: accentColor(s.action) }}
-                        >
-                          {s.action}
-                        </td>
-                        <td
-                          className="px-2 py-1 font-bold"
-                          style={{ color: accentColor(s.action) }}
-                        >
-                          {s.symbol}
-                        </td>
-                        <td
-                          className="px-2 py-1 text-right"
-                          style={{ color: s.action === "TRIM" ? "#FF4444" : "#4ade80" }}
-                        >
-                          {(Number.parseFloat(rcTarget) + s.excess_rc_pct).toFixed(1)}%
-                        </td>
-                        <td className="px-2 py-1 text-right" style={{ color: "#666" }}>
-                          {rcTarget}%
-                        </td>
-                        <td className="px-2 py-1 text-right" style={{ color: "#aaa" }}>
-                          {s.current_shares != null ? s.current_shares.toFixed(2) : "—"}
-                        </td>
-                        <td
-                          className="px-2 py-1 text-right font-bold"
-                          style={{ color: accentColor(s.action) }}
-                        >
-                          {s.action === "TRIM" && s.shares_to_trim != null
-                            ? `−${s.shares_to_trim.toFixed(2)}`
-                            : s.action === "BUY" && s.shares_to_buy != null
-                              ? `+${s.shares_to_buy.toFixed(2)}`
-                              : "—"}
-                        </td>
-                        <td className="px-2 py-1 text-right" style={{ color: "#888" }}>
-                          {s.current_price != null ? `${sym}${fmtPx(s.current_price)}` : "—"}
-                        </td>
-                        <td className="px-2 py-1 text-right" style={{ color: "#666" }}>
-                          {s.avg_entry_price != null ? `${sym}${fmtPx(s.avg_entry_price)}` : "—"}
-                        </td>
-                        <td className="px-2 py-1 text-right" style={{ color: "#aaa" }}>
-                          {(s.action === "TRIM" ? s.trim_value : s.buy_value) != null
-                            ? `${sym}${fmtAmt((s.action === "TRIM" ? s.trim_value : s.buy_value) ?? 0)}`
-                            : "—"}
-                        </td>
-                        <td className="px-2 py-1 text-right font-bold" style={{ color: pnlColor }}>
-                          {s.action === "TRIM" && s.trim_pnl != null ? (
-                            `${s.trim_pnl >= 0 ? "+" : "-"}${sym}${fmtAmt(Math.abs(s.trim_pnl))}${s.trim_pnl_pct != null ? ` (${s.trim_pnl_pct >= 0 ? "+" : ""}${s.trim_pnl_pct.toFixed(1)}%)` : ""}`
-                          ) : s.action === "BUY" ? (
-                            <span style={{ color: "#555" }}>n/a</span>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <div
-                className="px-2 py-1 text-[7px] rounded-b"
-                style={{ color: "#444", background: "#0a0a0a" }}
-              >
-                P&amp;L if executed = (mkt price − avg cost) × shares · based on weighted avg entry
-                price across all lots
-              </div>
-            </div>
-          );
-        })()}
-
-      {/* ── ROW 2: 9-col compact stats ── */}
-      <div className="grid grid-cols-3 md:grid-cols-9 gap-px">
-        {(
-          [
-            {
-              label: "SHARPE",
-              value: metrics.sharpe_ratio.toFixed(2),
-              good: metrics.sharpe_ratio > 1,
-            },
-            {
-              label: "SORTINO",
-              value: metrics.sortino_ratio.toFixed(2),
-              good: metrics.sortino_ratio > 1.5,
-            },
-            {
-              label: "CALMAR",
-              value: metrics.calmar_ratio.toFixed(2),
-              good: metrics.calmar_ratio > 1,
-            },
-            {
-              label: "MAX DD",
-              value: `${metrics.max_drawdown_pct.toFixed(1)}%`,
-              good: metrics.max_drawdown_pct < 15,
-            },
-            {
-              label: "CUR DD",
-              value: `${metrics.current_drawdown_pct.toFixed(1)}%`,
-              good: metrics.current_drawdown_pct < 5,
-            },
-            {
-              label: "DIV",
-              value: metrics.diversification_ratio.toFixed(2),
-              good: metrics.diversification_ratio > 1.5,
-            },
-            {
-              label: "EFF N",
-              value: metrics.effective_n.toFixed(1),
-              good: metrics.effective_n > 3,
-            },
-            { label: "BREACH", value: `${breachCount}/3`, good: breachCount === 0 },
-            {
-              label: "KUPIEC",
-              value: metrics.kupiec_pass ? "PASS" : "FAIL",
-              good: metrics.kupiec_pass,
-            },
-          ] as const
-        ).map(({ label, value, good }) => (
-          <div
-            key={label}
-            className="flex flex-col items-center justify-center py-1 rounded"
-            style={{ background: "#111" }}
-          >
-            <span className="text-[6px]" style={{ color: colors.textSecondary }}>
-              {label}
+        {/* Performance stats — inline, one line instead of a 9-tile row */}
+        <div className="w-px h-4 shrink-0" style={{ background: colors.border }} />
+        <div className="flex items-center gap-2 flex-wrap text-[7px] font-mono">
+          {(
+            [
+              ["SHARPE", metrics.sharpe_ratio.toFixed(2), metrics.sharpe_ratio > 1],
+              ["SORTINO", metrics.sortino_ratio.toFixed(2), metrics.sortino_ratio > 1.5],
+              ["CALMAR", metrics.calmar_ratio.toFixed(2), metrics.calmar_ratio > 1],
+              ["MAX DD", `${metrics.max_drawdown_pct.toFixed(1)}%`, metrics.max_drawdown_pct < 15],
+              ["CUR DD", `${metrics.current_drawdown_pct.toFixed(1)}%`, metrics.current_drawdown_pct < 5],
+              ["DIV", metrics.diversification_ratio.toFixed(2), metrics.diversification_ratio > 1.5],
+              ["EFF N", metrics.effective_n.toFixed(1), metrics.effective_n > 3],
+            ] as const
+          ).map(([label, value, good]) => (
+            <span key={label}>
+              <span style={{ color: colors.textSecondary }}>{label} </span>
+              <span className="font-bold" style={{ color: good ? "#00FF00" : "#FF4444" }}>
+                {value}
+              </span>
             </span>
-            <span
-              className="text-[8px] font-mono font-bold"
-              style={{ color: good ? "#00FF00" : "#FF4444" }}
-            >
-              {value}
-            </span>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
 
       {/* ── ROW 3: 2-col layout — Left: VaR detail | Right: Chart + Correlation ── */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-        {/* LEFT 2/5: VaR table + backtest block */}
+        {/* LEFT 2/5: VaR table + validation (the one backtest / Kupiec view) */}
         <div className="col-span-2 space-y-1.5">
           <div
             className="p-2 rounded"
@@ -1484,12 +1278,6 @@ function OverviewSection({
                 ENSEMBLE VaR/CVaR 95%
               </span>
               <EnsembleSignalBadge signal={metrics.ensemble_signal} />
-              <BacktestBadge
-                signal={metrics.var_backtest_signal}
-                exceptions={metrics.var_backtest_exceptions}
-                rate={metrics.var_backtest_rate}
-                lookback={metrics.lookback_days}
-              />
             </div>
             <table className="w-full text-[7px]">
               <thead>
@@ -1577,43 +1365,7 @@ function OverviewSection({
             )}
           </div>
 
-          {/* Backtest / Kupiec block */}
-          <div
-            className="px-2 py-1.5 rounded text-[7px] space-y-0.5"
-            style={{ background: "#111" }}
-          >
-            <div className="flex items-center justify-between">
-              <span style={{ color: colors.textSecondary }}>Backtest rate</span>
-              <span
-                className="font-mono"
-                style={{
-                  color:
-                    metrics.var_backtest_signal === "GREEN"
-                      ? "#00FF00"
-                      : metrics.var_backtest_signal === "YELLOW"
-                        ? "#ff9900"
-                        : "#FF4444",
-                }}
-              >
-                {(metrics.var_backtest_rate * 100).toFixed(1)}%
-              </span>
-              <span style={{ color: colors.textSecondary }}>
-                ({metrics.var_backtest_exceptions} exc / {metrics.lookback_days}d)
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span style={{ color: colors.textSecondary }}>Kupiec p-val</span>
-              <span
-                className="font-mono"
-                style={{ color: metrics.kupiec_pass ? "#00FF00" : "#FF4444" }}
-              >
-                {metrics.kupiec_pvalue?.toFixed(3) ?? "—"}
-              </span>
-              <span style={{ color: metrics.kupiec_pass ? "#00FF00" : "#FF4444" }}>
-                {metrics.kupiec_pass ? "PASS" : "FAIL"}
-              </span>
-            </div>
-          </div>
+          {validation}
         </div>
 
         {/* RIGHT 3/5: Chart toggle + Correlation */}
@@ -1726,38 +1478,7 @@ function OverviewSection({
                               />
                             </BarChart>
                           </ResponsiveContainer>
-                          {parity.rebalance_actions.length > 0 ? (
-                            <div className="mt-1 space-y-0.5">
-                              {parity.rebalance_actions.map((a) => (
-                                <div
-                                  key={a.symbol}
-                                  className="flex items-center gap-1 text-[7px] px-1 py-0.5 rounded"
-                                  style={{ background: "#111" }}
-                                >
-                                  <span
-                                    className="w-7 font-bold"
-                                    style={{ color: a.action === "BUY" ? "#00FF00" : "#FF4444" }}
-                                  >
-                                    {a.action}
-                                  </span>
-                                  <span className="font-bold" style={{ color: colors.text }}>
-                                    {a.symbol}
-                                  </span>
-                                  <span style={{ color: colors.textSecondary }}>
-                                    {a.current_weight_pct.toFixed(1)}%→
-                                    {a.optimal_weight_pct.toFixed(1)}%
-                                  </span>
-                                  <span
-                                    className="ml-auto font-mono"
-                                    style={{ color: a.drift_pct > 0 ? "#00FF00" : "#FF4444" }}
-                                  >
-                                    {a.drift_pct > 0 ? "+" : ""}
-                                    {a.drift_pct.toFixed(1)}%
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
+                          {parity.rebalance_actions.length === 0 && (
                             <div
                               className="flex items-center gap-1 text-[7px] mt-1"
                               style={{ color: "#00FF00" }}

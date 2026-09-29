@@ -14,6 +14,8 @@ import { type Colors, composeNote, fmtQty, splitNote } from "../helpers";
 import { SellModal } from "../modals/SellModal";
 import { portfolioQueries } from "../queries";
 import type { Account, Trade } from "../types";
+import { EntryValueCheck } from "../ui/EntryValueCheck";
+import { GuardSizePicker } from "../ui/GuardSizePicker";
 import { OptionEntryForm, type OptionEntryPrefill } from "../ui/OptionEntryForm";
 import {
   type OptionSlipForm,
@@ -135,6 +137,14 @@ export function ImportTab({
   }, [accounts, form.account_id]);
 
   const activeAccount = accounts.find((a) => a.id === form.account_id);
+  // TRADE GUARD: every new long carries a stop. It is filled for the user from
+  // the guard's auto stop (GuardSizePicker) and stays editable; a DRIP buy is
+  // not a trade and is exempt.
+  const stopRequired = side === "buy" && instrument === "stock" && !form.is_reinvest;
+  const showStop = extras.stop_loss || stopRequired;
+  // Last value the guard wrote into STOP LOSS — while the field still holds it,
+  // a new auto stop (price or symbol changed) replaces it; a typed stop is kept.
+  const autoStop = useRef<string | null>(null);
   const sectorList =
     SECTORS_BY_ACCOUNT[form.account_id] ??
     SECTORS_BY_CURRENCY[activeAccount?.currency ?? ""] ??
@@ -382,6 +392,24 @@ export function ImportTab({
       setSaveErr("Symbol, Date Entry, Price Entry and Volume are required");
       return;
     }
+    if (stopRequired && !form.strategy_name) {
+      // TRADE GUARD report: untagged buys held 18 of 21 rule breaks, and the
+      // time stop needs the tag to know a Value/Core hold from a swing trade.
+      setSaveErr("ไม้ซื้อต้องเลือก STRATEGY — ถือยาวให้เลือก Value หรือ Core");
+      return;
+    }
+    if (stopRequired) {
+      const sl = Number.parseFloat(form.price_stoploss);
+      const px = Number.parseFloat(form.price_entry);
+      if (!(sl > 0)) {
+        setSaveErr("ไม้ซื้อต้องมี STOP LOSS — เลือกหุ้นให้ระบบกรอกให้ หรือพิมพ์เอง");
+        return;
+      }
+      if (px > 0 && sl >= px) {
+        setSaveErr("STOP LOSS ต้องต่ำกว่า PRICE ENTRY");
+        return;
+      }
+    }
     if (side === "sell" && (!form.date_exit || !form.price_exit)) {
       setSaveErr("SELL trade requires Date Exit and Price Exit");
       return;
@@ -461,7 +489,14 @@ export function ImportTab({
   const inputCls = `${iField} border`;
 
   return (
-    <div className="overflow-y-auto" style={{ maxHeight: "calc(100vh - 200px)" }}>
+    // Fills the PORT content box and scrolls inside it. A fixed
+    // `calc(100vh - 200px)` cut SAVE off on a phone, where the header rows are
+    // taller than 200px and 100vh counts the browser's own toolbar; the bottom
+    // pad keeps SAVE clear of the home indicator.
+    <div
+      className="h-full overflow-y-auto overscroll-contain"
+      style={{ paddingBottom: "max(env(safe-area-inset-bottom), 64px)" }}
+    >
       {variant === "full" && (
         <div
           className="flex items-center gap-px px-3 pt-2 pb-0 border-b"
@@ -978,7 +1013,7 @@ export function ImportTab({
                   gridTemplateColumns: `repeat(${
                     1 +
                     (side === "sell" ? 1 : 0) +
-                    (extras.stop_loss ? 1 : 0) +
+                    (showStop ? 1 : 0) +
                     (extras.target ? 1 : 0) +
                     (extras.vat ? (side === "sell" ? 2 : 1) : 0)
                   }, minmax(0, 1fr))`,
@@ -1028,13 +1063,21 @@ export function ImportTab({
                     />
                   </div>
                 )}
-                {extras.stop_loss && (
+                {showStop && (
                   <div>
                     <div
                       className="text-[8px] mb-0.5 font-bold tracking-wider"
                       style={{ color: colors.textSecondary }}
+                      title={
+                        stopRequired
+                          ? "บังคับสำหรับไม้ซื้อ — ระบบกรอก stop อัตโนมัติ (2×ATR, 5–12%) เมื่อเลือกหุ้นแล้ว แก้เองได้"
+                          : undefined
+                      }
                     >
-                      STOP LOSS
+                      STOP LOSS{stopRequired ? " *" : ""}
+                      {stopRequired && autoStop.current != null && form.price_stoploss === autoStop.current && (
+                        <span style={{ color: colors.textDimmed }}> auto</span>
+                      )}
                     </div>
                     <input
                       className={inputCls}
@@ -1107,6 +1150,35 @@ export function ImportTab({
                   </div>
                 )}
               </div>
+              {side === "buy" && resolve.status === "resolved" && (
+                <GuardSizePicker
+                  symbol={resolve.picked.resolved_symbol}
+                  price={Number.parseFloat(form.price_entry) || null}
+                  currency={pickedCcy || activeAccount?.currency || null}
+                  accountId={form.account_id}
+                  manualStop={
+                    form.price_stoploss !== autoStop.current
+                      ? Number.parseFloat(form.price_stoploss) || null
+                      : null
+                  }
+                  colors={colors}
+                  onVolume={(v) => setForm((f) => calcPnl({ ...f, volume: String(Number(v.toFixed(7))) }))}
+                  onStop={(stop) => {
+                    showExtra("stop_loss");
+                    const v = String(Number(stop.toFixed(4)));
+                    autoStop.current = v;
+                    setForm((f) => ({ ...f, price_stoploss: v }));
+                  }}
+                  onAutoStop={(stop) => {
+                    const v = String(Number(stop.toFixed(4)));
+                    setForm((f) => {
+                      if (f.price_stoploss !== "" && f.price_stoploss !== autoStop.current) return f;
+                      autoStop.current = v;
+                      return { ...f, price_stoploss: v };
+                    });
+                  }}
+                />
+              )}
               {(feeEst.buy?.total != null || feeEst.sell?.total != null) && (
                 <div className="text-[8px] font-mono" style={{ color: colors.textSecondary }}>
                   FEES · {feeEst.buy?.basis ?? feeEst.sell?.basis}
@@ -1132,7 +1204,7 @@ export function ImportTab({
                     className="text-[8px] mb-0.5 font-bold tracking-wider"
                     style={{ color: colors.textSecondary }}
                   >
-                    STRATEGY
+                    STRATEGY{stopRequired ? " *" : ""}
                   </div>
                   <select
                     className={inputCls}
@@ -1218,6 +1290,24 @@ export function ImportTab({
                     ` (${Number.parseFloat(form.pnl_percent) >= 0 ? "+" : ""}${Number.parseFloat(form.pnl_percent).toFixed(2)}%)`}
                 </div>
               )}
+
+              <EntryValueCheck
+                side={side}
+                symbol={form.symbol}
+                price={side === "sell" ? form.price_exit : form.price_entry}
+                qty={form.volume}
+                fee={side === "sell" ? form.fee_exit : form.fee_entry}
+                estimate={side === "sell" ? feeEst.sell : feeEst.buy}
+                slipItems={
+                  slipFees &&
+                  slipFees.side === side &&
+                  slipFees.fee === (side === "sell" ? form.fee_exit : form.fee_entry)
+                    ? slipFees.items
+                    : null
+                }
+                currency={pickedCcy || activeAccount?.currency || ""}
+                colors={colors}
+              />
 
               <div className="flex items-center gap-2 pt-1">
                 <button

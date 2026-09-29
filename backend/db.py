@@ -1786,6 +1786,65 @@ def init_cot_schema() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_cot_positions_code ON cot_positions(code, report_date)")
 
 
+def init_guard_schema() -> None:
+    """TRADE GUARD tables (backend/trade_guard.py). Before init_sync_layer():
+    guard_overrides is synced."""
+    with get_db() as conn:
+        # TRADE GUARD "hold anyway" decisions (backend/trade_guard.py). One row
+        # per decision, keyed to a HOLDING PERIOD (account, yf_symbol,
+        # first_entry) so buying the symbol again later starts clean. A newer
+        # HOLD on the same holding sets `cleared_at` on the old one (kept for
+        # the report); DELETE is an undo. Synced: it is a decision the user made.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS guard_overrides (
+                id          TEXT PRIMARY KEY,
+                account_id  TEXT NOT NULL,
+                yf_symbol   TEXT NOT NULL,
+                symbol      TEXT,
+                first_entry TEXT NOT NULL,
+                codes       TEXT NOT NULL DEFAULT '[]',
+                reason      TEXT NOT NULL DEFAULT '',
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                cleared_at  TEXT
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_guard_ovr_pos "
+            "ON guard_overrides(account_id, yf_symbol, first_entry)"
+        )
+        # Last flags the guard scheduler saw per holding, so a notification
+        # fires on the TRANSITION into a flag, not every scan it stays there.
+        # Machine-local like alert_rule_state: a scan cursor, not user data.
+        # One VaR forecast per day per book, written BEFORE the day it is judged
+        # on (guard_scheduler → routers.risk._record_var_forecast). The only
+        # honest test of the VaR numbers: a forecast cannot be re-made after the
+        # fact. Machine-local (Windows is the sole writer until the Postgres
+        # cutover); `holdings` = {yf_symbol: {"w": weight, "ccy": currency}}.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS var_forecasts (
+                forecast_date  TEXT NOT NULL,
+                account_id     TEXT NOT NULL,
+                confidence     REAL NOT NULL,
+                var_hist_pct   REAL,
+                cvar_pct       REAL,
+                var_cf_pct     REAL,
+                cvar_mc_pct    REAL,
+                ensemble_pct   REAL,
+                portfolio_value REAL,
+                holdings       TEXT NOT NULL,
+                created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (forecast_date, account_id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS guard_state (
+                key        TEXT PRIMARY KEY,
+                flags      TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+
 def init_alerts_schema() -> None:
     """Alert Rule Engine tables (memory/plans/alert-rule-engine.md §5)."""
     from alerts.schema import create_alert_tables

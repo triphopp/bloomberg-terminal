@@ -584,6 +584,15 @@ def run_scan(body: ScanRequest = ScanRequest()):
 # ── Events ───────────────────────────────────────────────────────────────────
 
 
+def _guard_name(rule_id: str) -> str | None:
+    """Display name for TRADE GUARD events (rule_id "guard:<CODE>")."""
+    if not str(rule_id).startswith("guard:"):
+        return None
+    from trade_guard import GUARD_EVENT_LABELS
+    code = str(rule_id).split(":", 1)[1]
+    return f"TRADE GUARD · {GUARD_EVENT_LABELS.get(code, code)}"
+
+
 @router.get("/events")
 def list_events(limit: int = 100, acked: bool | None = None, rule_id: str | None = None):
     # LEFT JOIN, not INNER: alert_events deliberately has no FK to alert_rules
@@ -618,11 +627,14 @@ def list_events(limit: int = 100, acked: bool | None = None, rule_id: str | None
             "id": r["id"], "ruleId": r["rule_id"], "symbol": r["symbol"],
             "firedAt": r["fired_at"], "barTime": r["bar_time"],
             "snapshot": json.loads(r["snapshot_json"]), "acked": bool(r["acked"]),
-            "ruleName": r["rule_name"],
+            "ruleName": r["rule_name"] or _guard_name(r["rule_id"]),
             # An orphaned event has no rule to ask, so fall back to the ticker
             # (the passive channel) rather than silently dropping it or
-            # re-toasting history.
-            "notify": json.loads(r["rule_notify"]) if r["rule_notify"] else ["ticker"],
+            # re-toasting history. TRADE GUARD events (guard_scheduler.py) have
+            # no rule row by design and ask for a toast too.
+            "notify": (json.loads(r["rule_notify"]) if r["rule_notify"]
+                       else ["ticker", "toast"] if str(r["rule_id"]).startswith("guard:")
+                       else ["ticker"]),
             "notifiedAt": r["notified_at"],
             "notifyError": r["notify_error"],
         }

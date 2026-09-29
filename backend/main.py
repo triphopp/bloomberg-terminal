@@ -58,6 +58,7 @@ from db import (
     init_audit_layer,
     init_alerts_schema,
     init_thesis_schema,
+    init_guard_schema,
     init_zettel_schema,
     init_graphs_schema,
     init_series_schema,
@@ -84,6 +85,7 @@ from sync import oplog
 from sources.errors import UpstreamRateLimited, is_rate_limit
 from sync.gate import is_synced_write, should_gate
 from alerts import scheduler as alert_scheduler
+import guard_scheduler
 import iv_scheduler
 import series_scheduler
 
@@ -116,6 +118,7 @@ app.add_middleware(
 init_db()
 init_portfolio_v2()
 init_thesis_schema()   # must precede init_sync_layer(): it adds updated_at + triggers
+init_guard_schema()    # same: guard_overrides is synced
 init_zettel_schema()   # same ordering reason as the thesis schema above
 init_graphs_schema()   # index for research/graphs; no sync triggers, order free
 init_series_schema()   # generic indicator series; must precede init_sync_layer()
@@ -150,6 +153,9 @@ ensure_calibrated(triggered_by="startup")
 
 # ── Alert rules: periodic scan (no-ops while no rule is enabled) ──────────────
 alert_scheduler.start_background_scan()
+
+# ── TRADE GUARD: flag transitions → alert feed (backend/guard_scheduler.py) ──
+guard_scheduler.start_background_scan()
 
 # ── ATM IV snapshots: daily recorder (no-ops once the day is covered) ─────────
 # The provider exposes no IV history, so a day nobody records is a permanent hole

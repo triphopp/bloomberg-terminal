@@ -3,7 +3,7 @@
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAtom } from "jotai";
 import dynamic from "next/dynamic";
-import { Suspense, memo, useCallback, useEffect, useState } from "react";
+import { Suspense, memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import {
   chartTypeAtom,
   focusHeatmapSearchAtom,
@@ -34,6 +34,7 @@ import { useMarketDataQuery } from "../hooks";
 import { useChangeFeed } from "../hooks/useChangeFeed";
 import { AlertTicker } from "../layout/alert-ticker";
 import { MobileNav } from "../layout/mobile-nav";
+import { GuardRibbon } from "../layout/guard-ribbon";
 import { TailRiskRibbon } from "../layout/tail-risk-ribbon";
 import { TerminalHeader } from "../layout/terminal-header";
 import type { NavItem } from "../layout/terminal-header";
@@ -314,12 +315,17 @@ function BloombergTerminal() {
   );
 
   // Back handler for sub-views — same as Esc
-  const handleBack = () => setCurrentView("market");
+  const handleBack = useCallback(() => setCurrentView("market"), [setCurrentView]);
 
   // ── View rendering ─────────────────────────────────────────────────────────
-
-  const renderView = () => {
-    switch (currentView) {
+  // The view body follows a DEFERRED copy of currentView: a nav click (link,
+  // key, search, GUARD/TAIL ribbon…) paints the header at once and swaps the
+  // view — unmount old, mount new, 100–300 ms in dev — as interruptible
+  // background work instead of inside the click (INP). The element is memoised
+  // so the urgent re-render doesn't re-render the still-visible old view.
+  const shownView = useDeferredValue(currentView);
+  const viewElement = useMemo(() => {
+    switch (shownView) {
       case "news":
         return <MemoNews isDarkMode={isDarkMode} onBack={handleBack} />;
       case "heatmap":
@@ -335,7 +341,7 @@ function BloombergTerminal() {
       default:
         return <MarketView isDarkMode={isDarkMode} />;
     }
-  };
+  }, [shownView, isDarkMode, handleBack, stockSymbol]);
 
   return (
     <TerminalLayout shortcuts={shortcuts}>
@@ -345,13 +351,14 @@ function BloombergTerminal() {
       <TickFlash />
       {headerBlock}
       <div className="flex-1 min-h-0 overflow-hidden">
-        <Suspense fallback={<ViewSkeleton />}>{renderView()}</Suspense>
+        <Suspense fallback={<ViewSkeleton />}>{viewElement}</Suspense>
       </div>
       {/* Ribbon + crawl are desktop furniture: on a phone they eat ~40px of a
           ~700px screen for text too small to read, and the TAIL view has it all. */}
       {!isMobile && (
         <div className="flex h-[24px] shrink-0 min-w-0 overflow-hidden border-t border-[#292929] bg-black">
           <TailRiskRibbon />
+          <GuardRibbon />
           <AlertTicker />
         </div>
       )}
