@@ -60,11 +60,12 @@ COT refreshes in its own background thread (`cot-refresh`) when its cache is sta
 
 ## Backend Routers
 
-63 routers in `backend/routers/`, all mounted in `main.py`. The maintained table (prefix + source per router) is
+65 routers in `backend/routers/`, all mounted in `main.py`. The maintained table (prefix + source per router) is
 `project_summary.md` → "Backend Architecture — Modular Routers"; every endpoint is in `api-endpoints.md`.
 Added 2026-09-25/26: `bonds.py`, `cot.py`, `discover.py`, `market_heatmap.py`, `dev.py`; `macro.py` gained
 `/api/macro/calendar`; `portfolio_v2.py` gained `/takeover`, `/history-review` and the `/nav-index`
 start-of-day flow rule.
+Added 2026-09-28: `google_trends.py` (`/api/trends/{daily,interest}`, free public Google Trends; MCP-only consumer) and `fiscal_ai.py` (`/api/fiscal/*`, Fiscal.ai free trial; MCP-only consumer).
 
 ## Frontend Views (6, since 2026-09-26)
 
