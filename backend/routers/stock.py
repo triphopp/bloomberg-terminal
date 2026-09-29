@@ -546,6 +546,7 @@ def stock_sector(symbol: str):
         sector=info.get("sector"),
         industry=info.get("industry"),
         name=info.get("longName") or info.get("shortName") or "",
+        category=info.get("category"),
     )
     return {
         "symbol": symbol.upper(),

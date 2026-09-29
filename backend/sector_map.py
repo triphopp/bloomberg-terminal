@@ -231,12 +231,49 @@ _CLASS_SECTOR = {
 }
 
 
+# ── ETF kind: leveraged / inverse ────────────────────────────────────────────
+# A 3x or a -1x fund is a different risk from a plain index ETF, so the US list
+# files them apart. Yahoo's fund category ("Trading--Leveraged Equity",
+# "Trading--Inverse Debt") is decisive when present; the fund name is the
+# fallback. The name rules are narrow on purpose: "Short-Term Treasury" and
+# "Ultra-Short Income" are plain bond funds, not bets against anything.
+
+ETF_LEVERAGED = "ETF - Leveraged"
+ETF_INVERSE = "ETF - Inverse"
+
+_INVERSE_NAME = re.compile(
+    r"\binverse\b|\bbear\b|\bultrashort\b|\bultrapro short\b|\bproshares short\b"
+    r"|-\s?\d+(?:\.\d+)?x\b|\b\d+(?:\.\d+)?x\s+short\b",
+    re.I,
+)
+_LEVERAGED_NAME = re.compile(
+    r"\bleveraged\b|\bbull\b|\bultra(?:pro)?\b(?![-\s]short)|\b\d+(?:\.\d+)?x\b",
+    re.I,
+)
+
+
+def etf_kind(category: str | None = None, name: str = "") -> str | None:
+    """"inverse", "leveraged" or None. Inverse wins: a -3x fund is both."""
+    cat = str(category or "").lower()
+    if "inverse" in cat:
+        return "inverse"
+    if "leveraged" in cat:
+        return "leveraged"
+    nm = str(name or "")
+    if _INVERSE_NAME.search(nm):
+        return "inverse"
+    if _LEVERAGED_NAME.search(nm):
+        return "leveraged"
+    return None
+
+
 def classify(
     symbol: str,
     quote_type: str | None = None,
     sector: str | None = None,
     industry: str | None = None,
     name: str = "",
+    category: str | None = None,
 ) -> dict:
     """Return the asset class plus the sector in both the SET and the GICS lists.
 
@@ -246,10 +283,14 @@ def classify(
     cls = asset_class(symbol, quote_type, name)
     if cls in _CLASS_SECTOR:
         set_sector, us_sector = _CLASS_SECTOR[cls]
+        kind = etf_kind(category, name) if cls == "etf" else None
+        if kind:
+            us_sector = ETF_INVERSE if kind == "inverse" else ETF_LEVERAGED
         return {
             "asset_class": cls, "quote_type": quote_type,
             "sector_raw": sector, "industry_raw": industry,
             "set_sector": set_sector, "us_sector": us_sector,
+            "etf_kind": kind,
         }
 
     ind = str(industry or "").lower()
@@ -262,4 +303,54 @@ def classify(
         "asset_class": cls, "quote_type": quote_type,
         "sector_raw": sector, "industry_raw": industry,
         "set_sector": set_sector, "us_sector": us_sector,
+        "etf_kind": None,
     }
+
+
+# ── One vocabulary for risk caps (GICS-11 names) ─────────────────────────────
+# Trade rows carry whatever the ENTRY form offered at the time: SET industry
+# codes (ENERG, TRANS), Yahoo sector names (Technology, Consumer Defensive), GICS
+# names (Consumer Staples) and free labels (TECH). A sector cap that groups by
+# the raw string never sees "ENERG" and "Energy" as one exposure. to_gics() maps
+# every spelling onto the 11 GICS sector names so a cap can add them up.
+# Lossy by design (SET ENERG holds utilities too; CONS is construction, TASCO
+# is really construction materials) — good enough to catch concentration.
+_TO_GICS: dict[str, str] = {
+    # SET industry / sector codes
+    "AGRI": "Consumer Staples", "FOOD": "Consumer Staples", "PERSON": "Consumer Staples",
+    "FASHION": "Consumer Discretionary", "HOME": "Consumer Discretionary",
+    "TOURISM": "Consumer Discretionary", "MEDIA": "Communication Services",
+    "COMM": "Consumer Discretionary", "AUTO": "Consumer Discretionary",
+    "BANK": "Financials", "FIN": "Financials", "INSUR": "Financials",
+    "PETRO": "Materials", "CHEM": "Materials", "STEEL": "Materials", "CONMAT": "Materials",
+    "PKG": "Materials", "PAPER": "Materials", "MINE": "Materials",
+    "IMM": "Industrials", "CONS": "Industrials", "TRANS": "Industrials", "PROF": "Industrials",
+    "PROP": "Real Estate", "PF&REIT": "Real Estate",
+    "ENERG": "Energy", "HELTH": "Health Care",
+    "ETRON": "Information Technology", "ICT": "Communication Services",
+    # Yahoo sector names
+    "Technology": "Information Technology", "Financial Services": "Financials",
+    "Healthcare": "Health Care", "Consumer Cyclical": "Consumer Discretionary",
+    "Consumer Defensive": "Consumer Staples", "Basic Materials": "Materials",
+    # Free labels seen in the book
+    "TECH": "Information Technology", "Crypto": "Crypto", "CRYPTO": "Crypto",
+}
+GICS_SECTORS = (
+    "Energy", "Materials", "Industrials", "Consumer Discretionary", "Consumer Staples",
+    "Health Care", "Financials", "Information Technology", "Communication Services",
+    "Utilities", "Real Estate",
+)
+
+
+def to_gics(label: str | None) -> str:
+    """Any sector spelling → a GICS-11 name, 'Crypto', or the label unchanged
+    ('Unclassified' when blank). Case-insensitive on the known spellings."""
+    s = str(label or "").strip()
+    if not s:
+        return "Unclassified"
+    if s in GICS_SECTORS:
+        return s
+    if s in _TO_GICS:
+        return _TO_GICS[s]
+    up = {k.upper(): v for k, v in _TO_GICS.items()}
+    return up.get(s.upper(), next((g for g in GICS_SECTORS if g.upper() == s.upper()), s))
