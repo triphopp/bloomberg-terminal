@@ -593,6 +593,26 @@ def _recover_latest_daily_bar(hist: pd.DataFrame, raw: pd.DataFrame,
     recovered.at[day, "Close"] = price
     return recovered
 
+def _repair_zero_ohl(quotes: list[dict[str, Any]]) -> None:
+    """Rebuild O/H/L that Yahoo sent as 0 next to a real close — in place.
+
+    Indices published once a day (^MOVE, some ICE/CBOE series) come back with
+    Open/High/Low = 0.0 on the newest bar (2026-09-28: ^MOVE close 101.82,
+    O/H/L 0), which draws a candle from 0 to the close. A price can't be 0, so
+    rebuild the bar the way Yahoo fills these series' older rows: open = the
+    previous close, high/low = the range of open and close.
+    """
+    prev_close: float | None = None
+    for q in quotes:
+        close = q["close"]
+        if close > 0 and (q["open"] <= 0 or q["high"] <= 0 or q["low"] <= 0):
+            open_ = q["open"] if q["open"] > 0 else (prev_close or close)
+            q["open"] = open_
+            q["high"] = max(q["high"], open_, close)
+            q["low"] = min(v for v in (q["low"], open_, close) if v > 0)
+        prev_close = close
+
+
 def _history_args(symbol: str, period: str, interval: str):
     """Normalised request → (period, interval, yf_period, yf_interval,
     resample_rule, is_intraday, ttl, cache_key). Shared by the route and the
@@ -721,6 +741,7 @@ def stock_history(symbol: str, period: str = "1y", interval: str = ""):
             for row_date, row in hist.iterrows()
             if not pd.isna(row["Close"])
         ]
+        _repair_zero_ohl(quotes)
 
         # Bar dates are exchange-local and carry no zone. The live quote stream
         # stamps ticks in UTC, so the chart needs the offset to put a tick in
