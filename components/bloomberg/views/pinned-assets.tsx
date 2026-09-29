@@ -39,7 +39,12 @@ import {
   stockSearchSymbolAtom,
 } from "../atoms";
 import { openChartWindowAtom } from "../atoms/chart-windows";
-import { SessionGlyph, extendedSessionMove, staleMoveStyle } from "../core/market-session";
+import {
+  SessionGlyph,
+  extendedSessionMove,
+  sessionConfig,
+  staleMoveStyle,
+} from "../core/market-session";
 import {
   type PredictionSummary,
   probColor,
@@ -52,7 +57,6 @@ import {
   useWatchlistSignals,
 } from "../hooks/useWatchlistSignals";
 import { bloombergColors } from "../lib/theme-config";
-import { ExtCells, ExtHead, extLabelOf } from "./discover-lists";
 
 type ThemeColors = typeof bloombergColors.dark;
 
@@ -1203,7 +1207,6 @@ const CompactWatchRow = memo(function CompactWatchRow({
   onDragOverRow,
   onDropRow,
   onDragEndRow,
-  showExt,
 }: {
   pin: PinnedAsset;
   quote: Quote | undefined;
@@ -1221,11 +1224,16 @@ const CompactWatchRow = memo(function CompactWatchRow({
   onDragOverRow: (index: number) => void;
   onDropRow: (index: number) => void;
   onDragEndRow: () => void;
-  /** render the two extended-hours columns (the list is in PRE/AH) */
-  showExt: boolean;
 }) {
-  const price = q?.regularMarketPrice;
-  const pct = q?.regularMarketChangePercent;
+  const regPrice = q?.regularMarketPrice;
+  const regPct = q?.regularMarketChangePercent;
+  // PRE/AH: the extended print takes over LAST/CHG — the regular numbers are
+  // frozen at the close then, and two extra columns squeezed SYM to 2 letters.
+  // The regular close moves to the tooltip; a P/A mark says which price this is.
+  const ext = extendedSessionMove(q);
+  const extColor = ext ? sessionConfig(q?.marketState)?.color : undefined;
+  const price = ext ? ext.price : regPrice;
+  const pct = ext ? ext.pct : regPct;
   const buyAlert = price != null && pin.buyTarget != null && price <= pin.buyTarget;
   const sellAlert = price != null && pin.sellTarget != null && price >= pin.sellTarget;
   const sincePin =
@@ -1233,9 +1241,14 @@ const CompactWatchRow = memo(function CompactWatchRow({
       ? ((price - pin.priceAtPin) / pin.priceAtPin) * 100
       : null;
   // A move from a session that has already ended is dimmed, never read as today's.
-  const stale = q ? staleMoveStyle(q) : null;
+  const stale = q && !ext ? staleMoveStyle(q) : null;
   const title = [
     q?.shortName ?? pin.symbol,
+    ext
+      ? `${ext.label} ${fmtPrice(ext.price)}${ext.pct != null ? ` ${fmtPct(ext.pct)}` : ""} · close ${
+          regPrice != null ? fmtPrice(regPrice) : "—"
+        }${regPct != null ? ` ${fmtPct(regPct)}` : ""}`
+      : null,
     sincePin != null && pin.priceAtPin != null
       ? `since pin ${fmtPct(sincePin)} @${fmtPrice(pin.priceAtPin)}`
       : null,
@@ -1283,7 +1296,7 @@ const CompactWatchRow = memo(function CompactWatchRow({
         onDoubleClick={() => onEdit(pin.id)}
       >
         <td
-          className="px-1 py-0 text-left font-bold truncate max-w-0 w-full"
+          className="px-1 py-0 text-left font-bold truncate max-w-0 w-full min-w-[5ch]"
           style={{ color: sellAlert ? "#ef4444" : buyAlert ? "#4ade80" : colors.accent }}
         >
           {pin.symbol}
@@ -1291,6 +1304,11 @@ const CompactWatchRow = memo(function CompactWatchRow({
         </td>
         <td className={COMPACT_CELL} style={{ color: colors.text }}>
           {price != null ? fmtPrice(price) : "—"}
+          {ext && (
+            <sup className="text-[7px] ml-px font-bold" style={{ color: extColor }}>
+              {ext.short.charAt(0)}
+            </sup>
+          )}
         </td>
         <td
           className={COMPACT_CELL}
@@ -1304,7 +1322,6 @@ const CompactWatchRow = memo(function CompactWatchRow({
         <td className={COMPACT_CELL} style={{ color: colors.textSecondary }}>
           {q?.regularMarketVolume ? fmtVol(q.regularMarketVolume) : "—"}
         </td>
-        {showExt && <ExtCells quote={q} colors={colors} />}
         <td
           className={`${COMPACT_CELL} font-bold`}
           style={{ color: score == null ? colors.textSecondary : scoreColor(score) }}
@@ -1848,11 +1865,13 @@ export const PinnedAssets = memo(function PinnedAssets({
         case "priority":
           return pin.priority ?? 0;
         case "price":
-          return q?.regularMarketPrice ?? 0;
+          return extendedSessionMove(q)?.price ?? q?.regularMarketPrice ?? 0;
         case "change":
           return q?.regularMarketChange ?? 0;
-        case "pctChange":
-          return q?.regularMarketChangePercent ?? 0;
+        case "pctChange": {
+          const ext = extendedSessionMove(q);
+          return (ext ? ext.pct : q?.regularMarketChangePercent) ?? 0;
+        }
         case "volume":
           return q?.regularMarketVolume ?? 0;
         case "score":
@@ -2653,8 +2672,7 @@ export const PinnedAssets = memo(function PinnedAssets({
                       }))
                       .filter((sec) => sec.rows.length > 0)
                   : [{ group: null as PinGroup | null, rows: displayedPins }];
-              const extLabel = extLabelOf(displayedPins.map((p) => quotes[p.symbol]));
-              const cols = COMPACT_COLS + (extLabel ? 2 : 0);
+              const cols = COMPACT_COLS;
               const rowFor = (pin: PinnedAsset) => {
                 const idx = pageOffset + displayedPins.indexOf(pin);
                 return (
@@ -2675,7 +2693,6 @@ export const PinnedAssets = memo(function PinnedAssets({
                     onDragOverRow={rowDragOver}
                     onDropRow={rowDrop}
                     onDragEndRow={rowDragEnd}
-                    showExt={extLabel != null}
                   />
                 );
               };
@@ -2690,7 +2707,6 @@ export const PinnedAssets = memo(function PinnedAssets({
                       {sortHead("LAST", "price")}
                       {sortHead("CHG", "pctChange")}
                       {sortHead("VOL", "volume")}
-                      {extLabel && <ExtHead label={extLabel} />}
                       {sortHead("SIG", "score")}
                     </tr>
                   </thead>
