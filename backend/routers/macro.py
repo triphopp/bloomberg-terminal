@@ -193,48 +193,54 @@ def _fetch_fred_raw(series_id: str) -> list[dict]:
         return []
 
 
+# Bump when _apply_transform's output changes, so the per-series disk cache
+# drops values computed by the old code instead of serving them until the TTL.
+# v2 (2026-09-28): lags by date, not by row — see _lagged.
+_XFORM_VERSION = 2
+
+
+def _month_key(date: str) -> int:
+    """'YYYY-MM-DD' → months since year 0, so a lag is plain subtraction."""
+    return int(date[:4]) * 12 + int(date[5:7]) - 1
+
+
+def _lagged(rows: list[dict], months: int):
+    """Yield (row, base_raw) where base is the observation `months` earlier BY DATE.
+
+    Never by row offset: FRED has holes (no Oct-2025 CPI — shutdown), and a
+    12-row lag silently becomes 13 months across one. A row whose base month is
+    missing, or zero, is skipped rather than compared with a neighbour.
+    """
+    by_month = {_month_key(r["date"]): r["raw"] for r in rows}
+    for r in rows:
+        base = by_month.get(_month_key(r["date"]) - months)
+        if base:
+            yield r, base
+
+
 def _apply_transform(rows: list[dict], transform: str) -> list[dict]:
-    """Convert raw FRED level data to display values."""
+    """Convert raw FRED level data to display values. Rows newest first."""
     if not rows:
         return []
     if transform == "direct":
         return [{"date": r["date"], "value": round(r["raw"], 4)} for r in rows]
-    if transform == "yoy_pct":
-        # Need 12 months of extra history to compute first YoY value
-        result = []
-        for i in range(len(rows)):
-            if i + 12 < len(rows) and rows[i + 12]["raw"] != 0:
-                pct = round(
-                    (rows[i]["raw"] - rows[i + 12]["raw"]) / rows[i + 12]["raw"] * 100, 2
-                )
-                result.append({"date": rows[i]["date"], "value": pct})
-        return result
     if transform == "mom_diff":
+        by_month = {_month_key(r["date"]): r["raw"] for r in rows}
         return [
-            {"date": rows[i]["date"], "value": round(rows[i]["raw"] - rows[i + 1]["raw"], 1)}
-            for i in range(len(rows) - 1)
+            {"date": r["date"], "value": round(r["raw"] - by_month[_month_key(r["date"]) - 1], 1)}
+            for r in rows
+            if _month_key(r["date"]) - 1 in by_month
         ]
-    if transform == "mom_pct":
-        result = []
-        for i in range(len(rows) - 1):
-            if rows[i + 1]["raw"] != 0:
-                pct = round(
-                    (rows[i]["raw"] - rows[i + 1]["raw"]) / rows[i + 1]["raw"] * 100, 2
-                )
-                result.append({"date": rows[i]["date"], "value": pct})
-        return result
-    if transform == "yoy_pct_q":
-        # For quarterly GDP level data: compare same quarter vs one year ago (i+4)
-        # Much more stable than QoQ annualised — avoids seasonal/front-loading distortion
-        result = []
-        for i in range(len(rows)):
-            if i + 4 < len(rows) and rows[i + 4]["raw"] != 0:
-                pct = round(
-                    (rows[i]["raw"] - rows[i + 4]["raw"]) / rows[i + 4]["raw"] * 100, 2
-                )
-                result.append({"date": rows[i]["date"], "value": pct})
-        return result
-    return []
+    # yoy_pct: monthly, same month a year ago. mom_pct: previous month.
+    # yoy_pct_q: quarterly GDP level, same quarter a year ago — much more stable
+    # than QoQ annualised (avoids seasonal/front-loading distortion).
+    lag = {"yoy_pct": 12, "mom_pct": 1, "yoy_pct_q": 12}.get(transform)
+    if lag is None:
+        return []
+    return [
+        {"date": r["date"], "value": round((r["raw"] - base) / base * 100, 2)}
+        for r, base in _lagged(rows, lag)
+    ]
 
 
 def _fetch_av_raw(av_fn: str, av_interval: str, av_maturity: str | None = None) -> list[dict]:
@@ -418,7 +424,10 @@ def _refresh_series(cache: dict) -> bool:
     changed = False
 
     # Phase 1: try FRED concurrently for all expired indicators (fast, no quota)
-    expired = [k for k in _INDICATOR_CFG if not _is_fresh(cache.get(k))]
+    expired = [
+        k for k in _INDICATOR_CFG
+        if not _is_fresh(cache.get(k)) or cache[k].get("xv") != _XFORM_VERSION
+    ]
     if expired:
         fred_results: dict[str, list] = {}
         with ThreadPoolExecutor(max_workers=min(len(expired), 4)) as pool:
@@ -453,6 +462,7 @@ def _refresh_series(cache: dict) -> bool:
                 cache[k] = {
                     "ts":  time.time(),
                     "ttl": _SERIES_TTL[k],
+                    "xv":  _XFORM_VERSION,
                     "v":   data[0]["value"],
                     "p":   (data[1] if len(data) > 1 else data[0])["value"],
                     "d":   data[0]["date"][:7],   # YYYY-MM
