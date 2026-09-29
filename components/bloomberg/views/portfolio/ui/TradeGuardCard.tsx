@@ -12,8 +12,8 @@
  * Backend: /api/v2/portfolio/risk/guard[/override|/report] (backend/trade_guard.py).
  */
 
-import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 
 import type { Colors } from "../helpers";
 import { fmtAmt, fmtPx } from "../helpers";
@@ -86,7 +86,13 @@ interface StopPlan {
   dry_run: boolean;
   lots: number;
   backup?: string;
-  plan: { symbol: string; stop: number; stop_distance_pct: number; below_stop: boolean; lot_ids: string[] }[];
+  plan: {
+    symbol: string;
+    stop: number;
+    stop_distance_pct: number;
+    below_stop: boolean;
+    lot_ids: string[];
+  }[];
   skipped: { symbol: string; reason: string }[];
 }
 
@@ -342,9 +348,7 @@ export function TradeGuardCard({
                 DD {data.nav_drawdown_pct == null ? "—" : `${data.nav_drawdown_pct.toFixed(1)}%`}
               </span>
               {" · "}
-              <span title="ไม้ที่ปิดล่าสุดเสียติดกันกี่ไม้ — ครบ 4 ครึ่งไซซ์">
-                streak {data.loss_streak}
-              </span>
+              <span title="ไม้ที่ปิดล่าสุดเสียติดกันกี่ไม้ — ครบ 4 ครึ่งไซซ์">streak {data.loss_streak}</span>
               {" · "}
               <span title="เงินที่จะเสียเพิ่มจากราคาตอนนี้ ถ้าทุกตัวลงไปถึง stop">
                 heat {data.heat_pct == null ? "—" : `${data.heat_pct.toFixed(1)}%`} ({sym}
@@ -411,7 +415,7 @@ export function TradeGuardCard({
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => undoHold(a.override_id!)}
+                        onClick={() => a.override_id && undoHold(a.override_id)}
                         className="ml-2"
                         style={{ color: colors.textSecondary, fontSize: 9 }}
                         title="ยกเลิก HOLD (กดผิด) — กลับมาเตือนตามปกติ"
@@ -494,15 +498,12 @@ export function TradeGuardCard({
               </button>
             )}
             <span style={{ color: colors.textSecondary }}>
-              S/L ใส่เอง {data.counts.manual_stops ?? 0}/{data.counts.positions ?? 0} ·
-              ที่เหลือใช้ stop อัตโนมัติ
+              S/L ใส่เอง {data.counts.manual_stops ?? 0}/{data.counts.positions ?? 0} · ที่เหลือใช้ stop
+              อัตโนมัติ
               {(data.counts.overrides ?? 0) > 0 && ` · HOLD ${data.counts.overrides}`}
             </span>
             {data.atr_pending.length > 0 && (
-              <span
-                style={{ color: "#B06000" }}
-                title="ประวัติราคายังโหลดไม่เสร็จ — ใช้ stop 8% ชั่วคราว"
-              >
+              <span style={{ color: "#B06000" }} title="ประวัติราคายังโหลดไม่เสร็จ — ใช้ stop 8% ชั่วคราว">
                 ATR pending: {data.atr_pending.join(", ")}
               </span>
             )}
@@ -527,8 +528,8 @@ export function TradeGuardCard({
                 ) : (
                   <>
                     <span style={{ color: colors.text }}>
-                      จะเขียน S/L ลง {stopPlan.lots} ไม้ ({stopPlan.plan.length} ตัว) — สำรอง DB ก่อนเขียน,
-                      ไม้ที่มี S/L อยู่แล้วไม่แตะ:
+                      จะเขียน S/L ลง {stopPlan.lots} ไม้ ({stopPlan.plan.length} ตัว) — สำรอง DB
+                      ก่อนเขียน, ไม้ที่มี S/L อยู่แล้วไม่แตะ:
                     </span>
                     <span className="tabular-nums" style={{ color: colors.textSecondary }}>
                       {stopPlan.plan
@@ -589,9 +590,8 @@ export function TradeGuardCard({
             วันแต่กำไร &lt;{data.rules.time_stop_min_gain_pct}% = ค้าง (strategy Value/Core ยกเว้น) ·
             ตัวเดียว ≤{data.rules.max_weight_pct}% · กลุ่ม ≤{data.rules.max_sector_pct}% · วันละไม่เกิน −
             {data.rules.day_loss_limit_pct}% · NAV DD −{data.rules.dd_half_pct}% ครึ่งไซซ์ / −
-            {data.rules.dd_stop_pct}% หยุด · เสียติด {data.rules.loss_streak} ไม้ ครึ่งไซซ์.
-            ระบบแค่เตือน (ticker + toast เมื่อมีธงใหม่) ไม่ส่งคำสั่งขาย. ตัวเลขเป็นค่าตั้งต้น
-            ไม่ได้ผ่าน backtest.
+            {data.rules.dd_stop_pct}% หยุด · เสียติด {data.rules.loss_streak} ไม้ ครึ่งไซซ์. ระบบแค่เตือน
+            (ticker + toast เมื่อมีธงใหม่) ไม่ส่งคำสั่งขาย. ตัวเลขเป็นค่าตั้งต้น ไม่ได้ผ่าน backtest.
           </span>
         </>
       )}
@@ -775,8 +775,7 @@ function ReportPanel({
       style={{ borderTop: `1px solid ${colors.border}`, fontSize: 10 }}
     >
       <span style={{ color: colors.textSecondary, fontSize: 9 }}>
-        ไม้ที่ปิดแล้ว วัดเป็น R (1R = ระยะ stop ที่ระบบจะตั้งตอนเข้า) · ผิดกติกา = เสียเกิน 1.5R
-        หรือถือตัวขาดทุน ≥28 วัน
+        ไม้ที่ปิดแล้ว วัดเป็น R (1R = ระยะ stop ที่ระบบจะตั้งตอนเข้า) · ผิดกติกา = เสียเกิน 1.5R หรือถือตัวขาดทุน ≥28 วัน
       </span>
       <div className="flex gap-4 flex-wrap">
         <StatCell label="ทั้งหมด" s={data.summary} colors={colors} />
@@ -804,7 +803,7 @@ function ReportPanel({
       </span>
 
       {data.counterfactual && data.counterfactual.n > 0 && (
-        <CounterfactualBlock data={data} colors={colors} />
+        <CounterfactualBlock cf={data.counterfactual} sweep={data.sweep ?? []} colors={colors} />
       )}
 
       <div className="flex gap-6 flex-wrap items-start">
@@ -894,9 +893,15 @@ function ReportPanel({
   );
 }
 
-function CounterfactualBlock({ data, colors }: { data: GuardReport; colors: Colors }) {
-  const cf = data.counterfactual!;
-  const sweep = data.sweep ?? [];
+function CounterfactualBlock({
+  cf,
+  sweep,
+  colors,
+}: {
+  cf: NonNullable<GuardReport["counterfactual"]>;
+  sweep: NonNullable<GuardReport["sweep"]>;
+  colors: Colors;
+}) {
   const pc = (v: number | undefined, d = 2) =>
     v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(d)}%`;
   const col = (v: number | undefined) =>
@@ -906,12 +911,18 @@ function CounterfactualBlock({ data, colors }: { data: GuardReport; colors: Colo
     null
   );
   const th = (h: string, left = false) => (
-    <span key={h} style={{ color: colors.textSecondary, fontSize: 8.5, textAlign: left ? "left" : "right" }}>
+    <span
+      key={h}
+      style={{ color: colors.textSecondary, fontSize: 8.5, textAlign: left ? "left" : "right" }}
+    >
       {h}
     </span>
   );
   return (
-    <div className="flex flex-col gap-1" style={{ borderTop: `1px dashed ${colors.border}`, paddingTop: 4 }}>
+    <div
+      className="flex flex-col gap-1"
+      style={{ borderTop: `1px dashed ${colors.border}`, paddingTop: 4 }}
+    >
       <span style={{ color: colors.text, fontSize: 9.5 }}>
         ถ้าทำตาม stop จริง — เล่นซ้ำทีละวันจากราคาจริง (รวมไม้ชนะที่ stop จะตัดทิ้ง และวันเปิดกระโดดทะลุ stop)
       </span>
@@ -920,24 +931,32 @@ function CounterfactualBlock({ data, colors }: { data: GuardReport; colors: Colo
           <span style={{ color: colors.textSecondary }}>เฉลี่ย/ไม้ จริง </span>
           <span style={{ color: col(cf.actual_avg_pct) }}>{pc(cf.actual_avg_pct)}</span>
           <span style={{ color: colors.textSecondary }}> → ทำตาม stop </span>
-          <span style={{ color: col(cf.stop_avg_pct), fontWeight: 700 }}>{pc(cf.stop_avg_pct)}</span>
+          <span style={{ color: col(cf.stop_avg_pct), fontWeight: 700 }}>
+            {pc(cf.stop_avg_pct)}
+          </span>
         </span>
         <span>
           <span style={{ color: colors.textSecondary }}>ไม้แย่สุด </span>
           <span style={{ color: colors.negative }}>{pc(cf.actual_worst_pct, 1)}</span>
           <span style={{ color: colors.textSecondary }}> → </span>
-          <span style={{ color: colors.negative, fontWeight: 700 }}>{pc(cf.stop_worst_pct, 1)}</span>
+          <span style={{ color: colors.negative, fontWeight: 700 }}>
+            {pc(cf.stop_worst_pct, 1)}
+          </span>
         </span>
         <span style={{ color: colors.textSecondary }}>
-          win {cf.actual_win_pct}% → {cf.stop_win_pct}% · โดน stop {cf.stopped_pct}% ของไม้ · ไม้ชนะที่ถูกตัด{" "}
-          <span style={{ color: "#FFB300" }}>{cf.winners_cut}</span> · ไม้ที่ stop ช่วย{" "}
-          <span style={{ color: colors.positive }}>{cf.losses_saved}</span> · n {cf.n} ({cf.coverage_pct}% ของไม้)
+          win {cf.actual_win_pct}% → {cf.stop_win_pct}% · โดน stop {cf.stopped_pct}% ของไม้ ·
+          ไม้ชนะที่ถูกตัด <span style={{ color: "#FFB300" }}>{cf.winners_cut}</span> · ไม้ที่ stop ช่วย{" "}
+          <span style={{ color: colors.positive }}>{cf.losses_saved}</span> · n {cf.n} (
+          {cf.coverage_pct}% ของไม้)
         </span>
       </div>
       {cf.entry_mismatch.length > 0 && (
         <span style={{ color: "#B06000", fontSize: 8.5 }}>
           เล่นซ้ำไม่ได้ {cf.entry_mismatch.length} ไม้ — ราคาเข้าไม่ตรงกับราคาตลาดวันนั้น (น่าจะเป็นต้นทุนเฉลี่ย AVCO
-          จากไม้ก่อนหน้า): {cf.entry_mismatch.map((m) => `${m.symbol} ${m.date_entry} (${m.return_pct.toFixed(1)}%)`).join(", ")}
+          จากไม้ก่อนหน้า):{" "}
+          {cf.entry_mismatch
+            .map((m) => `${m.symbol} ${m.date_entry} (${m.return_pct.toFixed(1)}%)`)
+            .join(", ")}
         </span>
       )}
       {sweep.length > 0 && (
@@ -954,11 +973,18 @@ function CounterfactualBlock({ data, colors }: { data: GuardReport; colors: Colo
           {th("ช่วยได้")}
           <div className="contents">
             <span style={{ color: colors.textSecondary }}>ไม่มี stop (จริง)</span>
-            <span className="tabular-nums" style={{ textAlign: "right", color: col(cf.actual_avg_pct) }}>
+            <span
+              className="tabular-nums"
+              style={{ textAlign: "right", color: col(cf.actual_avg_pct) }}
+            >
               {pc(cf.actual_avg_pct)}
             </span>
-            <span className="tabular-nums" style={{ textAlign: "right" }}>{pc(cf.actual_sum_pct, 1)}</span>
-            <span className="tabular-nums" style={{ textAlign: "right" }}>{pc(cf.actual_worst_pct, 1)}</span>
+            <span className="tabular-nums" style={{ textAlign: "right" }}>
+              {pc(cf.actual_sum_pct, 1)}
+            </span>
+            <span className="tabular-nums" style={{ textAlign: "right" }}>
+              {pc(cf.actual_worst_pct, 1)}
+            </span>
             <span />
             <span />
             <span />
@@ -972,15 +998,27 @@ function CounterfactualBlock({ data, colors }: { data: GuardReport; colors: Colo
                 )}
                 {r === best && <span style={{ fontSize: 8 }}> ดีสุด</span>}
               </span>
-              <span className="tabular-nums" style={{ textAlign: "right", color: col(r.stop_avg_pct) }}>
+              <span
+                className="tabular-nums"
+                style={{ textAlign: "right", color: col(r.stop_avg_pct) }}
+              >
                 {pc(r.stop_avg_pct)}
               </span>
-              <span className="tabular-nums" style={{ textAlign: "right" }}>{pc(r.stop_sum_pct, 1)}</span>
-              <span className="tabular-nums" style={{ textAlign: "right" }}>{pc(r.stop_worst_pct, 1)}</span>
-              <span className="tabular-nums" style={{ textAlign: "right", color: colors.textSecondary }}>
+              <span className="tabular-nums" style={{ textAlign: "right" }}>
+                {pc(r.stop_sum_pct, 1)}
+              </span>
+              <span className="tabular-nums" style={{ textAlign: "right" }}>
+                {pc(r.stop_worst_pct, 1)}
+              </span>
+              <span
+                className="tabular-nums"
+                style={{ textAlign: "right", color: colors.textSecondary }}
+              >
                 {r.stopped_pct?.toFixed(0)}%
               </span>
-              <span className="tabular-nums" style={{ textAlign: "right", color: "#FFB300" }}>{r.winners_cut}</span>
+              <span className="tabular-nums" style={{ textAlign: "right", color: "#FFB300" }}>
+                {r.winners_cut}
+              </span>
               <span className="tabular-nums" style={{ textAlign: "right", color: colors.positive }}>
                 {r.losses_saved}
               </span>

@@ -168,10 +168,12 @@ export function usePayoff(
 
   // A new underlying's curve must not be centred on the old one's price.
   const underlying = legs?.[0]?.underlying?.trim().toUpperCase() ?? "";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `underlying` is the trigger
   useEffect(() => {
     setSpot(null);
   }, [underlying]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `nonce` forces a refetch
   useEffect(() => {
     if (!key) {
       setRemote(null);

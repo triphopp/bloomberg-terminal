@@ -86,15 +86,13 @@ export function GuardSizePicker({
   });
 
   const autoStop = data?.ok && data.stop_source !== "MANUAL" ? data.stop : null;
+  // onAutoStop is a fresh closure each render; the value is what matters.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fire on a new stop, not a new callback
   useEffect(() => {
     if (autoStop != null && autoStop > 0) onAutoStop?.(autoStop);
-    // onAutoStop is a fresh closure each render; the value is what matters.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoStop]);
 
-  const label = (
-    <span style={{ color: colors.textSecondary, letterSpacing: "0.1em" }}>SIZE</span>
-  );
+  const label = <span style={{ color: colors.textSecondary, letterSpacing: "0.1em" }}>SIZE</span>;
 
   if (!symbol) return null;
   if (error || (data && !data.ok)) {
@@ -132,7 +130,10 @@ export function GuardSizePicker({
               style={{ color: disabled ? colors.textDimmed : colors.accent }}
             >
               <span style={{ fontWeight: 700 }}>{k}</span>{" "}
-              <span className="tabular-nums" style={{ color: disabled ? colors.textDimmed : colors.text }}>
+              <span
+                className="tabular-nums"
+                style={{ color: disabled ? colors.textDimmed : colors.text }}
+              >
                 {fmtQty(b.volume)}
               </span>{" "}
               <span style={{ color: colors.textSecondary }}>
@@ -166,7 +167,8 @@ export function GuardSizePicker({
         {data.multiplier !== 1 && (
           <span style={{ color: blocked ? "#FF4444" : "#FFB300" }}>
             {" "}
-            · {blocked ? "หยุดเปิดไม้ใหม่" : `ไซซ์ ×${data.multiplier}`} ({data.multiplier_why.join(", ")})
+            · {blocked ? "หยุดเปิดไม้ใหม่" : `ไซซ์ ×${data.multiplier}`} (
+            {data.multiplier_why.join(", ")})
           </span>
         )}
         {data.light === "RED" && !blocked && (

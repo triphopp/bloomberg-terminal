@@ -18,6 +18,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["SYNC_ENABLED"] = "false"
 os.environ["SYNC_AUTODETECT"] = "false"
 os.environ["SYNC_DIR"] = ""  # empty, not unset: backend/.env sets it and would fill a gap
+# Op-log mode turns the snapshot sync off (sync.config.enabled), so a machine
+# whose backend/.env sets OPLOG_ENABLED=true failed every sync test with
+# status "disabled". Tests that want op-log mode set it themselves.
+os.environ["OPLOG_ENABLED"] = "false"
 
 
 import pytest

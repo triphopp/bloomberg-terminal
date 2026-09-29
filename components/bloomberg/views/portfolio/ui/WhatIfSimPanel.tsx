@@ -102,7 +102,13 @@ interface SimData {
     beta: number;
     resid_vol_pct: number;
   }[];
-  factors: { key: string; label: string; daily_vol_pct: number; sd_horizon_pct: number; estimated: boolean }[];
+  factors: {
+    key: string;
+    label: string;
+    daily_vol_pct: number;
+    sd_horizon_pct: number;
+    estimated: boolean;
+  }[];
   thin_history: string[];
   note?: string;
 }
@@ -212,6 +218,7 @@ export function WhatIfSimPanel({
 
   // key → shares after the trade. Typed qty beats ticked suggestions; among
   // ticked ones the deepest cut wins (a sell and a trim on one name = sell).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: isOn reads `picked`
   const target = useMemo(() => {
     const out: Record<string, number> = {};
     for (const p of picks) {
@@ -224,7 +231,6 @@ export function WhatIfSimPanel({
       if (v !== "" && Number.isFinite(n) && n >= 0) out[k] = n;
     }
     return out;
-    // biome-ignore lint/correctness/useExhaustiveDependencies: isOn reads `picked`
   }, [picks, picked, manual]);
 
   const req = useDebounced(
@@ -317,8 +323,7 @@ export function WhatIfSimPanel({
   const hidden = data.positions.length - rows.length;
 
   const set = (id: string, on: boolean) => setPicked((s) => ({ ...s, [id]: on }));
-  const allOff = () =>
-    setPicked(Object.fromEntries(picks.map((p) => [p.id, false])));
+  const allOff = () => setPicked(Object.fromEntries(picks.map((p) => [p.id, false])));
   const reset = () => {
     setPicked({});
     setManual({});
@@ -480,7 +485,10 @@ export function WhatIfSimPanel({
                           {p.account_id}
                         </span>
                       </td>
-                      <td className="px-1 text-right" style={{ color: p.weight_pct > 10 ? "#FFB300" : colors.text }}>
+                      <td
+                        className="px-1 text-right"
+                        style={{ color: p.weight_pct > 10 ? "#FFB300" : colors.text }}
+                      >
                         {p.weight_pct.toFixed(1)}
                       </td>
                       <td
@@ -529,7 +537,10 @@ export function WhatIfSimPanel({
                           className="w-20 text-right border px-1 outline-none"
                           style={{
                             ...iStyle,
-                            color: tgt !== undefined && Math.abs(tgt - p.volume) > 1e-9 ? C_DO : colors.text,
+                            color:
+                              tgt !== undefined && Math.abs(tgt - p.volume) > 1e-9
+                                ? C_DO
+                                : colors.text,
                           }}
                           placeholder={fmtQty(Number(after.toFixed(7)))}
                           value={manual[p.key] ?? ""}
@@ -546,7 +557,10 @@ export function WhatIfSimPanel({
                       </td>
                       <td
                         className="px-1 text-right"
-                        style={{ color: Math.abs(dv) < 0.005 ? colors.textSecondary : dv < 0 ? C_DONT : C_DO }}
+                        style={{
+                          color:
+                            Math.abs(dv) < 0.005 ? colors.textSecondary : dv < 0 ? C_DONT : C_DO,
+                        }}
                       >
                         {Math.abs(dv) < 0.005 ? "—" : money(dv, sym)}
                       </td>
@@ -622,7 +636,11 @@ export function WhatIfSimPanel({
       </div>
 
       <div className="flex gap-3 items-baseline flex-wrap" style={{ fontSize: 9 }}>
-        <button type="button" onClick={() => setShowModel((v) => !v)} style={{ color: colors.accent }}>
+        <button
+          type="button"
+          onClick={() => setShowModel((v) => !v)}
+          style={{ color: colors.accent }}
+        >
           {showModel ? "▾ HIDE MODEL" : "▸ MODEL INPUTS"}
         </button>
         {data.thin_history.length > 0 && (
@@ -631,9 +649,10 @@ export function WhatIfSimPanel({
           </span>
         )}
         <span style={{ color: colors.textSecondary, opacity: 0.75 }}>
-          หุ้น = β × ตลาดบ้าน (S&amp;P 500 / SET50 / BTC / ทอง) + ส่วนเฉพาะตัวหางอ้วน (t df 4) · ตลาดถูกบังคับจบที่
-          k SD · เทรด "ทำ" ที่ราคาวันนี้ ไม่รวมค่าธรรมเนียม · เงินสด 0% · ค่าเงินคงที่ ·{" "}
-          {data.n_paths.toLocaleString()} เส้นทาง · β/vol ย้อนหลัง ~1 ปี · ภาพประกอบการตัดสินใจ ไม่ใช่การพยากรณ์
+          หุ้น = β × ตลาดบ้าน (S&amp;P 500 / SET50 / BTC / ทอง) + ส่วนเฉพาะตัวหางอ้วน (t df 4) ·
+          ตลาดถูกบังคับจบที่ k SD · เทรด "ทำ" ที่ราคาวันนี้ ไม่รวมค่าธรรมเนียม · เงินสด 0% · ค่าเงินคงที่ ·{" "}
+          {data.n_paths.toLocaleString()} เส้นทาง · β/vol ย้อนหลัง ~1 ปี · ภาพประกอบการตัดสินใจ
+          ไม่ใช่การพยากรณ์
         </span>
       </div>
       {showModel && <ModelTable data={data} colors={colors} factorLabel={factorLabel} />}
@@ -714,7 +733,8 @@ const ScenarioChart = memo(function ScenarioChart({
           <span style={{ color: cDo }}>●</span> ทำ {pct(r.doV - 100, 2)} · DD {pct(r.doDd, 2)}
         </div>
         <div style={{ color: colors.text }}>
-          <span style={{ color: cDont }}>●</span> ไม่ทำ {pct(r.dontV - 100, 2)} · DD {pct(r.dontDd, 2)}
+          <span style={{ color: cDont }}>●</span> ไม่ทำ {pct(r.dontV - 100, 2)} · DD{" "}
+          {pct(r.dontDd, 2)}
         </div>
       </div>
     );
@@ -735,10 +755,34 @@ const ScenarioChart = memo(function ScenarioChart({
               tickFormatter={(v: number) => `${(v - 100).toFixed(0)}%`}
             />
             <ReferenceLine y={100} stroke={colors.textDimmed} strokeDasharray="3 3" />
-            <Area dataKey="dontBand" stroke="none" fill={cDont} fillOpacity={0.14} isAnimationActive={false} />
-            <Area dataKey="doBand" stroke="none" fill={cDo} fillOpacity={0.18} isAnimationActive={false} />
-            <Line dataKey="dontV" stroke={cDont} strokeWidth={2} dot={false} isAnimationActive={false} />
-            <Line dataKey="doV" stroke={cDo} strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Area
+              dataKey="dontBand"
+              stroke="none"
+              fill={cDont}
+              fillOpacity={0.14}
+              isAnimationActive={false}
+            />
+            <Area
+              dataKey="doBand"
+              stroke="none"
+              fill={cDo}
+              fillOpacity={0.18}
+              isAnimationActive={false}
+            />
+            <Line
+              dataKey="dontV"
+              stroke={cDont}
+              strokeWidth={2}
+              dot={false}
+              isAnimationActive={false}
+            />
+            <Line
+              dataKey="doV"
+              stroke={cDo}
+              strokeWidth={2}
+              dot={false}
+              isAnimationActive={false}
+            />
             <Tooltip content={tip} cursor={{ stroke: colors.textSecondary, strokeWidth: 1 }} />
           </ComposedChart>
         </ResponsiveContainer>
@@ -762,8 +806,20 @@ const ScenarioChart = memo(function ScenarioChart({
               width={34}
               tickFormatter={(v: number) => `${v.toFixed(0)}%`}
             />
-            <Line dataKey="dontDd" stroke={cDont} strokeWidth={1.5} dot={false} isAnimationActive={false} />
-            <Line dataKey="doDd" stroke={cDo} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+            <Line
+              dataKey="dontDd"
+              stroke={cDont}
+              strokeWidth={1.5}
+              dot={false}
+              isAnimationActive={false}
+            />
+            <Line
+              dataKey="doDd"
+              stroke={cDo}
+              strokeWidth={1.5}
+              dot={false}
+              isAnimationActive={false}
+            />
             <Tooltip content={tip} cursor={{ stroke: colors.textSecondary, strokeWidth: 1 }} />
           </ComposedChart>
         </ResponsiveContainer>
@@ -789,7 +845,11 @@ const SummaryTable = memo(function SummaryTable({
   sym: string;
 }) {
   const th = (key: string, h: string, color?: string) => (
-    <th key={key} className="text-right font-normal px-1" style={{ color: color ?? colors.textSecondary }}>
+    <th
+      key={key}
+      className="text-right font-normal px-1"
+      style={{ color: color ?? colors.textSecondary }}
+    >
       {h}
     </th>
   );
@@ -877,7 +937,9 @@ function ModelTable({
             <span className="tabular-nums">{h.beta.toFixed(2)}</span>
             <span className="tabular-nums">{h.resid_vol_pct.toFixed(2)}%</span>
             <span className="tabular-nums">
-              {h.stop == null ? "—" : `${fmtPx(h.stop)} (${((h.stop / h.price - 1) * 100).toFixed(1)}%)`}
+              {h.stop == null
+                ? "—"
+                : `${fmtPx(h.stop)} (${((h.stop / h.price - 1) * 100).toFixed(1)}%)`}
             </span>
           </div>
         ))}
