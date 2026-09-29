@@ -33,8 +33,17 @@ const series = { priceToCoordinate: (p: number) => 200 - p };
 function fakeCtx() {
   const noop = () => {};
   return {
-    save: noop, restore: noop, beginPath: noop, moveTo: noop, lineTo: noop, stroke: noop,
-    arc: noop, fill: noop, fillRect: noop, fillText: noop, setLineDash: noop,
+    save: noop,
+    restore: noop,
+    beginPath: noop,
+    moveTo: noop,
+    lineTo: noop,
+    stroke: noop,
+    arc: noop,
+    fill: noop,
+    fillRect: noop,
+    fillText: noop,
+    setLineDash: noop,
     measureText: () => ({ width: 20 }),
   };
 }
@@ -43,7 +52,10 @@ function paint(lines: StoredTrendLine[]) {
   const hits = createTrendHitMap();
   const overlay = createTrendLineOverlay(lines, null, null, hits);
   // biome-ignore lint/suspicious/noExplicitAny: minimal fakes
-  overlay.draw(fakeCtx() as any, chart as any, series as any, data, true, { width: 500, height: 300 });
+  overlay.draw(fakeCtx() as any, chart as any, series as any, data, true, {
+    width: 500,
+    height: 300,
+  });
   return hits;
 }
 
@@ -79,7 +91,10 @@ test("sameTrendBar compares bar and future offset", () => {
   assert.equal(sameTrendBar({ time: t, price: 1 }, { time: t, price: 2 }), true);
   assert.equal(sameTrendBar({ time: t, price: 1 }, { time: t, price: 1, futureBars: 3 }), false);
   assert.equal(
-    sameTrendBar({ time: t, price: 1, futureBars: 3 }, { time: String(t), price: 9, futureBars: 3 }),
+    sameTrendBar(
+      { time: t, price: 1, futureBars: 3 },
+      { time: String(t), price: 9, futureBars: 3 }
+    ),
     true
   );
 });

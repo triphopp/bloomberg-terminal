@@ -60,9 +60,7 @@ export function GuardRibbon() {
       type="button"
       className="flex h-full shrink-0 items-center gap-1.5 border-r border-[#242424] px-2 font-mono select-none"
       title={
-        data
-          ? live.map((a) => a.text).join("\n") || "TRADE GUARD: ไม่มีอะไรต้องทำ"
-          : "TRADE GUARD"
+        data ? live.map((a) => a.text).join("\n") || "TRADE GUARD: ไม่มีอะไรต้องทำ" : "TRADE GUARD"
       }
       aria-label={`TRADE GUARD ${data?.light ?? "loading"} — open PORT RISK`}
       onClick={() => {

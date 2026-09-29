@@ -1075,9 +1075,11 @@ export function ImportTab({
                       }
                     >
                       STOP LOSS{stopRequired ? " *" : ""}
-                      {stopRequired && autoStop.current != null && form.price_stoploss === autoStop.current && (
-                        <span style={{ color: colors.textDimmed }}> auto</span>
-                      )}
+                      {stopRequired &&
+                        autoStop.current != null &&
+                        form.price_stoploss === autoStop.current && (
+                          <span style={{ color: colors.textDimmed }}> auto</span>
+                        )}
                     </div>
                     <input
                       className={inputCls}
@@ -1162,7 +1164,9 @@ export function ImportTab({
                       : null
                   }
                   colors={colors}
-                  onVolume={(v) => setForm((f) => calcPnl({ ...f, volume: String(Number(v.toFixed(7))) }))}
+                  onVolume={(v) =>
+                    setForm((f) => calcPnl({ ...f, volume: String(Number(v.toFixed(7))) }))
+                  }
                   onStop={(stop) => {
                     showExtra("stop_loss");
                     const v = String(Number(stop.toFixed(4)));
@@ -1172,7 +1176,8 @@ export function ImportTab({
                   onAutoStop={(stop) => {
                     const v = String(Number(stop.toFixed(4)));
                     setForm((f) => {
-                      if (f.price_stoploss !== "" && f.price_stoploss !== autoStop.current) return f;
+                      if (f.price_stoploss !== "" && f.price_stoploss !== autoStop.current)
+                        return f;
                       autoStop.current = v;
                       return { ...f, price_stoploss: v };
                     });

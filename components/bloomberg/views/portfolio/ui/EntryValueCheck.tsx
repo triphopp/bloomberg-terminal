@@ -137,7 +137,8 @@ export function EntryValueCheck({
         {lines.map(([label, v]) => row(label, `${fmtAmt(v)}${ccy}`))}
         {source && (
           <div className="text-[8px] text-right" style={{ color: colors.textSecondary }}>
-            fees: {source === "slip" ? "from slip" : source === "typed" ? "typed" : "broker estimate"}
+            fees:{" "}
+            {source === "slip" ? "from slip" : source === "typed" ? "typed" : "broker estimate"}
           </div>
         )}
       </div>

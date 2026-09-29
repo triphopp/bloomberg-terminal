@@ -934,8 +934,8 @@ function VaRBreachChecker({
         style={{ background: "#111", border: `1px solid ${colors.border}` }}
       >
         <div className="text-[8px] font-bold mb-1.5" style={{ color: colors.textSecondary }}>
-          STEP 3 — KUPIEC POF TEST (rolling out-of-sample: each day vs the VaR of the days
-          before it · current basket replayed · live log in VAR VALIDATION)
+          STEP 3 — KUPIEC POF TEST (rolling out-of-sample: each day vs the VaR of the days before it
+          · current basket replayed · live log in VAR VALIDATION)
         </div>
 
         {var_backtest_signal === "INSUFFICIENT_DATA" ? (
@@ -1249,8 +1249,16 @@ function OverviewSection({
               ["SORTINO", metrics.sortino_ratio.toFixed(2), metrics.sortino_ratio > 1.5],
               ["CALMAR", metrics.calmar_ratio.toFixed(2), metrics.calmar_ratio > 1],
               ["MAX DD", `${metrics.max_drawdown_pct.toFixed(1)}%`, metrics.max_drawdown_pct < 15],
-              ["CUR DD", `${metrics.current_drawdown_pct.toFixed(1)}%`, metrics.current_drawdown_pct < 5],
-              ["DIV", metrics.diversification_ratio.toFixed(2), metrics.diversification_ratio > 1.5],
+              [
+                "CUR DD",
+                `${metrics.current_drawdown_pct.toFixed(1)}%`,
+                metrics.current_drawdown_pct < 5,
+              ],
+              [
+                "DIV",
+                metrics.diversification_ratio.toFixed(2),
+                metrics.diversification_ratio > 1.5,
+              ],
               ["EFF N", metrics.effective_n.toFixed(1), metrics.effective_n > 3],
             ] as const
           ).map(([label, value, good]) => (

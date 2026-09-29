@@ -64,7 +64,13 @@ export function VarValidationCard({
   accountId: string;
   colors: Colors;
   sym: string;
-  rolling: { exceptions: number; obs: number | undefined; rate: number; signal: string; kupiec: number };
+  rolling: {
+    exceptions: number;
+    obs: number | undefined;
+    rate: number;
+    signal: string;
+    kupiec: number;
+  };
   nav: {
     nav_value?: number;
     cash_value?: number;
@@ -77,7 +83,9 @@ export function VarValidationCard({
   const { data } = useQuery<LiveData>({
     queryKey: ["var-backtest", accountId],
     queryFn: async () => {
-      const r = await fetch(`/api/v2/portfolio/risk/var-backtest?account_id=${encodeURIComponent(accountId)}`);
+      const r = await fetch(
+        `/api/v2/portfolio/risk/var-backtest?account_id=${encodeURIComponent(accountId)}`
+      );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     },
@@ -95,7 +103,10 @@ export function VarValidationCard({
       <div className="flex items-baseline gap-2 flex-wrap">
         <span style={{ color: colors.textSecondary, letterSpacing: "0.12em" }}>VAR VALIDATION</span>
         {nav.nav_value != null && (
-          <span className="ml-auto tabular-nums" style={{ color: colors.textSecondary, fontSize: 9 }}>
+          <span
+            className="ml-auto tabular-nums"
+            style={{ color: colors.textSecondary, fontSize: 9 }}
+          >
             NAV {sym}
             {fmtAmt(nav.nav_value)} · cash {sym}
             {fmtAmt(nav.cash_value ?? 0)} · net {nav.net_exposure_pct?.toFixed(1) ?? "—"}% · gross{" "}
@@ -116,9 +127,12 @@ export function VarValidationCard({
               ● {rolling.signal}
             </span>{" "}
             <span style={{ color: colors.text }}>
-              {rolling.exceptions}/{rolling.obs ?? "—"} วันเกิน VaR ({rolling.rate.toFixed(1)}% · คาด 5%)
+              {rolling.exceptions}/{rolling.obs ?? "—"} วันเกิน VaR ({rolling.rate.toFixed(1)}% · คาด
+              5%)
             </span>{" "}
-            <span style={{ color: colors.textSecondary }}>Kupiec p {rolling.kupiec.toFixed(3)}</span>
+            <span style={{ color: colors.textSecondary }}>
+              Kupiec p {rolling.kupiec.toFixed(3)}
+            </span>
           </span>
         </div>
         <div className="flex flex-col">
@@ -134,10 +148,13 @@ export function VarValidationCard({
           ) : (
             <span className="tabular-nums">
               {hist && (
-                <span style={{ color: SIGNAL_COLOR[hist.signal], fontWeight: 700 }}>● {hist.signal}</span>
+                <span style={{ color: SIGNAL_COLOR[hist.signal], fontWeight: 700 }}>
+                  ● {hist.signal}
+                </span>
               )}{" "}
               <span style={{ color: colors.text }}>
-                VaR {hist?.exceptions ?? 0}/{hist?.n ?? 0} · CVaR {cvar?.exceptions ?? 0}/{cvar?.n ?? 0} วันเกิน
+                VaR {hist?.exceptions ?? 0}/{hist?.n ?? 0} · CVaR {cvar?.exceptions ?? 0}/
+                {cvar?.n ?? 0} วันเกิน
               </span>{" "}
               <span style={{ color: colors.textSecondary }}>
                 เริ่ม {data.first_forecast} · รอผล {data.pending}

@@ -389,7 +389,13 @@ interface HeatmapSVGProps {
 }
 
 // memo: the parent re-renders on every MKT symbol change; the matrix does not.
-const HeatmapSVG = memo(function HeatmapSVG({ data, svgW, svgH, compact, colors }: HeatmapSVGProps) {
+const HeatmapSVG = memo(function HeatmapSVG({
+  data,
+  svgW,
+  svgH,
+  compact,
+  colors,
+}: HeatmapSVGProps) {
   const { matrix, abbrs, sectors, n } = data;
   const mode = data.mode as Mode;
 

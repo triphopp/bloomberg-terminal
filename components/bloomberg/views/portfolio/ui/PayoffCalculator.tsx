@@ -130,7 +130,11 @@ export function PayoffCalculator({ colors }: { colors: Colors }) {
   const iField = "text-[10px] font-mono px-1.5 py-0.5 border outline-none w-full";
   const iStyle = { background: "#0a0a0a", color: colors.text, borderColor: colors.border };
   const head = (h: string) => (
-    <th key={h} className="text-left py-0.5 pr-1 font-normal" style={{ color: colors.textSecondary }}>
+    <th
+      key={h}
+      className="text-left py-0.5 pr-1 font-normal"
+      style={{ color: colors.textSecondary }}
+    >
       {h}
     </th>
   );
@@ -162,7 +166,9 @@ export function PayoffCalculator({ colors }: { colors: Colors }) {
                   style={iStyle}
                   placeholder="AAPL"
                   value={st.underlying}
-                  onChange={(e) => setSt((s) => ({ ...s, underlying: e.target.value.toUpperCase() }))}
+                  onChange={(e) =>
+                    setSt((s) => ({ ...s, underlying: e.target.value.toUpperCase() }))
+                  }
                 />
               </label>
               <label
@@ -192,112 +198,123 @@ export function PayoffCalculator({ colors }: { colors: Colors }) {
             </div>
 
             <div className="overflow-x-auto">
-            <table className="w-full text-[9px] font-mono">
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  {["SIDE", "TYPE", "STRIKE *", "EXPIRY *", "PREMIUM *", "CONTRACTS", "MULT", ""].map(head)}
-                </tr>
-              </thead>
-              <tbody>
-                {st.legs.map((l) => (
-                  <tr key={l.id}>
-                    <td className="py-0.5 pr-1">
-                      <select
-                        className={`${iField} min-w-[3.9rem]`}
-                        style={{ ...iStyle, color: l.side === "BUY" ? "#4ade80" : "#FF4444" }}
-                        value={l.side}
-                        onChange={(e) => setLeg(l.id, { side: e.target.value as LegInput["side"] })}
-                      >
-                        <option value="BUY">BUY</option>
-                        <option value="SELL">SELL</option>
-                      </select>
-                    </td>
-                    <td className="py-0.5 pr-1">
-                      <select
-                        className={`${iField} min-w-[3.9rem]`}
-                        style={iStyle}
-                        value={l.option_type}
-                        onChange={(e) =>
-                          setLeg(l.id, { option_type: e.target.value as LegInput["option_type"] })
-                        }
-                      >
-                        <option value="call">CALL</option>
-                        <option value="put">PUT</option>
-                      </select>
-                    </td>
-                    <td className="py-0.5 pr-1">
-                      <input
-                        className={`${iField} min-w-[3.8rem]`}
-                        style={iStyle}
-                        type="number"
-                        step="any"
-                        placeholder="150"
-                        value={l.strike}
-                        onChange={(e) => setLeg(l.id, { strike: e.target.value })}
-                      />
-                    </td>
-                    <td className="py-0.5 pr-1">
-                      <input
-                        className={`${iField} min-w-[6.8rem]`}
-                        style={iStyle}
-                        type="date"
-                        min="2000-01-01"
-                        value={l.expiry}
-                        onChange={(e) => setLeg(l.id, { expiry: e.target.value })}
-                      />
-                    </td>
-                    <td className="py-0.5 pr-1">
-                      <input
-                        className={`${iField} min-w-[3.8rem]`}
-                        style={iStyle}
-                        type="number"
-                        step="any"
-                        min={0}
-                        placeholder="5.20"
-                        title="Price per share (the quoted premium), not per contract"
-                        value={l.premium}
-                        onChange={(e) => setLeg(l.id, { premium: e.target.value })}
-                      />
-                    </td>
-                    <td className="py-0.5 pr-1">
-                      <input
-                        className={`${iField} min-w-[2.8rem]`}
-                        style={iStyle}
-                        type="number"
-                        step="any"
-                        min={0}
-                        value={l.contracts}
-                        onChange={(e) => setLeg(l.id, { contracts: e.target.value })}
-                      />
-                    </td>
-                    <td className="py-0.5 pr-1">
-                      <input
-                        className={`${iField} min-w-[2.8rem]`}
-                        style={iStyle}
-                        type="number"
-                        step="any"
-                        value={l.multiplier}
-                        onChange={(e) => setLeg(l.id, { multiplier: e.target.value })}
-                      />
-                    </td>
-                    <td className="py-0.5">
-                      {st.legs.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setSt((s) => ({ ...s, legs: s.legs.filter((x) => x.id !== l.id) }))
-                          }
-                          className="opacity-50 hover:opacity-100"
-                          title="Remove leg"
-                        >
-                          <X className="w-3 h-3" style={{ color: colors.textSecondary }} />
-                        </button>
-                      )}
-                    </td>
+              <table className="w-full text-[9px] font-mono">
+                <thead>
+                  <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    {[
+                      "SIDE",
+                      "TYPE",
+                      "STRIKE *",
+                      "EXPIRY *",
+                      "PREMIUM *",
+                      "CONTRACTS",
+                      "MULT",
+                      "",
+                    ].map(head)}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {st.legs.map((l) => (
+                    <tr key={l.id}>
+                      <td className="py-0.5 pr-1">
+                        <select
+                          className={`${iField} min-w-[3.9rem]`}
+                          style={{ ...iStyle, color: l.side === "BUY" ? "#4ade80" : "#FF4444" }}
+                          value={l.side}
+                          onChange={(e) =>
+                            setLeg(l.id, { side: e.target.value as LegInput["side"] })
+                          }
+                        >
+                          <option value="BUY">BUY</option>
+                          <option value="SELL">SELL</option>
+                        </select>
+                      </td>
+                      <td className="py-0.5 pr-1">
+                        <select
+                          className={`${iField} min-w-[3.9rem]`}
+                          style={iStyle}
+                          value={l.option_type}
+                          onChange={(e) =>
+                            setLeg(l.id, { option_type: e.target.value as LegInput["option_type"] })
+                          }
+                        >
+                          <option value="call">CALL</option>
+                          <option value="put">PUT</option>
+                        </select>
+                      </td>
+                      <td className="py-0.5 pr-1">
+                        <input
+                          className={`${iField} min-w-[3.8rem]`}
+                          style={iStyle}
+                          type="number"
+                          step="any"
+                          placeholder="150"
+                          value={l.strike}
+                          onChange={(e) => setLeg(l.id, { strike: e.target.value })}
+                        />
+                      </td>
+                      <td className="py-0.5 pr-1">
+                        <input
+                          className={`${iField} min-w-[6.8rem]`}
+                          style={iStyle}
+                          type="date"
+                          min="2000-01-01"
+                          value={l.expiry}
+                          onChange={(e) => setLeg(l.id, { expiry: e.target.value })}
+                        />
+                      </td>
+                      <td className="py-0.5 pr-1">
+                        <input
+                          className={`${iField} min-w-[3.8rem]`}
+                          style={iStyle}
+                          type="number"
+                          step="any"
+                          min={0}
+                          placeholder="5.20"
+                          title="Price per share (the quoted premium), not per contract"
+                          value={l.premium}
+                          onChange={(e) => setLeg(l.id, { premium: e.target.value })}
+                        />
+                      </td>
+                      <td className="py-0.5 pr-1">
+                        <input
+                          className={`${iField} min-w-[2.8rem]`}
+                          style={iStyle}
+                          type="number"
+                          step="any"
+                          min={0}
+                          value={l.contracts}
+                          onChange={(e) => setLeg(l.id, { contracts: e.target.value })}
+                        />
+                      </td>
+                      <td className="py-0.5 pr-1">
+                        <input
+                          className={`${iField} min-w-[2.8rem]`}
+                          style={iStyle}
+                          type="number"
+                          step="any"
+                          value={l.multiplier}
+                          onChange={(e) => setLeg(l.id, { multiplier: e.target.value })}
+                        />
+                      </td>
+                      <td className="py-0.5">
+                        {st.legs.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSt((s) => ({ ...s, legs: s.legs.filter((x) => x.id !== l.id) }))
+                            }
+                            className="opacity-50 hover:opacity-100"
+                            title="Remove leg"
+                          >
+                            <X className="w-3 h-3" style={{ color: colors.textSecondary }} />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
 
             <div className="flex items-center justify-between mt-1.5">
@@ -325,7 +342,8 @@ export function PayoffCalculator({ colors }: { colors: Colors }) {
             </div>
             {legs.length < st.legs.length && underlying && (
               <div className="text-[8px] mt-1" style={{ color: "#f59e0b" }}>
-                {st.legs.length - legs.length} leg ยังกรอกไม่ครบ (strike, expiry, premium) — ยังไม่นับในกราฟ
+                {st.legs.length - legs.length} leg ยังกรอกไม่ครบ (strike, expiry, premium) —
+                ยังไม่นับในกราฟ
               </div>
             )}
           </div>

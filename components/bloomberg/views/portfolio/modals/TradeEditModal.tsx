@@ -421,7 +421,10 @@ export function TradeEditModal({
                 />
               </div>
               {(siblingLotIds?.length ?? 0) > 0 && (
-                <div className="col-span-2 text-[8px] font-mono" style={{ color: colors.textSecondary }}>
+                <div
+                  className="col-span-2 text-[8px] font-mono"
+                  style={{ color: colors.textSecondary }}
+                >
                   S/L · TARGET apply to all {(siblingLotIds?.length ?? 0) + 1} lots of this position
                 </div>
               )}
