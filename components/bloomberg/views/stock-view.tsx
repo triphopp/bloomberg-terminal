@@ -4399,7 +4399,9 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
     trendPending,
     toggleTrendLine,
     drawingArmed,
+    drawingFutureRoom,
     handleChartClick,
+    handlePointerMove,
     toggleVolumeProfile,
     showVolumeEvents,
     toggleVolumeEvents,
@@ -5218,6 +5220,8 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                   eventMarkers={eventMarkers}
                   referencePriceLine={extendedHoursPriceLine(quote)}
                   onBarClick={handleChartClick}
+                  onPointerMove={handlePointerMove}
+                  futureRoomBars={drawingFutureRoom}
                   crosshairCursor={drawingArmed}
                 />
                 {selectedEvent && (

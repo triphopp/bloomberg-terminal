@@ -12,7 +12,9 @@ Replaces `localStorage["chart:regression"]` / `["chart:trend-lines"]` (imported 
   "data": {...}, "createdAt": "2026-09-27 15:07:24.295"}]}
 ```
 `data` by kind — times are bar times (not indices), prices raw floats:
-- `trend`: `{a:{time,price}, b:{time,price}, color}` — `a.price == b.price` ⇒ horizontal (Shift)
+- `trend`: `{a:{time,price,futureBars?}, b:{...}, color}` — `a.price == b.price` ⇒ horizontal (Shift).
+  `futureBars` (2026-09-28) = a point in the whitespace right of the last bar: `time` is the last loaded bar,
+  the point sits N bars after it (drawn via `logicalToCoordinate(index + N)`), so it stays pinned as bars arrive
 - `regression`: `{fromTime, toTime, color, options:{mode:"stddev"|"quantile", stdDevMult, tauPct, extend}}`
 Only drawings for the current symbol + bar interval render.
 
@@ -329,12 +331,22 @@ Three kinds of number, and conflating them is how a payoff screen misleads:
 | `curve[].expiry`, `breakevens`, `max_profit`, `max_loss` | **arithmetic** | nothing — `max(S−K,0)` and a subtraction |
 | `curve[].t0`, `current.pnl_today` | **model** | Black-Scholes at today's IV (via `greeks.py`) |
 | `pop` | **model estimate** | + lognormal terminal price, IV held constant, risk-neutral drift |
+| `curve[].sim`, `current.pnl_sim`, `scenario.grid` | **model (scenario)** | Black-Scholes at `today + days_forward` with every leg's IV `+ iv_shift` (floored at 1 vol pt) |
 
 ```
 payoff(S) = Σ legs [ (intrinsic(S) − entry_price) × qty × multiplier ] − Σ fees
 ```
 
 `quantity` is SIGNED — shorts come out right with no branch, which is exactly why the sign is kept.
+
+**Scenario (2026-09-28).** `sim` only appears on curve points when `scenario.active` (`days_forward > 0` or `iv_shift ≠ 0`). `days_forward` is clamped to `max_dte_days`. `scenario.horizons` = TODAY, the chosen date, and one `EXP +ND` column per distinct expiry (a calendar has a different shape at each). A leg already expired at a horizon is priced at intrinsic and needs no IV; a `null` cell means a leg still alive there has none. Breakeven, max P/L and POP stay on the expiry line and live IV — a scenario never changes them.
+
+```json
+"scenario": {"days_forward": 10, "iv_shift": 0.05, "active": true,
+  "horizons": [{"label": "TODAY", "days": 0, "expiry": false}, {"label": "+10D", "days": 10, "expiry": false},
+               {"label": "EXP +53D", "days": 53, "expiry": true}],
+  "grid": [{"move_pct": -7.0, "price": 711.35, "values": [7552.39, 7120.04, 5135.23]}]}
+```
 
 **Max profit/loss come from the tail slope, never from the sampled grid.** Only calls still have
 exposure as S→∞, so `Σ(qty×mult)` over the call legs decides it: positive → profit unbounded,
@@ -544,6 +556,44 @@ Two bases at once — the ALLOCATION (OPEN) card used to weight sectors by cost 
   "risk_label": "MODERATE-HIGH"
 }
 ```
+
+## Trade Guard (`GET /api/v2/portfolio/risk/guard`)
+```json
+{
+  "light": "RED",
+  "actions": [{ "level": "RED", "code": "STOP_HIT", "symbol": "OR", "text": "OR หลุด stop 12.79 (…) → ขาย หรือกด HOLD พร้อมเหตุผลถ้าตั้งใจถือต่อ" }],
+  "positions": [{ "account_id": "finansia", "symbol": "OR", "yf_symbol": "OR.BK", "currency": "THB",
+    "sector": "ENERG", "strategy": null, "long_horizon": false, "volume": 14400,
+    "entry_price": 13.63, "price": 12.5, "stop": 12.79, "stop_distance_pct": 6.18,
+    "stop_source": "ATR", "atr_pct": 3.09, "return_pct": -8.31, "to_stop_pct": -2.27,
+    "days_held": 232, "first_entry": "2026-02-08", "market_value": 180000.0,
+    "prev_value": 181000.0, "risk_to_stop": 0.0, "weight_pct": 8.34, "flags": ["STOP_HIT", "TIME"],
+    "override": null }],
+  "sectors": [{ "sector": "CONS", "weight_pct": 16.46, "breach": false }],
+  "invested_value": 2158666.06, "cash_value": 4353.37, "nav_value": 2163019.43,
+  "day_pnl_pct": -0.23, "nav_drawdown_pct": -0.06, "loss_streak": 1,
+  "size_multiplier": 1.0, "size_multiplier_why": [],
+  "heat_value": 159813.04, "heat_pct": 7.39,
+  "counts": { "STOP_HIT": 6, "NEAR_STOP": 3, "TIME": 9, "OVERWEIGHT": 4, "manual_stops": 1, "overrides": 0, "positions": 17 },
+  "skipped": [{ "symbol": "…", "reason": "no live price | short / zero volume | no entry price | no market symbol (option?)" }],
+  "atr_pending": [], "base_currency": "THB", "as_of": "2026-09-28",
+  "rules": { "stop_atr_mult": 2, "stop_min_pct": 5, "stop_max_pct": 12, "stop_default_pct": 8, "near_stop_fraction": 0.3333,
+    "time_stop_days": 28, "time_stop_min_gain_pct": 2, "max_weight_pct": 10, "max_sector_pct": 25, "day_loss_limit_pct": 2,
+    "dd_half_pct": 5, "dd_stop_pct": 10, "loss_streak": 4, "size_buckets_pct": { "S": 3, "M": 6, "L": 10 } }
+}
+```
+Action rows: `{level: RED|YELLOW|INFO, code, symbol, text, account_id?, yf_symbol?, first_entry?, override_id?}` — per-holding
+codes carry the holding key (HOLD needs it); INFO = a HOLD is recorded, not counted in `light`. Book codes: DAY_LOSS, DD_STOP, DD_HALF, STREAK, SECTOR.
+`override` on a position: `{id, account_id, yf_symbol, symbol, first_entry, codes[], reason, created_at, cleared_at}`.
+
+`GET /risk/guard/size` → `{ok, symbol, price, currency, fx, base_currency, nav_value, nav_includes_cash, light, multiplier, multiplier_why[],
+atr_pending, buckets: {S|M|L: {pct_nav, notional_base, volume, risk_base, risk_pct_nav}}, stop, stop_distance_pct, stop_source, atr_pct, lot}`.
+
+`GET /risk/guard/report` → `{summary, followed, broke, overridden: RStats, capped_expectancy_r, break_counts: {LOSS_PAST_STOP, HELD_LOSER},
+manual_stop_pct, monthly: [RStats + month, breaks], by_strategy: [RStats + strategy, breaks], worst: [{account_id, symbol, strategy, date_entry,
+date_exit, days_held, return_pct, stop_distance_pct, stop_source, r, breaks[], overridden}], atr_pending, skipped}`;
+RStats = `{n, win_pct, avg_return_pct, expectancy_r, avg_win_r, avg_loss_r}`.
+`stop_source`: MANUAL | ATR | DEFAULT. Prices native currency; `market_value`/`heat_value` in `base_currency`; weights are of INVESTED value (cash excluded). `stop_distance_pct` is from entry, `to_stop_pct` from today's price (negative = below stop).
 
 ## Allocation Signal (`GET /api/allocation/signal`)
 ```json
@@ -1432,9 +1482,15 @@ MOVE 80.6, z +1.41, 87th pct → ELEVATED.
   "quote_type": "EQUITY",
   "asset_class": "equity",  // equity|etf|fund|crypto|fx|index|future|option|dw|warrant
   "set_sector": "COMM",     // SET code   — TH accounts (TH_SECTORS)
-  "us_sector": "Consumer Staples"  // GICS label — USD accounts (US_SECTORS)
+  "us_sector": "Consumer Staples", // GICS label — USD accounts (US_SECTORS)
+  "etf_kind": null          // "leveraged" | "inverse" | null (2026-09-28, ETFs only)
 }
 ```
+
+ETF split (2026-09-28): for `asset_class: "etf"`, `us_sector` is `"ETF - Leveraged"` / `"ETF - Inverse"`
+when `sector_map.etf_kind()` says so — Yahoo `info.category` ("Trading--Leveraged Equity") first, fund
+name second (UltraPro/Bull/2X → leveraged; Bear/UltraShort/"UltraPro Short"/"2X Short"/-1x → inverse;
+"Short-Term"/"Ultra-Short Income" bond funds stay `ETF`). `set_sector` stays `ETF`.
 
 `set_sector` / `us_sector` are **never null** — undecidable resolves to `"Other"`. The two lists
 overlap only on `ETF` and `Other`, so a caller can take the first of `[set_sector, us_sector]`
@@ -1570,5 +1626,40 @@ SQLite: `search_hits(symbol TEXT PK, count INTEGER, last_at TEXT)` — local onl
 
 ### trades takeover columns + `GET /api/v2/portfolio/takeover` (2026-09-26)
 `acquisition_type TEXT` (`'TRANSFER_IN'` = lot received in kind at a portfolio takeover; NULL = normal buy), `original_price_entry REAL` (previous owner's cost/unit, memo), `transfer_price_entry REAL` (fair value/unit on the transfer date). For these lots `price_entry`/`amount`/`date_entry` = fair value on the transfer date, so every return starts there. Both memo prices are copied on partial-sell splits and never AVCO-rebased.
+`lot_price REAL` (2026-09-28) — what the lot cost per unit when bought; never AVCO-rebased, copied on splits. `price_entry` is DERIVED (pooled AVCO at the row's sale, or the current average on an open lot) and rewritten by `avco_replay.replay()` after every POST/PATCH/DELETE `/trades`, `/sell`, `/sell-all-lots`. A PATCH that changes `price_entry` is stored as a `lot_price` correction (carried to the lot's split rows). NULL on older rows until their position is first replayed (backfilled from `trade_audit_log`). Those endpoints' responses carry `replay: {skipped, warnings, avg, rows_changed, sales_repriced}` (PATCH: a list, or null when no history field changed).
 `/takeover?account_id&base_currency` → `{ base_currency, transfer_dates[], lots[{id, account_id, symbol, date_transfer, date_exit, open, volume, currency, original_price_entry, transfer_price_entry, original_cost_base, transfer_value_base, inherited_pnl_base, realized_since_base}], totals{original_cost, transfer_value, inherited_pnl, realized_since} }`. `inherited_pnl = (transfer − original) × volume` (pre-takeover, fixed). Unrealized since takeover = open-positions `unrealized_pnl_base` matched by `id`. Types `TakeoverPayload`/`TakeoverLot` in `views/portfolio/queries.ts`.
 `scopes[{account_id, sub_port, transfer_date, inherited_pnl, realized_since}]` (2026-09-27) = **takeover debt** per sub-portfolio (sub-port parsed from the note, `_sub_port` ↔ `subPortLabel`): `realized_since` sums EVERY trade closed in that account+sub-port on/after the transfer date, not just the transferred lots. PORT group header shows `TAKEOVER DEBT = inherited + realized_since + open unrealized of the scope` while < 0 (live; reappears if the book falls back). Closed rows with an empty note have no sub-port and are not counted. Type `TakeoverScope`.
+
+## Stop simulator (`GET /api/v2/portfolio/risk/stop-sim`)
+```json
+{ "start_value": 2163898.29, "cash": 4372.77, "horizon": 20, "n_paths": 1000, "base_currency": "THB",
+  "factors": [{ "key": "TDEX.BK", "label": "SET50 (TDEX)", "daily_vol_pct": 0.901, "sd_horizon_pct": 4.11, "estimated": true }],
+  "holdings": [{ "symbol": "AOT", "value": 187500, "weight_pct": 8.67, "price": 62.5, "stop": 61.99, "factor": "TDEX.BK",
+                 "beta": 1.19, "resid_vol_pct": 1.87, "below_stop_now": false }],
+  "scenarios": [{ "k": -2.0, "market_move_pct": { "TDEX.BK": -7.9 }, "avg_stops": 10.6,
+    "stop_prob": { "AOT": 96.0 },
+    "disciplined": { "p10": [100, …], "p50": [], "p90": [], "dd_p50": [0, …], "dd_p90": [],
+                     "final_p10": -3.21, "final_p50": -1.47, "final_p90": 0.37,
+                     "maxdd_p50": -2.3, "maxdd_p90": -3.74, "p_loss_gt_10": 0.0 },
+    "hold": { "…": "same shape" } }],
+  "thin_history": [], "as_of": "2026-09-29" }
+```
+Index paths start at 100 (length horizon+1); `dd_*` are % below the running peak (≤ 0); `maxdd_p90` = the worse tail.
+
+## What-if simulator (`POST /api/v2/portfolio/risk/what-if-sim`, 2026-09-29)
+Same as the stop simulator above, with `disciplined` = **DO** (the trades, then stops if `follow_stops`) and `hold` = **DON'T**. Holding identity is `key = "<account_id>|<yf_symbol>"` (one symbol can sit in two accounts) — `stop_prob` and `target_volume` use it.
+```json
+{ "follow_stops": true, "do_cash": 791687.84, "do_turnover": 787321.54,
+  "holdings": [{ "key": "dime|GOOGL", "scale": 0.0, "do_value": 0.0, "symbol": "GOOGL", "…": "as stop-sim" }],
+  "positions": [{ "key": "finansia|DCON.BK", "account_id": "finansia", "symbol": "DCON", "yf_symbol": "DCON.BK",
+                  "currency": "THB", "sector": "Real Estate", "volume": 259800, "price": 0.16, "entry_price": 0.23,
+                  "stop": 0.21, "stop_source": "MANUAL", "to_stop_pct": -23.81, "market_value": 41568, "weight_pct": 1.92,
+                  "return_pct": -30.43, "flags": ["STOP_HIT", "TIME"], "override": false }],
+  "suggestions": [{ "key": "dime|GOOGL", "code": "OVERWEIGHT", "target_volume": 18.765828,
+                    "text": "ลดเหลือ 10% ของพอร์ต (ตอนนี้ 14.6%)", "overridden": false }] }
+```
+`weight_pct` / the 10% cap are on invested value (ex-cash), as in TRADE GUARD. ERC trims are not in `suggestions` — the UI adds them from `/risk/metrics` `trim_signals`, spread over the accounts holding the symbol.
+
+## VaR forecast log (`var_forecasts`, `GET /risk/var-backtest`)
+Row: `forecast_date, account_id, confidence, var_hist_pct, cvar_pct, var_cf_pct, cvar_mc_pct, ensemble_pct, portfolio_value,
+holdings` (JSON `{yf_symbol: {"w": NAV weight, "ccy"}}`). Response shape in api-endpoints.md.

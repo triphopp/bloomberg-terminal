@@ -78,6 +78,12 @@ export const currentViewAtom = atom<
   "market" | "news" | "heatmap" | "stock" | "portfolio" | "tail" | "bonds"
 >("market");
 
+// PORT top tab another component asks to open (the TRADE GUARD status chip →
+// "risk"). PortfolioView consumes it and resets it to null.
+export const portfolioTabRequestAtom = atom<
+  "portfolio" | "analytics" | "risk" | "tools" | "paper" | null
+>(null);
+
 // Symbol requested by another view for the main MKT chart. The market view
 // consumes and clears this when it becomes active.
 export const marketSearchSymbolAtom = atom<string>("");

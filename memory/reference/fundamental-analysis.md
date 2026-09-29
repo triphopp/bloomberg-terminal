@@ -1,8 +1,9 @@
 # Fundamental Analysis — "วิเคราะห์พื้นฐาน" spec
 
-**อัปเดตล่าสุด:** 2026-09-27
+**อัปเดตล่าสุด:** 2026-09-28
 **ใช้เมื่อ:** ผู้ใช้สั่ง "วิเคราะห์พื้นฐาน [บริษัท / ticker]" (ผ่าน bloomberg-terminal MCP หรือช่องทางไหนก็ได้)
 **ใช้กับ:** ทุก agent (Claude, Codex, DeepSeek, …) — ต้องหาข้อมูลและตอบตาม spec นี้เหมือนกัน
+**ส่งผ่าน MCP:** ไฟล์นี้คือแหล่งเดียว — MCP `bloomberg-terminal` อ่านไฟล์นี้ตอนเรียก และให้บริการเป็น tool `get_fundamental_spec`, prompt `fundamental_analysis(symbol, thesis_id)` และ resource `spec://fundamental-analysis` (แก้ไฟล์นี้แล้วมีผลทันที ไม่ต้อง restart MCP)
 
 ---
 
@@ -20,8 +21,12 @@
 | ผู้บริหาร, ผู้ถือหุ้น, ปันผล, sector | `get_stock_data` → `management`, `ownership`, `dividends`, `sector` |
 | Annual report / 10-K / 20-F / 10-Q / 8-K | `get_filings(symbol, forms="10-K,20-F,10-Q,8-K")` — segment revenue, ลูกค้ารายใหญ่, risk factors อ่านจากตัวเอกสาร |
 | หุ้นไทย: One Report / 56-1 | SEC Thailand API (`reference/api-endpoints.md` → SEC sections) |
-| Earnings presentation + earnings call (transcript) | ไม่มีใน MCP → หาจากเว็บ (IR site ของบริษัท) |
+| Earnings call (transcript) | `get_fiscal_data(symbol, kind="ir-events")` → `kind="transcript", event_key="q3-2026"` (ต้องมี `FISCAL_AI_API_KEY`, free trial 100 บริษัท) — ไม่มี key / ไม่อยู่ใน list → IR site ของบริษัท |
+| KPI เฉพาะธุรกิจ + segment revenue | `get_fiscal_data(symbol, kind="segments-kpis", period="annual,quarterly")` (แหล่งรอง — ตรวจกับ 10-K/10-Q) |
+| Earnings presentation | IR site ของบริษัท |
 | ข่าวและการเปลี่ยนแปลงล่าสุด | `get_news(symbols)` |
+| ความสนใจของผู้บริโภค / แบรนด์ (ประกอบเท่านั้น) | `get_google_trends(keywords, geo, timeframe)` — index 0–100 เทียบ peak ในช่วงนั้น **ไม่ใช่ยอดค้นหา** · `get_trending_searches(geo)` |
+| ตัวเลขงบตามที่ยื่นจริง (ใช้ตรวจ yfinance) | SEC XBRL `data.sec.gov/api/xbrl/companyfacts/CIK##########.json` (ฟรี) |
 
 ถ้า MCP มี thesis ของหุ้นตัวนั้น: `get_thesis` ก่อน, `zettel_search` ก่อน `zettel_create` (ดู instructions ของ MCP server ใน `backend/mcp_server.py`)
 
@@ -55,3 +60,8 @@
 - ศัพท์ยากอธิบายเป็นภาษาง่ายในวงเล็บ เช่น free cash flow (เงินสดที่เหลือจริงหลังลงทุน)
 - ตัวเลขราคาใช้กฎ Number format ใน `CLAUDE.md` (ราคา ≥ 2 ตำแหน่ง)
 - เป็นการวิเคราะห์เพื่อการศึกษา ไม่ใช่คำแนะนำซื้อ/ขายเฉพาะบุคคล
+- **ต้องมีแหล่งอ้างอิงเสมอ:** ทุกตัวเลข/ข้อเท็จจริงต้องระบุ แหล่ง (tool/ผู้เผยแพร่ + URL หรือ filing: form, งวด, วันที่ยื่น) + วันที่ของข้อมูล — ไม่มีแหล่ง = ห้ามเขียนเป็นข้อเท็จจริง; คะแนน/มุมมอง sell-side/rating ต้องติดป้ายว่าเป็น "ความเห็น"
+- **ข้อมูลฟรีก่อนเสมอ:** ลำดับ = SEC EDGAR (filings, XBRL) → IR/press release ของบริษัท → ธนาคารกลาง/FRED → Google Trends → ข่าวฟรี. แหล่งเสียเงิน (Bloomberg, research Moody's/S&P/Fitch, transcript แบบเสียเงิน) ใช้เมื่อผู้ใช้มี license และสั่งเท่านั้น; ห้าม scrape เว็บ paywall/ขัด ToS, ห้ามหลบ rate limit
+- **yfinance ≠ ตัวเลขทางการ:** ตัวเลขที่บริษัทไม่ได้รายงาน (เช่น gross margin ของ Visa) ห้ามใช้; margin/กำไรให้ตรวจกับ 10-K/10-Q ก่อน
+- **ระบุไตรมาส/ช่วงเวลาทุกตัวเลข** โดยเฉพาะบริษัทที่ปีบัญชีไม่ตรงปีปฏิทิน หรือรับรู้รายได้จากข้อมูลไตรมาสก่อน (เช่น service revenue ของ Visa)
+- **Google Trends ใช้ประกอบเท่านั้น** — บอกความสนใจ/กระแส ไม่ใช่รายได้หรือพื้นฐาน

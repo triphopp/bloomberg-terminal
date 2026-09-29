@@ -53,7 +53,7 @@ This Windows box denies the system temp dir to pytest — pass `--basetemp` to a
 | State | Jotai (atoms) + TanStack React Query |
 | Charts | lightweight-charts v5 via our `chartkit/` + `chart/` (ModularChart, panes, event rail, regression channels), Recharts for dashboards |
 | Styling | Tailwind CSS, `bloombergColors` theme; text-only controls (`styles/globals.css`) |
-| Backend | Python FastAPI (port 9317) — 63 routers, `main.py` mounts them |
+| Backend | Python FastAPI (port 9317) — 65 routers, `main.py` mounts them |
 | Data | yfinance through a provider registry (`sources/`) + app-wide Yahoo gate (`yahoo_gate.py`, 6 concurrent) + shared request coordinator (`market_requests.py`) |
 | Macro / rates | FRED (+ Alpha Vantage fallback), Japan MOF JGB CSV, CBOE vol CSVs, Treasury fiscaldata |
 | Filings / positioning | SEC EDGAR (submissions, 8-K EX-99.1, XBRL, EFTS 424B2/424B5), CFTC Socrata (TFF + Disaggregated) |
@@ -70,6 +70,7 @@ This Windows box denies the system temp dir to pytest — pass `--basetemp` to a
 ```
 FRED_API_KEY          — required: macro, rates, crisis, TAIL, BOND
 ALPHA_VANTAGE_API_KEY — macro fallback
+FISCAL_AI_API_KEY / FISCAL_AI_DAILY_LIMIT — Fiscal.ai fundamentals (free trial: 100 fixed companies, 250 calls/day; base `https://api.fiscal.ai/v3`, key in `apiKey` query param — never log URLs). Used by `routers/fiscal_ai.py` + MCP `get_fiscal_data` (2026-09-28)
 ANTHROPIC_API_KEY     — portfolio AI; CLAUDE_MODEL / CLAUDE_MAX_TOKENS optional
 BINANCE_API_KEY       — crypto order footprint
 THESES_DIR / SOURCES_DIR / OBSIDIAN_WIKI_DIR / GRAPHS_DIR — thesis md, sources, Zettelkasten export, analysis pages
@@ -87,6 +88,7 @@ QUOTE_STREAM_MAX_SYMBOLS (default 900) — live stream budget across all Yahoo s
 IV_SNAPSHOT_INTERVAL (default 10800, 0 = off) / IV_SNAPSHOT_SYMBOLS — ATM IV recorder
 SERIES_REFRESH_INTERVAL — indicator series collectors
 ALERT_SCAN_INTERVAL   — alert rule scanner
+TRADE_GUARD_SCAN_INTERVAL (default 900, 0 = off) — TRADE GUARD notifier (guard_scheduler.py)
 UPSTREAM_LOG          — override logs/upstream.jsonl
 ALLOW_DANGEROUS_OPS   — gate for destructive maintenance endpoints
 SYNC_ENABLED / SYNC_DIR (no quotes) / SYNC_DEVICE_ID / SYNC_FOLDER_NAME / SYNC_AUTODETECT
@@ -105,7 +107,7 @@ PYTHON_API_URL=http://localhost:9317   — imported ONLY via lib/constants.ts (P
 
 ## Backend Architecture — Modular Routers
 
-`main.py` = app init + CORS + schema init + router mounting (63 routers). All logic in `backend/routers/`.
+`main.py` = app init + CORS + schema init + router mounting (65 routers). All logic in `backend/routers/`.
 Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo_gate` load before any router.
 
 | Router file | Prefix | Source |
@@ -118,6 +120,8 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `ir_stress.py` | `/api/ir-stress/{curve,scenarios,{symbol}/exposure|duration|scenario,screen/rank}` (CIRST, stock RATE STRESS tab) | XBRL + FRED |
 | `market_heatmap.py` | `/api/market-heatmap?market=US&per=25` (HMAP view) | yfinance `screen()` × 11 sectors in parallel; 90s, fail 60s, last-good 6h |
 | `stream.py` | `/api/stream/quotes?symbols=` (SSE, ≤1 msg/s, only symbols that ticked) · `/api/stream/status` | Yahoo pricing WebSocket, sharded ≤90 symbols per socket (Yahoo cap 100) on an own asyncio thread, protobuf decoded directly (`backend/quote_stream.py`), ref-counted subscriptions, regular-session ticks only; no REST calls, no key; upstream source `Yahoo stream` |
+| `google_trends.py` | `/api/trends/daily?geo=US` · `/api/trends/interest?keywords=a,b&geo=&timeframe=today 12-m` (no UI; MCP `get_trending_searches` / `get_google_trends`) | Google Trends public RSS (30 min, fail 5 min) + unofficial explore/multiline endpoints (6 h, 429 → fail 30 min, never retried around); every response has a `source` block; upstream source `Google Trends` |
+| `fiscal_ai.py` | `/api/fiscal/status` · `/api/fiscal/{kind}/{symbol}?period=` (profile, income, balance, cashflow, ratios, adjusted, segments-kpis, earnings-summary, ir-events, fund-letters, news-summary) · `/api/fiscal/transcript/{symbol}/{q3-2026}` (no UI; MCP `get_fiscal_data`) | Fiscal.ai API v1–v3, key in `X-Api-Key` header; daily budget persisted in `logs/fiscal_ai_usage.json` (429 when spent); cache 12 h, fail 10 min; no key → 424; upstream source `Fiscal.ai` |
 | `cot.py` | `/api/cot/{snapshot,history,basis,factor,portfolio,status}` | CFTC Socrata, 17 contracts, background refresh → `cot_*` tables; endpoints read SQLite only |
 | `discover.py` | `/api/search-stats/{hit,top,{symbol}}`, `/api/most-active` (MKT FREQ / ACTIVE) | SQLite `search_hits` + yfinance `screen("most_actives")` |
 | `bonds.py` | `/api/bonds/{overview,decomposition,supply,issuance}` (BOND view) | FRED + NY Fed ACM + Treasury fiscaldata + SEC EFTS |
@@ -136,7 +140,7 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `chart_drawings.py` | `/api/v2/chart-drawings/*` (trend lines + REG channels drawn on charts; synced) | SQLite `chart_drawings` |
 | `portfolio_v2.py` | `/api/v2/portfolio/*` — accounts, trades, sell (AVCO), cash/transfer/reconcile, dividends, fees, open-positions, summary, returns, nav-history, **nav-index** (TWR, start-of-day for capital dated before the snapshot day), **takeover**, **history-review**, ledger check/stock-card/statements/evidence, import | SQLite |
 | `slip_ocr.py` | `/api/v2/portfolio/slip/{read,status}` — broker slip screenshot → ENTRY fields (engine `backend/slip_ocr/`, easyocr in a spawned worker); read-only | — |
-| `risk.py` | `/api/v2/portfolio/risk/*` (VaR/CVaR/Parity/Stress/Sizing) | Ledoit-Wolf |
+| `risk.py` | `/api/v2/portfolio/risk/*` (VaR/CVaR/Parity/Stress/Sizing + `/guard`, `/guard/override`, `/guard/size`, `/guard/report` TRADE GUARD via `trade_guard.py`, `/stop-sim` + `/what-if-sim` via `stop_sim.py`, `/var-backtest`) | Ledoit-Wolf |
 | `backtest_v2.py` | `/api/v2/portfolio/backtest/*` | SQLite trades + yfinance |
 | `portfolio.py` | `/api/portfolio/*` (legacy research: thesis files, transactions, backtest) | filesystem + SQLite |
 | `theses.py` / `zettel.py` / `graphs.py` | `/api/v2/theses/*`, `/api/v2/zettel/*`, `/api/v2/graphs/*` | SQLite + `THESES_DIR` / `OBSIDIAN_WIKI_DIR` / `GRAPHS_DIR` |
@@ -191,7 +195,10 @@ ledger_events       (id, account_id, trade_date, settle_date, trade_time, type, 
                      net_cash, currency, fx_rate, broker_ref, link_id, reverses_id, source, source_ref, note, created_at)
                      -- append-only journal (plans/port-accounting-ledger.md); 0 posted rows yet; _ledger_guard blocks UPDATE/DELETE
 risk_snapshots      (account_id, snapshot_date, portfolio_value, breach_count, ensemble_signal, vol_regime, risk_score, ews, regime_label, …)
-alert_rules / alert_rule_state / alert_events   -- boolean-AST alert engine (routers/alert_rules.py)
+alert_rules / alert_rule_state / alert_events   -- boolean-AST alert engine (routers/alert_rules.py); TRADE GUARD writes alert_events rule_id 'guard:<CODE>'
+guard_overrides     -- TRADE GUARD HOLD decisions per holding (account, yf_symbol, first_entry); SYNCED
+guard_state         -- notifier cursor: last flags per holding (machine-local, not synced)
+var_forecasts       -- one VaR forecast per day per book (forecast_date, account_id) → /risk/var-backtest; machine-local
 pm_slug_registry    -- Polymarket slug cache
 paper_option_positions -- paper trading options
 symbol_lists        -- indices / FX / crypto lists seeded from config.py
@@ -438,6 +445,9 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 
 Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished plan becomes `- [x] … done YYYY-MM-DD` only with a Completion Evidence section.
 
+- [x] **RISK OVERVIEW redesign + WHAT-IF SIM** — done 2026-09-29: STOP SIM → WHAT-IF SIM ทำ vs ไม่ทำ บนหุ้นจริง (guard/ERC suggestions หรือแก้ qty เอง, toggle ทำตาม stop) รวมใน OVERVIEW; ตัด trim chips/ERC table/Backtest block ซ้ำ (`plans/completed/risk-overview-whatif-sim.md`)
+- [x] **PORT Risk validity + stop simulator** — done 2026-09-29: STOP SIM (±SD, follow stop vs hold), rolling OOS VaR + daily forecast log, GICS sector cap, MAE/MFE replay + stop sweep, NAV-basis VaR (cash/short/option Δ) (`plans/completed/port-risk-validity.md`)
+- [x] **PORT Trade Guard** — done 2026-09-28: auto stop (2×ATR) + traffic light in RISK, S/M/L sizing in ENTRY, ticker/toast on new flags, HOLD override + R-multiple report, NAV DD / streak breakers (`plans/completed/port-trade-guard.md`)
 - [x] **CPU profile → process pool** — done 2026-09-28: shared TLS context (CA bundle was reloaded per connection, ~0.3 s CPU each), ACM xls parse in `cpu_pool`, polymarket batch upsert (`plans/completed/cpu-profile-process-pool.md`)
 - [x] **Stream sessions + change feed + lite quotes** — done 2026-09-28: one SSE session + interest diff, DB-trigger change feed, price-only polls, multi-instance/Postgres design (`plans/completed/stream-sessions-change-feed.md`)
 - [x] **Request optimization** — done 2026-09-28: batched v7 quotes, stream-aware polling, `/api/heartbeat`, ETag/304 (`plans/completed/request-optimization.md`)
@@ -456,6 +466,7 @@ Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished pl
 
 ### Open
 
+- [ ] **PORT AVCO dated replay** — any back-dated buy / lot edit / sale re-derives the position by date: `trades.lot_price` + `avco_replay.py` rewrites sale P&L and open-lot avg with audit (`plans/port-avco-dated-replay.md`)
 - [ ] **PORT Evidence Match** — broker fills ↔ reconstructed trades, AUDIT → EVIDENCE (`plans/port-evidence-match.md`)
 - [ ] **THESES readability + GRAPHS format + graph sync** — 7/7 steps coded 2026-09-19 (counts บนแท็บมากับ payload, markdown renderer เต็ม, rail พับได้, ปุ่ม READ โหมดเอกสาร, GRAPHS render shell + เทมเพลต + lint, `graphs` เข้า SYNC_TABLES + ไฟล์ HTML ไป Drive); เหลือฝังไฟล์ฟอนต์ Laksaman (`plans/theses-readability-and-sync.md`)
 - [ ] **PORT Accounting Subsystems (S0–S7)** — audit + AVCO/FIFO preview + preflight + statement revisions/R3 + cash EDIT categories/R1/R2 + 29 image-cited Dime fills staged separately. 11 offsets เก่ายัง UNKNOWN; ไม่ migrate/activate, C1/H2/N1 ค้าง (`plans/port-accounting-subsystems.md`, `sessions/2026-09-25-dime-broker-execution-evidence.md`)
@@ -482,7 +493,7 @@ Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished pl
 - [ ] Clippings: auto-reload (file watcher)
 - [ ] Alerts: price alert when stock hits threshold (price target, separate from stop loss)
 - [ ] Sovereign: map visualization
-- [ ] Bloomberg CLI + MCP server (`plans/bloomberg-cli-mcp.md`) — **MCP part started 2026-09-18**: `backend/mcp_server.py` (theses workspace + portfolio/market research, 15 tools; Claude Code via `.mcp.json`, Claude Desktop via `claude_desktop_config.json` — setup in `docs/mcp-server.md`); CLI still not built
+- [ ] Bloomberg CLI + MCP server (`plans/bloomberg-cli-mcp.md`) — **MCP part started 2026-09-18**: `backend/mcp_server.py` (theses workspace + portfolio/market research + Google Trends; instructions require a source on every fact and free sources first (2026-09-28); Claude Code via `.mcp.json`, Claude Desktop via `claude_desktop_config.json` — setup in `docs/mcp-server.md`); CLI still not built
 - [ ] SEC One Report: frontend view (data available 2021–2023)
 
 ### Done (newest first)

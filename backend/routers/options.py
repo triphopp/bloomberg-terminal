@@ -119,6 +119,7 @@ class PayoffLeg(BaseModel):
     entry_price: float
     multiplier: float = 100
     fees: float = 0
+    iv: Optional[float] = None  # override; default is the chain's IV for this contract
 
 
 class PayoffIn(BaseModel):
@@ -126,6 +127,10 @@ class PayoffIn(BaseModel):
     spot: Optional[float] = None      # default: live price of the first leg's underlying
     points: int = 121
     range_pct: float = 0.35
+    # Scenario: reprice at a later date and/or shifted vol (0.05 = +5 vol points).
+    days_forward: float = 0
+    iv_shift: float = 0
+    moves: Optional[list[float]] = None  # underlying % moves for the scenario grid
 
 
 @router.post("/api/options/payoff")
@@ -147,6 +152,9 @@ async def compute_payoff(body: PayoffIn):
     legs = [leg.model_dump() for leg in body.legs]
     ivs: list[Optional[float]] = []
     for leg in body.legs:
+        if leg.iv is not None and leg.iv > 0:
+            ivs.append(float(leg.iv))
+            continue
         row = _chain_rows(leg.underlying.strip().upper(), str(leg.expiry)[:10]).get(
             (leg.option_type.lower(), round(float(leg.strike), 4))
         )
@@ -160,6 +168,9 @@ async def compute_payoff(body: PayoffIn):
         legs, float(spot), ivs,
         points=max(21, min(int(body.points), 401)),
         range_pct=max(0.05, min(float(body.range_pct), 2.0)),
+        days_forward=max(0.0, float(body.days_forward or 0)),
+        iv_shift=max(-1.0, min(float(body.iv_shift or 0), 2.0)),
+        moves=[m for m in (body.moves or []) if -95 <= m <= 500][:25] or None,
     )
     result["currency"] = "USD"
     result["underlyings"] = sorted({leg.underlying.strip().upper() for leg in body.legs})

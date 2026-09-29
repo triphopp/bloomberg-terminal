@@ -78,3 +78,48 @@ def test_unknown_classification_says_other_rather_than_nothing():
 
 def test_a_conglomerate_is_not_forced_into_one_set_sector():
     assert classify("SCC.BK", "EQUITY", "Industrials", "Conglomerates")["set_sector"] == "Other"
+
+
+@pytest.mark.parametrize(
+    "name,category,kind",
+    [
+        ("ProShares UltraPro QQQ", None, "leveraged"),
+        ("ProShares UltraPro Short QQQ", None, "inverse"),
+        ("ProShares UltraShort QQQ", None, "inverse"),
+        ("Direxion Daily Semiconductor Bull 3X Shares", None, "leveraged"),
+        ("Direxion Daily Semiconductor Bear 3X Shares", None, "inverse"),
+        ("ProShares Short S&P500", None, "inverse"),
+        ("T-Rex 2X Long MSTR Daily Target ETF", None, "leveraged"),
+        ("Defiance Daily Target 2X Short MSTR ETF", None, "inverse"),
+        # Short-duration bond funds are not bets against anything
+        ("iShares Short Treasury Bond ETF", None, None),
+        ("JPMorgan Ultra-Short Income ETF", None, None),
+        ("Invesco Ultra Short Duration ETF", None, None),
+        ("Vanguard Short-Term Bond ETF", None, None),
+        ("SPDR S&P 500 ETF Trust", None, None),
+        # Yahoo's fund category decides when present
+        ("Some Fund", "Trading--Leveraged Equity", "leveraged"),
+        ("Some Fund", "Trading--Inverse Debt", "inverse"),
+    ],
+)
+def test_etf_kind(name, category, kind):
+    from sector_map import etf_kind
+    assert etf_kind(category, name) == kind
+
+
+def test_leveraged_and_inverse_etfs_get_their_own_us_sector():
+    assert classify("TQQQ", "ETF", name="ProShares UltraPro QQQ")["us_sector"] == "ETF - Leveraged"
+    out = classify("SQQQ", "ETF", name="ProShares UltraPro Short QQQ")
+    assert out["us_sector"] == "ETF - Inverse" and out["set_sector"] == "ETF"
+    assert classify("SPY", "ETF", name="SPDR S&P 500 ETF Trust")["us_sector"] == "ETF"
+
+
+@pytest.mark.parametrize("label,gics", [
+    ("ENERG", "Energy"), ("Energy", "Energy"), ("TECH", "Information Technology"),
+    ("Technology", "Information Technology"), ("Communication Services", "Communication Services"),
+    ("CONS", "Industrials"), ("Consumer Defensive", "Consumer Staples"), ("FOOD", "Consumer Staples"),
+    ("", "Unclassified"), (None, "Unclassified"), ("energ", "Energy"), ("Something", "Something"),
+])
+def test_to_gics(label, gics):
+    from sector_map import to_gics
+    assert to_gics(label) == gics

@@ -132,6 +132,8 @@ When the user asks for a fundamental analysis (วิเคราะห์พื
 **[`memory/reference/fundamental-analysis.md`](memory/reference/fundamental-analysis.md)** exactly:
 which data to pull (MCP `get_stock_data` kinds, `get_filings` 10-K/20-F, earnings call, `get_news`),
 the 12-section Thai beginner report, and the rules — facts only, say "ไม่ชัด" when unclear, latest numbers first.
+The same file is served over MCP (`get_fundamental_spec` tool · `fundamental_analysis` prompt ·
+`spec://fundamental-analysis` resource) so agents outside the repo follow it too — edit the file, not the MCP.
 
 ## Memory Maintenance — What to Update After Each Change
 

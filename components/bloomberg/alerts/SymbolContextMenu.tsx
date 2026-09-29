@@ -132,13 +132,17 @@ export function SymbolContextMenu({
         </ContextMenuContent>
       </ContextMenu>
 
-      <AlertPickerDialog
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
-        symbol={symbol}
-        targets={targets}
-        colors={colors}
-      />
+      {/* Mounted only while open: one closed dialog per WATCHLIST row (with its
+          signals/rules hooks) was ~30 ms of every MKT mount in dev. */}
+      {pickerOpen && (
+        <AlertPickerDialog
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          symbol={symbol}
+          targets={targets}
+          colors={colors}
+        />
+      )}
     </>
   );
 }

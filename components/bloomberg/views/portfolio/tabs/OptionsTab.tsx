@@ -7,6 +7,7 @@ import { OptionTradeEditModal } from "../modals/OptionTradeEditModal";
 import { PayoffModal } from "../modals/PayoffModal";
 import type { OptionEntryPrefill } from "../ui/OptionEntryForm";
 import { type OptionTrade, OptionTradeLog } from "../ui/OptionTradeLog";
+import { PayoffCalculator } from "../ui/PayoffCalculator";
 import { PayoffChart } from "../ui/PayoffChart";
 import { type PayoffLeg, usePayoff } from "../ui/usePayoff";
 import { usePortfolioNav } from "../ui/usePortfolioNav";
@@ -503,6 +504,8 @@ export function OptionsTab({
           onSaved={load}
         />
       )}
+
+      {view === "lots" && <PayoffCalculator colors={colors} />}
 
       {/* Book totals — the same figures the account rollup in PORT now counts */}
       {view === "lots" && lots.length > 0 && (

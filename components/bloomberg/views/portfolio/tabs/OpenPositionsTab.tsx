@@ -521,6 +521,17 @@ export function OpenPositionsTab({
     return DEFAULT_COLS;
   });
   const [showColPicker, setShowColPicker] = useState(false);
+  // Width of the scroll box, so the group header can pin itself to the visible
+  // area — its colSpan cell is as wide as the TABLE, which on a narrow screen
+  // pushes the account P&L off the right edge.
+  const [scrollW, setScrollW] = useState<number | null>(null);
+  const scrollBoxRef = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return;
+    const ro = new ResizeObserver(() => setScrollW(el.clientWidth));
+    ro.observe(el);
+    setScrollW(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
   const [filter, setFilter] = useState("");
   const [stockCard, setStockCard] = useState<{ accountId: string; symbol: string } | null>(null);
   const [sellCtx, setSellCtx] = useState<{
@@ -533,6 +544,7 @@ export function OpenPositionsTab({
     mergedAvg: number;
     volume: number;
     costOverride?: number;
+    siblingLotIds?: string[];
   } | null>(null);
   const { data: thesesData } = useQuery(portfolioQueries.thesesSummary());
   const theses = thesesData?.by_symbol ?? EMPTY_THESES;
@@ -983,6 +995,7 @@ export function OpenPositionsTab({
         </div>
       ) : (
         <div
+          ref={scrollBoxRef}
           className="flex-1 overflow-y-auto overflow-x-auto"
           onClick={() => setShowColPicker(false)}
           onKeyDown={() => setShowColPicker(false)}
@@ -1059,7 +1072,19 @@ export function OpenPositionsTab({
                         borderLeftColor: groupColor,
                       }}
                     >
-                      <div className="flex items-center gap-3 py-0.5 text-[9px]">
+                      <div
+                        className="flex items-center gap-3 py-0.5 text-[9px] whitespace-nowrap"
+                        style={
+                          scrollW != null
+                            ? {
+                                position: "sticky",
+                                left: 12,
+                                // scroll box − td padding (px-3 ×2) − 3px left border
+                                width: Math.max(0, scrollW - 27),
+                              }
+                            : undefined
+                        }
+                      >
                         <span className="text-[7px] w-2" style={{ color: "#555" }}>
                           {isCollapsed ? "▶" : "▼"}
                         </span>
@@ -1222,7 +1247,13 @@ export function OpenPositionsTab({
                           </div>
                         ),
                         SECTOR: (
-                          <span style={{ color: colors.textSecondary }}>{p.sector || "—"}</span>
+                          <span
+                            className="block max-w-[120px] truncate"
+                            style={{ color: colors.textSecondary }}
+                            title={p.sector || undefined}
+                          >
+                            {p.sector || "—"}
+                          </span>
                         ),
                         ENTRY: (
                           <span
@@ -1424,7 +1455,11 @@ export function OpenPositionsTab({
                             <span style={{ color: colors.textSecondary }}>—</span>
                           ),
                         STRATEGY: (
-                          <span className="text-[8px]" style={{ color: colors.textSecondary }}>
+                          <span
+                            className="block max-w-[120px] truncate text-[8px]"
+                            style={{ color: colors.textSecondary }}
+                            title={p.strategy_name || undefined}
+                          >
                             {p.strategy_name || "—"}
                           </span>
                         ),
@@ -1444,9 +1479,13 @@ export function OpenPositionsTab({
                                 {cellMap[col]}
                               </td>
                             ))}
-                            <td className={`px-2 ${py} whitespace-nowrap text-right`}>
+                            {/* Pinned to the right edge: on a table wider than the
+                                screen the actions would otherwise sit off-screen. */}
+                            <td
+                              className={`px-2 ${py} whitespace-nowrap text-right sticky right-0`}
+                            >
                               <div
-                                className={`inline-flex gap-2 text-[8px] font-bold ${ROW_ACTION}`}
+                                className={`inline-flex gap-2 text-[8px] font-bold px-1 bg-[#111] ${ROW_ACTION}`}
                               >
                                 <button
                                   type="button"
@@ -1482,6 +1521,7 @@ export function OpenPositionsTab({
                                       mergedAvg: p.avg_entry,
                                       volume: p.total_volume,
                                       costOverride: costOverrides[p.symbol],
+                                      siblingLotIds: p.lots.slice(1).map((l) => l.id),
                                     });
                                   }}
                                 >
@@ -1610,6 +1650,7 @@ export function OpenPositionsTab({
           mergedAvg={editMeta?.mergedAvg}
           mergedVolume={editMeta?.volume}
           costOverride={editMeta?.costOverride}
+          siblingLotIds={editMeta?.siblingLotIds}
           onClose={() => {
             setEditTarget(null);
             setEditMeta(null);

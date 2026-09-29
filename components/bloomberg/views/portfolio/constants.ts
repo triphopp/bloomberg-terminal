@@ -115,6 +115,10 @@ export const US_SECTORS = [
   "Real Estate",
   "Utilities",
   "ETF",
+  // Split out of ETF: a 3x or a -1x fund is a different risk from an index ETF.
+  // The backend sets these from Yahoo's fund category / name (sector_map.etf_kind).
+  "ETF - Leveraged",
+  "ETF - Inverse",
   "Fixed Income",
   "Crypto",
   "Other",
@@ -138,6 +142,7 @@ export const STRATEGIES = [
   "Swing",
   "Momentum",
   "Value",
+  "Core",
   "Dividend",
   "Scalp",
   "Options Play",
@@ -243,6 +248,8 @@ export const SECTOR_COLORS: Record<string, string> = {
   INDU: "#64748b",
   TRANS: "#475569",
   ETF: "#84cc16",
+  "ETF - Leveraged": "#facc15",
+  "ETF - Inverse": "#f43f5e",
   GOLD: "#eab308",
   BOND: "#60a5fa",
   "Call Option": "#f97316",

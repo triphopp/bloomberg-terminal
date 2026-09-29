@@ -27,7 +27,7 @@ import {
   chartWindowUnitAtom,
 } from "../atoms";
 import { useFootprintData } from "../hooks/useFootprintData";
-import type { ChartClickContext } from "./ModularChart";
+import type { ChartClickContext, ChartHoverPoint } from "./ModularChart";
 import type { PeStats } from "./PEPane";
 import { createBbVolumeOverlay } from "./bb-volume-overlay";
 import { INDICATOR_REGISTRY, createCompositeVPOverlay, createSessionVPOverlay } from "./indicators";
@@ -42,9 +42,11 @@ import {
   type StoredTrendLine,
   TREND_LINE_COLOR,
   type TrendPoint,
+  type TrendPreview,
   createTrendHitMap,
   createTrendLineOverlay,
   hitTestTrendLines,
+  sameTrendBar,
 } from "./indicators/trend-line";
 import type {
   BarInterval,
@@ -244,8 +246,13 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
   const [trendArmed, setTrendArmed] = useState(false);
   const trendPendingRef = useRef<TrendPoint | null>(null);
   const [trendPending, setTrendPendingState] = useState<TrendPoint | null>(null);
+  // Cursor for the half-drawn line's dashed preview. A ref the overlay reads at
+  // paint time — the pointer-move handler writes it and asks for a repaint, so
+  // following the mouse costs no React render.
+  const trendPreviewRef = useRef<TrendPreview>({ current: null });
   const setTrendPending = useCallback((p: TrendPoint | null) => {
     trendPendingRef.current = p;
+    if (!p) trendPreviewRef.current.current = null;
     setTrendPendingState(p);
   }, []);
   // One line at a time can be selected; the overlay paints its × box and
@@ -504,7 +511,13 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     );
     if (trendLines.length > 0 || trendPending) {
       parts.push(
-        createTrendLineOverlay(trendLines, trendPending, selectedTrendId, trendHitsRef.current)
+        createTrendLineOverlay(
+          trendLines,
+          trendPending,
+          selectedTrendId,
+          trendHitsRef.current,
+          trendPreviewRef.current
+        )
       );
     } else {
       trendHitsRef.current.segments = [];
@@ -549,11 +562,15 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
       if (trendArmed) {
         if (ctx?.price == null) return;
         const first = trendPendingRef.current;
+        // A click right of the last bar is a point in the future (`futureBars`).
+        const at: TrendPoint = ctx.futureBars
+          ? { time, price: ctx.price, futureBars: ctx.futureBars }
+          : { time, price: ctx.price };
         if (!first) {
-          setTrendPending({ time, price: ctx.price });
+          setTrendPending(at);
           return;
         }
-        if (String(time) === String(first.time)) return; // same bar — ignore
+        if (sameTrendBar(at, first)) return; // same bar — ignore
         saveDrawing({
           id: globalThis.crypto?.randomUUID?.() ?? `tl-${Date.now()}`,
           kind: "trend",
@@ -561,7 +578,7 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
           barInterval,
           data: {
             a: first,
-            b: { time, price: ctx.shiftKey ? first.price : ctx.price },
+            b: { ...at, price: ctx.shiftKey ? first.price : ctx.price },
             color: TREND_LINE_COLOR,
           },
         });
@@ -726,6 +743,30 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     [activeRegression, setDefaultRegressionOpts, saveRegression]
   );
 
+  /** Pass to <ModularChart onPointerMove> — drives the half-drawn line's preview. */
+  const handlePointerMove = useCallback((p: ChartHoverPoint | null): boolean => {
+    const preview = trendPreviewRef.current;
+    const first = trendPendingRef.current;
+    if (!first) {
+      if (preview.current == null) return false;
+      preview.current = null;
+      return true;
+    }
+    const next: TrendPoint | null = p
+      ? {
+          time: p.time,
+          price: p.shiftKey ? first.price : p.price,
+          ...(p.futureBars > 0 ? { futureBars: p.futureBars } : {}),
+        }
+      : null;
+    const prev = preview.current;
+    // Repaint only on a real move — the repaint itself re-emits the event.
+    if (next && prev && sameTrendBar(next, prev) && next.price === prev.price) return false;
+    if (!next && !prev) return false;
+    preview.current = next;
+    return true;
+  }, []);
+
   return {
     indicators,
     overlays,
@@ -751,7 +792,10 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     clearTrendLines,
     /** Any click-to-draw tool is waiting for a click — show the crosshair cursor. */
     drawingArmed: regressionArmed || trendArmed,
+    /** <ModularChart futureRoomBars> — a trend line may end in the future. */
+    drawingFutureRoom: trendArmed ? 12 : 0,
     handleChartClick,
+    handlePointerMove,
     // Lookback window unit: "bars" (raw candles) vs "days" (session time)
     windowUnit,
     toggleWindowUnit,

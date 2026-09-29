@@ -489,6 +489,9 @@ class TradePatch(BaseModel):
     sector:          Optional[str]   = None
     date_entry:      Optional[str]   = None
     price_entry:     Optional[float] = None
+    # What the lot cost per unit. A changed price_entry is read as a
+    # correction of this (price_entry itself is the derived AVCO).
+    lot_price:       Optional[float] = None
     price_stoploss:  Optional[float] = None
     price_target:    Optional[float] = None
     volume:          Optional[float] = None
@@ -1001,8 +1004,8 @@ def create_trade(body: TradeIn):
                 news_sentiment, expectation_based, factor_based,
                 fear_greed_index, vix_index, note, is_reinvest,
                 fee_entry, fee_exit, fee_detail,
-                broker_order_ref, executed_at, entry_source, source_sha256)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                broker_order_ref, executed_at, entry_source, source_sha256, lot_price)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (trade_id, body.account_id, body.symbol.upper(),
               (body.resolved_symbol or "").upper() or None,
               (body.market or "").upper() or None, body.sector,
@@ -1015,7 +1018,7 @@ def create_trade(body: TradeIn):
               body.factor_based, body.fear_greed_index, body.vix_index, body.note,
               1 if body.is_reinvest else 0, fee_entry, fee_exit, fee_detail,
               order_ref, executed_at, "slip" if sidecar else "manual",
-              body.slip_sha256 if sidecar else None))
+              body.slip_sha256 if sidecar else None, body.price_entry))
         evidence_id = None
         if sidecar:
             try:
@@ -1023,7 +1026,11 @@ def create_trade(body: TradeIn):
                                                    body.slip_sha256, sidecar)
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # A buy dated before a sale already booked changes that sale's average.
+        replayed = _replay_position(conn, body.account_id, body.symbol.upper(),
+                                    f"new trade {trade_id[:8]}")
     return {
+        "replay": replayed,
         "ok": True,
         "id": trade_id,
         "evidence_id": evidence_id,
@@ -1035,9 +1042,55 @@ def create_trade(body: TradeIn):
     }
 
 
+def _replay_position(conn, account_id: str, symbol: str, reason: str = "") -> dict:
+    """Re-derive one position's sale P&L and open-lot average by date.
+
+    Called after anything that changes a lot's history, so a back-dated buy
+    or an edited lot never leaves a booked sale on the old average.
+    """
+    import avco_replay
+    with audit_reason(conn, f"AVCO replay by date: {reason}" if reason else "AVCO replay by date"):
+        out = avco_replay.replay(conn, account_id, symbol, audit=_write_audit_log, reason=reason)
+    if out.get("skipped"):
+        logger.warning("AVCO replay skipped %s/%s: %s", account_id, symbol, out["skipped"])
+    return out
+
+
+def _lot_family(conn, trade_id: str) -> set[str]:
+    """This row plus every row split off the same buy by partial sales."""
+    links = conn.execute(
+        "SELECT trade_id, reason FROM trade_audit_log WHERE action = 'SELL_PARTIAL_CREATED'"
+    ).fetchall()
+    edges: dict[str, set[str]] = {}
+    for r in links:
+        m = re.search(r"created from partial sell of (\S+)", r["reason"] or "")
+        if m:
+            edges.setdefault(r["trade_id"], set()).add(m.group(1))
+            edges.setdefault(m.group(1), set()).add(r["trade_id"])
+    seen, todo = {trade_id}, [trade_id]
+    while todo:
+        for n in edges.get(todo.pop(), ()):
+            if n not in seen:
+                seen.add(n)
+                todo.append(n)
+    return seen
+
+
+# Fields whose change moves a position's history, so a replay must follow.
+_HISTORY_FIELDS = {"symbol", "account_id", "date_entry", "price_entry", "lot_price",
+                   "volume", "date_exit", "price_exit", "fee_exit", "win_loss", "pnl_amount"}
+
+_CLEARABLE_TRADE_FIELDS = ("price_stoploss", "price_target")
+
+
 @router.patch("/trades/{trade_id}")
 def patch_trade(trade_id: str, body: TradePatch):
-    updates = body.model_dump(exclude_none=True)
+    # null means "not sent" for every field except the S/L and target levels,
+    # where an explicit null is how the user clears a level they no longer want.
+    updates = {
+        k: v for k, v in body.model_dump(exclude_unset=True).items()
+        if v is not None or k in _CLEARABLE_TRADE_FIELDS
+    }
     reason = updates.pop("adjustment_reason", "") or ""
     if not updates:
         raise HTTPException(status_code=400, detail="Nothing to update")
@@ -1049,7 +1102,20 @@ def patch_trade(trade_id: str, body: TradePatch):
         old = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
         if not old:
             raise HTTPException(status_code=404, detail="Trade not found")
+        if old["lot_price"] is None and len(_lot_family(conn, trade_id)) > 1:
+            # Old split row: recover the buy prices first, so a correction
+            # below knows what it replaces and reaches the lot's other rows.
+            import avco_replay
+            with audit_reason(conn, "recover lot buy price from the audit trail"):
+                avco_replay._fill_lot_prices(conn, old["account_id"], old["symbol"])
+            old = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
         old_dict = dict(old)
+        # price_entry is the pooled AVCO, rewritten by every replay. A user who
+        # changes it is correcting what this lot was bought for.
+        if ("price_entry" in updates and "lot_price" not in updates
+                and updates["price_entry"] is not None
+                and abs(float(updates["price_entry"]) - float(old_dict.get("price_entry") or 0)) > 1e-9):
+            updates["lot_price"] = updates["price_entry"]
         # pnl_amount is net of fee_exit: a corrected fee moves it by the difference.
         if "fee_exit" in updates and "pnl_amount" not in updates and old_dict.get("pnl_amount") is not None:
             delta = float(updates["fee_exit"] or 0) - float(old_dict.get("fee_exit") or 0)
@@ -1062,7 +1128,26 @@ def patch_trade(trade_id: str, body: TradePatch):
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Trade not found")
         _write_audit_log(conn, trade_id, "PATCH", old_dict, updates, reason)
-    return {"ok": True}
+        # A corrected buy price is the whole buy's: carry it to the rows split
+        # off the same lot that still hold the old price.
+        if "lot_price" in updates and old_dict.get("lot_price") is not None:
+            for sib in _lot_family(conn, trade_id) - {trade_id}:
+                srow = conn.execute("SELECT * FROM trades WHERE id = ?", (sib,)).fetchone()
+                if srow and srow["lot_price"] is not None and abs(
+                        float(srow["lot_price"]) - float(old_dict["lot_price"])) < 1e-9:
+                    conn.execute("UPDATE trades SET lot_price = ? WHERE id = ?",
+                                 (updates["lot_price"], sib))
+                    _write_audit_log(conn, sib, "PATCH", dict(srow),
+                                     {"lot_price": updates["lot_price"]},
+                                     f"buy price corrected on split row {trade_id[:8]}")
+        replayed = None
+        if _HISTORY_FIELDS & updates.keys():
+            positions = {(old_dict["account_id"], old_dict["symbol"]),
+                         (updates.get("account_id", old_dict["account_id"]),
+                          updates.get("symbol", old_dict["symbol"]))}
+            replayed = [_replay_position(conn, a, s, f"edit of trade {trade_id[:8]}")
+                        for a, s in positions]
+    return {"ok": True, "replay": replayed}
 
 
 @router.delete("/trades/{trade_id}")
@@ -1075,7 +1160,9 @@ def delete_trade(trade_id: str):
         conn.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
         import slip_evidence
         slip_evidence.unlink_trade(conn, trade_id)
-    return {"ok": True}
+        replayed = _replay_position(conn, old["account_id"], old["symbol"],
+                                    f"delete of trade {trade_id[:8]}")
+    return {"ok": True, "replay": replayed}
 
 
 # ── Audit events (row-level, trigger-written) ───────────────────────────────
@@ -1686,15 +1773,22 @@ def sell_position(body: SellIn):
             # Other lots of the same symbol may still be open — keep them on the
             # same average this sale was priced at.
             _rebase_open_lots_to_avco(conn, pos["account_id"], pos["symbol"], avg_cost)
+            # The pool above is what is open now; a sale dated before a buy
+            # already in the book is re-priced by date here.
+            replayed = _replay_position(conn, pos["account_id"], pos["symbol"],
+                                        f"sale {body.sell_date}")
+            row_now = conn.execute("SELECT pnl_amount, pnl_percent, win_loss, price_entry "
+                                   "FROM trades WHERE id = ?", (body.trade_id,)).fetchone()
 
             return {
+                "replay": replayed,
                 "ok": True,
                 "action": "full_sell",
                 "trade_id": body.trade_id,
-                "avg_cost": round(avg_cost, 4),
-                "pnl_amount": pnl_net,
-                "pnl_percent": pnl_pct,
-                "win_loss": wl,
+                "avg_cost": round(float(row_now["price_entry"]), 4),
+                "pnl_amount": row_now["pnl_amount"],
+                "pnl_percent": row_now["pnl_percent"],
+                "win_loss": row_now["win_loss"],
                 "fee_exit": fee_exit,
             }
         else:
@@ -1713,13 +1807,13 @@ def sell_position(body: SellIn):
                    price_entry, price_exit, volume, pnl_amount, win_loss, pnl_percent,
                    currency, exchange_rate, exit_exchange_rate, strategy_name, note, fee_exit,
                    acquisition_type, original_price_entry, transfer_price_entry,
-                   broker_order_ref, executed_at, entry_source, source_sha256)
+                   broker_order_ref, executed_at, entry_source, source_sha256, lot_price)
                    SELECT ?, account_id, symbol, resolved_symbol, market,
                    sector, date_entry, ?,
                    ?, ?, ?, ?, ?, ?,
                    currency, exchange_rate, ?, strategy_name, ?, ?,
                    acquisition_type, original_price_entry, transfer_price_entry,
-                   broker_order_ref, executed_at, entry_source, source_sha256
+                   broker_order_ref, executed_at, entry_source, source_sha256, lot_price
                    FROM trades WHERE id = ?""",
                 (sold_id, body.sell_date, avg_cost, exit_price, sold_volume,
                   sold_pnl_net, sold_wl, sold_pnl_pct, exit_fx,
@@ -1748,18 +1842,23 @@ def sell_position(body: SellIn):
                                "win_loss": sold_wl, "pnl_amount": sold_pnl_net,
                                "exit_exchange_rate": exit_fx},
                              f"created from partial sell of {body.trade_id}")
+            replayed = _replay_position(conn, pos["account_id"], pos["symbol"],
+                                        f"sale {body.sell_date}")
+            row_now = conn.execute("SELECT pnl_amount, pnl_percent, win_loss, price_entry "
+                                   "FROM trades WHERE id = ?", (sold_id,)).fetchone()
 
             return {
                 "ok": True,
+                "replay": replayed,
                 "action": "partial_sell",
-                "avg_cost": round(avg_cost, 4),
+                "avg_cost": round(float(row_now["price_entry"]), 4),
                 "sold_trade_id": sold_id,
                 "remaining_trade_id": body.trade_id,
                 "sold_volume": sold_volume,
                 "remaining_volume": remaining,
-                "pnl_amount": sold_pnl_net,
-                "pnl_percent": sold_pnl_pct,
-                "win_loss": sold_wl,
+                "pnl_amount": row_now["pnl_amount"],
+                "pnl_percent": row_now["pnl_percent"],
+                "win_loss": row_now["win_loss"],
                 "fee_exit": fee_exit,
             }
 
@@ -1823,8 +1922,10 @@ def sell_all_lots(body: SellAllLotsIn):
                               "pnl_amount": pnl_net},
                              f"sell all lots {vol} @ {exit_price}, avg_cost={round(avg_cost, 4)}")
             closed_ids.append(pos["id"])
+        replayed = _replay_position(conn, body.account_id, body.symbol, f"sale {body.sell_date}")
 
-        return {"ok": True, "action": "sell_all_lots", "closed_ids": closed_ids, "lots_closed": len(closed_ids)}
+        return {"ok": True, "action": "sell_all_lots", "closed_ids": closed_ids,
+                "lots_closed": len(closed_ids), "replay": replayed}
 
 
 # ── Cash Ledger ───────────────────────────────────────────────────────────────

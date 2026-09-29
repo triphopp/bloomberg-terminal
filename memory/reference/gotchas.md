@@ -357,6 +357,8 @@ HTTP 200 / `status: ok`; live SNDK 2026-10-16 SVI returned `ok` for 56 call and
 | `BOT_STATS_TOKEN` | `/api/bot/statistics/*` → 401 |
 | `SEC2_API_KEY` | All `/api/sec/v2/*` routes fail |
 | `BINANCE_API_KEY` | `/api/crypto/footprint` fails |
+| `FISCAL_AI_API_KEY` | `/api/fiscal/*` + MCP `get_fiscal_data` → 424 "not set". Free trial covers only 100 fixed companies (list: docs.fiscal.ai free-trial) — others will 4xx. Key rides in the `apiKey` query param: never log request URLs |
+| `FISCAL_AI_DAILY_LIMIT` (optional, default 250) | Local call budget for Fiscal.ai; above the plan limit → upstream 429s |
 | `FACEBOOK_ACCESS_TOKEN` | FB social feed falls back to RSSHub (may be rate-limited) |
 | `CLIPPINGS_DIR` | Clippings view empty (default: `./data/clippings`) |
 | `SYNC_DIR` (unset/unreachable) | Cloud sync silent no-op — app runs local-only (fail-soft, never blocks startup); SYNC chip shows OFFLINE |
@@ -1985,7 +1987,7 @@ Finansia 6065151/6065157 (AJ, DCON×2, DMT, LOXLEY, OR×2, TASCO×2, XPG) were h
 `import torch` after `main`'s modules → `WinError 1114 … c10.dll` (DLL init clash); a bare `python -c "import torch"` works, so it looks random. Fix: run anything torch-based in a **spawned** process — `slip_ocr/ocr.py` uses `ProcessPoolExecutor(max_workers=1, mp_context=spawn)`; decode the image in the parent so a bad file is a 422, not a worker crash. Don't catch `OSError` as "bad image" — the DLL error is an `OSError` too.
 
 ## `--reload` hangs at "Waiting for connections to close" (2026-09-26)
-A long-lived connection (the frontend's stream) keeps the old worker alive; `/api/dev/status` shows `stale: true` forever and RESTART does not help. Stop the old `spawn_main` child (its parent is the reloader) and the reloader starts a fresh one.
+A long-lived connection (the frontend's stream) keeps the old worker alive; `/api/dev/status` shows `stale: true` forever and RESTART does not help. Stop the old `spawn_main` child (its parent is the reloader) and the reloader starts a fresh one. **Only if a watched file changed:** stopping the child with no pending change leaves the reloader holding :9317 with no worker (connection timeouts) — `touch backend/config.py` to make it spawn one. Same trick after editing `backend/.env` (not watched) to load a new key (2026-09-29).
 
 ## Dime slip: shown price is rounded, value is not (2026-09-26)
 COST 2.0751791 × 914.11 = 1,896.94 but the slip's มูลค่าหุ้น is 1,896.96 → true fill 914.1187. Book `price_entry = value / qty` (4 dp) or qty × price drifts from the broker by cents. Dime commission 2.84 where the schedule rounds 2.85 — the slip wins (`broker_fees` is ±1¢).
@@ -2145,3 +2147,63 @@ picklable, light imports; Windows spawns). `CPU_POOL_WORKERS=0` disables it.
 **Cause:** `absolute right-0 w-56` under a trigger near the column's left edge grows leftward past x=0, and the column's `overflow: hidden` clips whatever sticks out.
 **Fix:** `useViewportAnchoredPanel(width)` in the same file — `position: fixed` under the trigger, left clamped to `[4, innerWidth - width - 4]`; the input focuses once `ready` (it is `visibility: hidden` for the first render, where `focus()` fails).
 **Rule:** a popover inside a panel column must not be `absolute` right-aligned — use fixed + clamp (this hook, or `chart/useAnchoredPanel`).
+
+## Monthly YoY off by a month after a data gap (fixed 2026-09-28)
+**Symptom:** `/api/macro` CPI Aug-2026 = 3.71% YoY; BLS/FRED by date = 3.35%.
+**Cause:** `_apply_transform(..., "yoy_pct")` in `backend/routers/macro.py` compared `rows[i]` with `rows[i+12]` — a row offset. FRED has no Oct-2025 CPI (shutdown), so the lag silently became 13 months. `mom_*` and `yoy_pct_q` had the same flaw.
+**Fix:** `_lagged(rows, months)` looks the base up by year-month and skips the point when it is missing; `_XFORM_VERSION` in the disk-cache entry (`xv`) forces a refetch of values computed by old code. Test: `backend/tests/test_macro_transform.py`.
+**Rule:** lag by date, never by index. Changing a transform → bump `_XFORM_VERSION`, or `macro_series.json` serves the old numbers until the TTL (up to 30 days).
+
+## PORT realized P&L ≠ stock card after a back-dated buy or a lot edit (code fixed 2026-09-28; existing data pending user OK)
+**Symptom:** ledger check I3 (sale P&L app ≠ stock card) / I2 (open-lot avg ≠ stock card) after entering a buy, editing a lot, or a multi-lot sell.
+**Cause:** `/sell` pools every lot open *now* (no `date_entry <= sell_date`); a buy dated before an already-booked sale, or a PATCH of `price_entry`/`volume`/`date_entry`, never re-derives that sale or the sibling lots. Pre-`3dd144a` multi-lot sells priced each lot at its own cost.
+**Fix:** `trades.lot_price` (buy price, never rebased) + `backend/avco_replay.py` called from every trade write endpoint (`_replay_position`). Test `tests/test_avco_replay.py`.
+**Rule:** anything that changes a lot's history must replay AVCO by date for that (account, symbol) — new write paths call `_replay_position`. Never trust `price_entry` as the buy price; use `lot_price`. Report: `memory/reports/port-avco-buy-sell-mismatch-risk-report.md`.
+
+## Chart freezes — "Maximum call stack size exceeded" in OverlayPrimitive.update (fixed 2026-09-28)
+**Symptom:** moving the mouse while a trend line is half drawn → RangeError, chart dead.
+**Cause:** repainting a primitive (`series.applyOptions({})`) makes lightweight-charts re-emit `subscribeCrosshairMove` **synchronously**; a move handler that repaints on every event calls itself forever.
+**Fix:** `ModularChart` move handler has a `repainting` guard, and `useChartIndicators.handlePointerMove` returns true only when the hover point actually changed.
+**Rule:** never repaint unconditionally from a crosshair handler — compare with the last value, and guard re-entry.
+
+## A 5xx `detail` never reaches the caller (2026-09-28)
+`main.py` `_http_exception_handler` replaces the detail of every `HTTPException` ≥ 500 with "Internal server error" (logged server-side only). An upstream condition the caller must act on — vendor 429, missing API key — must use a 4xx (`429` + `Retry-After`, `424` for a missing key) or the agent/MCP sees a useless message. `google_trends.py` and `fiscal_ai.py` follow this; `sources/errors.UpstreamRateLimited` is the Yahoo-flavoured 429.
+
+## TRADE GUARD notifier is silent on its first run (2026-09-28)
+`guard_scheduler.apply` seeds `guard_state` without writing events when the table is empty, so the flags that already exist on first boot never toast (the RISK card shows them). A flag toasts only when it APPEARS on a holding. Env `TRADE_GUARD_SCAN_INTERVAL` (default 900, `0` disables). Guard events live in `alert_events` with `rule_id = 'guard:<CODE>'` and no `alert_rules` row — `alert_rules.list_events` names them; anything else that joins `alert_events` to `alert_rules` sees them as orphans.
+
+## Yahoo `^SET.BK` returns ONE bar (2026-09-29)
+`yf.Ticker("^SET.BK").history(period="1y")` → 1 row (same for `^SET50.BK`). Anything needing SET index history must use a
+proxy: `TDEX.BK` (SET50 ETF, THB, Thai calendar, ~248 bars/yr) or `THD` (iShares Thailand, USD, US calendar). The stop
+simulator uses TDEX → THD. `config.py` already maps ^SET.BK → THD for ETF-proxy lookups.
+
+## Closed lots can carry AVCO from an earlier holding (2026-09-29)
+Some closed lots have `price_entry` = the average cost of the whole earlier position but `date_entry` = a later buy
+(SMR 2026-02-02 at 45.46 while SMR traded ~17; ORCL 2026-01-22 at 309.045 = the Oct-2025 cost). Anything that replays a
+trade from its entry date (MAE/MFE, stop counterfactual) must check the entry against that day's range —
+`trade_guard.entry_consistent` (±10%) — or it books the pre-date loss as a day-1 gap. Related: `plans/port-avco-dated-replay.md`.
+
+## INP 456 ms after TRADE GUARD — cross-view jump mounted the wrong tab first (fixed 2026-09-29)
+**Symptom:** click GUARD ribbon (any view) → PORT → RISK felt stuck; INP ~456 ms.
+**Cause:** `views/portfolio/index.tsx` started `topTab` at `"portfolio"` and switched to the requested tab in a
+`useEffect` — so the click rendered POSITIONS (~180 ms dev) just to throw it away, plus unmounting the old view, all
+inside the click task. Also WHAT-IF SIM re-rendered both Recharts charts on every keystroke in the qty input.
+**Fix:** `useState(() => tabRequest ?? "portfolio")`; ribbon click wraps `requestTab` + `setView` in `startTransition`
+(click task 110 ms → 1 ms, no long task); `ScenarioChart` / `SummaryTable` are `memo` (keystroke ~40 → ~20 ms dev).
+**Rule:** a "jump to view X, tab Y" request must be read in the target's `useState` initializer, never applied by a
+mount effect; a view swap triggered from a click should go through `startTransition`.
+**Follow-up same day — MKT:** entering MKT was a 313 ms click task (dev). Now `bloomberg-terminal.tsx` renders the view
+from `useDeferredValue(currentView)` with a memoised element → every nav path (links, keys, search, ribbons) swaps
+views as interruptible background work (click task 13 ms, no long task). Also: `AlertPickerDialog` mounts only while
+open (it was mounted closed in every watchlist row via `SymbolContextMenu` / `AlertBellCell`, ~30 ms of each MKT
+mount), `HeatmapSVG` is `memo`. Left: `MarketView` itself (~2,300 lines of JSX in one component) costs 25–35 ms dev
+per re-render on any in-view click — the fix there is splitting it into memoised panels.
+**How it was measured:** a temporary `__REACT_DEVTOOLS_GLOBAL_HOOK__` stub in `app/layout.tsx` (dev React then fills
+`fiber.actualDuration`; sum self time per component name in `onCommitFiberRoot`). Remove it after.
+
+## Candle drawn from 0 on ^MOVE — Yahoo newest bar has O/H/L = 0 (fixed 2026-09-29)
+Once-a-day indices (^MOVE; likely other ICE/CBOE series) come from Yahoo with Open/High/Low = 0.0 on the newest daily
+bar while Close is real (2026-09-28: close 101.82, O/H/L 0) — raw yfinance, not our code. The chart drew a candle to 0.
+**Fix:** `routers/stock.py` `_repair_zero_ohl` rebuilds such bars (open = previous close, high/low = range of open and
+close) in `/api/stock/history`. Test `tests/test_history_zero_ohl.py`. Anything else reading Yahoo OHLC for these
+series (ATR, MAE/MFE, stop sims) must treat a 0 price as missing, not as a price.

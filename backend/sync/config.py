@@ -105,6 +105,10 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     # peer ignores a table it does not walk, and its snapshot simply carries none.
     ("thesis_notes",             ["id"]),
     ("thesis_links",             ["thesis_id", "trade_id"]),   # composite PK
+    # TRADE GUARD "hold anyway" decisions — uuid PK, edited only to set
+    # cleared_at. guard_state (the notifier's per-holding flag cursor) is NOT
+    # synced, for the same reason alert_rule_state is not.
+    ("guard_overrides",          ["id"]),
     # Zettelkasten. `zettel` is a head row like `theses` (field-level LWW);
     # edges and sources are append-only by construction — closing a conflict
     # fills resolved_at on the existing row, it never rewrites the link — so a

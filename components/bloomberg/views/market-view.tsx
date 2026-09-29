@@ -1418,6 +1418,8 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     selectRegression: selectMktRegression,
     setRegressionMode: setMktRegressionMode,
     handleChartClick: handleMktChartClick,
+    handlePointerMove: handleMktPointerMove,
+    drawingFutureRoom: mktDrawingFutureRoom,
     trendLines: mktTrendLines,
     trendArmed: mktTrendArmed,
     trendPending: mktTrendPending,
@@ -2974,6 +2976,8 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                       )
                 }
                 onBarClick={handleMktChartClick}
+                onPointerMove={handleMktPointerMove}
+                futureRoomBars={mktDrawingFutureRoom}
                 crosshairCursor={mktDrawingArmed}
                 onLogicalRange={onChartLogicalRange}
                 viewportKey={chartViewportKey}

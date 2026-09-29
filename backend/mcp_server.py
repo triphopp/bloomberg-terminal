@@ -18,6 +18,8 @@ from typing import Any, Literal, Optional
 
 from urllib.parse import urlsplit, urlunsplit
 
+from pathlib import Path
+
 import requests
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -62,13 +64,35 @@ mcp = MCPServer(
         "self-contained HTML page attached to the thesis (graph_list first). "
         "Never rewrite the thesis body or change status/conviction unless asked, and "
         "always give a reason. "
-        "Fundamental analysis (\"วิเคราะห์พื้นฐาน\" a ticker): follow "
-        "memory/reference/fundamental-analysis.md in the repo — pull financials, "
-        "balance-sheet, ratios, quality, estimates, management (get_stock_data), "
-        "10-K/20-F (get_filings), news, plus the earnings call; answer in its 12 "
-        "Thai sections, facts only, say unclear when unclear."
+        "Fundamental analysis (\"วิเคราะห์พื้นฐาน\" a ticker): call "
+        "get_fundamental_spec FIRST and follow it exactly — which data to pull "
+        "(get_stock_data, get_filings, get_fiscal_data, get_news, the earnings call), "
+        "the 12 Thai sections, and its rules: facts only, say unclear when unclear. "
+        "SOURCES — ALWAYS: every number or factual claim you write (thesis body, "
+        "note, zettel, graph, chat answer) names its source: publisher/tool + URL or "
+        "filing (form, period, filed date) + the date of the fact. Tool results carry "
+        "a `source`/`url` field — pass it through. No source = do not state it as fact; "
+        "label opinions (scores, ratings, sell-side views) as opinions. "
+        "FREE FIRST: use free/public sources before anything paid — SEC EDGAR "
+        "(filings, XBRL), company IR/press releases, central banks, FRED, Google Trends, "
+        "then free news. Paid/licensed sources (Bloomberg, Moody's/S&P/Fitch research, "
+        "paid transcripts) only when the user has access and asks; never scrape a "
+        "paywalled or ToS-restricted site, never work around a rate limit."
     ),
 )
+
+
+# The fundamental-analysis spec lives in one file; the MCP serves it (tool, prompt,
+# resource) so agents outside the repo — Claude Desktop, HTTP clients — follow
+# the same 12 sections. Read on every call: edits need no MCP restart.
+SPEC_FILE = Path(__file__).resolve().parent.parent / "memory" / "reference" / "fundamental-analysis.md"
+
+
+def _spec_text() -> str:
+    try:
+        return SPEC_FILE.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ToolError(f"fundamental-analysis spec not found at {SPEC_FILE}") from exc
 
 
 # ── HTTP helpers ─────────────────────────────────────────────────────────────
@@ -342,6 +366,53 @@ def get_filings(symbol: str, forms: str = "10-K,10-Q,8-K", limit: int = 10) -> s
     """Recent SEC EDGAR filings (US issuers), newest first, with document links."""
     return _out(_call("GET", f"{API}/api/company/filings/{symbol.upper()}",
                       params={"forms": forms, "limit": limit}, timeout=60))
+
+
+@mcp.tool()
+def get_google_trends(
+    keywords: str,
+    geo: str = "",
+    timeframe: Literal["now 7-d", "today 1-m", "today 3-m", "today 12-m", "today 5-y"] = "today 12-m",
+) -> str:
+    """Google search interest over time for up to 5 comma-separated keywords
+    (geo '' = worldwide, else e.g. US, TH). Values are a 0–100 index relative to
+    the peak in this window and keyword set — NOT search volume, and they shift if
+    the keywords or window change. Context for demand/attention, never a
+    fundamental. Google rate-limits this (429 with the explore URL = try in ~30 min).
+    Cite the returned `source.url`."""
+    return _out(_call("GET", f"{API}/api/trends/interest", timeout=60,
+                      params={"keywords": keywords, "geo": geo, "timeframe": timeframe}))
+
+
+FiscalKind = Literal[
+    "profile", "income", "balance", "cashflow", "ratios", "adjusted", "segments-kpis",
+    "earnings-summary", "ir-events", "fund-letters", "news-summary", "transcript",
+]
+
+
+@mcp.tool()
+def get_fiscal_data(symbol: str, kind: FiscalKind = "segments-kpis", period: str = "annual",
+                    event_key: str = "") -> str:
+    """Fiscal.ai fundamentals (secondary source — cross-check vs SEC filings).
+    Free trial: only 100 fixed companies and 250 calls/day, so ask for what you need.
+    kind: profile · income / balance / cashflow (standardized) · ratios · adjusted ·
+    segments-kpis (company-specific KPIs + segment revenue) · earnings-summary ·
+    ir-events (lists earnings calls and their event keys) · transcript (needs
+    event_key like 'q3-2026' from ir-events) · fund-letters · news-summary.
+    period (periodic kinds): annual | quarterly | ltm | ytd | latest, comma-separated.
+    Cite the returned `source`."""
+    if kind == "transcript":
+        if not event_key:
+            raise BackendError("transcript needs event_key (e.g. q3-2026) — call kind=ir-events first")
+        return _out(_call("GET", f"{API}/api/fiscal/transcript/{symbol}/{event_key}", timeout=60))
+    return _out(_call("GET", f"{API}/api/fiscal/{kind}/{symbol}", params={"period": period}, timeout=60))
+
+
+@mcp.tool()
+def get_trending_searches(geo: str = "US") -> str:
+    """Today's trending Google searches for a country (public RSS): query,
+    approx traffic bucket, and the news stories behind each. Cite `source.url`."""
+    return _out(_call("GET", f"{API}/api/trends/daily", params={"geo": geo}, timeout=30))
 
 
 # ── Zettelkasten knowledge base ──────────────────────────────────────────────
@@ -626,7 +697,46 @@ def graph_update(
     })))
 
 
+# ── Fundamental-analysis spec ────────────────────────────────────────────────
+
+@mcp.tool()
+def get_fundamental_spec() -> str:
+    """The fundamental-analysis spec ("วิเคราะห์พื้นฐาน [ticker]"): which data to
+    pull and from which tool, the 12-section Thai report, and the rules (sources on
+    every fact, free first, facts only). Call this BEFORE any fundamental analysis."""
+    return _spec_text()
+
+
+@mcp.resource("spec://fundamental-analysis", name="fundamental-analysis-spec",
+              description="Fundamental-analysis spec: data sources, 12 Thai sections, rules",
+              mime_type="text/markdown")
+def fundamental_spec_resource() -> str:
+    return _spec_text()
+
+
 # ── Prompts ──────────────────────────────────────────────────────────────────
+
+@mcp.prompt()
+def fundamental_analysis(symbol: str, thesis_id: str = "") -> str:
+    """วิเคราะห์พื้นฐาน a ticker by the house spec; optionally write it into a thesis."""
+    target = (f"Write the result into thesis {thesis_id}: get_thesis first, keep what is there, "
+              "add/replace the '## Fundamental' section via update_thesis with a reason."
+              if thesis_id else
+              "Answer in chat. If I ask to save it: list_theses for the symbol first; "
+              "create_thesis only if none exists.")
+    return f"""วิเคราะห์พื้นฐาน {symbol.upper()} ตาม spec ด้านล่างทุกข้อ.
+
+Before writing:
+1. Pull every data item in spec §1 for {symbol.upper()}. Free sources first; label the
+   period (FY/quarter) and source of every number; cross-check yfinance margins/profit
+   against the 10-K/10-Q — never use a figure the company does not report.
+2. zettel_search "{symbol.upper()}" — reuse what the archive already holds; new findings
+   → zettel_create (kind=EVIDENCE, source url + quote + date of the fact).
+3. {target}
+
+--- SPEC (memory/reference/fundamental-analysis.md) ---
+{_spec_text()}"""
+
 
 @mcp.prompt()
 def triage_conflicts(thesis_id: str = "") -> str:

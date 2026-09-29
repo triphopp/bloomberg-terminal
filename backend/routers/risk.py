@@ -5,6 +5,7 @@ Supports per-account and combined (all accounts) risk metrics.
 Complexity target: O(n*T) where n=positions, T=lookback days.
 All covariance uses Ledoit-Wolf shrinkage (O(n^2*T)) — no matrix inversion needed for basic metrics.
 """
+import json
 import math
 import threading
 import time
@@ -16,7 +17,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cache import TTLCache
 from db import get_db
@@ -430,6 +431,34 @@ def _var_backtest(
     return exceptions, float(rate), signal
 
 
+def _var_backtest_oos(
+    port_returns: np.ndarray, confidence: float, window: Optional[int] = None,
+) -> tuple[int, int, float, str]:
+    """Rolling OUT-OF-SAMPLE historical-VaR backtest.
+
+    Day t is judged against the VaR estimated from the `window` days BEFORE it,
+    never from a sample that contains day t. The in-sample count (_var_backtest)
+    scores a percentile against its own sample and lands on 1−confidence by
+    construction — it could not fail. Returns (exceptions, n_obs, rate, signal).
+    Still the CURRENT basket replayed backwards: the live forecast log
+    (`var_forecasts`, GET /risk/var-backtest) is the test of the real book.
+    """
+    T = len(port_returns)
+    w = window or max(60, min(126, T // 2))
+    if T - w < 30:
+        return 0, max(T - w, 0), 0.0, "INSUFFICIENT_DATA"
+    q = (1 - confidence) * 100
+    exc = 0
+    for t in range(w, T):
+        if port_returns[t] < np.percentile(port_returns[t - w:t], q):  # perf-ok: ≤250 obs, once per request
+            exc += 1
+    n = T - w
+    rate = exc / n
+    expected = 1.0 - confidence
+    signal = "GREEN" if rate <= expected else ("YELLOW" if rate <= expected * 1.6 else "RED")
+    return exc, n, float(rate), signal
+
+
 def _kupiec_pvalue(n_exceptions: int, n_obs: int, confidence: float) -> float:
     """Kupiec POF test: H0 = VaR exception rate equals 1-confidence.
     Returns p-value; p > 0.05 means model is adequate (fail to reject H0).
@@ -451,11 +480,19 @@ def _kupiec_pvalue(n_exceptions: int, n_obs: int, confidence: float) -> float:
 # ── Core Risk Computations ───────────────────────────────────────────────────
 
 def _compute_portfolio_risk(
-    positions: list[dict], lookback: int, confidence: float, base_currency: str = "THB"
+    positions: list[dict], lookback: int, confidence: float, base_currency: str = "THB",
+    cash_base: float = 0.0,
+    extra_exposure: Optional[dict[str, tuple[float, str, str]]] = None,
 ):
     """
     Compute full risk metrics for a set of positions.
     Returns dict with all metrics.
+
+    Weights are on a NAV basis (2026-09-29): NAV = net market value + cash, so
+    cash dilutes risk instead of being ignored, a short lot (negative volume)
+    is a negative weight instead of being dropped, and `extra_exposure`
+    ({yf_symbol: (signed base value, currency, label)}) adds option legs as
+    delta-equivalent underlying exposure — linear, no gamma.
     """
     if not positions:
         return _empty_metrics()
@@ -481,7 +518,7 @@ def _compute_portfolio_risk(
         native_val = float(price or 0) * vol
         val = convert_amount(native_val, trade_currency(pos), report_currency(base_currency))
         sym_ccy_map.setdefault(yf_sym, trade_currency(pos))
-        if val > 0:
+        if val != 0:
             sym_value_map[yf_sym] = sym_value_map.get(yf_sym, 0.0) + val
             if price:
                 sym_price_map[yf_sym] = float(price)
@@ -491,13 +528,27 @@ def _compute_portfolio_risk(
             sym_entry_value_map[yf_sym] = sym_entry_value_map.get(yf_sym, 0.0) + entry_price * vol
             sym_volume_map[yf_sym] = sym_volume_map.get(yf_sym, 0.0) + vol
 
+    option_value = 0.0
+    for yf_sym, (val, ccy, label) in (extra_exposure or {}).items():
+        if not val:
+            continue
+        sym_value_map[yf_sym] = sym_value_map.get(yf_sym, 0.0) + val
+        sym_ccy_map.setdefault(yf_sym, ccy)
+        sym_to_yf.setdefault(yf_sym, label)
+        option_value += val
+
     if not sym_value_map:
         return _empty_metrics()
 
     symbols = list(sym_value_map.keys())
     values  = [sym_value_map[s] for s in symbols]
 
-    total_value = sum(values)
+    net_value = sum(values)
+    gross_value = sum(abs(v) for v in values)
+    short_value = sum(v for v in values if v < 0)
+    total_value = net_value + float(cash_base or 0.0)      # NAV
+    if total_value <= 0:
+        total_value = gross_value                           # degenerate book: fall back to gross
     weights = np.array(values) / total_value
 
     # Date-aligned, base-currency return matrix. Symbols without enough history
@@ -513,7 +564,10 @@ def _compute_portfolio_risk(
 
     R = returns_df.values
     w = np.array([weights[symbols.index(s)] for s in valid_syms])
-    w = w / w.sum()  # renormalize to valid symbols
+    # Symbols without history lend their weight to the rest, keeping the book's
+    # net invested share (cash stays cash).
+    if abs(w.sum()) > 1e-12:
+        w = w * (weights.sum() / w.sum())
 
     T, n = R.shape
 
@@ -584,7 +638,8 @@ def _compute_portfolio_risk(
     ensemble_conservative_amount = ensemble_conservative_pct * total_value
 
     # ── Ensemble Layer 4: VaR Backtest (exception counting) ──────────────────
-    bt_exceptions, bt_rate, bt_signal = _var_backtest(port_returns, var_hist_pct, confidence)
+    # Out-of-sample (rolling): the in-sample count could never fail.
+    bt_exceptions, bt_obs, bt_rate, bt_signal = _var_backtest_oos(port_returns, confidence)
 
     # ── Breach detection: most-recent return vs each VaR threshold ────────────
     today_return = float(port_returns[-1]) if len(port_returns) > 0 else 0.0
@@ -593,7 +648,7 @@ def _compute_portfolio_risk(
     breach_mc   = today_return < -cvar_mc_pct
 
     # Kupiec POF test p-value
-    kupiec_pvalue = _kupiec_pvalue(bt_exceptions, len(port_returns), confidence)
+    kupiec_pvalue = _kupiec_pvalue(bt_exceptions, bt_obs, confidence)
     kupiec_pass   = kupiec_pvalue > 0.05
 
     # Max Drawdown
@@ -627,7 +682,7 @@ def _compute_portfolio_risk(
 
     # Diversification ratio
     individual_vols = np.sqrt(np.diag(cov))
-    div_ratio = float(np.sum(w * individual_vols) / port_vol_daily)
+    div_ratio = float(np.sum(np.abs(w) * individual_vols) / port_vol_daily)
 
     # Correlation matrix
     std_diag = np.diag(1.0 / (individual_vols + 1e-10))
@@ -655,6 +710,13 @@ def _compute_portfolio_risk(
     return {
         "portfolio_value": round(total_value, 2),
         "base_currency": report_currency(base_currency),
+        # NAV basis (cash in the denominator, shorts negative, options by delta)
+        "nav_value": round(total_value, 2),
+        "cash_value": round(float(cash_base or 0.0), 2),
+        "gross_exposure_pct": round(gross_value / total_value * 100, 2) if total_value else None,
+        "net_exposure_pct": round(net_value / total_value * 100, 2) if total_value else None,
+        "short_value": round(short_value, 2),
+        "option_delta_value": round(option_value, 2),
         "n_positions": len(valid_syms),
         "lookback_days": int(T),
         "confidence": confidence,
@@ -687,6 +749,8 @@ def _compute_portfolio_risk(
         "var_backtest_exceptions": bt_exceptions,
         "var_backtest_rate": round(bt_rate * 100, 2),
         "var_backtest_signal": bt_signal,              # GREEN | YELLOW | RED | INSUFFICIENT_DATA
+        "var_backtest_obs": bt_obs,
+        "var_backtest_method": "rolling_oos_current_basket",
         # Breach checker
         "today_return_pct": round(today_return * 100, 3),
         "breach_hist": breach_hist,
@@ -1347,15 +1411,8 @@ def _backfill_ews_history(port_returns: np.ndarray, account_id: str, confidence:
 
 # ── API Endpoints ────────────────────────────────────────────────────────────
 
-@router.get("/metrics")
-def get_risk_metrics(
-    account_id: Optional[str] = Query(None),
-    confidence: float = Query(0.95),
-    lookback: int = Query(252),
-    base_currency: str = Query("THB"),
-):
-    """Full risk analysis for portfolio. Supports per-account or all."""
-    base_currency = report_currency(base_currency)
+def _open_positions_priced(account_id: Optional[str]) -> list[dict]:
+    """Open lots (win_loss 'P') with `current_price` filled from the batch quote."""
     where = ["win_loss = 'P'"]
     params = []
     if account_id and account_id != "all":
@@ -1391,8 +1448,54 @@ def get_risk_metrics(
                 pos["current_price"] = snap.get("price") if isinstance(snap, dict) else snap
     except Exception:
         pass
+    return positions
 
-    metrics = _compute_portfolio_risk(positions, lookback, confidence, base_currency)
+
+def _option_exposure(account_id: Optional[str], base: str) -> dict[str, tuple[float, str, str]]:
+    """Open option lots as delta-equivalent underlying value in `base`:
+    {underlying: (signed value, currency, label)}. Lots without a delta
+    (no quote) are left out — `option_unpriced` in the metrics says so."""
+    out: dict[str, tuple[float, str, str]] = {}
+    try:
+        from portfolio_options import open_option_positions, option_currency
+        lots = open_option_positions(None if account_id in (None, "all") else account_id, base)
+    except Exception:
+        return out
+    for lot in lots:
+        v = lot.get("delta_notional_base")
+        u = str(lot.get("underlying") or "").upper()
+        if v is None or not u:
+            continue
+        prev = out.get(u, (0.0, option_currency(lot), f"{u} (options Δ)"))
+        out[u] = (prev[0] + float(v), prev[1], prev[2])
+    return out
+
+
+def _risk_extras(account_id: Optional[str], base: str, summ: Optional[dict] = None):
+    """(cash, option exposure) for `_compute_portfolio_risk`'s NAV basis."""
+    cash = _guard_cash(account_id if account_id not in (None, "all") else None, base, summ)
+    return float(cash or 0.0), _option_exposure(account_id, base)
+
+
+@router.get("/metrics")
+def get_risk_metrics(
+    account_id: Optional[str] = Query(None),
+    confidence: float = Query(0.95),
+    lookback: int = Query(252),
+    base_currency: str = Query("THB"),
+):
+    """Full risk analysis for portfolio. Supports per-account or all."""
+    base_currency = report_currency(base_currency)
+    positions = _open_positions_priced(account_id)
+
+    try:
+        from routers.portfolio_v2 import get_summary
+        summ = get_summary(base_currency=base_currency)
+    except Exception:
+        summ = None
+    cash, opt = _risk_extras(account_id, base_currency, summ)
+    metrics = _compute_portfolio_risk(positions, lookback, confidence, base_currency,
+                                      cash_base=cash, extra_exposure=opt)
 
     # Pop internal numpy/pandas series before JSON serialization
     port_returns_arr = metrics.pop("_port_returns", None)
@@ -1433,8 +1536,9 @@ def get_risk_metrics(
             acct_groups[aid].append(pos)
 
         for aid, group in acct_groups.items():
+            a_cash, a_opt = _risk_extras(aid, base_currency, summ)
             acct_metrics = _compute_portfolio_risk(
-                group, lookback, confidence, base_currency
+                group, lookback, confidence, base_currency, cash_base=a_cash, extra_exposure=a_opt
             )
             account_breakdown[aid] = {
                 "portfolio_value": acct_metrics["portfolio_value"],
@@ -2266,3 +2370,726 @@ def stress_test(
         })
 
     return {"scenarios": sorted(results, key=lambda x: x["portfolio_loss_thb"])}
+
+
+# ── Trade guard (fast-turnover rules) ────────────────────────────────────────
+#
+# Rules live in backend/trade_guard.py (pure). This section only does I/O:
+# open lots, live prices, ATR history, cash, real-NAV drawdown, overrides.
+
+_guard_cache: TTLCache = TTLCache(ttl=900, maxsize=32)
+
+
+def _guard_lots(account_id: Optional[str], open_only: bool) -> tuple[list[dict], list[dict]]:
+    """Trade rows (open or closed) with `yf_symbol` + `currency` resolved."""
+    where, params = ["t.win_loss = 'P'" if open_only else "t.win_loss != 'P'"], []
+    if not open_only:
+        where.append("t.price_exit > 0")
+    if account_id and account_id != "all":
+        where.append("t.account_id = ?")
+        params.append(account_id)
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT t.*, a.currency acc_currency FROM trades t "
+            "JOIN portfolio_accounts a ON t.account_id = a.id "
+            f"WHERE {' AND '.join(where)}",
+            params,
+        ).fetchall()
+    lots, skipped = [], []
+    for r in rows:
+        lot = dict(r)
+        yf_sym = _position_yf_symbol(lot)
+        if not yf_sym:
+            skipped.append({"symbol": lot.get("symbol"), "reason": "no market symbol (option?)"})
+            continue
+        lot["yf_symbol"] = yf_sym
+        lot["currency"] = trade_currency(lot)
+        lots.append(lot)
+    return lots, skipped
+
+
+def _guard_atr(asof_by_symbol: dict[str, Optional[str]], timeout: float = 15) -> tuple[dict, list[str]]:
+    """ATR fraction per symbol at the given date (None = latest bar)."""
+    import trade_guard
+    from market_requests import collect
+    from market_snapshots import history_future
+
+    symbols = sorted(asof_by_symbol)
+    if not symbols:
+        return {}, []
+    frames, statuses = collect(
+        {s: history_future(s, "2y", "1d", ttl=900) for s in symbols}, timeout=timeout
+    )
+    atr = {s: trade_guard.atr_pct_asof(frames.get(s), asof_by_symbol[s]) for s in symbols}
+    pending = sorted(s for s in symbols if atr.get(s) is None
+                     and statuses.get(s, {}).get("status") != "ready")
+    return atr, pending
+
+
+def _guard_overrides(account_id: Optional[str], active_only: bool = True) -> list[dict]:
+    q = "SELECT * FROM guard_overrides"
+    clauses, params = [], []
+    if active_only:
+        clauses.append("cleared_at IS NULL")
+    if account_id and account_id != "all":
+        clauses.append("account_id = ?")
+        params.append(account_id)
+    if clauses:
+        q += " WHERE " + " AND ".join(clauses)
+    with get_db() as conn:
+        rows = [dict(r) for r in conn.execute(q + " ORDER BY created_at", params).fetchall()]
+    for r in rows:
+        try:
+            r["codes"] = json.loads(r.get("codes") or "[]")
+        except ValueError:
+            r["codes"] = []
+    return rows
+
+
+def _guard_cash(account_id: Optional[str], base: str, summ: Optional[dict] = None) -> Optional[float]:
+    """Cash in `base` from the same summary the header shows (None = unknown)."""
+    if summ is None:
+        try:
+            from routers.portfolio_v2 import get_summary
+            summ = get_summary(base_currency=base)
+        except Exception:
+            return None
+    if not account_id or account_id == "all":
+        v = summ.get("total_cash_base")
+        return float(v) if v is not None else None
+    for a in summ.get("accounts") or []:
+        acct = a.get("account")
+        acct_id = acct.get("id") if isinstance(acct, dict) else (acct or a.get("id") or a.get("account_id"))
+        if str(acct_id or "") == account_id:
+            v = a.get("cash_base")
+            return float(v) if v is not None else None
+    return None
+
+
+def _guard_nav_drawdown(account_id: Optional[str], base: str) -> Optional[float]:
+    """Current drawdown of the REAL time-weighted NAV index from its 1y peak, %.
+
+    Not /risk/metrics' drawdown — that one replays today's basket backwards.
+    """
+    key = f"navdd:{account_id or 'all'}:{base}"
+    hit = _guard_cache.get(key)
+    if hit is not None:
+        return hit.get("v")
+    value = None
+    try:
+        from routers.portfolio_v2 import get_nav_index
+        d = get_nav_index(account_id=account_id if account_id != "all" else None,
+                          days=365, benchmark="SPY", base_currency=base)
+        idx = [float(p["port_index"]) for p in d.get("points") or []
+               if p.get("port_index") is not None]
+        if len(idx) >= 2:
+            value = (idx[-1] / max(idx) - 1) * 100
+    except Exception:
+        value = None
+    _guard_cache.set(key, {"v": value})
+    return value
+
+
+def _guard_snapshot(account_id: Optional[str], base_currency: str) -> dict:
+    """Full guard evaluation — shared by the endpoint, sizing and the notifier."""
+    import trade_guard
+    from routers.portfolio_v2 import _batch_fetch_prices
+
+    base = report_currency(base_currency)
+    lots, skipped = _guard_lots(account_id, open_only=True)
+    positions = trade_guard.aggregate_lots(lots)
+    atr, pending = _guard_atr({p["yf_symbol"]: p["first_entry"] for p in positions})
+
+    symbols = sorted({p["yf_symbol"] for p in positions})
+    prices = _batch_fetch_prices(symbols) if symbols else {}
+    fx_cache: dict[str, float] = {}
+    for p in positions:
+        snap = prices.get(p["yf_symbol"])
+        snap = snap if isinstance(snap, dict) else {"price": snap}
+        p["price"] = snap.get("price")
+        p["prev_close"] = snap.get("prev_close")
+        ccy = p.get("currency") or base
+        if ccy not in fx_cache:
+            fx_cache[ccy] = convert_amount(1.0, ccy, base) or 1.0
+        p["fx"] = fx_cache[ccy]
+
+    overrides = {
+        trade_guard.override_key(o["account_id"], o["yf_symbol"], o["first_entry"]): o
+        for o in _guard_overrides(account_id)
+    }
+    closed, _ = _guard_lots(account_id, open_only=False)
+    out = trade_guard.evaluate(
+        positions, atr,
+        overrides=overrides,
+        nav_drawdown_pct=_guard_nav_drawdown(account_id, base),
+        streak=trade_guard.loss_streak(closed),
+        cash_value=_guard_cash(account_id, base),
+    )
+    out["skipped"] = skipped + out["skipped"]
+    out["base_currency"] = base
+    out["atr_pending"] = pending
+    return out
+
+
+@router.get("/guard")
+def get_trade_guard(
+    account_id: Optional[str] = Query(None),
+    base_currency: str = Query("THB"),
+):
+    """Traffic light + per-position stops for a fast-turnover book.
+
+    Every open long gets a stop without the user entering one (manual
+    `price_stoploss` wins; else 2×ATR14 at the entry date, clamped 5–12%).
+    Book-level: day loss, real-NAV drawdown (−5% half size, −10% stop) and a
+    losing streak. History frames still loading leave that symbol on the 8%
+    default stop — `atr_pending` names them.
+    """
+    return _guard_snapshot(account_id, base_currency)
+
+
+class GuardOverrideIn(BaseModel):
+    account_id: str
+    yf_symbol: str
+    first_entry: str
+    symbol: Optional[str] = None
+    codes: list[str]
+    reason: str = ""
+
+
+@router.post("/guard/override")
+def create_guard_override(body: GuardOverrideIn):
+    """Record "hold anyway" for one holding period. The flag stays on the row;
+    the action drops to INFO and stops colouring the light."""
+    codes = sorted({c.upper() for c in body.codes if c})
+    if not codes:
+        return {"ok": False, "error": "codes required"}
+    oid = str(uuid.uuid4())
+    with get_db() as conn:
+        # One live decision per holding: a new HOLD replaces the previous one.
+        conn.execute(
+            "UPDATE guard_overrides SET cleared_at = datetime('now') "
+            "WHERE account_id = ? AND yf_symbol = ? AND first_entry = ? AND cleared_at IS NULL",
+            (body.account_id, body.yf_symbol.upper(), body.first_entry[:10]),
+        )
+        conn.execute(
+            "INSERT INTO guard_overrides (id, account_id, yf_symbol, symbol, first_entry, codes, reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (oid, body.account_id, body.yf_symbol.upper(), body.symbol, body.first_entry[:10],
+             json.dumps(codes), body.reason.strip()[:500]),
+        )
+        conn.commit()
+    return {"ok": True, "id": oid, "codes": codes}
+
+
+@router.delete("/guard/override/{override_id}")
+def delete_guard_override(override_id: str):
+    """UNDO a hold (a mis-click), so the report never counts it. A hold that
+    was superseded by a newer one keeps its row with `cleared_at` set."""
+    with get_db() as conn:
+        cur = conn.execute("DELETE FROM guard_overrides WHERE id = ?", (override_id,))
+        conn.commit()
+    return {"ok": True, "deleted": cur.rowcount}
+
+
+@router.get("/guard/size")
+def get_guard_size(
+    symbol: str = Query(..., description="Yahoo symbol, e.g. AOT.BK / AAPL"),
+    price: Optional[float] = Query(None, description="Planned entry; default = last price"),
+    currency: Optional[str] = Query(None, description="Instrument currency; default inferred"),
+    account_id: Optional[str] = Query(None),
+    base_currency: str = Query("THB"),
+    stop: Optional[float] = Query(None, description="Manual stop, if the user has one"),
+):
+    """S / M / L volumes for a planned entry — pre-trade layer of the guard.
+
+    NAV = invested market value + cash of `account_id` (all accounts if none),
+    scaled by the guard's size multiplier (half after −5% NAV drawdown or a
+    losing streak, zero after −10%).
+    """
+    import trade_guard
+    from portfolio_currency import infer_instrument_currency
+    from routers.portfolio_v2 import _batch_fetch_prices
+
+    base = report_currency(base_currency)
+    sym = symbol.strip().upper()
+    snap = _guard_snapshot(account_id, base)
+    nav = snap.get("nav_value") or snap.get("invested_value") or 0.0
+
+    px = price
+    if not px:
+        q = _batch_fetch_prices([sym]).get(sym)
+        px = (q.get("price") if isinstance(q, dict) else q) or None
+    if not px or px <= 0:
+        return {"ok": False, "error": f"no price for {sym}"}
+    ccy = normalize_currency(currency) if currency else None
+    if not ccy:
+        ccy = normalize_currency(infer_instrument_currency(None, sym)) or "USD"
+    fx = convert_amount(1.0, ccy, base) or 1.0
+    atr, pending = _guard_atr({sym: None}, timeout=10)
+
+    out = trade_guard.size_buckets(
+        nav, float(px), fx, atr.get(sym),
+        multiplier=snap.get("size_multiplier", 1.0), manual_stop=stop,
+        lot=100.0 if sym.endswith(".BK") else 0.0,   # SET board lot
+    )
+    return {
+        "ok": True, "symbol": sym, "price": float(px), "currency": ccy, "fx": fx,
+        "base_currency": base, "nav_value": nav,
+        "nav_includes_cash": snap.get("cash_value") is not None,
+        "light": snap.get("light"),
+        "multiplier_why": snap.get("size_multiplier_why", []),
+        "atr_pending": bool(pending),
+        **out,
+    }
+
+
+@router.get("/guard/report")
+def get_guard_report(account_id: Optional[str] = Query(None)):
+    """Closed trades in R-multiples: expectancy, rule breaks, followed vs broke,
+    monthly and per-strategy. Cached 15 min (one ATR history per symbol)."""
+    import trade_guard
+
+    key = f"report:{account_id or 'all'}"
+    hit = _guard_cache.get(key)
+    if hit is not None:
+        return hit
+    closed, skipped = _guard_lots(account_id, open_only=False)
+    # ATR measured at each symbol's EARLIEST closed entry is a simplification
+    # only when one symbol was traded in very different regimes; per-lot ATR
+    # would multiply the history work for a report that is read monthly.
+    first: dict[str, str] = {}
+    for c in closed:
+        d = str(c.get("date_entry") or "")[:10]
+        if c["yf_symbol"] not in first or d < first[c["yf_symbol"]]:
+            first[c["yf_symbol"]] = d
+    atr, pending = _guard_atr(first, timeout=25)
+    overridden = {
+        trade_guard.override_key(o["account_id"], o["yf_symbol"], o["first_entry"])
+        for o in _guard_overrides(account_id, active_only=False)
+    }
+    # Raw (unadjusted) bars so a replayed stop compares with broker fills; a
+    # dividend-adjusted series sits below the prices actually traded.
+    from market_requests import collect
+    from market_snapshots import history_future
+    raw, raw_status = collect(
+        {sym: history_future(sym, "2y", "1d", ttl=900, auto_adjust=False) for sym in first},
+        timeout=25,
+    )
+    out = trade_guard.trade_report(closed, atr, overridden, frames=raw)
+    out["atr_pending"] = pending
+    out["bars_pending"] = sorted(s_ for s_, st in raw_status.items() if st.get("status") == "pending")
+    out["skipped"] = skipped
+    if not pending and not out["bars_pending"]:
+        _guard_cache.set(key, out)
+    return out
+
+
+class GuardApplyStopsIn(BaseModel):
+    account_id: Optional[str] = None
+    dry_run: bool = True
+
+
+def _backup_db(tag: str) -> str:
+    """Online SQLite backup under backend/backups/ before a bulk write."""
+    import sqlite3
+    from pathlib import Path
+
+    from db import connect
+
+    dst = Path(__file__).resolve().parent.parent / "backups" / (
+        f"portfolio.db.bak-{datetime.now():%Y%m%d-%H%M%S}-{tag}")
+    dst.parent.mkdir(exist_ok=True)
+    src = connect(readonly=True)
+    out = sqlite3.connect(dst)  # db-ok: fresh backup file, not the book
+    try:
+        src.backup(out)
+    finally:
+        out.close()
+        src.close()
+    return str(dst)
+
+
+@router.post("/guard/apply-stops")
+def apply_guard_stops(body: GuardApplyStopsIn):
+    """Write the guard's ATR auto stop into `price_stoploss` of every OPEN lot
+    that has none, so the stop lives on the trade (TradeEdit, exports, MCP)
+    instead of only being recomputed by the guard.
+
+    Only ATR stops are written — an 8% DEFAULT (no price history yet) is a
+    placeholder, not a decision. Lots with a stop already are left alone.
+    `dry_run` (default) lists what would change; a real run backs the DB up first.
+    """
+    snap = _guard_snapshot(body.account_id, "THB")
+    plan, skipped = [], []
+    lots, _ = _guard_lots(body.account_id, open_only=True)
+    for r in snap.get("positions", []):
+        if r.get("stop_source") != "ATR":
+            if r.get("stop_source") == "DEFAULT":
+                skipped.append({"symbol": r["symbol"], "reason": "no ATR history (8% default)"})
+            continue
+        ids = [l["id"] for l in lots
+               if l["account_id"] == r["account_id"] and l["yf_symbol"] == r["yf_symbol"]
+               and not float(l.get("price_stoploss") or 0) > 0]
+        if ids:
+            plan.append({"symbol": r["symbol"], "account_id": r["account_id"],
+                         "stop": round(float(r["stop"]), 4), "stop_distance_pct": r["stop_distance_pct"],
+                         "price": r["price"], "below_stop": "STOP_HIT" in r.get("flags", []),
+                         "lot_ids": ids})
+    if body.dry_run or not plan:
+        return {"dry_run": True, "plan": plan, "skipped": skipped,
+                "lots": sum(len(p["lot_ids"]) for p in plan)}
+
+    backup = _backup_db("pre-guard-stops")
+    n = 0
+    with get_db() as conn:
+        for p in plan:
+            for tid in p["lot_ids"]:
+                cur = conn.execute(
+                    "UPDATE trades SET price_stoploss = ? WHERE id = ? AND win_loss = 'P' "
+                    "AND (price_stoploss IS NULL OR price_stoploss <= 0)",
+                    (p["stop"], tid),
+                )
+                n += cur.rowcount
+        conn.commit()
+    return {"dry_run": False, "backup": backup, "plan": plan, "skipped": skipped, "lots": n}
+
+
+# ── Stop-discipline simulator ────────────────────────────────────────────────
+
+# Home-market factor per holding. Gold and crypto are their own market.
+# Yahoo serves ^SET.BK as a single bar (2026-09-29), so the SET factor is the
+# SET50 ETF TDEX.BK (THB, Thai calendar); THD (iShares Thailand, USD, US
+# calendar) is the fallback when TDEX has no history.
+_SIM_FACTORS = {"US": "^GSPC", "TH": "TDEX.BK", "CRYPTO": "BTC-USD", "GOLD": "GC=F"}
+_SIM_TH_FALLBACK = "THD"
+_SIM_FACTOR_LABEL = {"^GSPC": "S&P 500", "TDEX.BK": "SET50 (TDEX)", "THD": "Thailand (THD)",
+                     "BTC-USD": "BTC", "GC=F": "GOLD"}
+_sim_cache: TTLCache = TTLCache(ttl=600, maxsize=16)
+
+
+def _sim_factor_for(yf_symbol: str) -> str:
+    s = (yf_symbol or "").upper()
+    if s.endswith(".BK"):
+        return _SIM_FACTORS["TH"]
+    if s.endswith(("-USD", "-THB", "-USDT")):
+        return _SIM_FACTORS["CRYPTO"]
+    if s in ("GC=F", "SI=F", "GLD", "IAU"):
+        return _SIM_FACTORS["GOLD"]
+    return _SIM_FACTORS["US"]
+
+
+def _sim_beta(asset: "pd.Series", factor: "pd.Series") -> tuple[float, float, int]:
+    """(β, residual daily σ, n) from date-joined log returns (last 250)."""
+    df = pd.concat([asset.rename("a"), factor.rename("f")], axis=1).dropna()
+    df = np.log(df / df.shift(1)).dropna().iloc[-250:]
+    n = len(df)
+    if n < MIN_HISTORY_DAYS:
+        return 1.0, 0.02, n
+    var = float(df["f"].var())
+    beta = float(df["a"].cov(df["f"]) / var) if var > 0 else 1.0
+    resid = float((df["a"] - beta * df["f"]).std())
+    return beta, max(resid, 0.001), n
+
+
+def _sim_key(row: dict) -> str:
+    return f"{row.get('account_id') or ''}|{row['yf_symbol']}"
+
+
+def _sim_inputs(account_id: Optional[str], fresh: bool = False) -> dict:
+    """Everything the simulator needs that is slow to get: the guard snapshot
+    (positions, stops, flags), β / residual vol per holding and the factor
+    covariance. Cached 10 min — the simulation itself is cheap and re-runs
+    for every what-if the user ticks."""
+    import stop_sim
+
+    key = f"inputs:{account_id or 'all'}"
+    hit = None if fresh else _sim_cache.get(key)
+    if hit is not None:
+        return hit
+
+    snap = _guard_snapshot(account_id, "THB")
+    rows = snap.get("positions", [])
+    if not rows:
+        return {"rows": [], "holdings": [], "note": "no open positions"}
+
+    factor_of = {r["yf_symbol"]: _sim_factor_for(r["yf_symbol"]) for r in rows}
+    factors = sorted(set(factor_of.values()))
+    close = _fetch_close_frame(sorted(set(factor_of) | set(factors) | {_SIM_TH_FALLBACK}), 400)
+    th = _SIM_FACTORS["TH"]
+    if th in factors and (th not in close.columns
+                          or close[th].dropna().shape[0] < MIN_HISTORY_DAYS):
+        factor_of = {k: (_SIM_TH_FALLBACK if v == th else v) for k, v in factor_of.items()}
+        factors = sorted(set(factor_of.values()))
+
+    holdings, thin = [], []
+    for r in rows:
+        f = factor_of[r["yf_symbol"]]
+        if r["yf_symbol"] in close.columns and f in close.columns:
+            beta, resid, n = _sim_beta(close[r["yf_symbol"]], close[f])
+        else:
+            beta, resid, n = 1.0, 0.02, 0
+        if n < MIN_HISTORY_DAYS:
+            thin.append(r["symbol"])
+        holdings.append(stop_sim.Holding(
+            symbol=r["symbol"], value=float(r["market_value"]), price=float(r["price"]),
+            stop=float(r["stop"]) if r.get("stop") else None,
+            factor=f, beta=beta, resid_vol=resid, key=_sim_key(r),
+        ))
+
+    fr, _ = _aligned_returns([f for f in factors if f in close.columns], 252)
+    usable = list(fr.columns)
+    missing = [f for f in factors if f not in usable]
+    if missing:
+        # A factor with no history: treat it as independent with 1.5%/day.
+        cov = np.eye(len(factors)) * 0.015 ** 2
+        if usable:
+            sub = np.cov(fr[usable].values, rowvar=False).reshape(len(usable), len(usable))
+            ix = [factors.index(u) for u in usable]
+            cov[np.ix_(ix, ix)] = sub
+    else:
+        cov = np.cov(fr[factors].values, rowvar=False).reshape(len(factors), len(factors))
+
+    out = {
+        "rows": rows, "holdings": holdings, "cov": cov, "factors": factors,
+        "missing": missing, "thin": thin,
+        "cash": float(snap.get("cash_value") or 0.0), "as_of": snap.get("as_of"),
+    }
+    _sim_cache.set(key, out)
+    return out
+
+
+def _sim_run(inp: dict, horizon: int, n_paths: int,
+             scale: Optional[list[float]] = None, follow_stops: bool = True) -> dict:
+    import stop_sim
+
+    cov, factors = inp["cov"], inp["factors"]
+    out = stop_sim.simulate(
+        inp["holdings"], cov, factors, cash=inp["cash"],
+        horizon=horizon, n_paths=n_paths, scale=scale, follow_stops=follow_stops,
+    )
+    fvol = np.sqrt(np.diag(cov))
+    out["factors"] = [
+        {"key": f, "label": _SIM_FACTOR_LABEL.get(f, f),
+         "daily_vol_pct": round(float(fvol[i]) * 100, 3),
+         "sd_horizon_pct": round(float(np.expm1(fvol[i] * np.sqrt(horizon))) * 100, 2),
+         "estimated": f not in inp["missing"]}
+        for i, f in enumerate(factors)
+    ]
+    out["thin_history"] = inp["thin"]
+    out["base_currency"] = "THB"
+    out["as_of"] = inp["as_of"]
+    return out
+
+
+@router.get("/stop-sim")
+def get_stop_sim(
+    account_id: Optional[str] = Query(None),
+    horizon: int = Query(20, ge=5, le=120),
+    n_paths: int = Query(1000, ge=100, le=5000),
+    fresh: bool = Query(False, description="Skip the 10-min cache"),
+):
+    """Book NAV over `horizon` trading days if every home market moves
+    +1 / 0 / −1 / −2 SD — obeying stops vs holding everything.
+
+    Stops = the guard's (manual S/L, else 2×ATR auto). β and residual vol per
+    holding from the last ~250 daily returns against its home-market factor;
+    factor co-movement from their joint history. Model + caveats:
+    backend/stop_sim.py. The UI uses POST /what-if-sim, which is this with trades.
+    """
+    inp = _sim_inputs(account_id, fresh)
+    if not inp["holdings"]:
+        return {"scenarios": [], "holdings": [], "note": inp.get("note", "no open positions")}
+    return _sim_run(inp, horizon, n_paths)
+
+
+class WhatIfSimIn(BaseModel):
+    account_id: Optional[str] = None
+    horizon: int = Field(20, ge=5, le=120)
+    n_paths: int = Field(1000, ge=100, le=5000)
+    # key (account|yf_symbol) → shares after the trade. Missing = unchanged.
+    target_volume: dict[str, float] = Field(default_factory=dict)
+    follow_stops: bool = True
+    fresh: bool = False
+
+
+def _what_if_suggestions(rows: list[dict]) -> list[dict]:
+    """The guard's own advice, as trades: sell what broke its stop, cut what is
+    over the single-name cap back to the cap. ERC trims come from
+    /risk/metrics (`trim_signals`) and are merged in by the UI."""
+    import trade_guard
+
+    total = sum(float(r["market_value"]) for r in rows) or 0.0
+    out = []
+    for r in rows:
+        key, vol = _sim_key(r), float(r["volume"])
+        if "STOP_HIT" in (r.get("flags") or []):
+            out.append({"key": key, "code": "STOP_HIT", "target_volume": 0.0,
+                        "text": f"ขายทั้งหมด — หลุด stop {trade_guard.fmt_px(r['stop'])}",
+                        "overridden": bool(r.get("override"))})
+        if "OVERWEIGHT" in (r.get("flags") or []) and total > 0 and r["market_value"] > 0:
+            cap_value = trade_guard.MAX_WEIGHT * total
+            target = vol * min(1.0, cap_value / float(r["market_value"]))
+            out.append({"key": key, "code": "OVERWEIGHT", "target_volume": round(target, 7),
+                        "text": f"ลดเหลือ {trade_guard.MAX_WEIGHT * 100:.0f}% ของพอร์ต "
+                                f"(ตอนนี้ {r['weight_pct']:.1f}%)",
+                        "overridden": bool(r.get("override"))})
+    return out
+
+
+@router.post("/what-if-sim")
+def post_what_if_sim(body: WhatIfSimIn):
+    """The real book, two ways, over +1 / 0 / −1 / −2 SD markets:
+    DO (`disciplined`) = the trades in `target_volume` filled today at today's
+    price (no fees), then stops obeyed if `follow_stops`; DON'T (`hold`) = the
+    book exactly as it is, held. Same random draws for both, so the gap
+    between them is the decision and nothing else. Model: backend/stop_sim.py.
+    """
+    inp = _sim_inputs(body.account_id, body.fresh)
+    if not inp["holdings"]:
+        return {"scenarios": [], "holdings": [], "positions": [], "suggestions": [],
+                "note": inp.get("note", "no open positions")}
+    rows_by_key = {_sim_key(r): r for r in inp["rows"]}
+    scale = []
+    for h in inp["holdings"]:
+        vol = float(rows_by_key[h.key]["volume"])
+        tgt = body.target_volume.get(h.key)
+        scale.append(1.0 if tgt is None or vol <= 0 else max(float(tgt), 0.0) / vol)
+    out = _sim_run(inp, body.horizon, body.n_paths, scale=scale, follow_stops=body.follow_stops)
+    out["positions"] = [
+        {"key": _sim_key(r), "account_id": r.get("account_id"), "symbol": r["symbol"],
+         "yf_symbol": r["yf_symbol"], "currency": r.get("currency"), "sector": r.get("sector"),
+         "volume": r["volume"], "price": r["price"], "entry_price": r["entry_price"],
+         "stop": r["stop"], "stop_source": r.get("stop_source"), "to_stop_pct": r.get("to_stop_pct"),
+         "market_value": r["market_value"], "weight_pct": r["weight_pct"],
+         "return_pct": r.get("return_pct"), "flags": r.get("flags") or [],
+         "override": bool(r.get("override"))}
+        for r in inp["rows"]
+    ]
+    out["suggestions"] = _what_if_suggestions(inp["rows"])
+    return out
+
+
+# ── VaR forecast log (live out-of-sample test) ───────────────────────────────
+
+def _record_var_forecast(account_id: str = "all", confidence: float = 0.95) -> Optional[dict]:
+    """Write today's VaR forecast for the book once (no-op if already written).
+
+    Judged later against the NEXT trading day's return of exactly these
+    holdings (GET /risk/var-backtest), so it can never see its own outcome.
+    """
+    today = datetime.now().date().isoformat()
+    with get_db() as conn:
+        if conn.execute(
+            "SELECT 1 FROM var_forecasts WHERE forecast_date = ? AND account_id = ?",
+            (today, account_id),
+        ).fetchone():
+            return None
+    positions = _open_positions_priced(None if account_id == "all" else account_id)
+    cash, opt = _risk_extras(account_id, "THB")
+    m = _compute_portfolio_risk(positions, 252, confidence, "THB", cash_base=cash, extra_exposure=opt)
+    assets = m.get("assets") or []
+    if not assets:
+        return None
+    ccy = {}
+    for p in positions:
+        y = _position_yf_symbol(p)
+        if y:
+            ccy.setdefault(y, trade_currency(p))
+    holdings = {a["yf_symbol"]: {"w": a["weight_pct"] / 100, "ccy": ccy.get(a["yf_symbol"], "THB")}
+                for a in assets}
+    row = {
+        "forecast_date": today, "account_id": account_id, "confidence": confidence,
+        "var_hist_pct": m.get("var_historical_pct"), "cvar_pct": m.get("cvar_pct"),
+        "var_cf_pct": m.get("var_cf_pct"), "cvar_mc_pct": m.get("cvar_mc_pct"),
+        "ensemble_pct": m.get("ensemble_conservative_pct"),
+        "portfolio_value": m.get("portfolio_value"),
+    }
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO var_forecasts (forecast_date, account_id, confidence, var_hist_pct, "
+            "cvar_pct, var_cf_pct, cvar_mc_pct, ensemble_pct, portfolio_value, holdings) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (*row.values(), json.dumps(holdings)),
+        )
+        conn.commit()
+    return row
+
+
+def _evaluate_var_forecasts(forecasts: list[dict], returns: "pd.DataFrame") -> dict:
+    """Pure: score each forecast against the first return dated AFTER it.
+
+    `returns` = date-indexed base-currency LOG returns per yf symbol. A
+    forecast's realized loss is the next trading day's simple return of its
+    own weights (renormalised over the symbols that have a return that day).
+    """
+    methods = {"hist": "var_hist_pct", "cvar": "cvar_pct", "cf": "var_cf_pct", "ensemble": "ensemble_pct"}
+    rows, pending = [], 0
+    idx = returns.index if not returns.empty else pd.DatetimeIndex([])
+    for f in sorted(forecasts, key=lambda r: r["forecast_date"]):
+        d = pd.Timestamp(f["forecast_date"])
+        later = idx[idx > d]
+        if not len(later):
+            pending += 1
+            continue
+        day = later[0]
+        h = json.loads(f["holdings"]) if isinstance(f["holdings"], str) else f["holdings"]
+        r = returns.loc[day]
+        w = {s: v["w"] for s, v in h.items() if s in r.index and pd.notna(r[s])}
+        tot = sum(w.values())
+        w_all = sum(v["w"] for v in h.values())
+        if tot <= 0:
+            pending += 1
+            continue
+        # Weights are NAV-basis (cash = the missing part), so the book's return
+        # is Σ w·r; only a symbol with no return that day is spread over the rest.
+        realized = sum(wi * float(np.expm1(r[s])) for s, wi in w.items()) * (w_all / tot) * 100
+        row = {"forecast_date": f["forecast_date"], "return_date": day.date().isoformat(),
+               "realized_pct": round(realized, 3),
+               "coverage_pct": round(tot / w_all * 100, 1) if w_all else 0.0}
+        for k, col in methods.items():
+            v = f.get(col)
+            row[k] = v
+            row[f"{k}_exception"] = bool(v is not None and realized < -float(v))
+        rows.append(row)
+
+    conf = float(forecasts[0]["confidence"]) if forecasts else 0.95
+    summary = {}
+    for k in methods:
+        n = sum(1 for r in rows if r.get(k) is not None)
+        e = sum(1 for r in rows if r.get(f"{k}_exception"))
+        rate = e / n if n else 0.0
+        exp = 1 - conf
+        summary[k] = {
+            "n": n, "exceptions": e, "rate_pct": round(rate * 100, 2),
+            "expected_pct": round(exp * 100, 2),
+            "kupiec_p": round(_kupiec_pvalue(e, n, conf), 4) if n >= 30 else None,
+            "signal": ("INSUFFICIENT_DATA" if n < 30 else
+                       "GREEN" if rate <= exp else "YELLOW" if rate <= exp * 1.6 else "RED"),
+        }
+    return {"rows": list(reversed(rows)), "summary": summary, "pending": pending,
+            "confidence": conf, "first_forecast": forecasts[0]["forecast_date"] if forecasts else None}
+
+
+@router.get("/var-backtest")
+def get_var_backtest(account_id: str = Query("all")):
+    """Live VaR test: each day's logged forecast vs the next trading day's
+    return of the holdings it was made for. Needs ~30 days before Kupiec means
+    anything; until then `signal` = INSUFFICIENT_DATA."""
+    with get_db() as conn:
+        forecasts = [dict(r) for r in conn.execute(
+            "SELECT * FROM var_forecasts WHERE account_id = ? ORDER BY forecast_date",
+            (account_id,),
+        ).fetchall()]
+    if not forecasts:
+        return {"rows": [], "summary": {}, "pending": 0, "first_forecast": None,
+                "note": "no forecasts logged yet — the guard notifier writes one per day"}
+    ccy: dict[str, str] = {}
+    for f in forecasts:
+        for s, v in json.loads(f["holdings"]).items():
+            ccy.setdefault(s, v.get("ccy") or "THB")
+    first = pd.Timestamp(forecasts[0]["forecast_date"])
+    days = max(30, int((pd.Timestamp.now() - first).days * 0.8) + 15)
+    rets, _ = _aligned_returns(sorted(ccy), days, ccy_map=ccy, base_currency="THB", min_history=1)
+    out = _evaluate_var_forecasts(forecasts, rets)
+    out["account_id"] = account_id
+    return out

@@ -46,6 +46,9 @@ memory/
 
 | Plan | สถานะ |
 |------|--------|
+| [PORT AVCO dated replay](plans/port-avco-dated-replay.md) | 🔄 in progress 2026-09-28 |
+| [PORT Risk validity + stop simulator](plans/completed/port-risk-validity.md) | ✅ done 2026-09-29 — STOP SIM, OOS VaR + forecast log, GICS sectors, MAE/MFE replay, NAV-basis VaR |
+| [PORT Trade Guard](plans/completed/port-trade-guard.md) | ✅ done 2026-09-28 — auto stop + light, S/M/L, alerts, HOLD + R report, NAV DD/streak; risk-model issues → `reports/port-risk-model-risk-report.md` |
 | [Analytics INDEX underwater fill](plans/completed/analytics-index-underwater-fill.md) | ✅ done 2026-09-27 |
 | [Analytics INDEX drawdown pane](plans/completed/analytics-index-drawdown-pane.md) | ✅ done 2026-09-27 |
 | [Analytics INDEX risk metrics](plans/completed/analytics-index-risk-metrics.md) | ✅ done 2026-09-27 |
@@ -182,6 +185,7 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 | **Multi-Currency Sub-Portfolio** (instrument ccy authoritative, per-trade rollup, hybrid historical/live FX, ECON attribution) ✅ done 2026-07-14 | `plans/completed/multi-currency-portfolio.md` |
 | **Bloomberg CLI + MCP Server** (`bloomberg market/portfolio/mcp`, 13 MCP tools) | `plans/bloomberg-cli-mcp.md` |
 | **Portfolio Risk Management System** (VaR/CVaR/Greeks/Stress, RiskTab, Action Log) | `plans/portfolio-risk-system.md` |
+| **RISK OVERVIEW redesign + WHAT-IF SIM** (STOP SIM → ทำ vs ไม่ทำ บนหุ้นจริง, รวมเข้า OVERVIEW, ตัดส่วนซ้ำ) ✅ done 2026-09-29 | `plans/completed/risk-overview-whatif-sim.md` |
 | **Corporate IR Stress Testing (CIRST)** (bottom-up firm-level rate shock: EaR → Merton PD → ΔWACC/ΔEV, ES/Euler, IR-Stress Score) 📋 planned | `plans/corporate-ir-stress-testing.md` |
 | **CIRST Validation Harness** (5-yr PIT backtest, null models, float-share inference, calibration/IC/DM gates) 📋 planned | `plans/cirst-validation-harness.md` |
 | **CIRST RATE STRESS tab** (stock-view sub-tab 5 อัน: EXPOSURE/SCENARIO/DURATION/HISTORY/DIAGNOSTICS — เข้าจาก NEWS, มีตารางทฤษฎี-vs-จริง) 📋 planned | `plans/cirst-stock-rate-tab.md` |
