@@ -58,35 +58,104 @@ def payoff_at_expiry(legs: Sequence[Mapping], spot: float) -> float:
     return total
 
 
+def value_at(
+    legs: Sequence[Mapping],
+    spot: float,
+    ivs: Sequence[Optional[float]],
+    *,
+    days_forward: float = 0.0,
+    iv_shift: float = 0.0,
+    r: float = _RISK_FREE_RATE,
+) -> Optional[float]:
+    """Mark-to-model P&L if the underlying were at `spot` `days_forward` days
+    from now, with every leg's implied vol moved by `iv_shift` (absolute, 0.05
+    = +5 vol points).
+
+    Returns None when a leg still alive at that horizon lacks an implied vol —
+    a partial curve drawn from the legs that happen to have one would be a
+    different position than the one on screen. A leg that has expired by the
+    horizon needs no vol: it is worth exactly its intrinsic value.
+    """
+    horizon = max(_f(days_forward), 0.0) / 365.0
+    total = 0.0
+    for leg, iv in zip(legs, ivs):
+        expiry = str(leg.get("expiry") or "")[:10]
+        T = _days_to_expiry(expiry) - horizon
+        strike = _f(leg.get("strike"))
+        opt = str(leg.get("option_type", "call")).lower()
+        if T <= _EPS:
+            price = intrinsic(opt, strike, spot)
+        else:
+            if iv is None or _f(iv) <= 0:
+                return None
+            # A vol shift can push a low-vol leg through zero; floor it at one
+            # vol point rather than pricing a negative variance.
+            sigma = max(_f(iv) + _f(iv_shift), 0.01)
+            price = _bs_price(spot, strike, T, r, sigma, opt)
+        total += (price - _f(leg.get("entry_price"))) * _leg_size(leg)
+        total -= _f(leg.get("fees"))
+    return total
+
+
 def value_today(
     legs: Sequence[Mapping],
     spot: float,
     ivs: Sequence[Optional[float]],
     r: float = _RISK_FREE_RATE,
 ) -> Optional[float]:
-    """Mark-to-model P&L if the underlying were at `spot` RIGHT NOW.
+    """Mark-to-model P&L if the underlying were at `spot` RIGHT NOW."""
+    return value_at(legs, spot, ivs, r=r)
 
-    Returns None when any leg lacks an implied vol — a partial curve drawn from
-    the legs that happen to have one would be a different position than the one
-    on screen.
+
+# ── scenario grid ───────────────────────────────────────────────────────────
+
+DEFAULT_MOVES = (-20.0, -15.0, -10.0, -5.0, -2.0, 0.0, 2.0, 5.0, 10.0, 15.0, 20.0)
+
+
+def _dte_days(leg: Mapping) -> int:
+    return round(_days_to_expiry(str(leg.get("expiry") or "")[:10]) * 365)
+
+
+def scenario_horizons(legs: Sequence[Mapping], days_forward: float = 0.0) -> list[dict]:
+    """Columns of the scenario grid: today, the chosen date, and each expiry.
+
+    Each distinct expiry is its own column because a calendar or diagonal has
+    a different shape at the near expiry than at the far one — collapsing them
+    into one "at expiry" column would describe neither.
     """
-    total = 0.0
-    for leg, iv in zip(legs, ivs):
-        expiry = str(leg.get("expiry") or "")[:10]
-        T = _days_to_expiry(expiry)
-        strike = _f(leg.get("strike"))
-        opt = str(leg.get("option_type", "call")).lower()
-        if T <= 0:
-            # Past expiry there is no time value left to model; the option is
-            # worth exactly its intrinsic value.
-            price = intrinsic(opt, strike, spot)
-        else:
-            if iv is None or _f(iv) <= 0:
-                return None
-            price = _bs_price(spot, strike, T, r, _f(iv), opt)
-        total += (price - _f(leg.get("entry_price"))) * _leg_size(leg)
-        total -= _f(leg.get("fees"))
-    return total
+    dtes = sorted({_dte_days(leg) for leg in legs} - {0})
+    out = [{"label": "TODAY", "days": 0, "expiry": False}]
+    d = int(round(max(_f(days_forward), 0.0)))
+    if d > 0 and d not in dtes:
+        out.append({"label": f"+{d}D", "days": d, "expiry": False})
+    for n in dtes:
+        out.append({"label": f"EXP +{n}D", "days": n, "expiry": True})
+    out.sort(key=lambda h: h["days"])
+    return out
+
+
+def scenario_grid(
+    legs: Sequence[Mapping],
+    spot: float,
+    ivs: Sequence[Optional[float]],
+    *,
+    horizons: Sequence[Mapping],
+    moves: Sequence[float] = DEFAULT_MOVES,
+    iv_shift: float = 0.0,
+    r: float = _RISK_FREE_RATE,
+) -> list[dict]:
+    """P&L for each (underlying move, horizon) pair. `None` where a live leg has no IV."""
+    rows = []
+    for m in sorted({round(_f(x), 4) for x in moves}):
+        s = spot * (1 + m / 100.0)
+        if s <= 0:
+            continue
+        vals = []
+        for h in horizons:
+            v = value_at(legs, s, ivs, days_forward=h["days"], iv_shift=iv_shift, r=r)
+            vals.append(None if v is None else round(v, 2))
+        rows.append({"move_pct": m, "price": round(s, 4), "values": vals})
+    return rows
 
 
 # ── shape of the payoff at the extremes ─────────────────────────────────────
@@ -241,8 +310,17 @@ def build_payoff(
     points: int = 121,
     range_pct: float = 0.35,
     r: float = _RISK_FREE_RATE,
+    days_forward: float = 0.0,
+    iv_shift: float = 0.0,
+    moves: Optional[Sequence[float]] = None,
 ) -> dict:
-    """Curve plus every headline number, in the legs' own currency."""
+    """Curve plus every headline number, in the legs' own currency.
+
+    `days_forward` / `iv_shift` define a SCENARIO: a third curve (`sim`) and
+    the grid are priced at that date and vol. The headline numbers (breakeven,
+    max profit/loss, POP) stay on the expiry line and live IV — a scenario is a
+    question asked of the position, not a change to it.
+    """
     legs = list(legs)
     if not legs or spot <= 0:
         return {"curve": [], "breakevens": [], "error": "no legs or no spot price"}
@@ -254,16 +332,25 @@ def build_payoff(
     lo = min([lo] + [k * 0.92 for k in strikes if k > 0])
     hi = max([hi] + [k * 1.08 for k in strikes if k > 0])
 
+    max_dte = max((_dte_days(leg) for leg in legs), default=0)
+    days_forward = min(max(_f(days_forward), 0.0), float(max_dte))
+    iv_shift = _f(iv_shift)
+    has_sim = days_forward > 0 or abs(iv_shift) > _EPS
+
     step = (hi - lo) / max(points - 1, 1)
     curve = []
     for i in range(points):
         s = lo + i * step
         t0 = value_today(legs, s, ivs, r)
-        curve.append({
+        point = {
             "s": round(s, 4),
             "expiry": round(payoff_at_expiry(legs, s), 2),
             "t0": None if t0 is None else round(t0, 2),
-        })
+        }
+        if has_sim:
+            sim = value_at(legs, s, ivs, days_forward=days_forward, iv_shift=iv_shift, r=r)
+            point["sim"] = None if sim is None else round(sim, 2)
+        curve.append(point)
 
     # Search wider than the drawn window: a breakeven can sit outside it.
     bes = find_breakevens(legs, 0.0, max(hi * 2, spot * 3))
@@ -280,6 +367,11 @@ def build_payoff(
     )
 
     now_t0 = value_today(legs, spot, ivs, r)
+    horizons = scenario_horizons(legs, days_forward)
+    sim_now = (
+        value_at(legs, spot, ivs, days_forward=days_forward, iv_shift=iv_shift, r=r)
+        if has_sim else None
+    )
     return {
         "spot": round(spot, 4),
         "range": {"min": round(lo, 4), "max": round(hi, 4)},
@@ -292,9 +384,23 @@ def build_payoff(
         "current": {
             "pnl_if_expired_now": round(payoff_at_expiry(legs, spot), 2),
             "pnl_today": None if now_t0 is None else round(now_t0, 2),
+            "pnl_sim": None if sim_now is None else round(sim_now, 2),
         },
         "pop": probability_of_profit(legs, spot, sigma, T, r, bes),
         "dte_days": round(T * 365) if T > 0 else 0,
+        "max_dte_days": max_dte,
+        "scenario": {
+            "days_forward": days_forward,
+            "iv_shift": iv_shift,
+            "active": has_sim,
+            "horizons": horizons,
+            "grid": scenario_grid(
+                legs, spot, ivs,
+                horizons=horizons, moves=moves if moves else DEFAULT_MOVES,
+                iv_shift=iv_shift, r=r,
+            ),
+        },
+        "ivs": [None if not iv else round(_f(iv), 6) for iv in ivs],
         "iv_used": round(sigma, 6) if sigma else None,
         "legs_missing_iv": [
             i for i, iv in enumerate(ivs)
@@ -303,6 +409,8 @@ def build_payoff(
         "model_note": (
             "The expiry line is arithmetic. The T+0 line is Black-Scholes at the current implied "
             "vol, and POP additionally assumes a lognormal terminal price with that vol held "
-            "constant and a risk-neutral drift — a rough ordering device, not odds."
+            "constant and a risk-neutral drift — a rough ordering device, not odds. The "
+            "scenario line and grid reprice every leg with Black-Scholes at the chosen date "
+            "and shifted vol; breakeven, max profit/loss and POP stay on expiry and live IV."
         ),
     }

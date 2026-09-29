@@ -137,10 +137,26 @@ export function localPayoff(legs: PayoffLeg[], spot: number, points = 121): Payo
  * the backend for it and reuses the answer for the local curve, so the chart
  * appears as soon as there is a price to centre it on.
  */
-export function usePayoff(legs: PayoffLeg[] | null, { debounceMs = 400 } = {}) {
-  const [remote, setRemote] = useState<PayoffResult | null>(null);
-  const [spot, setSpot] = useState<number | null>(null);
+export function usePayoff(
+  legs: PayoffLeg[] | null,
+  {
+    debounceMs = 400,
+    spot: spotOverride = null,
+  }: {
+    debounceMs?: number;
+    /** A price the user typed — used instead of the live quote when set. */
+    spot?: number | null;
+  } = {}
+) {
+  // Tagged with the legs it was computed for. After a keystroke the local
+  // expiry curve is right and the previous backend answer is not, so a stale
+  // remote result must not win over it.
+  const [remote, setRemote] = useState<{ key: string; data: PayoffResult } | null>(null);
+  const [liveSpot, setSpot] = useState<number | null>(null);
+  const spot = spotOverride && spotOverride > 0 ? spotOverride : liveSpot;
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // The serialized legs are the ONLY dependency. Callers build the array inline,
@@ -148,36 +164,49 @@ export function usePayoff(legs: PayoffLeg[] | null, { debounceMs = 400 } = {}) {
   // re-ran this effect each render, which cleared the timer and aborted the
   // in-flight request every time. The symptom was hundreds of ERR_ABORTED
   // requests and a chart that never drew.
-  const key = legs?.length ? JSON.stringify(legs) : "";
+  const key = legs?.length ? JSON.stringify({ legs, spot: spotOverride || null }) : "";
+
+  // A new underlying's curve must not be centred on the old one's price.
+  const underlying = legs?.[0]?.underlying?.trim().toUpperCase() ?? "";
+  useEffect(() => {
+    setSpot(null);
+  }, [underlying]);
 
   useEffect(() => {
     if (!key) {
       setRemote(null);
       return;
     }
-    const payloadLegs: PayoffLeg[] = JSON.parse(key);
+    const { legs: payloadLegs, spot: payloadSpot } = JSON.parse(key) as {
+      legs: PayoffLeg[];
+      spot: number | null;
+    };
     if (timer.current) clearTimeout(timer.current);
     const controller = new AbortController();
     timer.current = setTimeout(async () => {
       setLoading(true);
+      setError(null);
       try {
         const r = await fetch("/api/options/payoff", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ legs: payloadLegs }),
+          body: JSON.stringify({ legs: payloadLegs, spot: payloadSpot ?? undefined }),
           signal: controller.signal,
         });
         const d = await r.json();
         if (r.ok && !d?.error) {
-          setRemote(d);
-          if (d.spot > 0) setSpot(d.spot);
+          setRemote({ key, data: d });
+          if (!payloadSpot && d.spot > 0) setSpot(d.spot);
         } else {
           // Keep whatever spot we already know so the local curve survives a
           // failed lookup instead of blanking the chart.
           setRemote(null);
+          setError(String(d?.detail ?? d?.error ?? `HTTP ${r.status}`));
         }
-      } catch {
-        /* aborted or offline — the local expiry curve still stands */
+      } catch (e) {
+        // Aborted is a newer keystroke, not a failure. Offline is — say so; the
+        // local expiry curve still stands if a spot is already known.
+        if (!controller.signal.aborted) setError(String(e));
       } finally {
         setLoading(false);
       }
@@ -186,18 +215,25 @@ export function usePayoff(legs: PayoffLeg[] | null, { debounceMs = 400 } = {}) {
       if (timer.current) clearTimeout(timer.current);
       controller.abort();
     };
-  }, [key, debounceMs]);
+  }, [key, debounceMs, nonce]);
 
   // Redrawn from the serialized legs for the same reason as the effect above.
   // Once `spot` is known this is instant on every subsequent keystroke — the
   // first draw still waits for the backend, because the price to centre the
   // chart on has to come from somewhere.
   const local = useMemo(
-    () => (key && spot ? localPayoff(JSON.parse(key) as PayoffLeg[], spot) : null),
+    () => (key && spot ? localPayoff(JSON.parse(key).legs as PayoffLeg[], spot) : null),
     [key, spot]
   );
 
   // Prefer the backend's answer once it lands: it carries the T+0 line and POP,
   // and its expiry line is the same arithmetic.
-  return { payoff: remote ?? local, loading, spot };
+  const fresh = remote && remote.key === key ? remote.data : null;
+  return {
+    payoff: fresh ?? local,
+    loading,
+    spot,
+    error,
+    retry: () => setNonce((n) => n + 1),
+  };
 }
