@@ -154,7 +154,9 @@ export function ChartPanel({
     trendPending,
     toggleTrendLine,
     drawingArmed,
+    drawingFutureRoom,
     handleChartClick,
+    handlePointerMove,
     supportsEvents,
     selectedEvent,
     clearSelectedEvent,
@@ -451,6 +453,8 @@ export function ChartPanel({
                       eventMarkers={eventMarkers}
                       referencePriceLine={extendedHoursPriceLine(quote)}
                       onBarClick={handleChartClick}
+                      onPointerMove={handlePointerMove}
+                      futureRoomBars={drawingFutureRoom}
                       crosshairCursor={drawingArmed}
                       onLogicalRange={onLogicalRange}
                       viewportKey={viewportKey}

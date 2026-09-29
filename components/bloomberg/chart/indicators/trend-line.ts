@@ -14,18 +14,38 @@
  * Endpoints on bars that are not loaded on the current timeframe hide the line
  * rather than guessing where it would go.
  *
+ * An endpoint can sit in the empty space right of the last bar (a projection):
+ * it is stored as that last bar's time plus `futureBars`, so it stays pinned to
+ * a real bar and keeps its distance in bars as new bars fill the gap.
+ *
+ * While a line is half drawn, a dashed preview runs from the first point to
+ * the cursor (`TrendPreview`, written by the pointer-move handler) — aiming the
+ * second click blind was the hard part.
+ *
  * Each line is its own object: clicking it selects it (thicker, hollow handles,
  * a × box at its middle), and the × — or Delete — removes that line alone. The
  * overlay records where it painted each line into a `TrendHitMap` so a click can
  * be matched to a line in the same pane coordinates it was drawn in.
  */
 
-import { fmtPriceStd } from "../../lib/number-format";
-import type { CanvasOverlay, OhlcvBar } from "../types";
+import { fmtPriceStd } from "../../lib/number-format.ts";
+import type { CanvasOverlay, OhlcvBar } from "../types.ts";
 
 export interface TrendPoint {
   time: string | number;
   price: number;
+  /** Bars after `time`'s bar — set only for a point in the future whitespace. */
+  futureBars?: number;
+}
+
+/** Cursor position for the half-drawn line's preview; mutated, never replaced. */
+export interface TrendPreview {
+  current: TrendPoint | null;
+}
+
+/** Same spot on the chart (bar + offset) — a zero-length line is not saved. */
+export function sameTrendBar(a: TrendPoint, b: TrendPoint): boolean {
+  return String(a.time) === String(b.time) && (a.futureBars ?? 0) === (b.futureBars ?? 0);
 }
 
 export interface StoredTrendLine {
@@ -101,7 +121,8 @@ export function createTrendLineOverlay(
   lines: StoredTrendLine[],
   pending: TrendPoint | null,
   selectedId: string | null = null,
-  hits: TrendHitMap | null = null
+  hits: TrendHitMap | null = null,
+  preview: TrendPreview | null = null
 ): CanvasOverlay {
   return {
     id: "trend-lines",
@@ -116,11 +137,19 @@ export function createTrendLineOverlay(
       }
       if (data.length === 0) return;
       const timeScale = chart.timeScale();
+      // Bar position of a point: its bar's index plus any future offset.
+      const barOf = (p: TrendPoint): number => {
+        const i = indexOfTime(data, p.time);
+        return i < 0 ? -1 : i + (p.futureBars ?? 0);
+      };
       const toXY = (p: TrendPoint): [number, number] | null => {
         const i = indexOfTime(data, p.time);
         if (i < 0) return null;
-        // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts Time union
-        const x = timeScale.timeToCoordinate(data[i].time as any);
+        const x = p.futureBars
+          ? // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts Logical brand
+            timeScale.logicalToCoordinate((i + p.futureBars) as any)
+          : // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts Time union
+            timeScale.timeToCoordinate(data[i].time as any);
         const y = mainSeries.priceToCoordinate(p.price);
         return x == null || y == null ? null : [x, y];
       };
@@ -177,8 +206,8 @@ export function createTrendLineOverlay(
         // Readout at the right-hand end: a flat line reads as a level, a
         // sloped one as a move.
         const flat = line.a.price === line.b.price;
-        const ia = indexOfTime(data, line.a.time);
-        const ib = indexOfTime(data, line.b.time);
+        const ia = barOf(line.a);
+        const ib = barOf(line.b);
         // Left → right, whichever order the points were clicked in.
         const [from, to] = ia <= ib ? [line.a, line.b] : [line.b, line.a];
         const pct = from.price !== 0 ? ((to.price - from.price) / from.price) * 100 : 0;
@@ -206,6 +235,36 @@ export function createTrendLineOverlay(
           ctx.beginPath();
           ctx.arc(p[0], p[1], 4, 0, Math.PI * 2);
           ctx.stroke();
+          const hover = preview?.current;
+          const q = hover && !sameTrendBar(hover, pending) ? toXY(hover) : null;
+          if (hover && q) {
+            // Rubber band to the cursor, with the readout the saved line will carry.
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(p[0], p[1]);
+            ctx.lineTo(q[0], q[1]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.arc(q[0], q[1], 3, 0, Math.PI * 2);
+            ctx.stroke();
+            const ia = barOf(pending);
+            const ib = barOf(hover);
+            const [from, to] = ia <= ib ? [pending, hover] : [hover, pending];
+            const pct = from.price !== 0 ? ((to.price - from.price) / from.price) * 100 : 0;
+            const label =
+              hover.price === pending.price
+                ? fmtPriceStd(hover.price)
+                : `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%  ${Math.abs(ib - ia)} bars`;
+            ctx.font = "8px monospace";
+            const w = ctx.measureText(label).width;
+            const lx = Math.min(q[0] + 6, rect.width - w - 6);
+            const ly = q[1] - 6;
+            ctx.fillStyle = bg;
+            ctx.fillRect(lx - 2, ly - 8, w + 4, 11);
+            ctx.fillStyle = TREND_LINE_COLOR;
+            ctx.fillText(label, lx, ly);
+          }
           ctx.restore();
         }
       }

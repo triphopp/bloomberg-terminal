@@ -90,6 +90,20 @@ export interface ChartClickContext {
   panePoint?: { x: number; y: number };
   /** Shift held during the click (trend line: snap horizontal). */
   shiftKey?: boolean;
+  /**
+   * Bars past the last loaded bar when the click landed in the empty space to
+   * the right of the data. `time` is then the last bar's time, so a caller that
+   * does not care about the future reads it as a click on the last bar.
+   */
+  futureBars?: number;
+}
+
+/** Where the pointer is over the price pane — for live drawing previews. */
+export interface ChartHoverPoint {
+  time: string | number;
+  futureBars: number;
+  price: number;
+  shiftKey: boolean;
 }
 
 export interface ModularChartProps {
@@ -129,6 +143,18 @@ export interface ModularChartProps {
   onBarClick?: (time: string | number, ctx?: ChartClickContext) => void;
   /** Show a crosshair cursor — signals that a click will be captured. */
   crosshairCursor?: boolean;
+  /**
+   * Pointer moved over the chart (null = left the price pane). Return true to
+   * repaint `drawingOverlay` — how a half-drawn line follows the cursor
+   * without a React render per mouse move. Held in a ref like `onBarClick`.
+   */
+  onPointerMove?: (p: ChartHoverPoint | null) => boolean | undefined;
+  /**
+   * Bars of empty space to open right of the last bar when this turns > 0 —
+   * room to place a drawing's endpoint in the future. Only ever scrolls
+   * forward; a view already showing that much future is left alone.
+   */
+  futureRoomBars?: number;
   /**
    * Fired (debounced) with the visible bar range whenever the user pans or
    * zooms. `from` runs negative into the whitespace left of the data — that is
@@ -242,6 +268,8 @@ export function ModularChart({
   pricePrecision,
   onBarClick,
   crosshairCursor = false,
+  onPointerMove,
+  futureRoomBars = 0,
   onLogicalRange,
   viewportKey,
 }: ModularChartProps) {
@@ -270,6 +298,8 @@ export function ModularChart({
   // rebuilds it — the effect below depends on data/indicators, not on this.
   const barClickRef = useRef(onBarClick);
   barClickRef.current = onBarClick;
+  const pointerMoveRef = useRef(onPointerMove);
+  pointerMoveRef.current = onPointerMove;
   const logicalRangeRef = useRef(onLogicalRange);
   logicalRangeRef.current = onLogicalRange;
   const viewportKeyRef = useRef(viewportKey);
@@ -809,15 +839,32 @@ export function ModularChart({
     // ── Bar clicks (Regression Channel range selection, event detail card) ──
     // Rail hit-testing uses the rectangles actually drawn on the pane. Future
     // icons sit in whitespace and have no bar time, so test before that guard.
+    // A point in the whitespace right of the last bar has no bar time. It is
+    // expressed as (last bar, N bars later) so a drawing can reach into the
+    // future and still stay pinned to a real bar when new ones arrive.
+    const futureOf = (param: {
+      time?: unknown;
+      logical?: number;
+      paneIndex?: number;
+    }): { time: string | number; futureBars: number } | null => {
+      if (param.time !== undefined || (param.paneIndex ?? 0) !== 0) return null;
+      const bars = dataRef.current;
+      if (bars.length === 0 || param.logical == null) return null;
+      const n = Math.round(param.logical) - (bars.length - 1);
+      return n > 0 ? { time: bars[bars.length - 1].time, futureBars: n } : null;
+    };
+
     const clickHandler = (param: {
       time?: unknown;
+      logical?: number;
       point?: { x: number; y: number };
       paneIndex?: number;
       sourceEvent?: { shiftKey?: boolean };
     }) => {
       const events = param.point ? eventRail?.hitTest(param.point) : undefined;
-      if (param.time === undefined && !events?.length) return;
-      const time = (param.time ?? events?.[0].time) as string | number;
+      const future = events?.length ? null : futureOf(param);
+      if (param.time === undefined && !events?.length && !future) return;
+      const time = (param.time ?? events?.[0]?.time ?? future?.time) as string | number;
 
       let point: { x: number; y: number } | undefined;
       if (param.point && container) {
@@ -836,9 +883,46 @@ export function ModularChart({
         price: price ?? undefined,
         panePoint: param.point && (param.paneIndex ?? 0) === 0 ? param.point : undefined,
         shiftKey: param.sourceEvent?.shiftKey ?? false,
+        futureBars: future?.futureBars,
       });
     };
     chart.subscribeClick(clickHandler);
+
+    // Repainting the drawing makes the library re-emit the crosshair event
+    // synchronously; without this guard the two call each other forever.
+    let repainting = false;
+    const moveHandler = (param: {
+      time?: unknown;
+      logical?: number;
+      point?: { x: number; y: number };
+      paneIndex?: number;
+      sourceEvent?: { shiftKey?: boolean };
+    }) => {
+      const cb = pointerMoveRef.current;
+      if (!cb || repainting) return;
+      let hover: ChartHoverPoint | null = null;
+      if (param.point && (param.paneIndex ?? 0) === 0) {
+        const price = candleSeries.coordinateToPrice(param.point.y);
+        const future = futureOf(param);
+        const time = (param.time ?? future?.time) as string | number | undefined;
+        if (price != null && time !== undefined) {
+          hover = {
+            time,
+            futureBars: future?.futureBars ?? 0,
+            price,
+            shiftKey: param.sourceEvent?.shiftKey ?? false,
+          };
+        }
+      }
+      if (!cb(hover)) return;
+      repainting = true;
+      try {
+        updateDrawingRef.current?.(drawingRef.current);
+      } finally {
+        repainting = false;
+      }
+    };
+    chart.subscribeCrosshairMove(moveHandler);
 
     // Viewport readings for the caller (auto-extend lives outside the chart —
     // only the caller knows what "more history" means for its data source).
@@ -934,6 +1018,7 @@ export function ModularChart({
       unwatchRange();
       overlayUnsubscribe?.();
       chart.unsubscribeClick(clickHandler);
+      chart.unsubscribeCrosshairMove(moveHandler);
       ro.disconnect();
       chart.remove();
       chartRef.current = null;
@@ -965,6 +1050,12 @@ export function ModularChart({
       updateEventRailRef.current?.(eventMarkers, dataRef.current);
     }
   }, [eventMarkers]);
+
+  useEffect(() => {
+    const ts = chartRef.current?.timeScale();
+    if (!ts || futureRoomBars <= 0) return;
+    if (ts.scrollPosition() < futureRoomBars) ts.scrollToPosition(futureRoomBars, false);
+  }, [futureRoomBars]);
 
   // Drawings repaint in place (see `drawingOverlay`).
   useEffect(() => {

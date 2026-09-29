@@ -13,7 +13,8 @@ POST   /api/v2/chart-drawings/import       bulk insert-if-absent (localStorage m
 
 `data` is the drawing's own shape, owned by the frontend
 (chart/indicators/trend-line.ts, regression-channel.ts) and stored as JSON:
-  trend       {"a": {"time", "price"}, "b": {"time", "price"}, "color"}
+  trend       {"a": {"time", "price", "futureBars"?}, "b": {...}, "color"}
+              futureBars = bars past `time` for a point projected into the future
   regression  {"fromTime", "toTime", "color", "options": {...}}
 """
 from __future__ import annotations
