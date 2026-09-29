@@ -344,6 +344,11 @@ GRAPHS_DIR = Path(os.getenv("GRAPHS_DIR", str(_REPO_ROOT / "research" / "graphs"
 CLAUDE_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ALPHA_VANTAGE_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")
 FRED_API_KEY = os.getenv("FRED_API_KEY", "")
+# Fiscal.ai — routers/fiscal_ai.py sends the key as the X-Api-Key header; the API
+# also takes ?apiKey=, which would leak it into URLs/logs — keep the header.
+FISCAL_AI_API_KEY = os.getenv("FISCAL_AI_API_KEY", "")
+FISCAL_AI_BASE_URL = "https://api.fiscal.ai/v3"
+FISCAL_AI_DAILY_LIMIT = int(os.getenv("FISCAL_AI_DAILY_LIMIT", "250") or 250)
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 
 BOT_API_TOKEN   = os.getenv("BOT_API_TOKEN", "")     # Bond Auction

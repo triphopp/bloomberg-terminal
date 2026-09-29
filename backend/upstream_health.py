@@ -73,6 +73,8 @@ SOURCES: dict[str, str] = {
     "mof.go.jp": "MOF Japan",
     "binance.com": "Binance",
     "worldbank.org": "World Bank",
+    "trends.google.com": "Google Trends",
+    "fiscal.ai": "Fiscal.ai",
 }
 
 #: Hosts that are not vendors — local services must never raise a data alert.
