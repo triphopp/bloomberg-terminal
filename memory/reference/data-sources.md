@@ -104,6 +104,23 @@
 | **DBnomics** (สำรอง) | `https://api.db.nomics.world/v22` | รวม >80 หน่วยงาน | `/series/IMF/WEO:latest/THA.NGDP_RPCH.pcent_change?observations=1` | ⚠️ `WEO:latest` = 2025-04 (ช้ากว่า IMF 1 รอบ) — ใช้เมื่อต้นทางล่มเท่านั้น |
 | **SEC EDGAR** | `https://data.sec.gov` · `efts.sec.gov` | filings, XBRL companyfacts | | มีใน backend + MCP แล้ว — ต้องส่ง User-Agent พร้อมอีเมลติดต่อ |
 
+### 3.1 เอเชีย — ข่าวภาษาท้องถิ่น / เงินของนักลงทุนแต่ละประเทศ (ทดสอบ 2026-09-30)
+
+board/forum ทุกแหล่ง **ต้องตรวจ ToS ก่อนใช้**
+
+| แหล่ง | Base URL / ตัวอย่าง | ได้อะไร | หมายเหตุ |
+|---|---|---|---|
+| Google News RSS (JP/KR/HK/CN) | `news.google.com/rss/search?q=<คำ>&hl=ja&gl=JP&ceid=JP:ja` · `hl=ko&gl=KR&ceid=KR:ko` · `hl=zh-HK&gl=HK&ceid=HK:zh-Hant` · **`hl=zh-CN&gl=CN&ceid=CN:zh-Hans`** | พาดหัวภาษาท้องถิ่น | ✅ · ฉบับ zh-CN = สื่อจีนแผ่นดินใหญ่ (新浪财经, 东方财富, 华尔街见闻) |
+| **Naver (KR)** | `m.stock.naver.com/api/news/stock/005930?pageSize=5&page=1` | ข่าวรายหุ้นเกาหลี (JSON) | ✅ |
+| **Naver investor trend (KR)** ⭐ | `m.stock.naver.com/api/stock/005930/trend?pageSize=5` | **ต่างชาติ/สถาบัน/รายย่อย ซื้อสุทธิรายหุ้นรายวัน** + % ต่างชาติถือ | ✅ ข้อมูล flow รายหุ้นที่ดีที่สุดในเอเชียที่หาได้ฟรี |
+| **JPX investor type (JP)** | `jpx.co.jp/markets/statistics-equities/investor-type/` → `stock_1_w_*.xlsx` | ต่างชาติ/รายย่อย/สถาบัน ซื้อขายสุทธิ **ระดับตลาด** รายสัปดาห์ | ✅ ไฟล์ Excel |
+| **JPX margin (JP)** | `jpx.co.jp/markets/statistics-equities/margin/` → `YYYYMMDD_mtdaily.xlsx` | ยอด margin รายวัน | ✅ |
+| **HKEX Stock Connect** | `hkex.com.hk/eng/csm/DailyStat/data_tab_daily_YYYYMMDDe.js` | **Southbound ซื้อ/ขายแยก** รายวัน (เงินจีนเข้าหุ้นฮ่องกง) | ✅ · Northbound มีแค่ turnover รวม ไม่แยกซื้อ/ขาย |
+| Eastmoney search (CN) | `search-api-web.eastmoney.com/search/jsonp?...` | ข่าวภาษาจีนแผ่นดินใหญ่ | ❌ match ทีละตัวอักษร แล้วคืน 0 ทุกคำค้น แม้ 茅台 (2026-10-01) — ใช้ Google News zh-CN แทน |
+| Eastmoney datacenter (CN) | `datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPTA_RZRQ_LSHJ&columns=ALL` | ยอด margin หุ้น A รายวัน | ✅ |
+| Kabutan (JP) | `kabutan.jp/stock/news?code=7203` | ข่าวรายหุ้นญี่ปุ่น (HTML) | ✅ 200 · ตรวจ ToS ก่อน parse |
+| Naver 종목토론 (KR) | `m.stock.naver.com/front-api/discussion/list?discussionType=domesticStock&itemCode=005930` | กระทู้รายย่อย | ✅ 200 · ตรวจ ToS ก่อน |
+
 ---
 
 ## 4. ฟรีแต่ต้องมี key
@@ -151,6 +168,13 @@
 ---
 
 - **KKP (ธนาคารของ Dime) เรทแลกเงิน** `bank.kkpfg.com/en/exchange-rates` — ข้อมูลจริงมาจาก `/Utility/GetExchangeRate?date=YYYY-MM-DD&lang=th` (17 รอบ/วัน, TT buy/sell) แต่ **403 จาก bot protection เมื่อเรียกจาก backend/curl** (ตรวจ 2026-09-30) — ห้ามพยายามเลี่ยง; เปิดดูในเบราว์เซอร์ได้อย่างเดียว. และ **ไม่ใช่เรทที่ Dime ใช้แสดงยอด**: 2026-09-30 Dime app = 33.55 ต่อ USD ขณะที่ KKP รอบ 17 ของ 29 ก.ย. = 33.45/33.74
+
+- **Bing News RSS `mkt=zh-CN`** คืน HTML (ภาษาไทยตาม locale เครื่อง) ไม่ใช่ RSS — ใช้ Eastmoney แทนสำหรับข่าวจีนแผ่นดินใหญ่
+- **Northbound Stock Connect** ไม่มีตัวเลขซื้อ/ขายสุทธิรายวันแล้ว (HKEX ให้แค่ turnover) — อย่าหาต่อ
+- **Eastmoney 股吧 `gbapi`** ตอบ 200 แต่ list ว่างด้วย parameter แบบง่าย — ยังไม่ได้หา parameter ที่ถูก
+- **Baidu Index** (ความสนใจการค้นหาในจีน) ต้อง login — ไม่มีตัวแทนฟรีของ Google Trends สำหรับจีนแผ่นดินใหญ่
+
+---
 
 ## 7. เพิ่มแหล่งใหม่
 
