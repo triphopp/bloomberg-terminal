@@ -175,6 +175,8 @@ components/bloomberg/
 │   ├── boot-screen.tsx          ← dynamic() loading fallback + watchdog (auto-reload if terminal chunk stalls)
 │   ├── confirmation-modal.tsx
 │   ├── global-search.tsx        ← search overlay (/ or Ctrl+K) — terminal engine + stock search
+│   (pins/usePinActions.ts       ← only pin write path outside WATCHLIST edit/reorder: pin(symbol, {groupId}|{newGroup}) → PUT /api/pins/by-symbol; optimistic + rollback + toast + pinErrorAtom; ensureLoaded(); exports DEFAULT_WATCHLIST_GROUP)
+│   (pins/PinGroupPicker.tsx     ← shared popover: ✓ current group, "Move to <name>" when pinned, "+ New group…" inline (Enter = create + pin/move in one call). Used by global-search + stock-view; WATCHLIST AddCardForm uses a <select> with "+ New group…". Only pinned-assets.tsx writes the localStorage pin cache)
 │   ├── keyboard-shortcuts.tsx   ← shortcuts help panel
 │   ├── tick-flash.tsx           ← <TickFlash/> (mounted once in bloomberg-terminal): MutationObserver on <body>, flashes any all-numeric text green/red on change; sign-aware; skips user-initiated changes (<400ms after click/key) and ×10 jumps (THB↔USD); opt out with `data-noflash`
 │   ├── shortcut-indicator.tsx
