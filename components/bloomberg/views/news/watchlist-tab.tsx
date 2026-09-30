@@ -2,14 +2,13 @@
 
 import { useSetAtom } from "jotai";
 import { AlertTriangle, ExternalLink, Filter, Layers, RefreshCw, Settings2, X } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { currentViewAtom, stockSearchSymbolAtom } from "../../atoms";
 import { BloombergButton } from "../../core/bloomberg-button";
-import { DcfTab } from "../stock/dcf";
-import { MarketStateTab } from "../stock/market-state";
-import { RateStressTab } from "../stock/rate-stress";
 import {
   ALL_SOURCE_IDS,
+  DEFAULT_SOURCE_IDS,
   SENTIMENT_COLORS,
   SENTIMENT_GLYPH,
   SOURCE_LABELS,
@@ -29,6 +28,23 @@ import type {
   WatchlistSymbolMeta,
 } from "./types";
 import { useWatchlistNews, useWatchlistSymbols } from "./useWatchlistNews";
+
+// Only mounted once a company is in focus and its panel picked — kept out of
+// the NEWS chunk so opening NEWS does not download the DCF / market-state /
+// rate-stress code (their own chunks, shared with the equity view).
+const PanelLoading = () => (
+  <div className="py-16 text-center text-[10px] opacity-60 font-mono">LOADING…</div>
+);
+const DcfTab = dynamic(() => import("../stock/dcf").then((m) => m.DcfTab), {
+  loading: PanelLoading,
+});
+const MarketStateTab = dynamic(
+  () => import("../stock/market-state").then((m) => m.MarketStateTab),
+  { loading: PanelLoading }
+);
+const RateStressTab = dynamic(() => import("../stock/rate-stress").then((m) => m.RateStressTab), {
+  loading: PanelLoading,
+});
 
 // Stable fallbacks while there is no response — see the note at their use.
 const NO_ARTICLES: WatchlistArticle[] = [];
@@ -218,7 +234,7 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
   const setCurrentView = useSetAtom(currentViewAtom);
 
   const [sources, setSources] = useState<string[]>(() => {
-    if (typeof window === "undefined") return [...ALL_SOURCE_IDS];
+    if (typeof window === "undefined") return [...DEFAULT_SOURCE_IDS];
     try {
       const raw = localStorage.getItem(WL_SOURCES_KEY);
       if (raw) {
@@ -229,7 +245,7 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
     } catch {
       /* ignore */
     }
-    return [...ALL_SOURCE_IDS];
+    return [...DEFAULT_SOURCE_IDS];
   });
 
   const [layout, setLayout] = useState<LayoutPrefs>(() => {
@@ -267,7 +283,7 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
     localStorage.setItem(WL_LAYOUT_KEY, JSON.stringify(layout));
   }, [layout]);
 
-  const { data, isFetching, error, refetch } = useWatchlistNews({
+  const { data, isFetching, error, refresh } = useWatchlistNews({
     symbols,
     sources,
     perSymbol: layout.perSymbol,
@@ -654,7 +670,7 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
             <span className="text-[9px] font-mono" style={{ color: colors.textSecondary }}>
               {visible.length}/{articles.length} · {data?.as_of ? clockStr(data.as_of) : "—"}
             </span>
-            <BloombergButton color="default" onClick={() => refetch()} disabled={isFetching}>
+            <BloombergButton color="default" onClick={() => refresh()} disabled={isFetching}>
               <RefreshCw className={`h-3 w-3 ${isFetching ? "animate-spin" : "mr-1"}`} />
               {!isFetching && "REFRESH"}
             </BloombergButton>

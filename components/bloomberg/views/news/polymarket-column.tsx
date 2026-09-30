@@ -1,42 +1,17 @@
 "use client";
 
 import { ExternalLink, RefreshCw, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { CompanyOutlookPanel } from "../../core/company-outlook-panel";
 import { isUsListing } from "../../hooks/useCompanyOutlook";
 import { sectorColor } from "./constants";
 import { fmtEndDate, fmtVol, polyUrl } from "./helpers";
 import { PredictionLadder } from "./prediction-ladder";
 import type { PolySearchResult, PolySignal, ThemeColors, WatchlistMarket } from "./types";
+import { usePolymarketSearch, usePolymarketSignals } from "./useNewsQueries";
 
-// ── Signals hook ──────────────────────────────────────────────────────────────
-
-function usePolymarketSignals() {
-  const [signals, setSignals] = useState<PolySignal[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [asOf, setAsOf] = useState<string>("");
-
-  const fetch_ = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await fetch("/api/polymarket");
-      if (!r.ok) return;
-      const d = await r.json();
-      setSignals(d.signals ?? []);
-      setAsOf(d.as_of ?? "");
-    } catch {
-      /* ignore */
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetch_();
-  }, [fetch_]);
-
-  return { signals, loading, asOf, refresh: fetch_ };
-}
+const NO_SIGNALS: PolySignal[] = [];
+const NO_RESULTS: PolySearchResult[] = [];
 
 // ── Probability bar ───────────────────────────────────────────────────────────
 
@@ -93,12 +68,14 @@ export function PolymarketColumn({
   ladderSymbol,
   ladderCompany,
 }: Props) {
-  const { signals, loading, asOf, refresh } = usePolymarketSignals();
+  const signalsQuery = usePolymarketSignals();
+  const signals: PolySignal[] = signalsQuery.data?.signals ?? NO_SIGNALS;
+  const asOf = signalsQuery.data?.as_of ?? "";
+  const loading = signalsQuery.isFetching;
+  const refresh = () => signalsQuery.refetch();
   const [query, setQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<PolySearchResult[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [showMacro, setShowMacro] = useState(true);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const asOfStr = asOf
     ? new Date(asOf).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
@@ -109,31 +86,16 @@ export function PolymarketColumn({
     ? watchlistMarkets.filter((m) => focusSymbols.includes(m.symbol))
     : watchlistMarkets;
 
-  const runSearch = useCallback(async (q: string) => {
-    setSearchLoading(true);
-    try {
-      const r = await fetch(`/api/polymarket?q=${encodeURIComponent(q)}`);
-      if (!r.ok) return;
-      const d = await r.json();
-      setSearchResults(d.results ?? []);
-    } catch {
-      /* ignore */
-    } finally {
-      setSearchLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (query.trim().length < 2) {
-      setSearchResults([]);
-      return;
-    }
-    debounceRef.current = setTimeout(() => runSearch(query.trim()), 400);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [query, runSearch]);
+    const q = query.trim();
+    const t = setTimeout(() => setDebouncedQuery(q), 400);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const search = usePolymarketSearch(isSearching ? debouncedQuery : "");
+  const searchResults: PolySearchResult[] = search.data?.results ?? NO_RESULTS;
+  // Also "loading" while the debounce is still settling on the typed text.
+  const searchLoading = search.isFetching || (isSearching && debouncedQuery !== query.trim());
 
   return (
     <div
@@ -188,14 +150,7 @@ export function PolymarketColumn({
           style={{ color: colors.text }}
         />
         {query && (
-          <button
-            type="button"
-            onClick={() => {
-              setQuery("");
-              setSearchResults([]);
-            }}
-            className="hover:opacity-70 shrink-0"
-          >
+          <button type="button" onClick={() => setQuery("")} className="hover:opacity-70 shrink-0">
             <X className="h-2.5 w-2.5" style={{ color: colors.textSecondary }} />
           </button>
         )}

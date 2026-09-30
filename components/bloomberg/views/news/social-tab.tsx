@@ -1,64 +1,41 @@
 "use client";
 
 import { ExternalLink, Plus, RefreshCw, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { BloombergButton } from "../../core/bloomberg-button";
 import { PLATFORMS, PLATFORM_INFO, SOCIAL_KEY } from "./constants";
 import { timeAgo } from "./helpers";
-import type { Platform, SocialHandle, SocialPost, ThemeColors } from "./types";
+import type { Platform, SocialHandle, ThemeColors } from "./types";
+import { useSocialFeed } from "./useNewsQueries";
 
 /** Multi-platform social feed — X/Nitter, YouTube, Reddit, generic RSS. */
 export function SocialTab({ colors }: { colors: ThemeColors }) {
-  const [socialHandles, setSocialHandles] = useState<SocialHandle[]>([]);
-  const [socialPosts, setSocialPosts] = useState<SocialPost[]>([]);
-  const [socialLoading, setSocialLoading] = useState(false);
-  const [socialError, setSocialError] = useState<string | null>(null);
-  const [newHandle, setNewHandle] = useState("");
-  const [selectedPlatform, setSelectedPlatform] = useState<Platform>("youtube");
-
-  useEffect(() => {
+  const [socialHandles, setSocialHandles] = useState<SocialHandle[]>(() => {
+    if (typeof window === "undefined") return [];
     try {
       const saved = localStorage.getItem(SOCIAL_KEY);
       if (saved) {
         const parsed: { platform: string; handle: string }[] = JSON.parse(saved);
-        const valid = parsed.filter((h) =>
-          (PLATFORMS as string[]).includes(h.platform)
-        ) as SocialHandle[];
-        setSocialHandles(valid);
+        return parsed.filter((h) => (PLATFORMS as string[]).includes(h.platform)) as SocialHandle[];
       }
     } catch {
       /* ignore */
     }
-  }, []);
-
-  const fetchSocialPosts = useCallback(async (handles: SocialHandle[]) => {
-    if (!handles.length) return;
-    setSocialLoading(true);
-    setSocialError(null);
-    try {
-      const map: Record<string, string[]> = {};
-      for (const { platform, handle } of handles) {
-        if (!map[platform]) map[platform] = [];
-        map[platform].push(handle);
-      }
-      const res = await fetch(
-        `/api/news/social?handles=${encodeURIComponent(JSON.stringify(map))}&limit=80`
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setSocialPosts(data.posts ?? []);
-      if (data.errors?.length)
-        setSocialError(`Some sources failed: ${data.errors.slice(0, 3).join(" · ")}`);
-    } catch {
-      setSocialError("Failed to connect to backend. Make sure the Python backend is running.");
-    } finally {
-      setSocialLoading(false);
-    }
-  }, []);
+    return [];
+  });
+  const [newHandle, setNewHandle] = useState("");
+  const [selectedPlatform, setSelectedPlatform] = useState<Platform>("youtube");
 
   useEffect(() => {
-    if (socialHandles.length > 0 && socialPosts.length === 0) fetchSocialPosts(socialHandles);
-  }, [socialHandles, socialPosts.length, fetchSocialPosts]);
+    localStorage.setItem(SOCIAL_KEY, JSON.stringify(socialHandles));
+  }, [socialHandles]);
+
+  const social = useSocialFeed(socialHandles);
+  const socialPosts = social.posts;
+  const socialLoading = social.isFetching;
+  const socialError = social.errors.length
+    ? `Some sources failed: ${social.errors.slice(0, 3).join(" · ")}`
+    : null;
 
   const normalizeHandle = (platform: Platform, raw: string): string => {
     const s = raw.trim().replace(/\/+$/, "");
@@ -83,16 +60,12 @@ export function SocialTab({ colors }: { colors: ThemeColors }) {
     }
     const updated = [...socialHandles, { platform: selectedPlatform, handle }];
     setSocialHandles(updated);
-    localStorage.setItem(SOCIAL_KEY, JSON.stringify(updated));
     setNewHandle("");
-    fetchSocialPosts(updated);
   };
 
   const handleRemoveHandle = (platform: Platform, handle: string) => {
     const updated = socialHandles.filter((h) => !(h.platform === platform && h.handle === handle));
     setSocialHandles(updated);
-    localStorage.setItem(SOCIAL_KEY, JSON.stringify(updated));
-    setSocialPosts((prev) => prev.filter((p) => !(p.platform === platform && p.handle === handle)));
   };
 
   return (
@@ -148,10 +121,7 @@ export function SocialTab({ colors }: { colors: ThemeColors }) {
         {socialHandles.length > 0 && (
           <BloombergButton
             color="default"
-            onClick={() => {
-              setSocialPosts([]);
-              fetchSocialPosts(socialHandles);
-            }}
+            onClick={() => social.refresh()}
             disabled={socialLoading}
           >
             <RefreshCw className={`h-3 w-3 ${socialLoading ? "animate-spin" : "mr-1"}`} />
@@ -223,7 +193,7 @@ export function SocialTab({ colors }: { colors: ThemeColors }) {
           </div>
         )}
 
-        {socialLoading && (
+        {socialLoading && socialPosts.length === 0 && (
           <div className="flex items-center justify-center py-16">
             <RefreshCw className="h-4 w-4 animate-spin mr-2" style={{ color: colors.accent }} />
             <span className="text-xs" style={{ color: colors.textSecondary }}>
@@ -232,7 +202,7 @@ export function SocialTab({ colors }: { colors: ThemeColors }) {
           </div>
         )}
 
-        {!socialLoading && socialPosts.length > 0 && (
+        {socialPosts.length > 0 && (
           <div className="divide-y" style={{ borderColor: colors.border }}>
             {socialPosts.map((post, i) => {
               const info = PLATFORM_INFO[post.platform];

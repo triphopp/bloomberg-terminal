@@ -21,6 +21,7 @@ Signal types:
 """
 import json
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -51,6 +52,11 @@ _CACHE_TTL = MEM_CACHE_TTL  # 5 minutes (kept for _market_pool)
 _market_pool: list[dict] = []
 _pool_ts: float = 0
 _POOL_TTL = 10 * 60
+# One refresh at a time. Without it a cold start had every caller — 8 signal
+# workers plus 4 NEWS-watchlist workers — see an empty pool and pull all 30
+# pages (~550 KB each) at once: ~360 requests for one 16 MB dataset.
+_pool_lock = threading.Lock()
+_POOL_PAGE_WORKERS = 8
 
 # ═════════════════════════════════════════════════════════════════════════════
 # SIGNAL TYPE DEFINITIONS
@@ -191,34 +197,56 @@ def _refresh_market_pool() -> list[dict]:
     NOTE: The Gamma API does NOT support server-side filtering by tag/category/keyword.
     All params except limit/offset/active/closed are silently ignored.
     We fetch the full pool and filter client-side.
+
+    Only one thread refreshes. While it does, callers that already hold an
+    older pool get that one back at once; only a cold start waits.
     """
     global _market_pool, _pool_ts
     if _market_pool and (time.time() - _pool_ts) < _POOL_TTL:
         return _market_pool
 
-    url = f"{_GAMMA_BASE}/markets"
-    pool: list[dict] = []
-    for offset in range(0, GAMMA_POOL_MAX, GAMMA_PAGE_SIZE):
-        try:
-            r = _SESSION.get(url, params={
-                "limit": GAMMA_PAGE_SIZE, "offset": offset,
-                "active": "true", "closed": "false",
-            }, timeout=_TIMEOUT)
-            if not r.ok:
-                break
-            batch = r.json()
-            if not isinstance(batch, list) or not batch:
-                break
-            pool.extend(batch)
-            if len(batch) < GAMMA_PAGE_SIZE:
-                break
-        except Exception:
-            break
+    if not _pool_lock.acquire(blocking=not _market_pool):
+        return _market_pool  # a refresh is running — serve the stale pool
+    try:
+        if _market_pool and (time.time() - _pool_ts) < _POOL_TTL:
+            return _market_pool  # refreshed while we waited
+        pool = _fetch_pool_pages()
+        if pool:
+            _market_pool = pool
+            _pool_ts = time.time()
+        return _market_pool
+    finally:
+        _pool_lock.release()
 
-    if pool:
-        _market_pool = pool
-        _pool_ts = time.time()
-    return _market_pool
+
+def _fetch_pool_page(offset: int) -> list[dict] | None:
+    try:
+        r = _SESSION.get(f"{_GAMMA_BASE}/markets", params={
+            "limit": GAMMA_PAGE_SIZE, "offset": offset,
+            "active": "true", "closed": "false",
+        }, timeout=_TIMEOUT)
+        if not r.ok:
+            return None
+        batch = r.json()
+        return batch if isinstance(batch, list) else None
+    except Exception:
+        return None
+
+
+def _fetch_pool_pages() -> list[dict]:
+    """All pages in parallel (sequential took 30 round-trips), stitched in offset
+    order and cut at the first missing or short page, as the serial loop did."""
+    offsets = list(range(0, GAMMA_POOL_MAX, GAMMA_PAGE_SIZE))
+    with ThreadPoolExecutor(max_workers=_POOL_PAGE_WORKERS) as ex:
+        pages = list(ex.map(_fetch_pool_page, offsets))
+    pool: list[dict] = []
+    for batch in pages:
+        if not batch:
+            break
+        pool.extend(batch)
+        if len(batch) < GAMMA_PAGE_SIZE:
+            break
+    return pool
 
 
 def _phrase_match(text: str, keywords: list[str]) -> bool:
