@@ -2226,6 +2226,10 @@ def init_guard_schema() -> None:
             "CREATE INDEX IF NOT EXISTS idx_guard_ovr_pos "
             "ON guard_overrides(account_id, yf_symbol, first_entry)"
         )
+        # A HOLD expires: on `review_on` (default created_at + HOLD_REVIEW_DAYS)
+        # or when price breaks `floor_price` (default stop − 1R). NULL = default.
+        _ensure_column(conn, "guard_overrides", "review_on", "review_on TEXT")
+        _ensure_column(conn, "guard_overrides", "floor_price", "floor_price REAL")
         # Last flags the guard scheduler saw per holding, so a notification
         # fires on the TRANSITION into a flag, not every scan it stays there.
         # Machine-local like alert_rule_state: a scan cursor, not user data.

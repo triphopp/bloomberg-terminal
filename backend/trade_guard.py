@@ -24,7 +24,16 @@ Rules (all constants below — the numbers are starting defaults, not research):
     STREAK    ≥ 4 consecutive losing closes → half size                  → YELLOW
 
 HOLD (`overrides`) records "hold anyway" with a reason for one holding period;
-its codes stay on the row but the action drops to INFO and leaves the light.
+its codes stay on the row but the action drops to INFO and leaves the light —
+until its review date (default HOLD_REVIEW_DAYS after it was made) or until
+price breaks its floor (the UI proposes one more R below where price is when
+the HOLD is made; a hold saved without a floor has only its review date). Then
+the codes come back at full level: a hold is a decision to re-check, not a
+permanent mute.
+
+Missing data never reads as safe: a holding without a live price, an entry or
+with a short volume becomes a DATA action (YELLOW), and an unknown NAV drawdown
+halves the size.
 
 Also here: S/M/L pre-trade sizing (`size_buckets`, 3/6/10% of NAV × the size
 multiplier), the R-multiple after-trade report (`trade_report`) and the flag
@@ -59,6 +68,7 @@ DAY_LOSS_LIMIT = 0.02
 DD_HALF = 0.05          # NAV drawdown from peak -> new trades at half size
 DD_STOP = 0.10          # -> no new trades
 LOSS_STREAK = 4         # consecutive losing closes -> half size
+HOLD_REVIEW_DAYS = 14   # a HOLD without an explicit review date expires after this
 SIZE_BUCKETS = {"S": 0.03, "M": 0.06, "L": 0.10}
 
 LONG_HORIZON_STRATEGIES = {"value", "core", "dividend", "long term", "long-term", "income"}
@@ -78,6 +88,7 @@ RULES = {
     "dd_half_pct": DD_HALF * 100,
     "dd_stop_pct": DD_STOP * 100,
     "loss_streak": LOSS_STREAK,
+    "hold_review_days": HOLD_REVIEW_DAYS,
     "size_buckets_pct": {k: v * 100 for k, v in SIZE_BUCKETS.items()},
 }
 
@@ -208,12 +219,52 @@ def override_key(account_id: Any, yf_symbol: Any, first_entry: Any) -> tuple[str
     return (str(account_id or ""), str(yf_symbol or "").upper(), str(first_entry or "")[:10])
 
 
-def size_multiplier(nav_drawdown_pct: Optional[float], streak: int) -> tuple[float, list[str]]:
+def hold_floor(entry: float, stop: float, price: Optional[float] = None) -> float:
+    """Proposed HOLD floor: one more R below the stop, or below today's price
+    when that is already under the stop (R = entry − stop; a stop at or above
+    the entry — a trailing stop — uses 5% of the stop as its R). Holding a
+    position that is already deep under its stop must not be born broken."""
+    r = entry - stop if entry > stop else stop * STOP_MIN_PCT
+    base = min(stop, price) if price and price > 0 else stop
+    return max(base - r, 0.0)
+
+
+def hold_status(ov: Optional[dict], price: float, entry: float, stop: float,
+                today: date) -> Optional[dict]:
+    """The override with its effective review date / floor and whether it still
+    holds. `active` False = expired ("REVIEW") or broken ("FLOOR")."""
+    if not ov:
+        return None
+    review = str(ov.get("review_on") or "")[:10]
+    if not review and ov.get("created_at"):
+        try:
+            made = date.fromisoformat(str(ov["created_at"])[:10])
+            review = date.fromordinal(made.toordinal() + HOLD_REVIEW_DAYS).isoformat()
+        except ValueError:
+            review = ""
+    raw = ov.get("floor_price")
+    floor = float(raw) if raw not in (None, "") and float(raw) > 0 else None
+    ended = None
+    if review and today.isoformat() >= review:
+        ended = "REVIEW"
+    elif floor is not None and price <= floor:
+        ended = "FLOOR"
+    return {**ov, "review_on": review or None,
+            "floor_price": round(floor, 6) if floor is not None else None,
+            "active": ended is None, "ended": ended}
+
+
+def size_multiplier(nav_drawdown_pct: Optional[float], streak: int,
+                    dd_unknown: bool = False) -> tuple[float, list[str]]:
     """Fraction of the normal S/M/L size allowed right now, and why."""
     if nav_drawdown_pct is not None and nav_drawdown_pct <= -DD_STOP * 100:
         return 0.0, [f"DD {nav_drawdown_pct:.1f}% ≤ −{DD_STOP * 100:.0f}%"]
     why: list[str] = []
     mult = 1.0
+    if dd_unknown:
+        # Fail closed: a drawdown we cannot measure is not a drawdown of zero.
+        mult = 0.5
+        why.append("NAV drawdown ไม่ทราบ")
     if nav_drawdown_pct is not None and nav_drawdown_pct <= -DD_HALF * 100:
         mult = 0.5
         why.append(f"DD {nav_drawdown_pct:.1f}% ≤ −{DD_HALF * 100:.0f}%")
@@ -247,6 +298,7 @@ def evaluate(
     nav_drawdown_pct: Optional[float] = None,
     streak: int = 0,
     cash_value: Optional[float] = None,
+    nav_drawdown_unknown: bool = False,
 ) -> dict[str, Any]:
     """Apply the rules to aggregated long positions.
 
@@ -256,7 +308,9 @@ def evaluate(
 
     `overrides` maps `override_key(...)` → {id, codes, reason, created_at}: a
     "hold anyway" the user recorded. Its codes stay flagged on the row but the
-    action drops to INFO and no longer colours the light.
+    action drops to INFO and no longer colours the light — while `hold_status`
+    says it is active (before its review date, price above its floor).
+    `nav_drawdown_unknown` = the caller tried and could not measure the drawdown.
     """
     today = today or date.today()
     overrides = overrides or {}
@@ -267,13 +321,16 @@ def evaluate(
         entry = float(p.get("entry_price") or 0)
         price = p.get("price")
         if vol <= 0:
-            skipped.append({"symbol": p.get("symbol"), "reason": "short / zero volume"})
+            skipped.append({"symbol": p.get("symbol"), "reason": "short / zero volume",
+                            "account_id": p.get("account_id")})
             continue
         if entry <= 0:
-            skipped.append({"symbol": p.get("symbol"), "reason": "no entry price"})
+            skipped.append({"symbol": p.get("symbol"), "reason": "no entry price",
+                            "account_id": p.get("account_id")})
             continue
         if not price or float(price) <= 0:
-            skipped.append({"symbol": p.get("symbol"), "reason": "no live price"})
+            skipped.append({"symbol": p.get("symbol"), "reason": "no live price",
+                            "account_id": p.get("account_id")})
             continue
         price = float(price)
         fx = float(p.get("fx") or 1.0)
@@ -308,7 +365,8 @@ def evaluate(
             "prev_value": float(prev) * vol * fx if prev else None,
             # Open risk: what is lost from here if the stop fills exactly.
             "risk_to_stop": max(price - stop, 0.0) * vol * fx,
-            "override": ov,
+            "hold_floor_default": round(hold_floor(entry, stop, price), 6),
+            "override": hold_status(ov, price, entry, stop, today),
         })
 
     total = sum(r["market_value"] for r in rows)
@@ -322,7 +380,12 @@ def evaluate(
         key = {"account_id": r["account_id"], "yf_symbol": r["yf_symbol"],
                "first_entry": r["first_entry"]}
         ov = r["override"]
-        held = set(ov.get("codes") or []) if ov else set()
+        held = set(ov.get("codes") or []) if ov and ov["active"] else set()
+        # An expired / broken HOLD says why its codes are loud again.
+        ended = ""
+        if ov and not ov["active"]:
+            ended = (f" · HOLD หมดอายุ {ov['review_on']}" if ov["ended"] == "REVIEW"
+                     else f" · หลุด floor ของ HOLD {fmt_px(ov['floor_price'])}")
 
         def push(level: str, code: str, text: str) -> None:
             if code in held:
@@ -332,6 +395,8 @@ def evaluate(
                     {**key, "override_id": ov.get("id")},
                 ))
             else:
+                if ended and code in set(ov.get("codes") or []):
+                    text += ended
                 actions.append(_action(level, code, sym, text, key))
 
         days = r["days_held"]
@@ -374,6 +439,7 @@ def evaluate(
                 "YELLOW", "SECTOR", None,
                 f"กลุ่ม {s['sector']} รวม {s['weight_pct']:.1f}% (เพดาน {MAX_SECTOR * 100:.0f}%) "
                 f"→ อย่าเพิ่มตัวในกลุ่มนี้",
+                {"sector": s["sector"], "weight_pct": round(s["weight_pct"], 2)},
             ))
 
     priced_prev = [r for r in rows if r["prev_value"]]
@@ -404,6 +470,16 @@ def evaluate(
             "YELLOW", "STREAK", None,
             f"เสียติดกัน {streak} ไม้ล่าสุด → ไม้ใหม่ใช้ครึ่งไซซ์จนกว่าจะชนะ 1 ไม้",
         ))
+    # Fail closed: what the guard could not check is something to look at.
+    for s_ in skipped:
+        what = {"no live price": "ไม่มีราคาล่าสุด — ตรวจ stop ไม่ได้",
+                "no entry price": "ไม่มีราคาทุน — ตรวจ stop ไม่ได้",
+                "short / zero volume": "short / volume 0 — guard ไม่ตรวจ"}[s_["reason"]]
+        book.append(_action("YELLOW", "DATA", s_["symbol"], f"{s_['symbol']} {what}",
+                            {"account_id": s_.get("account_id")}))
+    if nav_drawdown_unknown:
+        book.append(_action("YELLOW", "DATA", None,
+                            "NAV drawdown คำนวณไม่ได้ → ไม้ใหม่ใช้ครึ่งไซซ์จนกว่าจะรู้ค่า"))
     actions = book + actions
 
     live = [a for a in actions if a["level"] != "INFO"]
@@ -412,7 +488,7 @@ def evaluate(
     order = {"RED": 0, "YELLOW": 1, "INFO": 2}
     actions.sort(key=lambda a: order[a["level"]])
     heat = sum(r["risk_to_stop"] for r in rows)
-    mult, mult_why = size_multiplier(nav_drawdown_pct, streak)
+    mult, mult_why = size_multiplier(nav_drawdown_pct, streak, nav_drawdown_unknown)
 
     for r in rows:
         for k in ("entry_price", "price", "stop"):
@@ -445,7 +521,7 @@ def evaluate(
             code: sum(code in r["flags"] for r in rows)
             for code in ("STOP_HIT", "NEAR_STOP", "TIME", "OVERWEIGHT")
         } | {"manual_stops": sum(r["stop_source"] == "MANUAL" for r in rows),
-             "overrides": sum(1 for r in rows if r["override"]),
+             "overrides": sum(1 for r in rows if r["override"] and r["override"]["active"]),
              "positions": len(rows)},
         "skipped": skipped,
         "rules": RULES,
@@ -644,6 +720,13 @@ def _parse_day(value: Any) -> date:
 # around the cap and would toast all day; they stay on the card only.
 NOTIFY_CODES = ("STOP_HIT", "NEAR_STOP", "TIME")
 NOTIFY_BOOK_CODES = ("DAY_LOSS", "DD_STOP", "DD_HALF", "STREAK")
+# Codes that fire EVERY scan while they stand, not only when they appear: the
+# alert_events UNIQUE(rule_id, symbol, bar_time = day) turns that into one
+# reminder per day until the user sells or records a HOLD. A stop broken last
+# week is still broken today; firing once and falling silent is how DCON sat
+# 35% under its stop with nobody asked about it (2026-09-30).
+REMIND_DAILY_CODES = ("STOP_HIT",)
+REMIND_DAILY_BOOK_CODES = ("DD_STOP",)
 BOOK_KEY = "book|all"
 
 GUARD_EVENT_LABELS = {
@@ -664,31 +747,39 @@ def position_state_key(row: dict) -> str:
 def transitions(
     prev: dict[str, set[str]], snapshot: dict[str, Any],
 ) -> tuple[dict[str, set[str]], list[dict]]:
-    """(new state, events to fire): a code fires when it APPEARS on a holding.
+    """(new state, events to fire): a code fires when it APPEARS on a holding;
+    REMIND_DAILY codes fire on every call while they stand (the caller caps
+    them at one per day).
 
-    Overridden codes are excluded — the user already decided about them. A key
-    that disappears (position closed) drops out of the state, so re-entering
-    the same symbol later fires again.
+    Codes under an ACTIVE override are excluded — the user already decided. An
+    expired or broken HOLD no longer excludes them. A key that disappears
+    (position closed) drops out of the state, so re-entering the same symbol
+    later fires again.
     """
     state: dict[str, set[str]] = {}
     events: list[dict] = []
     for r in snapshot.get("positions", []):
-        held = set((r.get("override") or {}).get("codes") or [])
+        ov = r.get("override") or {}
+        held = set(ov.get("codes") or []) if ov.get("active", True) else set()
         now = {f for f in r.get("flags", []) if f in NOTIFY_CODES and f not in held}
         key = position_state_key(r)
         state[key] = now
-        for code in sorted(now - prev.get(key, set())):
+        fire = (now - prev.get(key, set())) | (now & set(REMIND_DAILY_CODES))
+        for code in sorted(fire):
             events.append({
                 "code": code, "symbol": r.get("symbol"), "key": key,
-                # The ticker prints snapshot values unlabelled, joined by " / ":
-                # keep it to price / stop / return %.
+                # Labelled on the client (components/bloomberg/alerts/guard-alert.ts).
                 "snapshot": {"price": r.get("price"), "stop": r.get("stop"),
-                             "return_pct": r.get("return_pct")},
+                             "return_pct": r.get("return_pct"),
+                             "to_stop_pct": r.get("to_stop_pct"),
+                             "days_held": r.get("days_held"),
+                             "hold_ended": 1 if ov and not ov.get("active", True) else None},
             })
     book_now = {a["code"] for a in snapshot.get("actions", [])
                 if a.get("code") in NOTIFY_BOOK_CODES and a.get("level") != "INFO"}
     state[BOOK_KEY] = book_now
-    for code in sorted(book_now - prev.get(BOOK_KEY, set())):
+    book_fire = (book_now - prev.get(BOOK_KEY, set())) | (book_now & set(REMIND_DAILY_BOOK_CODES))
+    for code in sorted(book_fire):
         events.append({
             "code": code, "symbol": "PORT", "key": BOOK_KEY,
             "snapshot": {"day_pnl_pct": snapshot.get("day_pnl_pct"),

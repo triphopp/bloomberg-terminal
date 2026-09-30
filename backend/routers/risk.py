@@ -6,11 +6,12 @@ Complexity target: O(n*T) where n=positions, T=lookback days.
 All covariance uses Ledoit-Wolf shrinkage (O(n^2*T)) — no matrix inversion needed for basic metrics.
 """
 import json
+import logging
 import math
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import numpy as np
@@ -28,6 +29,7 @@ from portfolio_currency import (
     trade_currency,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2/portfolio/risk")
 
 _returns_cache: TTLCache = TTLCache(ttl=300, maxsize=100)
@@ -2476,6 +2478,7 @@ def _guard_nav_drawdown(account_id: Optional[str], base: str) -> Optional[float]
     if hit is not None:
         return hit.get("v")
     value = None
+    failed = False
     try:
         from routers.portfolio_v2 import get_nav_index
         d = get_nav_index(account_id=account_id if account_id != "all" else None,
@@ -2485,8 +2488,10 @@ def _guard_nav_drawdown(account_id: Optional[str], base: str) -> Optional[float]
         if len(idx) >= 2:
             value = (idx[-1] / max(idx) - 1) * 100
     except Exception:
-        value = None
-    _guard_cache.set(key, {"v": value})
+        logger.warning("guard: NAV drawdown failed for %s", account_id or "all", exc_info=True)
+        value, failed = None, True
+    if not failed:  # a failure retries next call instead of sticking for 15 min
+        _guard_cache.set(key, {"v": value})
     return value
 
 
@@ -2518,16 +2523,21 @@ def _guard_snapshot(account_id: Optional[str], base_currency: str) -> dict:
         for o in _guard_overrides(account_id)
     }
     closed, _ = _guard_lots(account_id, open_only=False)
+    nav_dd = _guard_nav_drawdown(account_id, base)
     out = trade_guard.evaluate(
         positions, atr,
         overrides=overrides,
-        nav_drawdown_pct=_guard_nav_drawdown(account_id, base),
+        nav_drawdown_pct=nav_dd,
         streak=trade_guard.loss_streak(closed),
         cash_value=_guard_cash(account_id, base),
+        # Holdings but no drawdown = unknown, which sizes as half (fail closed).
+        nav_drawdown_unknown=nav_dd is None and bool(positions),
     )
     out["skipped"] = skipped + out["skipped"]
     out["base_currency"] = base
     out["atr_pending"] = pending
+    import guard_scheduler
+    out["scan"] = guard_scheduler.status()
     return out
 
 
@@ -2554,15 +2564,30 @@ class GuardOverrideIn(BaseModel):
     symbol: Optional[str] = None
     codes: list[str]
     reason: str = ""
+    # When the hold ends by itself. Omitted → HOLD_REVIEW_DAYS / stop − 1R.
+    review_days: Optional[int] = None
+    floor_price: Optional[float] = None
 
 
 @router.post("/guard/override")
 def create_guard_override(body: GuardOverrideIn):
     """Record "hold anyway" for one holding period. The flag stays on the row;
-    the action drops to INFO and stops colouring the light."""
+    the action drops to INFO and stops colouring the light — until the review
+    date or until price breaks the floor, then it is loud again."""
+    import trade_guard
+
     codes = sorted({c.upper() for c in body.codes if c})
     if not codes:
         return {"ok": False, "error": "codes required"}
+    if not body.reason.strip():
+        # The UI already insists; the API must too (MCP, scripts).
+        return {"ok": False, "error": "reason required"}
+    days = body.review_days if body.review_days is not None else trade_guard.HOLD_REVIEW_DAYS
+    if not 1 <= days <= 365:
+        return {"ok": False, "error": "review_days must be 1–365"}
+    if body.floor_price is not None and body.floor_price <= 0:
+        return {"ok": False, "error": "floor_price must be > 0"}
+    review_on = (date.today() + timedelta(days=days)).isoformat()
     oid = str(uuid.uuid4())
     with get_db() as conn:
         # One live decision per holding: a new HOLD replaces the previous one.
@@ -2572,13 +2597,14 @@ def create_guard_override(body: GuardOverrideIn):
             (body.account_id, body.yf_symbol.upper(), body.first_entry[:10]),
         )
         conn.execute(
-            "INSERT INTO guard_overrides (id, account_id, yf_symbol, symbol, first_entry, codes, reason) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO guard_overrides (id, account_id, yf_symbol, symbol, first_entry, codes, reason, "
+            "review_on, floor_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (oid, body.account_id, body.yf_symbol.upper(), body.symbol, body.first_entry[:10],
-             json.dumps(codes), body.reason.strip()[:500]),
+             json.dumps(codes), body.reason.strip()[:500], review_on, body.floor_price),
         )
         conn.commit()
-    return {"ok": True, "id": oid, "codes": codes}
+    return {"ok": True, "id": oid, "codes": codes, "review_on": review_on,
+            "floor_price": body.floor_price}
 
 
 @router.delete("/guard/override/{override_id}")

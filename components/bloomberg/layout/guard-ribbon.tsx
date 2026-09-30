@@ -20,6 +20,8 @@ interface GuardSummary {
   actions: { level: "RED" | "YELLOW" | "INFO"; code: string; text: string }[];
   counts: Record<string, number>;
   size_multiplier: number;
+  /** Notifier heartbeat (backend/guard_scheduler.py status()). */
+  scan?: { state: "OK" | "STARTING" | "ERROR" | "STALE" | "OFF"; last_error: string | null };
 }
 
 const LIGHT_COLOR: Record<Light, string> = {
@@ -86,6 +88,20 @@ export function GuardRibbon() {
           {summary}
         </span>
       )}
+      {/* The light is computed live; the notifier behind the alerts is not —
+          say so when it is not running, or a quiet ticker reads as "all clear". */}
+      {data?.scan &&
+        (data.scan.state === "STALE" ||
+          data.scan.state === "OFF" ||
+          data.scan.state === "ERROR") && (
+          <span
+            className="text-[8.5px] font-bold"
+            style={{ color: data.scan.state === "ERROR" ? "#FFB300" : "#FF4444" }}
+            title={data.scan.last_error ?? "ตัวเตือน TRADE GUARD ไม่ได้สแกน — ไม่มีเตือน STOP HIT"}
+          >
+            ALERTS {data.scan.state}
+          </span>
+        )}
     </button>
   );
 }

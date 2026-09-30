@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { useAtom } from "jotai";
 import { type ReactNode, useEffect, useState } from "react";
+import { GuardAlertModal } from "../alerts/GuardAlertModal";
 import { errorAtom, isDarkModeAtom } from "../atoms";
 import { GlobalSearch } from "../core/global-search";
 import { KeyboardShortcuts } from "../core/keyboard-shortcuts";
@@ -45,6 +46,9 @@ export function TerminalLayout({ children, shortcuts }: TerminalLayoutProps) {
 
       {/* Global Search overlay — available from any view */}
       <GlobalSearch />
+
+      {/* RED TRADE GUARD / MARGIN events (stop hit, day-loss cap, liquidation) */}
+      <GuardAlertModal />
 
       {/* Keyboard shortcuts */}
       <KeyboardShortcuts shortcuts={shortcuts} isEnabled={true} />

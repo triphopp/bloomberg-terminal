@@ -7,8 +7,13 @@
  * else 2×ATR14 at the entry date, clamped 5–12%), plus a time stop, a 10%
  * size cap and a 25% sector cap. Book level: day loss, REAL-NAV drawdown
  * (−5% half size, −10% stop) and a losing streak. The card says WHAT TO DO;
- * HOLD records a "hold anyway" with a reason (drops the line to grey), and the
- * REPORT shows whether following the rules has paid, in R-multiples.
+ * HOLD records a "hold anyway" with a reason, a review date and a floor (drops
+ * the line to grey until either ends it), and the REPORT shows whether
+ * following the rules has paid, in R-multiples.
+ *
+ * Layout: light → KPI strip → actions on one grid (● · CODE · SYMBOL · three
+ * readings · next step · buttons) grouped ACT NOW / WATCH / HELD, so the eye
+ * reads down fixed columns instead of hunting numbers inside sentences.
  * Backend: /api/v2/portfolio/risk/guard[/override|/report] (backend/trade_guard.py).
  */
 
@@ -17,6 +22,7 @@ import { useState } from "react";
 
 import type { Colors } from "../helpers";
 import { fmtAmt, fmtPx } from "../helpers";
+import { NumInput } from "./NumInput";
 
 type Light = "GREEN" | "YELLOW" | "RED";
 
@@ -25,6 +31,18 @@ interface GuardOverride {
   codes: string[];
   reason: string;
   created_at: string;
+  /** Effective review date (stored, or created_at + hold_review_days). */
+  review_on: string | null;
+  floor_price: number | null;
+  /** False once the review date passed or price broke the floor. */
+  active: boolean;
+  ended: "REVIEW" | "FLOOR" | null;
+}
+
+interface GuardScan {
+  state: "OK" | "STARTING" | "ERROR" | "STALE" | "OFF";
+  last_ok_at: string | null;
+  last_error: string | null;
 }
 
 interface GuardAction {
@@ -36,6 +54,8 @@ interface GuardAction {
   yf_symbol?: string;
   first_entry?: string;
   override_id?: string;
+  sector?: string;
+  weight_pct?: number;
 }
 
 interface GuardRow {
@@ -59,6 +79,8 @@ interface GuardRow {
   risk_to_stop: number;
   flags: string[];
   override: GuardOverride | null;
+  /** Proposed HOLD floor: one R below the stop or below today's price. */
+  hold_floor_default: number;
 }
 
 interface GuardData {
@@ -80,6 +102,7 @@ interface GuardData {
   atr_pending: string[];
   base_currency: string;
   rules: Record<string, number>;
+  scan?: GuardScan;
 }
 
 interface StopPlan {
@@ -185,7 +208,157 @@ const FLAG_COLOR: Record<string, string> = {
 /** Codes a HOLD can silence — the per-holding exit signals. */
 const HOLDABLE = new Set(["STOP_HIT", "NEAR_STOP", "TIME"]);
 
+/** Review periods offered when recording a HOLD (days). */
+const REVIEW_CHOICES = [7, 14, 30, 90, 180];
+
+/** Short "what to do" per code — the long sentence stays in the row tooltip. */
+const NEXT_STEP: Record<string, string> = {
+  STOP_HIT: "ขาย หรือ HOLD พร้อมเหตุผล",
+  NEAR_STOP: "เตรียมแผนออก",
+  TIME: "รีวิว: ขาย · HOLD · ตั้ง Value/Core",
+  OVERWEIGHT: "ลดขนาดลง",
+  SECTOR: "อย่าเพิ่มตัวในกลุ่มนี้",
+  DAY_LOSS: "หยุดเปิดไม้ใหม่วันนี้",
+  DD_STOP: "หยุดเปิดไม้ใหม่ · รีวิวพอร์ต",
+  DD_HALF: "ไม้ใหม่ครึ่งไซซ์",
+  STREAK: "ครึ่งไซซ์จนกว่าจะชนะ 1 ไม้",
+};
+
+/** Section heading per level — the list reads top-down by urgency. */
+const SECTION: Record<GuardAction["level"], string> = {
+  RED: "ACT NOW",
+  YELLOW: "WATCH",
+  INFO: "HELD",
+};
+
+const SCAN_LABEL: Record<GuardScan["state"], { text: string; color: string; title: string }> = {
+  OK: { text: "ON", color: "#00C853", title: "ตัวเตือนทำงานปกติ" },
+  STARTING: { text: "STARTING", color: "#888888", title: "รอบสแกนแรกยังไม่ถึงเวลา" },
+  ERROR: { text: "ERROR", color: "#FFB300", title: "รอบสแกนล่าสุดล้ม — ดู logs/backend.log" },
+  STALE: {
+    text: "STALE",
+    color: "#FF4444",
+    title: "ไม่มีรอบสแกนสำเร็จเกิน 2 รอบ — จะไม่มีเตือน STOP HIT จนกว่าจะกลับมา",
+  },
+  OFF: { text: "OFF", color: "#FF4444", title: "TRADE_GUARD_SCAN_INTERVAL=0 — ปิดตัวเตือน" },
+};
+
+/** Row grid: ● · CODE · SYMBOL · three readings · next step · buttons. */
+const ROW_GRID = "8px 76px 64px 96px 96px 96px minmax(120px,1fr) auto";
+
 const fmtR = (r: number | null) => (r == null ? "—" : `${r >= 0 ? "+" : ""}${r.toFixed(2)}R`);
+
+const signed = (v: number | null | undefined, d = 1) =>
+  v == null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(d)}%`;
+
+const shortDate = (iso: string | null | undefined) => {
+  if (!iso) return "—";
+  const d = new Date(`${iso.slice(0, 10)}T00:00:00`);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+};
+
+interface Reading {
+  label: string;
+  value: string;
+  color?: string;
+}
+
+/** The three numbers that decide each line, always in the same three columns. */
+function readingsOf(
+  a: GuardAction,
+  row: GuardRow | undefined,
+  d: GuardData,
+  sym: string,
+  colors: Colors
+): Reading[] {
+  const tone = (v: number | null | undefined) =>
+    v == null ? undefined : v < 0 ? colors.negative : colors.positive;
+  switch (a.code) {
+    case "STOP_HIT":
+    case "NEAR_STOP":
+      return row
+        ? [
+            { label: "LAST", value: fmtPx(row.price) },
+            { label: "STOP", value: fmtPx(row.stop), color: LEVEL_COLOR.RED },
+            {
+              label: a.code === "STOP_HIT" ? "UNDER" : "GAP",
+              value: signed(row.to_stop_pct),
+              color: a.code === "STOP_HIT" ? LEVEL_COLOR.RED : LEVEL_COLOR.YELLOW,
+            },
+          ]
+        : [];
+    case "TIME":
+      return row
+        ? [
+            { label: "DAYS", value: String(row.days_held ?? "—") },
+            { label: "P&L", value: signed(row.return_pct), color: tone(row.return_pct) },
+            { label: "LAST", value: fmtPx(row.price) },
+          ]
+        : [];
+    case "OVERWEIGHT": {
+      if (!row) return [];
+      const cap = d.rules.max_weight_pct;
+      const trim = ((row.weight_pct - cap) / 100) * d.invested_value;
+      return [
+        { label: "WEIGHT", value: `${row.weight_pct.toFixed(1)}%`, color: FLAG_COLOR.OVERWEIGHT },
+        { label: "CAP", value: `${cap}%` },
+        { label: "TRIM", value: `${sym}${fmtAmt(Math.max(trim, 0))}` },
+      ];
+    }
+    case "SECTOR":
+      return [
+        { label: "WEIGHT", value: `${(a.weight_pct ?? 0).toFixed(1)}%`, color: LEVEL_COLOR.YELLOW },
+        { label: "CAP", value: `${d.rules.max_sector_pct}%` },
+      ];
+    case "DAY_LOSS":
+      return [
+        { label: "TODAY", value: signed(d.day_pnl_pct, 2), color: tone(d.day_pnl_pct) },
+        { label: "CAP", value: `−${d.rules.day_loss_limit_pct}%` },
+      ];
+    case "DD_STOP":
+    case "DD_HALF":
+      return [
+        { label: "NAV DD", value: signed(d.nav_drawdown_pct), color: tone(d.nav_drawdown_pct) },
+        {
+          label: "CAP",
+          value: `−${a.code === "DD_STOP" ? d.rules.dd_stop_pct : d.rules.dd_half_pct}%`,
+        },
+        { label: "SIZE", value: `×${d.size_multiplier}` },
+      ];
+    case "STREAK":
+      return [
+        { label: "STREAK", value: String(d.loss_streak) },
+        { label: "CAP", value: String(d.rules.loss_streak) },
+        { label: "SIZE", value: `×${d.size_multiplier}` },
+      ];
+    default:
+      return [];
+  }
+}
+
+function subjectOf(a: GuardAction): string {
+  if (a.symbol) return a.symbol;
+  if (a.code === "SECTOR") return a.sector ?? "SECTOR";
+  return "PORT";
+}
+
+/** What to do next, including why a HOLD stopped covering the line. */
+function nextOf(a: GuardAction, row: GuardRow | undefined): string {
+  const ov = row?.override;
+  if (a.level === "INFO" && ov) {
+    const floor = ov.floor_price != null ? ` · floor ${fmtPx(ov.floor_price)}` : "";
+    return `HOLD ถึง ${shortDate(ov.review_on)}${floor} — ${ov.reason || "ไม่ระบุเหตุผล"}`;
+  }
+  if (ov && !ov.active && ov.codes.includes(a.code)) {
+    return ov.ended === "REVIEW"
+      ? `HOLD หมดอายุ ${shortDate(ov.review_on)} → ตัดสินใจใหม่`
+      : `หลุด floor ${ov.floor_price != null ? fmtPx(ov.floor_price) : ""} → ตัดสินใจใหม่`;
+  }
+  if (a.code === "DATA") return a.text.replace(a.symbol ? `${a.symbol} ` : "", "");
+  return NEXT_STEP[a.code] ?? a.text;
+}
 
 export function TradeGuardCard({
   accountId,
@@ -201,6 +374,8 @@ export function TradeGuardCard({
   const [showReport, setShowReport] = useState(false);
   const [holding, setHolding] = useState<string | null>(null); // action key being held
   const [reason, setReason] = useState("");
+  const [reviewDays, setReviewDays] = useState(14);
+  const [floor, setFloor] = useState("");
   const [busy, setBusy] = useState(false);
   const [actErr, setActErr] = useState<string | null>(null);
   const [stopPlan, setStopPlan] = useState<StopPlan | null>(null);
@@ -233,14 +408,23 @@ export function TradeGuardCard({
 
   const sym = currency === "THB" ? "฿" : "$";
   const actionKey = (a: GuardAction) => `${a.account_id}|${a.yf_symbol}|${a.first_entry}`;
+  const rowOf = (a: GuardAction) =>
+    data?.positions.find((p) => p.account_id === a.account_id && p.yf_symbol === a.yf_symbol);
+
+  const openHold = (a: GuardAction, k: string) => {
+    const row = rowOf(a);
+    setHolding(k);
+    setReason("");
+    setReviewDays(data?.rules.hold_review_days ?? 14);
+    setFloor(row?.hold_floor_default ? String(row.hold_floor_default) : "");
+  };
 
   const submitHold = async (a: GuardAction) => {
-    const row = data?.positions.find(
-      (p) => p.account_id === a.account_id && p.yf_symbol === a.yf_symbol
-    );
+    const row = rowOf(a);
     // Hold every exit signal the holding shows now, not only the clicked line —
     // one decision per holding.
     const codes = (row?.flags ?? [a.code]).filter((f) => HOLDABLE.has(f));
+    const floorNum = Number.parseFloat(floor);
     setBusy(true);
     setActErr(null);
     try {
@@ -254,6 +438,8 @@ export function TradeGuardCard({
           symbol: a.symbol,
           codes: codes.length ? codes : [a.code],
           reason: reason.trim(),
+          review_days: reviewDays,
+          floor_price: floorNum > 0 ? floorNum : null,
         }),
       });
       const d = await r.json();
@@ -307,13 +493,79 @@ export function TradeGuardCard({
     }
   };
 
+  const labelStyle = {
+    color: colors.textDimmed,
+    fontSize: 8,
+    fontWeight: 700,
+    letterSpacing: "0.1em",
+  } as const;
+
+  const kpis: Reading[] = data
+    ? [
+        {
+          label: "TODAY",
+          value: signed(data.day_pnl_pct, 2),
+          color:
+            data.day_pnl_pct == null
+              ? colors.textSecondary
+              : data.day_pnl_pct >= 0
+                ? colors.positive
+                : colors.negative,
+        },
+        { label: "NAV DD", value: signed(data.nav_drawdown_pct) },
+        {
+          label: "STREAK",
+          value: String(data.loss_streak),
+          color: data.loss_streak >= data.rules.loss_streak ? LEVEL_COLOR.YELLOW : undefined,
+        },
+        {
+          label: "HEAT",
+          value: data.heat_pct == null ? "—" : `${data.heat_pct.toFixed(1)}%`,
+        },
+        {
+          label: "SIZE",
+          value: `×${data.size_multiplier}`,
+          color:
+            data.size_multiplier === 1
+              ? undefined
+              : data.size_multiplier === 0
+                ? LEVEL_COLOR.RED
+                : LEVEL_COLOR.YELLOW,
+        },
+        {
+          label: "ALERTS",
+          value: data.scan ? SCAN_LABEL[data.scan.state].text : "—",
+          color: data.scan ? SCAN_LABEL[data.scan.state].color : undefined,
+        },
+      ]
+    : [];
+  const kpiTitle: Record<string, string> = data
+    ? {
+        TODAY: "พอร์ตวันนี้เทียบราคาปิดเมื่อวาน",
+        "NAV DD": "NAV จริง (time-weighted) เทียบจุดสูงสุดใน 1 ปี — −5% ครึ่งไซซ์, −10% หยุด",
+        STREAK: `ไม้ที่ปิดล่าสุดเสียติดกันกี่ไม้ — ครบ ${data.rules.loss_streak} ครึ่งไซซ์`,
+        HEAT: `เงินที่จะเสียเพิ่มจากราคาตอนนี้ ถ้าทุกตัวลงไปถึง stop: ${sym}${fmtAmt(data.heat_value)}`,
+        SIZE: data.size_multiplier_why.join(" · ") || "ไซซ์ปกติ",
+        ALERTS: data.scan
+          ? `${SCAN_LABEL[data.scan.state].title}${data.scan.last_ok_at ? `\nสแกนสำเร็จล่าสุด ${new Date(data.scan.last_ok_at).toLocaleString("en-GB")}` : ""}${data.scan.last_error ? `\n${data.scan.last_error}` : ""}`
+          : "",
+      }
+    : {};
+
+  const groups = data
+    ? (["RED", "YELLOW", "INFO"] as const)
+        .map((lv) => ({ lv, items: data.actions.filter((a) => a.level === lv) }))
+        .filter((g) => g.items.length > 0)
+    : [];
+
   return (
     <div
-      className="rounded p-2 mb-2 flex flex-col gap-1 font-mono"
+      className="p-2 mb-2 flex flex-col gap-2 font-mono"
       style={{ border: `1px solid ${colors.border}` }}
     >
-      <div className="flex items-baseline gap-2 flex-wrap">
-        <span style={{ color: colors.textSecondary, fontSize: 10, letterSpacing: "0.12em" }}>
+      {/* Header: name + light */}
+      <div className="flex items-baseline gap-2">
+        <span style={{ ...labelStyle, fontSize: 10, color: colors.textSecondary }}>
           TRADE GUARD
         </span>
         {data && (
@@ -324,54 +576,38 @@ export function TradeGuardCard({
             <span style={{ color: LIGHT_COLOR[data.light], fontSize: 10 }}>
               {LIGHT_LABEL[data.light]}
             </span>
-            <span
-              className="ml-auto tabular-nums"
-              style={{ color: colors.textSecondary, fontSize: 9 }}
-            >
-              today{" "}
-              <span
-                style={{
-                  color:
-                    data.day_pnl_pct == null
-                      ? colors.textSecondary
-                      : data.day_pnl_pct >= 0
-                        ? colors.positive
-                        : colors.negative,
-                }}
-              >
-                {data.day_pnl_pct == null
-                  ? "—"
-                  : `${data.day_pnl_pct >= 0 ? "+" : ""}${data.day_pnl_pct.toFixed(2)}%`}
-              </span>
-              {" · "}
-              <span title="NAV จริง (time-weighted) เทียบจุดสูงสุดใน 1 ปี — −5% ครึ่งไซซ์, −10% หยุด">
-                DD {data.nav_drawdown_pct == null ? "—" : `${data.nav_drawdown_pct.toFixed(1)}%`}
-              </span>
-              {" · "}
-              <span title="ไม้ที่ปิดล่าสุดเสียติดกันกี่ไม้ — ครบ 4 ครึ่งไซซ์">streak {data.loss_streak}</span>
-              {" · "}
-              <span title="เงินที่จะเสียเพิ่มจากราคาตอนนี้ ถ้าทุกตัวลงไปถึง stop">
-                heat {data.heat_pct == null ? "—" : `${data.heat_pct.toFixed(1)}%`} ({sym}
-                {fmtAmt(data.heat_value)})
-              </span>
-              {" · "}
-              <span
-                style={{
-                  color:
-                    data.size_multiplier === 1
-                      ? colors.textSecondary
-                      : data.size_multiplier === 0
-                        ? "#FF4444"
-                        : "#FFB300",
-                }}
-                title={data.size_multiplier_why.join(" · ") || "ไซซ์ปกติ"}
-              >
-                size ×{data.size_multiplier}
-              </span>
-            </span>
           </>
         )}
       </div>
+
+      {/* KPI strip — same cell as the alert modal's readings */}
+      {data && (
+        <div
+          className="grid border"
+          style={{
+            gridTemplateColumns: `repeat(${kpis.length}, minmax(0, 1fr))`,
+            borderColor: colors.border,
+            background: colors.surfaceDeep,
+          }}
+        >
+          {kpis.map((k, i) => (
+            <div
+              key={k.label}
+              className="px-2 py-1"
+              style={{ borderLeft: i ? `1px solid ${colors.border}` : undefined }}
+              title={kpiTitle[k.label]}
+            >
+              <div style={labelStyle}>{k.label}</div>
+              <div
+                className="tabular-nums"
+                style={{ color: k.color ?? colors.text, fontSize: 12, fontWeight: 700 }}
+              >
+                {k.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {isLoading ? (
         <span style={{ color: colors.textSecondary, fontSize: 10 }}>loading…</span>
@@ -381,97 +617,197 @@ export function TradeGuardCard({
         </span>
       ) : (
         <>
-          {data.actions.length === 0 ? (
+          {groups.length === 0 ? (
             <span style={{ color: colors.textSecondary, fontSize: 10 }}>
               ไม่มีอะไรต้องทำ — ทุกตัวอยู่เหนือ stop, ไม่มีตัวค้างนาน, ขนาดไม่เกินเพดาน
             </span>
           ) : (
-            <ul className="flex flex-col gap-0.5" style={{ fontSize: 10 }}>
-              {data.actions.map((a, i) => {
-                const k = a.yf_symbol ? actionKey(a) : null;
-                const canHold = a.level !== "INFO" && HOLDABLE.has(a.code) && !!k;
-                return (
-                  <li
-                    key={`${a.code}-${a.symbol}-${i}`}
-                    style={{ color: a.level === "INFO" ? colors.textSecondary : colors.text }}
-                  >
-                    <span style={{ color: LEVEL_COLOR[a.level], marginRight: 6 }}>●</span>
-                    {a.text}
-                    {canHold && holding !== k && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setHolding(k);
-                          setReason("");
-                        }}
-                        className="ml-2"
-                        style={{ color: colors.accent, fontSize: 9 }}
-                        title="บันทึกว่าตั้งใจถือต่อ พร้อมเหตุผล — บรรทัดนี้จะเป็นสีเทาและไม่นับในไฟ จนกว่าจะขายหมด"
-                      >
-                        HOLD
-                      </button>
-                    )}
-                    {a.level === "INFO" && a.override_id && (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => a.override_id && undoHold(a.override_id)}
-                        className="ml-2"
-                        style={{ color: colors.textSecondary, fontSize: 9 }}
-                        title="ยกเลิก HOLD (กดผิด) — กลับมาเตือนตามปกติ"
-                      >
-                        UNDO
-                      </button>
-                    )}
-                    {canHold && holding === k && (
-                      <span className="ml-2 inline-flex items-baseline gap-1">
-                        <input
-                          // biome-ignore lint/a11y/noAutofocus: opened by an explicit click
-                          autoFocus
-                          value={reason}
-                          onChange={(e) => setReason(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && reason.trim()) submitHold(a);
-                            if (e.key === "Escape") setHolding(null);
-                          }}
-                          placeholder="เหตุผลที่ถือต่อ (บังคับ)"
-                          className="px-1"
-                          style={{
-                            fontSize: 9,
-                            width: 220,
-                            background: "transparent",
-                            color: colors.text,
-                            borderBottom: `1px solid ${colors.border}`,
-                          }}
-                        />
-                        <button
-                          type="button"
-                          disabled={busy || !reason.trim()}
-                          onClick={() => submitHold(a)}
-                          style={{
-                            color: reason.trim() ? colors.accent : colors.textDimmed,
-                            fontSize: 9,
-                          }}
-                        >
-                          SAVE
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setHolding(null)}
-                          style={{ color: colors.textSecondary, fontSize: 9 }}
-                        >
-                          CANCEL
-                        </button>
-                      </span>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
+            <div className="overflow-x-auto">
+              <div
+                className="grid items-baseline gap-x-3"
+                style={{ gridTemplateColumns: ROW_GRID, fontSize: 10, minWidth: 720 }}
+              >
+                {groups.map((g) => (
+                  <div key={g.lv} className="contents">
+                    <div
+                      className="pt-1.5 pb-0.5 border-b"
+                      style={{
+                        gridColumn: "1 / -1",
+                        borderColor: colors.border,
+                        ...labelStyle,
+                        color: LEVEL_COLOR[g.lv],
+                      }}
+                    >
+                      {SECTION[g.lv]} · {g.items.length}
+                    </div>
+                    {g.items.map((a, i) => {
+                      const k = a.yf_symbol ? actionKey(a) : null;
+                      const row = a.yf_symbol ? rowOf(a) : undefined;
+                      const canHold = a.level !== "INFO" && HOLDABLE.has(a.code) && !!k;
+                      const readings = readingsOf(a, row, data, sym, colors);
+                      const dim = a.level === "INFO";
+                      return (
+                        <div key={`${a.code}-${a.symbol}-${a.sector}-${i}`} className="contents">
+                          <span style={{ color: LEVEL_COLOR[a.level] }}>●</span>
+                          <span
+                            className="font-bold whitespace-nowrap"
+                            style={{
+                              color: dim ? colors.textSecondary : LEVEL_COLOR[a.level],
+                              letterSpacing: "0.04em",
+                            }}
+                          >
+                            {a.code.replace("_", " ")}
+                          </span>
+                          <span
+                            className="font-bold truncate"
+                            style={{ color: dim ? colors.textSecondary : colors.text }}
+                          >
+                            {subjectOf(a)}
+                          </span>
+                          {[0, 1, 2].map((n) => {
+                            const r = readings[n];
+                            return (
+                              <span
+                                key={n}
+                                className="flex justify-between gap-1 tabular-nums whitespace-nowrap"
+                              >
+                                {r && (
+                                  <>
+                                    <span style={labelStyle}>{r.label}</span>
+                                    <span
+                                      style={{
+                                        color: dim
+                                          ? colors.textSecondary
+                                          : (r.color ?? colors.text),
+                                      }}
+                                    >
+                                      {r.value}
+                                    </span>
+                                  </>
+                                )}
+                              </span>
+                            );
+                          })}
+                          <span
+                            className="truncate"
+                            style={{ color: colors.textSecondary }}
+                            title={a.text}
+                          >
+                            {nextOf(a, row)}
+                          </span>
+                          <span className="text-right whitespace-nowrap" style={{ fontSize: 9 }}>
+                            {canHold && holding !== k && (
+                              <button
+                                type="button"
+                                onClick={() => openHold(a, k)}
+                                style={{ color: colors.accent, fontWeight: 700 }}
+                                title="บันทึกว่าตั้งใจถือต่อ พร้อมเหตุผล วันทบทวน และ floor — ครบกำหนดหรือหลุด floor จะกลับมาเตือน"
+                              >
+                                HOLD
+                              </button>
+                            )}
+                            {dim && a.override_id && (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => a.override_id && undoHold(a.override_id)}
+                                style={{ color: colors.textSecondary }}
+                                title="ยกเลิก HOLD (กดผิด) — กลับมาเตือนตามปกติ"
+                              >
+                                UNDO
+                              </button>
+                            )}
+                          </span>
+                          {canHold && holding === k && (
+                            <div
+                              className="flex items-baseline gap-3 flex-wrap py-1 pl-4"
+                              style={{ gridColumn: "1 / -1", fontSize: 9 }}
+                            >
+                              <input
+                                // biome-ignore lint/a11y/noAutofocus: opened by an explicit click
+                                autoFocus
+                                value={reason}
+                                onChange={(e) => setReason(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" && reason.trim()) submitHold(a);
+                                  if (e.key === "Escape") setHolding(null);
+                                }}
+                                placeholder="เหตุผลที่ถือต่อ (บังคับ)"
+                                className="px-1 flex-1"
+                                style={{
+                                  minWidth: 200,
+                                  background: "transparent",
+                                  color: colors.text,
+                                  borderBottom: `1px solid ${colors.border}`,
+                                }}
+                              />
+                              <label className="flex items-baseline gap-1">
+                                <span style={labelStyle}>REVIEW</span>
+                                <select
+                                  value={reviewDays}
+                                  onChange={(e) => setReviewDays(Number(e.target.value))}
+                                  style={{ color: colors.text, fontSize: 9 }}
+                                >
+                                  {REVIEW_CHOICES.map((n) => (
+                                    <option key={n} value={n}>
+                                      {n} วัน
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <span
+                                className="flex items-baseline gap-1"
+                                title="ถ้าราคาลงถึงระดับนี้ HOLD จบ และกลับมาเตือนแดง — ค่าเริ่มต้น = ต่ำกว่าราคาตอนนี้อีก 1R"
+                              >
+                                <span style={labelStyle}>FLOOR</span>
+                                <NumInput
+                                  aria-label="HOLD floor price"
+                                  value={floor}
+                                  onChange={(e) => setFloor(e.target.value)}
+                                  className="px-1 tabular-nums"
+                                  style={{
+                                    width: 84,
+                                    background: "transparent",
+                                    color: colors.text,
+                                    borderBottom: `1px solid ${colors.border}`,
+                                  }}
+                                />
+                              </span>
+                              <button
+                                type="button"
+                                disabled={busy || !reason.trim()}
+                                onClick={() => submitHold(a)}
+                                style={{
+                                  color: reason.trim() ? colors.accent : colors.textDimmed,
+                                  fontWeight: 700,
+                                }}
+                              >
+                                SAVE
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setHolding(null)}
+                                style={{ color: colors.textSecondary }}
+                              >
+                                CANCEL
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
           {actErr && <span style={{ color: colors.negative, fontSize: 9 }}>{actErr}</span>}
 
-          <div className="flex items-baseline gap-3 flex-wrap" style={{ fontSize: 9 }}>
+          {/* Footer controls — one line, one separator */}
+          <div
+            className="flex items-baseline gap-4 flex-wrap pt-1.5 border-t"
+            style={{ fontSize: 9, borderColor: colors.border }}
+          >
             <button
               type="button"
               onClick={() => setShowTable((v) => !v)}
@@ -497,24 +833,23 @@ export function TradeGuardCard({
                 WRITE STOPS
               </button>
             )}
-            <span style={{ color: colors.textSecondary }}>
-              S/L ใส่เอง {data.counts.manual_stops ?? 0}/{data.counts.positions ?? 0} · ที่เหลือใช้ stop
-              อัตโนมัติ
-              {(data.counts.overrides ?? 0) > 0 && ` · HOLD ${data.counts.overrides}`}
+            <span className="ml-auto tabular-nums" style={{ color: colors.textSecondary }}>
+              S/L {data.counts.manual_stops ?? 0}/{data.counts.positions ?? 0}
+              {" · "}HOLD {data.counts.overrides ?? 0}
+              {data.atr_pending.length > 0 && (
+                <span
+                  style={{ color: "#B06000" }}
+                  title="ประวัติราคายังโหลดไม่เสร็จ — ใช้ stop 8% ชั่วคราว"
+                >
+                  {" · "}ATR pending {data.atr_pending.join(", ")}
+                </span>
+              )}
+              {data.skipped.length > 0 && (
+                <span title={data.skipped.map((s) => `${s.symbol}: ${s.reason}`).join("\n")}>
+                  {" · "}skipped {data.skipped.length}
+                </span>
+              )}
             </span>
-            {data.atr_pending.length > 0 && (
-              <span style={{ color: "#B06000" }} title="ประวัติราคายังโหลดไม่เสร็จ — ใช้ stop 8% ชั่วคราว">
-                ATR pending: {data.atr_pending.join(", ")}
-              </span>
-            )}
-            {data.skipped.length > 0 && (
-              <span
-                style={{ color: colors.textSecondary }}
-                title={data.skipped.map((s) => `${s.symbol}: ${s.reason}`).join("\n")}
-              >
-                skipped {data.skipped.length}
-              </span>
-            )}
           </div>
 
           {stopPlan && (
@@ -583,16 +918,36 @@ export function TradeGuardCard({
             />
           )}
 
-          <span
-            style={{ color: colors.textSecondary, fontSize: 8.5, opacity: 0.7, lineHeight: 1.5 }}
+          {/* Rules — label/value pairs on a grid instead of one run-on line */}
+          <div
+            className="grid gap-x-4 gap-y-0.5 pt-1.5 border-t tabular-nums"
+            style={{
+              gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
+              borderColor: colors.border,
+              fontSize: 8.5,
+              color: colors.textSecondary,
+            }}
           >
-            stop = S/L ที่ใส่เอง หรือ 2×ATR ตอนเข้า (5–12% จากทุน) · ถือ ≥{data.rules.time_stop_days}{" "}
-            วันแต่กำไร &lt;{data.rules.time_stop_min_gain_pct}% = ค้าง (strategy Value/Core ยกเว้น) ·
-            ตัวเดียว ≤{data.rules.max_weight_pct}% · กลุ่ม ≤{data.rules.max_sector_pct}% · วันละไม่เกิน −
-            {data.rules.day_loss_limit_pct}% · NAV DD −{data.rules.dd_half_pct}% ครึ่งไซซ์ / −
-            {data.rules.dd_stop_pct}% หยุด · เสียติด {data.rules.loss_streak} ไม้ ครึ่งไซซ์. ระบบแค่เตือน
-            (ticker + toast เมื่อมีธงใหม่) ไม่ส่งคำสั่งขาย. ตัวเลขเป็นค่าตั้งต้น ไม่ได้ผ่าน backtest.
-          </span>
+            {[
+              ["STOP", "S/L เอง · 2×ATR 5–12%"],
+              ["TIME", `≥${data.rules.time_stop_days}ว · <+${data.rules.time_stop_min_gain_pct}%`],
+              ["ต่อตัว", `≤${data.rules.max_weight_pct}%`],
+              ["ต่อกลุ่ม", `≤${data.rules.max_sector_pct}%`],
+              ["ต่อวัน", `−${data.rules.day_loss_limit_pct}%`],
+              ["NAV DD", `−${data.rules.dd_half_pct}% ×0.5 · −${data.rules.dd_stop_pct}% ×0`],
+              ["STREAK", `${data.rules.loss_streak} ไม้ ×0.5`],
+              ["HOLD", `ทบทวน ${data.rules.hold_review_days ?? 14}ว · floor`],
+            ].map(([k, v]) => (
+              <span key={k} className="flex justify-between gap-2">
+                <span style={labelStyle}>{k}</span>
+                <span>{v}</span>
+              </span>
+            ))}
+            <span style={{ gridColumn: "1 / -1", opacity: 0.7 }}>
+              ระบบแค่เตือน ไม่ส่งคำสั่งขาย · STOP HIT เตือนซ้ำวันละครั้งจนกว่าจะขายหรือ HOLD · ตัวเลขเป็นค่าตั้งต้น
+              ไม่ได้ผ่าน backtest
+            </span>
+          </div>
         </>
       )}
     </div>

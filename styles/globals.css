@@ -206,3 +206,55 @@ body.light select option {
     color: #e68a00 !important;
   }
 }
+
+/* ── Toasts (sonner, components/ui/sonner.tsx) ──────────────────────────────
+ * Same frame as the modals: black surface, 1px border, square corners, mono.
+ * The 2px left rule carries the severity: --bb-toast-rule from the caller,
+ * else the sonner type (error/warning/success), else the accent.
+ */
+.bb-toast {
+  --bb-toast-rule-default: var(--bb-accent);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 356px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 10px;
+  background: var(--bb-surface-deep);
+  border: 1px solid var(--bb-border-mid);
+  border-left: 2px solid var(--bb-toast-rule, var(--bb-toast-rule-default));
+  border-radius: 0;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7);
+  color: var(--bb-text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.bb-toast[data-type="error"] { --bb-toast-rule-default: #ff4444; }
+.bb-toast[data-type="warning"] { --bb-toast-rule-default: #ffb300; }
+.bb-toast[data-type="success"] { --bb-toast-rule-default: #00c853; }
+.bb-toast-title {
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--bb-text);
+}
+.bb-toast-desc {
+  margin-top: 2px;
+  color: var(--bb-text-sec);
+  font-variant-numeric: tabular-nums;
+}
+.bb-toast-icon {
+  margin-top: 1px;
+  color: var(--bb-toast-rule, var(--bb-toast-rule-default));
+}
+.bb-toast-action,
+.bb-toast-cancel {
+  margin-left: auto;
+  align-self: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.bb-toast-action { color: var(--bb-accent); }
+.bb-toast-cancel { color: var(--bb-text-dim); }
