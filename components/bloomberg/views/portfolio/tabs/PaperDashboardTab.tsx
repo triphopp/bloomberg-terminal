@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import { fmt, fmtAmt, fmtPct, pnlColor } from "../helpers";
 import type { Colors } from "../helpers";
+import { MarginCard } from "../ui/MarginCard";
 
 interface PaperAccount {
   id: string;
@@ -28,6 +29,7 @@ interface AccountSummary {
   initial_balance: number;
   cash: number;
   positions_value: number;
+  options_value?: number;
   equity: number;
   unrealized_pnl: number;
   realized_pnl: number;
@@ -251,6 +253,9 @@ export function PaperDashboardTab({ colors }: { colors: Colors }) {
           ))}
         </div>
       )}
+
+      {/* Reg T margin — also switches this account's order checks to buying power */}
+      {activeId && <MarginCard scope="paper" accountId={activeId} colors={colors} />}
 
       {/* Equity curve */}
       {curve.length > 1 && s && (

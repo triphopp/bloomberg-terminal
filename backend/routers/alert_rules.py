@@ -585,7 +585,12 @@ def run_scan(body: ScanRequest = ScanRequest()):
 
 
 def _guard_name(rule_id: str) -> str | None:
-    """Display name for TRADE GUARD events (rule_id "guard:<CODE>")."""
+    """Display name for TRADE GUARD events (rule_id "guard:<CODE>") and MARGIN
+    events (rule_id "margin:<LEVEL>", margin_scheduler.py)."""
+    if str(rule_id).startswith("margin:"):
+        from margin_scheduler import LABELS
+        level = str(rule_id).split(":", 1)[1]
+        return f"MARGIN {level} · {LABELS.get(level, level)}"
     if not str(rule_id).startswith("guard:"):
         return None
     from trade_guard import GUARD_EVENT_LABELS
@@ -633,7 +638,7 @@ def list_events(limit: int = 100, acked: bool | None = None, rule_id: str | None
             # re-toasting history. TRADE GUARD events (guard_scheduler.py) have
             # no rule row by design and ask for a toast too.
             "notify": (json.loads(r["rule_notify"]) if r["rule_notify"]
-                       else ["ticker", "toast"] if str(r["rule_id"]).startswith("guard:")
+                       else ["ticker", "toast"] if str(r["rule_id"]).startswith(("guard:", "margin:"))
                        else ["ticker"]),
             "notifiedAt": r["notified_at"],
             "notifyError": r["notify_error"],

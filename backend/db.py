@@ -1845,6 +1845,38 @@ def init_guard_schema() -> None:
         """)
 
 
+def init_margin_schema() -> None:
+    """MARGIN tables (backend/margin.py, routers/margin.py). Before
+    init_sync_layer(): margin_settings is synced."""
+    with get_db() as conn:
+        # Per-account Reg T parameters the user chose. scope = 'port' (a
+        # portfolio_accounts id) or 'paper' (a paper_accounts id). `enabled`
+        # turns the model on; overrides_json = {"SYMBOL": maint rate} for
+        # IBKR house rates; thresholds_json = cushion floors per level.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS margin_settings (
+                scope           TEXT NOT NULL CHECK(scope IN ('port','paper')),
+                account_id      TEXT NOT NULL,
+                enabled         INTEGER NOT NULL DEFAULT 0,
+                maint_long      REAL NOT NULL DEFAULT 0.25,
+                maint_short     REAL NOT NULL DEFAULT 0.30,
+                initial         REAL NOT NULL DEFAULT 0.50,
+                overrides_json  TEXT NOT NULL DEFAULT '{}',
+                thresholds_json TEXT NOT NULL DEFAULT '{}',
+                PRIMARY KEY (scope, account_id)
+            )
+        """)
+        # Last level the margin scheduler saw per account, so an alert fires on
+        # the transition, not on every scan. Machine-local like guard_state.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS margin_state (
+                key        TEXT PRIMARY KEY,
+                level      TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+
 def init_alerts_schema() -> None:
     """Alert Rule Engine tables (memory/plans/alert-rule-engine.md §5)."""
     from alerts.schema import create_alert_tables

@@ -34,6 +34,7 @@ import { useMarketDataQuery } from "../hooks";
 import { useChangeFeed } from "../hooks/useChangeFeed";
 import { AlertTicker } from "../layout/alert-ticker";
 import { GuardRibbon } from "../layout/guard-ribbon";
+import { MarginRibbon } from "../layout/margin-ribbon";
 import { MobileNav } from "../layout/mobile-nav";
 import { TailRiskRibbon } from "../layout/tail-risk-ribbon";
 import { TerminalHeader } from "../layout/terminal-header";
@@ -359,6 +360,7 @@ function BloombergTerminal() {
         <div className="flex h-[24px] shrink-0 min-w-0 overflow-hidden border-t border-[#292929] bg-black">
           <TailRiskRibbon />
           <GuardRibbon />
+          <MarginRibbon />
           <AlertTicker />
         </div>
       )}

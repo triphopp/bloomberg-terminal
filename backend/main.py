@@ -59,6 +59,7 @@ from db import (
     init_alerts_schema,
     init_thesis_schema,
     init_guard_schema,
+    init_margin_schema,
     init_zettel_schema,
     init_graphs_schema,
     init_series_schema,
@@ -80,12 +81,16 @@ from routers import changes as changes_router
 from change_feed import init_change_feed
 from routers.chart_drawings import init_chart_drawings_schema
 from routers import dev as dev_router
+from routers import margin as margin_router
+from routers import ledger as ledger_router
+import ledger as ledger_core
 import sync
 from sync import oplog
 from sources.errors import UpstreamRateLimited, is_rate_limit
 from sync.gate import is_synced_write, should_gate
 from alerts import scheduler as alert_scheduler
 import guard_scheduler
+import margin_scheduler
 import iv_scheduler
 import series_scheduler
 
@@ -119,6 +124,7 @@ init_db()
 init_portfolio_v2()
 init_thesis_schema()   # must precede init_sync_layer(): it adds updated_at + triggers
 init_guard_schema()    # same: guard_overrides is synced
+init_margin_schema()   # same: margin_settings is synced
 init_zettel_schema()   # same ordering reason as the thesis schema above
 init_graphs_schema()   # index for research/graphs; no sync triggers, order free
 init_series_schema()   # generic indicator series; must precede init_sync_layer()
@@ -156,6 +162,9 @@ alert_scheduler.start_background_scan()
 
 # ── TRADE GUARD: flag transitions → alert feed (backend/guard_scheduler.py) ──
 guard_scheduler.start_background_scan()
+
+# ── MARGIN: account level worsens → alert feed (backend/margin_scheduler.py) ──
+margin_scheduler.start_background_scan()
 
 # ── ATM IV snapshots: daily recorder (no-ops once the day is covered) ─────────
 # The provider exposes no IV history, so a day nobody records is a permanent hole
@@ -212,6 +221,7 @@ app.include_router(chart_drawings.router)
 app.include_router(changes_router.router, tags=["Changes"])
 app.include_router(backtest_v2.router)
 app.include_router(risk.router)
+app.include_router(margin_router.router, tags=["Margin"])
 app.include_router(allocation.router)
 app.include_router(country_rotation.router)
 app.include_router(sector.router)

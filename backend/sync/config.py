@@ -168,6 +168,10 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     # Client-minted uuid PK, so the same line drawn on two devices never
     # collides; a REG rail-mode change is an edit in place → field-level LWW.
     ("chart_drawings",           ["id"]),
+    # MARGIN parameters per account (routers/margin.py): a choice the user made,
+    # edited in place → field-level LWW on the natural key. margin_state (the
+    # scheduler's last-seen level) is NOT synced, same reason as guard_state.
+    ("margin_settings",          ["scope", "account_id"]),  # composite PK
 ]
 
 TABLE_PK: dict[str, list[str]] = {t: pk for t, pk in SYNC_TABLES}
