@@ -116,6 +116,7 @@ be negative-cached, or "empty = expired" re-fires them on every request.
 - K/M/B suffixes only on chart **axis ticks** (`fmtAxis`) — never on a value a person reads as a price or amount.
 - Never `toLocaleString()` bare on a quantity (stops at 3 dp) or `maximumFractionDigits: 0` / `toFixed(0|1)` on a price.
 - New price display → use the helper; don't write another local `fmtPrice`.
+- Typed number fields (PORT ENTRY / CASH / SELL / RECONCILE) → `views/portfolio/ui/NumInput.tsx`, not `<input type="number">`: shows `1,234,567.89` while typing, hands the form `1234567.89`, never rounds (logic in `components/bloomberg/lib/number-input.ts`). No minus unless `allowNegative`.
 
 ## Chart indicators — performance rules (2026-09-26)
 
@@ -125,6 +126,15 @@ be negative-cached, or "empty = expired" re-fires them on every request.
 re-loop the last k bars per bar), no `Math.max(...arr)`, no `shift()` in loops, expensive fits cached on
 closed-bar content (not array identity). Exceptions need `// perf-ok: <reason>`. Same rules for
 `lib/volume-stats.ts`, `lib/volume-events.ts`, `lib/bb-volume.ts`.
+
+## Looking for data → `memory/reference/data-sources.md` FIRST (2026-09-29)
+
+Before searching for any data (macro, country, rates, company, news), open
+**[`memory/reference/data-sources.md`](memory/reference/data-sources.md)** and go in its order:
+MCP tools → backend endpoints that already exist → the verified free APIs listed there
+(IMF SDMX, World Bank, BIS, OECD, BOT, …) → only then the web. A new source that works
+goes back into that file. The MCP serves the same file (`get_data_sources` tool ·
+`spec://data-sources`) — edit the file, not the MCP.
 
 ## Fundamental analysis — "วิเคราะห์พื้นฐาน [ticker]" (2026-09-27)
 
@@ -279,7 +289,8 @@ memory/
 │   ├── api-endpoints.md        ← all endpoints + caching strategy + Next.js proxy routes
 │   ├── frontend-structure.md   ← full component tree + key exports + keyboard shortcuts
 │   ├── data-shapes.md          ← API response shapes (avoid reading router files)
-│   └── data-catalog.md         ← 17 data categories available for analysis
+│   ├── data-catalog.md         ← 17 data categories available for analysis
+│   └── data-sources.md         ← where to look for data (read before searching)
 ├── plans/                 ← feature plans (active + completed/)
 └── sessions/              ← audit trail + reports
 ```

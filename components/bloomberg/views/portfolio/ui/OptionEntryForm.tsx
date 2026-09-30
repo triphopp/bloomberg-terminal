@@ -6,6 +6,7 @@ import { type Colors, fmtAmt, fmtPx, fmtQty, pnlColor } from "../helpers";
 import { portfolioQueries } from "../queries";
 import type { OptionLot } from "../tabs/OptionsTab";
 import type { Account } from "../types";
+import { NumInput } from "./NumInput";
 import type { OptionSlipForm } from "./SlipReader";
 
 // One option fill → POST /api/options/fills (backend option_fills.py). Every
@@ -453,10 +454,9 @@ export function OptionEntryForm({
         </div>
         <div>
           <Label colors={colors}>STRIKE *</Label>
-          <input
+          <NumInput
             className={iField}
             style={iStyle}
-            type="number"
             step="any"
             placeholder="40.00"
             value={f.strike}
@@ -475,10 +475,9 @@ export function OptionEntryForm({
         </div>
         <div>
           <Label colors={colors}>MULTIPLIER</Label>
-          <input
+          <NumInput
             className={iField}
             style={iStyle}
-            type="number"
             step="any"
             value={f.multiplier}
             onChange={set("multiplier")}
@@ -489,10 +488,9 @@ export function OptionEntryForm({
       <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(6, minmax(0, 1fr))" }}>
         <div>
           <Label colors={colors}>CONTRACTS *</Label>
-          <input
+          <NumInput
             className={iField}
             style={iStyle}
-            type="number"
             step="any"
             placeholder="10"
             value={f.contracts}
@@ -501,10 +499,9 @@ export function OptionEntryForm({
         </div>
         <div>
           <Label colors={colors}>PREMIUM / หุ้น {expired ? "" : "*"}</Label>
-          <input
+          <NumInput
             className={iField}
             style={iStyle}
-            type="number"
             step="any"
             placeholder={expired ? "0 — หมดอายุ" : "0.29"}
             disabled={expired}
@@ -600,10 +597,9 @@ export function OptionEntryForm({
                     <td className="pr-3">คงเหลือ {fmtQty(Math.abs(l.quantity))}</td>
                     <td>
                       {f.pick ? (
-                        <input
+                        <NumInput
                           className="text-[9px] font-mono px-1 border outline-none w-16"
                           style={iStyle}
-                          type="number"
                           step="any"
                           placeholder="0"
                           value={f.picks[l.id] ?? ""}
@@ -635,10 +631,9 @@ export function OptionEntryForm({
               <div className="text-[8px]" style={{ color: colors.textSecondary }}>
                 {fe.label}
               </div>
-              <input
+              <NumInput
                 className={iField}
                 style={{ ...iStyle, color: "#facc15" }}
-                type="number"
                 step="any"
                 placeholder="0.00"
                 value={f.fees[fe.key] ?? ""}

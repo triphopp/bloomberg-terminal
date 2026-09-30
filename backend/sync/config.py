@@ -39,6 +39,13 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     ("cash_adjustments",        ["id"]),
     ("broker_statements",        ["id"]),  # cited, versioned broker evidence
     ("broker_executions",         ["id"]),  # cited broker fills; no implied cash/wallet
+    # Ledger v2 (plans/port-ledger-v2.md). Journal + period closes are
+    # APPEND-ONLY (below): a merge is a union, never an update or a delete.
+    # Wallets are settings — ordinary field-level LWW.
+    ("ledger_events",             ["id"]),
+    ("ledger_period_close",       ["id"]),
+    ("ledger_wallets",            ["account_id", "wallet"]),  # composite PK
+    ("ledger_wallet_rules",       ["id"]),                    # routing settings, LWW
     # Normalized option schema (2026-09-10). Contracts sync on their natural key
     # so the same contract entered on two devices merges into one row; trades
     # and matches carry uuid PKs.
@@ -168,9 +175,20 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     # Client-minted uuid PK, so the same line drawn on two devices never
     # collides; a REG rail-mode change is an edit in place → field-level LWW.
     ("chart_drawings",           ["id"]),
+    # MARGIN parameters per account (routers/margin.py): a choice the user made,
+    # edited in place → field-level LWW on the natural key. margin_state (the
+    # scheduler's last-seen level) is NOT synced, same reason as guard_state.
+    ("margin_settings",          ["scope", "account_id"]),  # composite PK
 ]
 
 TABLE_PK: dict[str, list[str]] = {t: pk for t, pk in SYNC_TABLES}
+
+# Tables no device may change or delete once a row exists (DB triggers refuse
+# it). Sync must match: rows only ever get ADDED — no updated_at stamping
+# trigger (it is an UPDATE, which the append-only trigger aborts), no
+# tombstones, and a peer row that differs from ours under the same key is a
+# conflict to review, never an overwrite.
+APPEND_ONLY_TABLES: frozenset[str] = frozenset({"ledger_events", "ledger_period_close"})
 
 # Tables holding real money. A delete only beats a concurrent edit here when it
 # is STRICTLY newer — on a same-timestamp tie the row survives and is reported as
@@ -181,6 +199,7 @@ MONEY_TABLES: frozenset[str] = frozenset({
     "broker_executions", "dividends",
     "option_trades", "option_trade_matches", "trade_fee_items",
     "portfolio_accounts", "position_cost_overrides",
+    "ledger_events", "ledger_period_close", "ledger_wallets",
 })
 
 # char(31) — unit separator — joins composite key parts inside tombstone row_id.

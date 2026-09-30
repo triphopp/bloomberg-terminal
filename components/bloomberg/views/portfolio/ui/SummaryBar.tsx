@@ -3,6 +3,7 @@ import { useState } from "react";
 import { type Colors, fmtAmt, pnlColor } from "../helpers";
 import { CashReconcileModal } from "../modals/CashReconcileModal";
 import type { Summary } from "../types";
+import { useLedgerAccounts } from "./ledger-client";
 
 export function SummaryBar({
   summary,
@@ -19,7 +20,32 @@ export function SummaryBar({
   onToggleCurrency?: () => void;
 }) {
   const [editCash, setEditCash] = useState(false);
+  const ledgerQ = useLedgerAccounts();
   if (!summary) return null;
+
+  // Ledger v2: SHADOW accounts in scope show their reconciled wallet cash next
+  // to the derived CASH. USD wallets are valued at the displayed rate — a
+  // valuation, not a cash difference (the wallets themselves stay in USD).
+  const rate = summary.thb_per_usd;
+  const ledgerAccs = (ledgerQ.data?.accounts ?? []).filter(
+    (a) => a.ledger_mode !== "LEGACY" && (!accountId || accountId === "all" || a.id === accountId)
+  );
+  const toDisplay = (amt: number, ccy: string) => {
+    const thb = ccy === "THB" ? amt : ccy === "USD" ? amt * rate : Number.NaN;
+    return currency === "THB" ? thb : thb / rate;
+  };
+  const ledgerCash = ledgerAccs.reduce(
+    (s, a) => s + a.balances.reduce((t, b) => t + toDisplay(Number(b.balance), b.currency), 0),
+    0
+  );
+  const ledgerAgreed = ledgerAccs.every((a) => a.matched);
+  const ledgerTitle = ledgerAccs
+    .map(
+      (a) =>
+        `${a.name}: ${a.balances.map((b) => `${b.wallet} ${fmtAmt(Number(b.balance))} ${b.currency}`).join(" · ")}` +
+        ` — ${a.matched ? "agreed with broker" : "not agreed"}`
+    )
+    .join("\n");
 
   const totalPnl = summary.total_pnl_base;
   const economicPnl = summary.total_economic_pnl_base;
@@ -130,6 +156,31 @@ export function SummaryBar({
           {fmtAmt(Math.abs(cash))}
         </span>
       </button>
+      {ledgerAccs.length > 0 && Number.isFinite(ledgerCash) && (
+        <span
+          className="flex items-center"
+          title={`Ledger wallets (reconciled, native currency)\n${ledgerTitle}\nUSD valued at ${rate.toFixed(2)}${
+            accountId === "all"
+              ? `\nOnly ${ledgerAccs.map((a) => a.name).join(", ")} — other accounts are not on the ledger yet`
+              : ""
+          }`}
+        >
+          <span style={{ color: colors.textSecondary }}>
+            LEDGER
+            {accountId === "all"
+              ? `(${ledgerAccs.map((a) => a.name.toUpperCase()).join("+")})`
+              : ""}{" "}
+          </span>
+          <span className="font-bold text-xs" style={{ color: colors.text }}>
+            {ledgerCash < 0 ? "-" : ""}
+            {sym}
+            {fmtAmt(Math.abs(ledgerCash))}
+          </span>
+          <span className="ml-1" style={{ color: ledgerAgreed ? "#4ade80" : "#facc15" }}>
+            ●
+          </span>
+        </span>
+      )}
       {editCash && (
         <CashReconcileModal
           summary={summary}

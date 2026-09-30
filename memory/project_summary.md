@@ -11,6 +11,7 @@
 > - [reference/gotchas.md](reference/gotchas.md) — error dictionary, anti-patterns, "Where is X?", env var map
 > - [reference/terminal-commands.md](reference/terminal-commands.md) — command mode (`heatmap(US)`, ALERT …)
 > - [reference/data-catalog.md](reference/data-catalog.md) — data categories available for analysis
+> - [reference/data-sources.md](reference/data-sources.md) — where to look for data first (in-house → free APIs → web)
 
 ---
 
@@ -89,6 +90,7 @@ IV_SNAPSHOT_INTERVAL (default 10800, 0 = off) / IV_SNAPSHOT_SYMBOLS — ATM IV r
 SERIES_REFRESH_INTERVAL — indicator series collectors
 ALERT_SCAN_INTERVAL   — alert rule scanner
 TRADE_GUARD_SCAN_INTERVAL (default 900, 0 = off) — TRADE GUARD notifier (guard_scheduler.py)
+MARGIN_SCAN_INTERVAL (default 300, 0 = off) — MARGIN notifier (margin_scheduler.py): account level worsens → alert_events `margin:<LEVEL>`
 UPSTREAM_LOG          — override logs/upstream.jsonl
 ALLOW_DANGEROUS_OPS   — gate for destructive maintenance endpoints
 SYNC_ENABLED / SYNC_DIR (no quotes) / SYNC_DEVICE_ID / SYNC_FOLDER_NAME / SYNC_AUTODETECT
@@ -138,9 +140,11 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `company_filings.py` | `/api/company/{filings,outlook,xbrl}/{symbol}` | SEC EDGAR (US only) |
 | `series.py` | `/api/v2/series/*` (generic indicator series; dramexchange DRAM/NAND) | SQLite + `series_sources/` |
 | `chart_drawings.py` | `/api/v2/chart-drawings/*` (trend lines + REG channels drawn on charts; synced) | SQLite `chart_drawings` |
+| `ledger.py` | `/api/v2/ledger/*` — append-only journal v2: accounts/mode (LEGACY·SHADOW), wallets, events (trade, position, cash, dividend, transfer, fx-convert, opening, adjust, reverse, fee-trueup), balances, positions, close/reopen, closes, check (L1–L9), pilot, project. Core in `backend/ledger.py`; errors `{code, detail, evidence}` 409/422 | SQLite |
 | `portfolio_v2.py` | `/api/v2/portfolio/*` — accounts, trades, sell (AVCO), cash/transfer/reconcile, dividends, fees, open-positions, summary, returns, nav-history, **nav-index** (TWR, start-of-day for capital dated before the snapshot day), **takeover**, **history-review**, ledger check/stock-card/statements/evidence, import | SQLite |
 | `slip_ocr.py` | `/api/v2/portfolio/slip/{read,status}` — broker slip screenshot → ENTRY fields (engine `backend/slip_ocr/`, easyocr in a spawned worker); read-only | — |
 | `risk.py` | `/api/v2/portfolio/risk/*` (VaR/CVaR/Parity/Stress/Sizing + `/guard`, `/guard/override`, `/guard/size`, `/guard/report` TRADE GUARD via `trade_guard.py`, `/stop-sim` + `/what-if-sim` via `stop_sim.py`, `/var-backtest`) | Ledoit-Wolf |
+| `margin.py` | `/api/v2/portfolio/margin/{status,overview,settings}` — IBKR Reg T per account (PORT + PAPER): NLV/ELV/IM/MM/EL/AF/cushion, level SAFE→LIQUIDATION, drop-to-call per account + per underlying; model `backend/margin.py`, PAPER order checks | in-process portfolio_v2 / paper_trading valuation |
 | `backtest_v2.py` | `/api/v2/portfolio/backtest/*` | SQLite trades + yfinance |
 | `portfolio.py` | `/api/portfolio/*` (legacy research: thesis files, transactions, backtest) | filesystem + SQLite |
 | `theses.py` / `zettel.py` / `graphs.py` | `/api/v2/theses/*`, `/api/v2/zettel/*`, `/api/v2/graphs/*` | SQLite + `THESES_DIR` / `OBSIDIAN_WIKI_DIR` / `GRAPHS_DIR` |
@@ -191,12 +195,26 @@ portfolio_nav_snapshots (account_id all|<id>, snapshot_date, total_value, open_c
 --   (2026-01-01 → day before first live). /nav-history re-derives invested_capital + dividends by date from TODAY's
 --   ledgers and adds cash_balance / nav_with_cash / invested_before_day; cash = invested + realized + dividends
 --   − open_cost_basis(stored) + adjustments → changing lot cost basis requires re-basing stored snapshots.
-ledger_events       (id, account_id, trade_date, settle_date, trade_time, type, symbol, qty, price, gross, fee, vat, tax,
-                     net_cash, currency, fx_rate, broker_ref, link_id, reverses_id, source, source_ref, note, created_at)
-                     -- append-only journal (plans/port-accounting-ledger.md); 0 posted rows yet; _ledger_guard blocks UPDATE/DELETE
+ledger_events       (id, account_id, wallet, trade_date, book_date, settle_date, trade_time, type, symbol, qty, price,
+                     multiplier, position_effect, gross, fee, vat, tax, fee_basis, net_cash, currency, fx_rate, broker_ref,
+                     link_id, reverses_id, category, evidence_ref, source, source_key, source_ref, note, created_at, updated_at)
+                     -- v2 2026-09-29 (plans/port-ledger-v2.md): numbers = Decimal strings; cash = Σ net_cash per wallet by book_date;
+                     --   append-only (_ledger_guard), period lock trigger on book_date, one REVERSAL per event (unique reverses_id);
+                     --   SYNCED append-only (sync.config.APPEND_ONLY_TABLES: union, no stamp trigger, no tombstones)
+ledger_period_close (id, account_id, wallet, currency, action CLOSE|REOPEN, closed_through, balance, statement_id, source_ref,
+                     reason, created_at, updated_at)  -- append-only; latest row per wallet = effective closed_through; SYNCED
+ledger_wallets      (account_id, wallet, currency, is_default, note, broker_label, updated_at)  PK(account_id, wallet) -- SYNCED LWW
+ledger_wallet_rules (id, account_id, symbol_pattern, wallet, note, updated_at) UNIQUE(account_id, symbol_pattern) -- SYNCED LWW
+trades.wallet_entry / wallet_exit · cash_ledger.wallet · dividends.wallet  -- ledger v2 wallet per legacy row (NULL = routed/default)
+ledger_dirty        (id, account_id, table_name)  -- machine-local queue; triggers on trades/cash_ledger/dividends/
+                     --   cash_adjustments/option_trades for SHADOW accounts; db.get_db drains its own rows → ledger.project
+portfolio_accounts.ledger_mode  LEGACY|SHADOW|PRIMARY (PRIMARY refused until a pilot passes)
+portfolio_accounts.ledger_cutover / ledger_cutover_at (UTC moment) / ledger_cutover_baseline  -- journal start day + {source_key: fingerprint} of legacy history ≤ it (L10)
 risk_snapshots      (account_id, snapshot_date, portfolio_value, breach_count, ensemble_signal, vol_regime, risk_score, ews, regime_label, …)
 alert_rules / alert_rule_state / alert_events   -- boolean-AST alert engine (routers/alert_rules.py); TRADE GUARD writes alert_events rule_id 'guard:<CODE>'
 guard_overrides     -- TRADE GUARD HOLD decisions per holding (account, yf_symbol, first_entry); SYNCED
+margin_settings     -- MARGIN Reg T params per (scope 'port'|'paper', account_id): enabled, maint/initial rates, overrides_json, thresholds_json; SYNCED
+margin_state        -- margin_scheduler last level per account (local, not synced)
 guard_state         -- notifier cursor: last flags per holding (machine-local, not synced)
 var_forecasts       -- one VaR forecast per day per book (forecast_date, account_id) → /risk/var-backtest; machine-local
 pm_slug_registry    -- Polymarket slug cache
@@ -445,6 +463,8 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 
 Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished plan becomes `- [x] … done YYYY-MM-DD` only with a Completion Evidence section.
 
+- [x] **PORT Margin Maintenance (IBKR Reg T)** — done 2026-09-29: NLV/ELV/IM/MM/EL/AF/cushion per account (PORT + PAPER), level colours per account + per underlying, drop-to-liquidation, `margin:<LEVEL>` alerts, MGN ribbon + POSITIONS column, PAPER Reg T order checks (`plans/completed/port-margin-maintenance.md`)
+- [ ] **PORT Ledger v2** — append-only ledger ที่ใช้ได้จริง: wallet ต่อสกุลเงิน, ปิดงวดกับ statement, FX convert 2 ขา, Decimal, sync append-only, SHADOW projection จาก ENTRY (`plans/port-ledger-v2.md`)
 - [x] **RISK OVERVIEW redesign + WHAT-IF SIM** — done 2026-09-29: STOP SIM → WHAT-IF SIM ทำ vs ไม่ทำ บนหุ้นจริง (guard/ERC suggestions หรือแก้ qty เอง, toggle ทำตาม stop) รวมใน OVERVIEW; ตัด trim chips/ERC table/Backtest block ซ้ำ (`plans/completed/risk-overview-whatif-sim.md`)
 - [x] **PORT Risk validity + stop simulator** — done 2026-09-29: STOP SIM (±SD, follow stop vs hold), rolling OOS VaR + daily forecast log, GICS sector cap, MAE/MFE replay + stop sweep, NAV-basis VaR (cash/short/option Δ) (`plans/completed/port-risk-validity.md`)
 - [x] **PORT Trade Guard** — done 2026-09-28: auto stop (2×ATR) + traffic light in RISK, S/M/L sizing in ENTRY, ticker/toast on new flags, HOLD override + R-multiple report, NAV DD / streak breakers (`plans/completed/port-trade-guard.md`)

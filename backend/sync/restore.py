@@ -12,7 +12,7 @@ would re-stamp updated_at (breaking LWW) and manufacture false tombstones.
 import sqlite3
 from contextlib import contextmanager
 
-from .config import SYNC_TABLES, TABLE_PK, TOMB_SEP
+from .config import APPEND_ONLY_TABLES, SYNC_TABLES, TABLE_PK, TOMB_SEP
 
 
 @contextmanager
@@ -44,7 +44,8 @@ def _upsert(conn: sqlite3.Connection, table: str, pk: list[str], rows: list[dict
         # never rewrite the conflict key or a surrogate id during upsert
         skip = set(pk) | {"id"}
         setters = [c for c in cols if c not in skip]
-        if not setters:
+        if not setters or table in APPEND_ONLY_TABLES:
+            # append-only: add what is missing, never touch what exists
             sql = (f"INSERT INTO {table} ({collist}) VALUES ({placeholders}) "
                    f"ON CONFLICT({conflict}) DO NOTHING")
         else:
@@ -104,7 +105,7 @@ def restore(conn: sqlite3.Connection, tables: dict, tombstones: list) -> int:
         for t in tombstones:
             tbl = t["table_name"]
             pk = TABLE_PK.get(tbl)
-            if not pk:
+            if not pk or tbl in APPEND_ONLY_TABLES:
                 continue
             _apply_tombstone(conn, tbl, pk, t["row_id"], t.get("deleted_at") or "")
     return applied

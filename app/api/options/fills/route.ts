@@ -1,4 +1,5 @@
 import { PYTHON_API } from "@/lib/constants";
+import { ledgerHeaders } from "@/lib/ledger-proxy";
 import { type NextRequest, NextResponse } from "next/server";
 
 // One option fill from PORT → ENTRY (backend option_fills.py). `dry_run: true`
@@ -8,7 +9,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const res = await fetch(`${PYTHON_API}/api/options/fills`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...ledgerHeaders(req) },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(30_000),
     });

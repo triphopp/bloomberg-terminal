@@ -20,6 +20,7 @@ from sources import market_data
 
 from cache import TTLCache
 from db import audit_reason, get_db
+import ledger
 from market_session import is_current_session, is_today_at, local_date_of, session_date_for
 from portfolio_options import (
     capture_daily_greeks,
@@ -480,6 +481,11 @@ class TradeIn(BaseModel):
     # form, and the slip becomes a broker_executions row linked to the trade.
     slip_sha256: Optional[str] = None
     broker_order_ref: Optional[str] = None   # typed by hand, no slip
+    # Ledger v2: the wallet the buy was paid from / the sale paid into. Blank =
+    # routed (slip's payment account → rule → default) for SHADOW accounts.
+    wallet_entry: Optional[str] = None
+    wallet_exit: Optional[str] = None
+    settlement_label: Optional[str] = None   # "Dime! FCD" as the slip prints it
     executed_at: Optional[str] = None
 
 
@@ -511,6 +517,8 @@ class TradePatch(BaseModel):
     adjustment_reason: Optional[str] = None
     fee_entry: Optional[float] = None
     fee_exit: Optional[float] = None
+    wallet_entry: Optional[str] = None
+    wallet_exit: Optional[str] = None
 
 
 class CashIn(BaseModel):
@@ -527,6 +535,7 @@ class CashIn(BaseModel):
     investment: float = 0
     exchange_rate: float = 1
     note: str = ""
+    wallet: Optional[str] = None   # ledger v2: THB wallet it lands in (blank = default)
 
 
 CASH_FLOW_TYPES = ("DEPOSIT", "WITHDRAW")
@@ -604,6 +613,7 @@ class DividendIn(BaseModel):
     # Save even though dividend_check found an error-level problem (the user
     # saw the warning and confirmed).
     force: bool = False
+    wallet: Optional[str] = None   # ledger v2: wallet the dividend is paid into
 
 
 # ── Symbol Resolver (plans/port-redesign.md Step 1) ──────────────────────────
@@ -995,6 +1005,12 @@ def create_trade(body: TradeIn):
         exit_detail = _with_breakdown(exit_detail, body.fee_exit_breakdown)
         details = {k: v for k, v in (("entry", entry_detail), ("exit", exit_detail)) if v}
         fee_detail = json.dumps(details) if details else None
+        is_closed = bool(body.date_exit or body.win_loss.upper() != "P")
+        label = body.settlement_label
+        wallet_entry = ledger.entry_wallet(conn, body.account_id, currency, body.symbol, body.wallet_entry,
+                                           None if is_closed else label)
+        wallet_exit = ledger.entry_wallet(conn, body.account_id, currency, body.symbol, body.wallet_exit,
+                                          label) if is_closed else None
         conn.execute("""
             INSERT INTO trades (id, account_id, symbol, resolved_symbol, market,
                 sector, date_entry, date_exit,
@@ -1004,8 +1020,9 @@ def create_trade(body: TradeIn):
                 news_sentiment, expectation_based, factor_based,
                 fear_greed_index, vix_index, note, is_reinvest,
                 fee_entry, fee_exit, fee_detail,
-                broker_order_ref, executed_at, entry_source, source_sha256, lot_price)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                broker_order_ref, executed_at, entry_source, source_sha256, lot_price,
+                wallet_entry, wallet_exit)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (trade_id, body.account_id, body.symbol.upper(),
               (body.resolved_symbol or "").upper() or None,
               (body.market or "").upper() or None, body.sector,
@@ -1018,7 +1035,8 @@ def create_trade(body: TradeIn):
               body.factor_based, body.fear_greed_index, body.vix_index, body.note,
               1 if body.is_reinvest else 0, fee_entry, fee_exit, fee_detail,
               order_ref, executed_at, "slip" if sidecar else "manual",
-              body.slip_sha256 if sidecar else None, body.price_entry))
+              body.slip_sha256 if sidecar else None, body.price_entry,
+              wallet_entry, wallet_exit))
         evidence_id = None
         if sidecar:
             try:
@@ -1039,6 +1057,8 @@ def create_trade(body: TradeIn):
         "exit_exchange_rate": exit_fx,
         "fee_entry": fee_entry,
         "fee_exit": fee_exit,
+        "wallet_entry": wallet_entry,
+        "wallet_exit": wallet_exit,
     }
 
 
@@ -1110,6 +1130,10 @@ def patch_trade(trade_id: str, body: TradePatch):
                 avco_replay._fill_lot_prices(conn, old["account_id"], old["symbol"])
             old = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
         old_dict = dict(old)
+        for col in ("wallet_entry", "wallet_exit"):
+            if updates.get(col):
+                updates[col] = ledger.wallet_for(conn, old_dict["account_id"], trade_currency(old_dict),
+                                                 updates[col])
         # price_entry is the pooled AVCO, rewritten by every replay. A user who
         # changes it is correcting what this lot was bought for.
         if ("price_entry" in updates and "lot_price" not in updates
@@ -1687,6 +1711,16 @@ class SellIn(BaseModel):
     sell_price: float = 0                # Exit price
     sell_date: str                       # Date of sale (YYYY-MM-DD)
     commission: Optional[float] = None   # None = broker fee estimate; a number = as typed
+    wallet: Optional[str] = None             # ledger v2: wallet the proceeds land in
+    settlement_label: Optional[str] = None   # the slip's receiving account
+
+
+def _set_exit_wallet(conn, ids: list[str], pos, wallet: Optional[str], label: Optional[str]) -> None:
+    """Ledger v2: record which wallet a sale paid into (see ledger.entry_wallet)."""
+    pos = dict(pos)
+    w = ledger.entry_wallet(conn, pos["account_id"], trade_currency(pos), pos["symbol"], wallet, label)
+    if w:
+        conn.executemany("UPDATE trades SET wallet_exit = ? WHERE id = ?", [(w, i) for i in ids])
 
 
 @router.post("/sell", status_code=201)
@@ -1768,6 +1802,7 @@ def sell_position(body: SellIn):
                   fee_exit, f"\n[SOLD {body.sell_date}] @ {exit_price} | P&L: {pnl_net}",
                   body.trade_id),
             )
+            _set_exit_wallet(conn, [body.trade_id], pos, body.wallet, body.settlement_label)
             _write_audit_log(conn, body.trade_id, "SELL_FULL", pos, new_vals,
                              f"full sell {total_volume} @ {exit_price}, avg_cost={round(avg_cost, 4)}")
             # Other lots of the same symbol may still be open — keep them on the
@@ -1807,13 +1842,15 @@ def sell_position(body: SellIn):
                    price_entry, price_exit, volume, pnl_amount, win_loss, pnl_percent,
                    currency, exchange_rate, exit_exchange_rate, strategy_name, note, fee_exit,
                    acquisition_type, original_price_entry, transfer_price_entry,
-                   broker_order_ref, executed_at, entry_source, source_sha256, lot_price)
+                   broker_order_ref, executed_at, entry_source, source_sha256, lot_price,
+                   wallet_entry)
                    SELECT ?, account_id, symbol, resolved_symbol, market,
                    sector, date_entry, ?,
                    ?, ?, ?, ?, ?, ?,
                    currency, exchange_rate, ?, strategy_name, ?, ?,
                    acquisition_type, original_price_entry, transfer_price_entry,
-                   broker_order_ref, executed_at, entry_source, source_sha256, lot_price
+                   broker_order_ref, executed_at, entry_source, source_sha256, lot_price,
+                   wallet_entry
                    FROM trades WHERE id = ?""",
                 (sold_id, body.sell_date, avg_cost, exit_price, sold_volume,
                   sold_pnl_net, sold_wl, sold_pnl_pct, exit_fx,
@@ -1821,6 +1858,7 @@ def sell_position(body: SellIn):
                   body.trade_id),
             )
 
+            _set_exit_wallet(conn, [sold_id], pos, body.wallet, body.settlement_label)
             # Reduce the remaining open lot. The partial sell is captured in the
             # audit log (below) — no auto-note appended to keep notes user-owned.
             conn.execute(
@@ -1869,6 +1907,8 @@ class SellAllLotsIn(BaseModel):
     sell_price: float
     sell_date: str
     commission: Optional[float] = None
+    wallet: Optional[str] = None
+    settlement_label: Optional[str] = None
 
 
 @router.post("/sell-all-lots", status_code=201)
@@ -1922,6 +1962,8 @@ def sell_all_lots(body: SellAllLotsIn):
                               "pnl_amount": pnl_net},
                              f"sell all lots {vol} @ {exit_price}, avg_cost={round(avg_cost, 4)}")
             closed_ids.append(pos["id"])
+        if closed_ids:
+            _set_exit_wallet(conn, closed_ids, lots[0], body.wallet, body.settlement_label)
         replayed = _replay_position(conn, body.account_id, body.symbol, f"sale {body.sell_date}")
 
         return {"ok": True, "action": "sell_all_lots", "closed_ids": closed_ids,
@@ -1963,12 +2005,14 @@ def add_cash(body: CashIn):
     entry_id = str(uuid.uuid4())
     with get_db() as conn:
         _require_account(conn, body.account_id)
+        # cash_ledger amounts are THB (ledger_backfill posts them as THB)
+        wallet = ledger.entry_wallet(conn, body.account_id, "THB", None, body.wallet)
         conn.execute("""
             INSERT INTO cash_ledger (id, account_id, date, income, investment,
-                                     exchange_rate, note, entry_type)
-            VALUES (?,?,?,?,?,?,?,?)
+                                     exchange_rate, note, entry_type, wallet)
+            VALUES (?,?,?,?,?,?,?,?,?)
         """, (entry_id, body.account_id, body.date, income, investment,
-              body.exchange_rate, body.note, entry_type))
+              body.exchange_rate, body.note, entry_type, wallet))
     return {"ok": True, "id": entry_id, "entry_type": entry_type, "investment": investment}
 
 
@@ -2247,14 +2291,15 @@ def add_dividend(body: DividendIn):
         currency = _dividend_currency(conn, body)
     check = _guard_dividend(body, currency)
     with get_db() as conn:
+        wallet = ledger.entry_wallet(conn, body.account_id, currency or "THB", body.asset, body.wallet)
         conn.execute("""
             INSERT INTO dividends (id, account_id, asset, ex_date, pay_date,
                 amount_per_unit, total_received, reinvested_amount,
-                reinvest_asset, reinvest_price, reinvest_units, currency)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                reinvest_asset, reinvest_price, reinvest_units, currency, wallet)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (div_id, body.account_id, body.asset, body.ex_date, body.pay_date,
               body.amount_per_unit, body.total_received, body.reinvested_amount,
-              body.reinvest_asset, body.reinvest_price, body.reinvest_units, currency))
+              body.reinvest_asset, body.reinvest_price, body.reinvest_units, currency, wallet))
     return {"ok": True, "id": div_id, "currency": currency, "check": check}
 
 
@@ -4414,6 +4459,8 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
         for row in closed_rows:
             if field == "month":
                 key = str(row.get("date_exit") or row.get("date_entry") or "")[:7]
+            elif field == "day":
+                key = str(row.get("date_exit") or row.get("date_entry") or "")[:10]
             else:
                 key = str(row.get(field) or "").strip()
             if not key and not allow_empty:
@@ -4433,13 +4480,14 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
             }
             for key, val in buckets.items()
         ]
-        if field == "month":
+        if field in ("month", "day"):
             return sorted(result, key=lambda item: item[output_key])
         return sorted(result, key=lambda item: -item["pnl"])
 
     by_sector = _aggregate("sector", "sector")
     by_strategy = _aggregate("strategy_name", "strategy_name")
     by_month = _aggregate("month", "month")
+    by_day = _aggregate("day", "date")
     top_symbols = _aggregate("symbol", "symbol")[:15]
     subport_rows = [
         {
@@ -4614,6 +4662,7 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
         "by_sector":     _fmt(by_sector),
         "by_strategy":   _fmt(by_strategy),
         "by_month":      _fmt(by_month),
+        "by_day":        _fmt(by_day),
         "top_symbols":   _fmt(top_symbols),
         "by_subport":    _fmt(by_subport),
         "open_by_sector": [

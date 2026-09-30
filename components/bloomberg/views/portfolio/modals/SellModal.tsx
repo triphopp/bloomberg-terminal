@@ -4,17 +4,32 @@ import { useCallback, useEffect, useState } from "react";
 import { type FeeEstimate, feeBreakdown, fetchFeeEstimate } from "../accounting-types";
 import { type Colors, fmt, fmtAmt, fmtPx } from "../helpers";
 import type { Trade } from "../types";
+import { NumInput } from "../ui/NumInput";
+import { WalletSelect, useInvalidateLedger } from "../ui/ledger-client";
 
 interface Props {
   target: Trade;
   avgEntry?: number; // weighted avg across all lots (position-level)
   allLots?: Trade[]; // all open lots — enables multi-lot full sell
+  /** The receiving account a sell slip printed ("DIME! FCD") — ledger routing. */
+  settlementLabel?: string | null;
   colors: Colors;
   onClose: () => void;
   onSold: () => void;
 }
 
-export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }: Props) {
+export function SellModal({
+  target,
+  avgEntry,
+  allLots,
+  settlementLabel,
+  colors,
+  onClose,
+  onSold,
+}: Props) {
+  // Ledger v2: which wallet the proceeds land in ("" = auto: slip → rule → default).
+  const [wallet, setWallet] = useState("");
+  const invalidateLedger = useInvalidateLedger();
   const effectiveAvgEntry = avgEntry ?? target.price_entry;
   const positionVolume = allLots ? allLots.reduce((s, l) => s + l.volume, 0) : target.volume;
 
@@ -72,6 +87,10 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
   const handleSell = useCallback(async () => {
     // One order, one fee: each lot's call carries its share by volume. Omitted
     // when there is no schedule and nothing typed (the backend then charges none).
+    const walletBody = {
+      ...(wallet ? { wallet } : {}),
+      ...(settlementLabel ? { settlement_label: settlementLabel } : {}),
+    };
     const feeShare = (vol: number) =>
       totalFee != null && soldVolume > 0
         ? { commission: Math.round(((totalFee * vol) / soldVolume) * 1e6) / 1e6 }
@@ -98,6 +117,7 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
               sell_price: price,
               sell_date: sellDate,
               ...feeShare(lot.volume),
+              ...walletBody,
             }),
           });
           if (!r.ok) throw new Error(await r.text());
@@ -119,6 +139,7 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
               sell_price: price,
               sell_date: sellDate,
               ...feeShare(consume),
+              ...walletBody,
             }),
           });
           if (!r.ok) throw new Error(await r.text());
@@ -135,10 +156,12 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
             sell_price: price,
             sell_date: sellDate,
             ...feeShare(soldVolume),
+            ...walletBody,
           }),
         });
         if (!r.ok) throw new Error(await r.text());
       }
+      invalidateLedger();
       onSold();
       onClose();
     } catch (e) {
@@ -156,6 +179,9 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
     sellPartial,
     soldVolume,
     totalFee,
+    wallet,
+    settlementLabel,
+    invalidateLedger,
     onSold,
     onClose,
   ]);
@@ -264,9 +290,8 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
             >
               Sell Volume (remaining: {positionVolume.toLocaleString()})
             </label>
-            <input
+            <NumInput
               id="sell-volume"
-              type="number"
               step="any"
               className="w-full px-2 py-1 text-[10px] font-mono border mt-0.5 outline-none"
               style={{ background: "#050505", borderColor: colors.border, color: colors.text }}
@@ -286,9 +311,8 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
           >
             Sell Price
           </label>
-          <input
+          <NumInput
             id="sell-price"
-            type="number"
             step="any"
             className="w-full px-2 py-1 text-[10px] font-mono border mt-0.5 outline-none"
             style={{ background: "#050505", borderColor: colors.border, color: colors.text }}
@@ -323,6 +347,19 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
           />
         </div>
 
+        <div className="mb-3">
+          <WalletSelect
+            accountId={target.account_id}
+            currency={target.pos_currency || target.currency}
+            symbol={target.symbol}
+            label={settlementLabel}
+            value={wallet}
+            onChange={setWallet}
+            colors={colors}
+            caption="PROCEEDS LAND IN"
+          />
+        </div>
+
         {/* Broker fees */}
         <div className="mb-3">
           <label
@@ -333,9 +370,8 @@ export function SellModal({ target, avgEntry, allLots, colors, onClose, onSold }
           >
             Fees (commission + VAT + SEC + TAF)
           </label>
-          <input
+          <NumInput
             id="sell-fee"
-            type="number"
             step="any"
             className="w-full px-2 py-1 text-[10px] font-mono border mt-0.5 outline-none"
             style={{ background: "#050505", borderColor: colors.border, color: "#facc15" }}

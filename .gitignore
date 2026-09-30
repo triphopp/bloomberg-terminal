@@ -115,3 +115,9 @@ backend/evidence/
 
 # sync device id — machine-local (backend/sync/oplog.py)
 backend/.oplog_device_*
+
+# Research graphs (backend/config.py GRAPHS_DIR) — the pages live in Google Drive
+# (My Drive/…/graphs), not in git. Files stay on disk for the app; only
+# _template.html is tracked so a fresh clone can still render new graphs.
+research/graphs/*
+!research/graphs/_template.html

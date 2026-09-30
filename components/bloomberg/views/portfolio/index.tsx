@@ -1,4 +1,5 @@
 "use client";
+import { installLedgerCorrectionRetry } from "@/lib/ledger-correction";
 import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
 import { Loader2, RefreshCw } from "lucide-react";
@@ -110,6 +111,8 @@ function TabStrip<T extends string>({
 export function PortfolioView() {
   const [isDarkMode] = useAtom(isDarkModeAtom);
   const colors = isDarkMode ? bloombergColors.dark : bloombergColors.light;
+  // A write into a period agreed with the broker asks for a reason (lib/ledger-correction.ts).
+  useEffect(() => installLedgerCorrectionRetry(), []);
 
   const [activeAccount, setActiveAccount] = useState<string>("all");
   const [currency, setCurrency] = useState<"THB" | "USD">("THB");

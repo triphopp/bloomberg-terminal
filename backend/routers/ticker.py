@@ -15,6 +15,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
 
@@ -23,18 +24,56 @@ from cache import TTLCache
 router = APIRouter(prefix="/api/ticker", tags=["ticker"])
 
 # ── Cache policy ──────────────────────────────────────────────────────────────
-# Two ages, not one. FRESH_TTL is how long a payload is served with no work at
-# all; STALE_TTL is how long a payload that was once good keeps being served
-# WHILE a background thread refreshes it. Between the two, the crawl shows real
-# numbers a minute or two old instead of "MARKET DATA LOADING..." — it is
-# ambient context, and a slightly late S&P print beats an empty bar.
+# Three ages, and they answer different questions:
 #
-# FRESH_TTL sits deliberately UNDER the frontend's 60s poll. At 60 it matched
-# the poll exactly, and matched CACHE_TTL on the market and heatmap caches too,
-# so an entry expired at the instant the next request arrived and nearly every
-# poll paid the full cold path (measured: 23.5s cold vs 0.21s warm).
+#   FRESH_TTL    — when a READ should start a background refresh.
+#   STALE_GRACE  — how far past that the payload may drift before the bar says
+#                  STALE. The `stale` flag is for the viewer: "these numbers are
+#                  older than they should be", i.e. refreshes are failing.
+#   STALE_TTL    — past this, a payload is too old to show at all.
+#
+# Refresh-on-read means an entry is always as old as the gap since the previous
+# poll when the next poll arrives. With the frontend polling every 90s against a
+# 45s FRESH_TTL, that gap (~81s) was over FRESH_TTL on every poll — and the flag
+# used to be tied to FRESH_TTL, so the bar read STALE nearly all the time while
+# the data was ~1.5 min old and perfectly healthy. The flag now waits for
+# FRESH_TTL + STALE_GRACE, which a working refresh cycle never reaches: it takes
+# at least one failed refresh (a degraded build keeps the old payload).
+#
+# Cost: the underlying market/heatmap/FX caches expire at 60s, so each refresh is
+# one warm fan-out to Yahoo (~4 batched calls). Weekdays that is one per poll.
+# From the FX close on Friday (17:00 ET) to the FX open on Sunday (17:00 ET)
+# nothing in the crawl trades, so FRESH_TTL stretches to QUIET_FRESH_TTL and the
+# weekend costs ~6 builds an hour instead of ~40. QUIET_FRESH_TTL must stay under
+# STALE_TTL, or the entry is evicted first and every refresh goes cold (inline).
 FRESH_TTL = 45
-STALE_TTL = 900  # 15 min — past this, a payload is too old to show at all
+QUIET_FRESH_TTL = 600  # 10 min — weekend, nothing in the crawl is moving
+STALE_GRACE = 180      # two missed 90s polls' worth before the bar says STALE
+STALE_TTL = 900        # 15 min — past this, a payload is too old to show at all
+
+_ET = ZoneInfo("America/New_York")
+
+
+def _market_quiet(now: datetime | None = None) -> bool:
+    """True between the Friday FX close and the Sunday FX open (17:00 ET both).
+
+    FX is the last thing in the crawl to close and the first to reopen, so this
+    window is when every row is frozen. Holidays are not modelled — a weekday
+    holiday just costs normal weekday refreshes.
+    """
+    et = (now or datetime.now(timezone.utc)).astimezone(_ET)
+    wd = et.weekday()  # Mon=0 … Sun=6
+    if wd == 5:
+        return True
+    if wd == 4:
+        return et.hour >= 17
+    if wd == 6:
+        return et.hour < 17
+    return False
+
+
+def _fresh_ttl(now: datetime | None = None) -> float:
+    return QUIET_FRESH_TTL if _market_quiet(now) else FRESH_TTL
 
 # A refresh that returned nothing is retried on this cadence rather than on
 # every request, so an upstream 429 does not turn into a stampede.
@@ -476,8 +515,9 @@ def get_ticker(account_id: str = Query("all")):
     Bloomberg crawl data: indices + VIX + commodities + FX + active alerts.
 
     Stale-while-revalidate: a payload older than FRESH_TTL is still returned
-    (flagged `stale`) while a background thread refreshes it, so the bar only
-    ever goes empty on the very first request of a cold process.
+    while a background thread refreshes it, so the bar only ever goes empty on
+    the very first request of a cold process. It is flagged `stale` only past
+    FRESH_TTL + STALE_GRACE — see the cache-policy comment at the top.
 
     `account_id` is accepted and ignored — see `_CACHE_KEY`. It is kept so an
     older frontend build still gets a 200 rather than a 422.
@@ -487,9 +527,15 @@ def get_ticker(account_id: str = Query("all")):
     entry = _cache.get(key)  # STALE_TTL view — see the _cache comment above
     if entry is not None:
         fetched_at, payload = entry
-        if time.monotonic() - fetched_at < FRESH_TTL:
+        age = time.monotonic() - fetched_at
+        fresh_ttl = _fresh_ttl()
+        if age < fresh_ttl:
             return payload
         _spawn_refresh(key)
+        # Past FRESH_TTL is normal between polls — only flag what a working
+        # refresh cycle would never have let get this old.
+        if age < fresh_ttl + STALE_GRACE:
+            return payload
         return {**payload, "stale": True}
 
     # Cold process, or nothing good for STALE_TTL. Build inline — there is

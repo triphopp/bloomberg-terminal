@@ -1,4 +1,5 @@
 import { PYTHON_API as API } from "@/lib/constants";
+import { ledgerHeaders } from "@/lib/ledger-proxy";
 import { NextResponse } from "next/server";
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -6,6 +7,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     const { id } = await params;
     const r = await fetch(`${API}/api/v2/portfolio/cash/adjustments/${id}`, {
       method: "DELETE",
+      headers: ledgerHeaders(_req),
       signal: AbortSignal.timeout(10_000),
     });
     const d = await r.json();

@@ -262,9 +262,11 @@ export function AlertTicker() {
   const [enabled] = useAtom(tickerEnabledAtom);
   const { data, isLoading, isError } = useQuery<TickerResponse>({
     queryKey: ["ticker"],
-    // Poll at 90s against a 45s server-side freshness window, so a poll that
-    // arrives on schedule always lands on a warm entry. At 60s against a 60s
-    // cache the two expired together and most polls paid the cold fan-out.
+    // Poll at 90s. The backend serves its cached payload at once and refreshes
+    // behind it when older than 45s (10 min over the weekend), so each poll
+    // costs at most one warm rebuild and never waits on it. `stale` only comes
+    // back once refreshes have been failing — see backend/routers/ticker.py.
+    // Hidden tabs don't poll (React Query's refetchIntervalInBackground=false).
     queryFn: () => fetch("/api/ticker").then((r) => r.json()),
     refetchInterval: 90_000,
     staleTime: 45_000,

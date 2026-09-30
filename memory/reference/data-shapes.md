@@ -33,6 +33,8 @@ Exports in `components/bloomberg/views/portfolio/accounting-types.ts`:
 
 The first preparation phase added no persisted schema. Existing `ledger_events` remains empty until reviewed migration; method selection affects preview only.
 
+**Ledger v2 event (2026-09-29, `/api/v2/ledger/events`):** `{id, account_id, wallet, trade_date, book_date, settle_date, trade_time, type, symbol, qty, price, multiplier, position_effect: 'OPEN'|'CLOSE'|null, gross, fee, vat, tax, fee_basis: 'ESTIMATED'|'POSTED'|null, net_cash, currency, fx_rate, broker_ref, link_id, reverses_id, category, evidence_ref, source: 'MANUAL'|'IMPORT'|'BACKFILL'|'BACKFILL_ESTIMATE'|'SHADOW', source_key, source_ref, note, created_at, updated_at, reversed: bool}` — every number is a **decimal string** (`"-9985.59"`, `"0"`), never a float. Types add `OPENING`, `OPTION_EXPIRE`, `ASSIGN`, `EXERCISE`. Balance row: `{account_id, wallet, currency, balance, events, closed_through}`. Error body: `{code, detail, evidence}`. Slip OCR form (`/api/v2/portfolio/slip/read`) adds `settlement_wallet` ("DIME! FCD", from บัญชีชำระเงิน / บัญชีรับเงิน). Route: `{mode, wallet, reason, choices: LedgerWallet[]}`.
+
 **Evidence phase extension (same date):** `broker_statements` is now persisted. GET `/ledger/statements` returns `{count,statements:[{statement:{id,account_id,as_of,currency,cash,market_value,holdings_json,source_ref,source_note,supersedes_id,positions,...},comparison}]}`. `comparison` has `statement_cash`, nullable `reconstructed_cash_before_offsets`/`cash_difference`, `missing_fx_event_ids`, `O1`, `O2`, `quantity_differences`, `matched`, `market_value_checked_against_history:false`, `broker_source_verified:false`, `basis`. POST returns `{id,recorded:true,comparison,note}`. A source reference is user supplied; no broker file is authenticated by the app. `cash_adjustments.category` is a new non-null TEXT field, old rows default `UNKNOWN`; cash adjustment TypeScript interface adds optional `category` for compatibility.
 
 **Dime Activity image import (same date):** `broker_executions` stores `{id,account_id,broker,symbol,side:'BUY'|'SELL',executed_at_local,display_timezone:'UNKNOWN',quantity,unit_price,instrument_ccy:'USD',order_amount?,order_ccy?,source_image,source_sha256,source_note,created_at,updated_at}`. Quantity/price/amount are decimal strings. Every row cites a SHA-256-checked image. The 29 imported rows appear in existing `/audit-events?table_name=broker_executions` responses; there is no new execution API. This evidence table is excluded from current cash, trade lots, P&L, NAV and `ledger_events` until funding and settlement reconcile. Sale amount is null because the Activity images only show quantity and execution price.
@@ -1663,3 +1665,20 @@ Same as the stop simulator above, with `disciplined` = **DO** (the trades, then 
 ## VaR forecast log (`var_forecasts`, `GET /risk/var-backtest`)
 Row: `forecast_date, account_id, confidence, var_hist_pct, cvar_pct, var_cf_pct, cvar_mc_pct, ensemble_pct, portfolio_value,
 holdings` (JSON `{yf_symbol: {"w": NAV weight, "ccy"}}`). Response shape in api-endpoints.md.
+
+## Margin (`GET /api/v2/portfolio/margin/status`) — 2026-09-29
+All money in the ACCOUNT currency (`currency`). Fractions, not percent.
+```
+{enabled: true, scope, account_id, name, broker, currency, cash_is_estimate, cash_reconciled_at, missing: string[],
+ nlv, elv, stock_mv, option_mv, cash, loan, maint_margin, initial_margin, excess_liquidity, available_funds,
+ cushion (EL/NLV | null), gross_leverage, level: "SAFE"|"WATCH"|"WARNING"|"DANGER"|"LIQUIDATION",
+ restricted (AF<0), uses_margin, drop_to_call (fraction | null = never), rise_to_call,
+ lines: [{kind:"stock"|"option", key, symbol, ref, qty, price, mv, maint, initial, maint_rate, rate_source
+          ("REG_T"|"FINRA_4210"|"OVERRIDE"|"COVERED"|"SPREAD"|"NAKED"|"NAKED_NO_SPOT"|"LONG"|combos "+"),
+          covered?, spread?, naked?, level, drop_to_call}],
+ assets: [{key, mv, maint, initial, symbols[], drop_to_call, rise_to_call, level, mm_share}],   // worst level first
+ settings: {scope, account_id, enabled, maint_long, maint_short, initial, overrides:{SYM:rate}, thresholds:{WATCH,WARNING,DANGER}}}
+```
+`overview` → `{accounts: [{scope, account_id, name, currency, level, cushion, excess_liquidity, available_funds, nlv, maint_margin, loan, drop_to_call, rise_to_call, restricted, uses_margin, cash_is_estimate, error?}], worst}`.
+PAPER `GET /api/paper/accounts/{id}/summary` gained `options_value`; `equity` = cash + stocks + options, and `cash` now includes option premium flows.
+

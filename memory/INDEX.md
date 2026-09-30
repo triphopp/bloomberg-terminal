@@ -24,7 +24,8 @@ memory/
 │   ├── data-shapes.md         response shapes + TS interfaces (frontend hardcodes field names)
 │   ├── gotchas.md             error dictionary, anti-patterns, "Where is X?", env var map
 │   ├── terminal-commands.md   command mode (heatmap(US), ALERT, VIEW …)
-│   └── data-catalog.md        data categories available for analysis
+│   ├── data-catalog.md        data categories available for analysis
+│   └── data-sources.md        where to look for data — in-house first, then free APIs
 ├── plans/                ← ⚠️ gitignored — machine-local (completed/ inside)
 ├── sessions/             ← ⚠️ gitignored — machine-local (INDEX.md + reports/)
 └── reports/              ← ⚠️ gitignored — machine-local risk reports
@@ -46,6 +47,7 @@ memory/
 
 | Plan | สถานะ |
 |------|--------|
+| [PORT Margin Maintenance](plans/completed/port-margin-maintenance.md) | ✅ done 2026-09-29 — IBKR Reg T, PORT + PAPER, alerts, PAPER order checks |
 | [PORT AVCO dated replay](plans/port-avco-dated-replay.md) | 🔄 in progress 2026-09-28 |
 | [PORT Risk validity + stop simulator](plans/completed/port-risk-validity.md) | ✅ done 2026-09-29 — STOP SIM, OOS VaR + forecast log, GICS sectors, MAE/MFE replay, NAV-basis VaR |
 | [PORT Trade Guard](plans/completed/port-trade-guard.md) | ✅ done 2026-09-28 — auto stop + light, S/M/L, alerts, HOLD + R report, NAV DD/streak; risk-model issues → `reports/port-risk-model-risk-report.md` |
@@ -58,6 +60,7 @@ memory/
 | [Central DB — Postgres primary + local mirrors](plans/central-db-cloud-primary.md) | 🔄 P0 done (PR #71); mac adopt pending; next P1 version/outbox on SQLite |
 | [Chart render performance](plans/chart-render-perf.md) | 📋 planning — tick O(1), columns, chunked history, cache tiers |
 | [Unified Trade Entry](plans/unified-trade-entry.md) | 🔄 ENTRY รวมหุ้น + option, สลิป option OCR |
+| [PORT Ledger v2 — wallet, period close, SHADOW projection](plans/port-ledger-v2.md) | 🔄 in progress 2026-09-29 — cash/entry redesign |
 | [PORT Accounting Ledger](plans/port-accounting-ledger.md) | 🔄 reconstructed preview + checks; no posted journal / read switch |
 | [PORT Accounting Subsystems](plans/port-accounting-subsystems.md) | 🔄 S0–S7 preparation; migration/activation pending |
 | [PORT Evidence Match](plans/port-evidence-match.md) | 🔄 broker fills ↔ reconstructed trades |
@@ -213,6 +216,7 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 | **TICK DATA board** (7 sections, ยุบและจัดลำดับเองได้, จำลำดับ, bp vs %chg) | `reference/frontend-structure.md` → "MKT — TICK DATA board" |
 | **Ctrl+C แล้ว dev:all ขึ้น traceback** | `reference/gotchas.md` → "npm run dev:all dumps a scary traceback" |
 | Data catalog — ข้อมูลทั้งหมดที่ดึงได้ 17 หมวด | `reference/data-catalog.md` |
+| **หาข้อมูล (มหภาค/ประเทศ/ดอกเบี้ย/บริษัท) — เปิดที่นี่ก่อนค้นเว็บ** — ลำดับ MCP → backend → free API (IMF, WB, BIS, OECD, BOT) | `reference/data-sources.md` |
 | **วิเคราะห์พื้นฐาน [ticker]** — data ที่ต้องหา + 12 หัวข้อ report มือใหม่ + กฎ fact-only | `reference/fundamental-analysis.md` |
 | **SEC Thailand API** — endpoints, key config, One Report structure (old portal closed 2026-06-30) | `reference/api-endpoints.md` → SEC sections |
 | International sectors (TH/CN/KR/EU) + sector constituents (ทำเสร็จแล้ว) | `plans/completed/international-sectors.md` |

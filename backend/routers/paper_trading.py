@@ -130,7 +130,45 @@ def _get_cash(conn, account_id: str) -> float:
             cash -= cost
         else:
             cash += f["quantity"] * f["price"] - f["commission"]
-    return round(cash, 2)
+    return round(cash + _option_cash_flow(conn, account_id), 2)
+
+
+def _option_cash_flow(conn, account_id: str) -> float:
+    """Premium paid/received on paper options, net of commission.
+
+    Options used to live outside cash entirely: a written put's premium never
+    arrived and a bought call never cost anything, so equity ignored every
+    option result and the margin model (routers/margin.py) had no true Net
+    Liq. Open: −entry·qty·mult (qty signed, so a short brings cash in).
+    Closed / expired / exercised: + exit·qty·mult on top (exercise is cash-
+    settled at intrinsic here, expired worthless has exit_price 0).
+    """
+    flow = 0.0
+    for o in conn.execute(
+        "SELECT quantity, entry_price, exit_price, commission, multiplier, status "
+        "FROM paper_option_positions WHERE account_id = ?", (account_id,)
+    ).fetchall():
+        mult = o["multiplier"] or 100
+        flow -= (o["entry_price"] or 0) * o["quantity"] * mult + (o["commission"] or 0)
+        if o["status"] != "open" and o["exit_price"] is not None:
+            flow += o["exit_price"] * o["quantity"] * mult
+    return flow
+
+
+def _open_option_rows(conn, account_id: str) -> list[dict]:
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM paper_option_positions WHERE account_id = ? AND status = 'open'",
+        (account_id,),
+    ).fetchall()]
+
+
+def _option_value(rows: list[dict], currency: str = "USD") -> float:
+    """Market value of open paper options (signed), same valuation as PORT."""
+    if not rows:
+        return 0.0
+    from portfolio_options import value_option_rows
+    valued = value_option_rows(rows, currency, with_greeks=False)
+    return sum(float(v.get("market_value_native") or 0) for v in valued)
 
 
 def _get_positions_from_db(conn, account_id: str) -> list[dict]:
@@ -152,6 +190,22 @@ def _apply_slippage(price: float, side: str) -> float:
 def _compute_commission(quantity: float, price: float) -> float:
     comm = quantity * price * DEFAULT_COMMISSION_RATE
     return round(max(comm, DEFAULT_COMMISSION_MIN), 2)
+
+
+def _buying_power_reject(conn, account_id: str, symbol: str, quantity: float,
+                         price: float, cost: float) -> Optional[str]:
+    """Why a buy cannot fill, or None. Cash account: cost ≤ cash. Margin
+    account (PAPER → DASHBOARD → MARGIN): Reg T available funds stay ≥ 0 after
+    the fill, as IBKR checks it (routers/margin.paper_check)."""
+    from routers import margin as margin_router
+    if margin_router.paper_enabled(account_id):
+        import margin as mg
+        line = mg.StockLine(symbol.upper(), symbol.upper(), quantity, price, True, symbol.upper())
+        return margin_router.paper_check(account_id, stock=line, cash_delta=-cost)
+    cash = _get_cash(conn, account_id)
+    if cost > cash:
+        return f"Insufficient cash. Need {cost:.2f}, have {cash:.2f}"
+    return None
 
 
 def _execute_fill(conn, order_id: str, account_id: str, symbol: str,
@@ -256,6 +310,14 @@ def _check_pending_orders(conn, account_id: Optional[str] = None) -> int:
                 conn.execute("UPDATE paper_orders SET status='expired' WHERE id=?", (order["id"],))
                 continue
 
+        if should_fill and order["side"] == "buy":
+            qty = order["quantity"] - order["filled_qty"]
+            reject = _buying_power_reject(conn, order["account_id"], sym, qty, fill_price,
+                                          qty * fill_price + _compute_commission(qty, fill_price))
+            if reject:
+                conn.execute("UPDATE paper_orders SET status='cancelled' WHERE id=?", (order["id"],))
+                continue
+
         if should_fill:
             try:
                 remaining = order["quantity"] - order["filled_qty"]
@@ -286,6 +348,7 @@ def _ensure_daily_snapshot(conn, account_id: str) -> None:
         pos_value = sum(p["quantity"] * (prices.get(p["symbol"]) or 0) for p in positions)
     else:
         pos_value = 0.0
+    pos_value += _option_value(_open_option_rows(conn, account_id))
 
     conn.execute(
         "INSERT OR REPLACE INTO paper_snapshots (id, account_id, date, equity, cash, positions_value) "
@@ -344,6 +407,7 @@ async def account_summary(account_id: str):
 
         positions = _get_positions_from_db(conn, account_id)
         cash = _get_cash(conn, account_id)
+        option_rows = _open_option_rows(conn, account_id)
 
     if positions:
         symbols = [p["symbol"] for p in positions]
@@ -359,7 +423,8 @@ async def account_summary(account_id: str):
         unrealized = 0.0
         total_realized = 0.0
 
-    equity = cash + pos_value
+    options_value = _option_value(option_rows, acc["currency"])
+    equity = cash + pos_value + options_value
     initial = acc["initial_balance"]
     total_return = equity - initial
     total_return_pct = (total_return / initial * 100) if initial else 0
@@ -371,6 +436,7 @@ async def account_summary(account_id: str):
         "initial_balance": initial,
         "cash": round(cash, 2),
         "positions_value": round(pos_value, 2),
+        "options_value": round(options_value, 2),
         "equity": round(equity, 2),
         "unrealized_pnl": round(unrealized, 2),
         "realized_pnl": round(total_realized, 2),
@@ -418,11 +484,11 @@ async def place_order(body: OrderCreate):
             fill_price = _apply_slippage(current, body.side)
 
             if body.side == "buy":
-                cash = _get_cash(conn, body.account_id)
                 cost = body.quantity * fill_price + _compute_commission(body.quantity, fill_price)
-                if cost > cash:
+                reject = _buying_power_reject(conn, body.account_id, symbol, body.quantity, fill_price, cost)
+                if reject:
                     conn.execute("UPDATE paper_orders SET status='cancelled' WHERE id=?", (order_id,))
-                    raise HTTPException(400, f"Insufficient cash. Need {cost:.2f}, have {cash:.2f}")
+                    raise HTTPException(400, reject)
 
             if body.side == "sell":
                 pos = conn.execute(
@@ -595,7 +661,20 @@ async def place_option_order(body: OptionOrderCreate):
     notional = abs(signed_qty) * fill_price * 100
     commission = abs(signed_qty) * OPTION_COMMISSION
 
-    if body.side == "buy":
+    from routers import margin as margin_router
+    if margin_router.paper_enabled(body.account_id):
+        # Reg T: a short needs its requirement, a long is paid in full out of
+        # ELV — both are "available funds stay ≥ 0" (routers/margin.py).
+        import margin as mg
+        from portfolio_options import underlying_spot
+        line = mg.OptionLine(underlying, f"{underlying} {body.strike:g}{body.option_type[0].upper()}",
+                             body.option_type, body.strike, body.expiry, signed_qty, 100.0,
+                             fill_price, underlying_spot(underlying))
+        reject = margin_router.paper_check(
+            body.account_id, option=line, cash_delta=-signed_qty * fill_price * 100 - commission)
+        if reject:
+            raise HTTPException(400, reject)
+    elif body.side == "buy":
         cash = _get_cash_from_db(body.account_id)
         total_cost = notional + commission
         if total_cost > cash:

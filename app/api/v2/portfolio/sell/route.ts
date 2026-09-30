@@ -1,4 +1,5 @@
 import { PYTHON_API as API } from "@/lib/constants";
+import { ledgerHeaders } from "@/lib/ledger-proxy";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
@@ -6,7 +7,7 @@ export async function POST(req: Request) {
     const body = await req.json();
     const r = await fetch(`${API}/api/v2/portfolio/sell`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...ledgerHeaders(req) },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15_000),
     });

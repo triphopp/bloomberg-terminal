@@ -111,6 +111,7 @@ import {
 import { patchRowGroups } from "../lib/live-quotes";
 import { calcHurst } from "../lib/market-utils";
 import { fmtPriceStd } from "../lib/number-format";
+import { resolveSymbol } from "../lib/resolve-symbol";
 import { recordSearchHit } from "../lib/search-stats";
 import { openSymbolsOf } from "../lib/stream-cadence";
 import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
@@ -1761,19 +1762,22 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     [setCompareSymbols]
   );
 
-  const handleSearchSubmit = useCallback(() => {
-    const sym = searchInput.trim().toUpperCase();
-    if (!sym) return;
-    setSelectedSymbol(sym);
-    setCompareSymbols([]);
-    setSelectedLabel(sym);
-    setSelectedTickId(null);
-    addToRecent(sym, sym);
-    recordSearchHit(sym);
+  const handleSearchSubmit = useCallback(async () => {
+    const typed = searchInput.trim().toUpperCase();
+    if (!typed) return;
     setSearchInput("");
     setShowDropdown(false);
     setDropdownIdx(-1);
     searchRef.current?.blur();
+    // Typed, not picked — CPALL has to become CPALL.BK before any data fetch
+    const sym = await resolveSymbol(typed);
+    const label = displaySymbol({ symbol: sym });
+    setSelectedSymbol(sym);
+    setCompareSymbols([]);
+    setSelectedLabel(label);
+    setSelectedTickId(null);
+    addToRecent(sym, label);
+    recordSearchHit(sym);
   }, [searchInput, addToRecent, setCompareSymbols]);
 
   const handleSelectSuggestion = useCallback(

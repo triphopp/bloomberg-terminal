@@ -21,6 +21,7 @@ import { type Colors, fmtAmt, fmtAxis, pnlColor } from "../helpers";
 import type { Dividend, Summary, Trade } from "../types";
 import { AccBadge } from "../ui/AccBadge";
 import { AllocationBasisCard } from "../ui/AllocationBasisCard";
+import { DailyPnlHeatmap } from "../ui/DailyPnlHeatmap";
 import { NavGrowthChart } from "../ui/NavGrowthChart";
 import { OptionAttributionCard } from "../ui/OptionAttributionCard";
 import {
@@ -869,6 +870,7 @@ export function AnalyticsTab({
     by_strategy: any[];
     // biome-ignore lint/suspicious/noExplicitAny: untyped API response
     by_month: any[];
+    by_day?: { date: string; pnl: number; cnt: number; wins: number }[];
     // biome-ignore lint/suspicious/noExplicitAny: untyped API response
     top_symbols: any[];
     // biome-ignore lint/suspicious/noExplicitAny: untyped API response
@@ -925,10 +927,11 @@ export function AnalyticsTab({
     }
     return "ALL";
   });
-  const [monthlyView, setMonthlyView] = useState<"CHART" | "TABLE">(() => {
+  const [monthlyView, setMonthlyView] = useState<"CHART" | "TABLE" | "HEATMAP">(() => {
     if (typeof window === "undefined") return "CHART";
     try {
-      if (localStorage.getItem(MONTHLY_VIEW_KEY) === "TABLE") return "TABLE";
+      const v = localStorage.getItem(MONTHLY_VIEW_KEY);
+      if (v === "TABLE" || v === "HEATMAP") return v;
     } catch {
       /* ignore */
     }
@@ -1938,7 +1941,7 @@ export function AnalyticsTab({
             <Card
               colors={colors}
               className={ts && ts.closed > 0 ? "xl:col-span-2" : "xl:col-span-3"}
-              title="MONTHLY P&L"
+              title="REALIZED P&L"
               sub={
                 <>
                   total <span style={{ color: pnlColor(totalPnl) }}>{money(totalPnl, true)}</span> ·
@@ -1954,6 +1957,7 @@ export function AnalyticsTab({
                   options={[
                     ["CHART", "CHART"],
                     ["TABLE", "TABLE"],
+                    ["HEATMAP", "HEATMAP"],
                   ]}
                   value={monthlyView}
                   onChange={setMonthlyView}
@@ -1961,7 +1965,9 @@ export function AnalyticsTab({
               }
               note={`Bars = realized P&L closed in the month (left axis); blue line = running total (right axis). ${economicPnlTitle}`}
             >
-              {monthlyView === "CHART" ? (
+              {monthlyView === "HEATMAP" ? (
+                <DailyPnlHeatmap data={analytics?.by_day ?? []} colors={colors} money={money} />
+              ) : monthlyView === "CHART" ? (
                 <ResponsiveContainer width="100%" height={240}>
                   <ComposedChart
                     data={monthData.map((m, i) => ({

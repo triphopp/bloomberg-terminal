@@ -8,7 +8,9 @@ import { CashReconcileModal } from "../modals/CashReconcileModal";
 import { ConfirmDeleteModal } from "../modals/ConfirmDeleteModal";
 import type { CashEntry, CashFlowForm, CashFlowType, Dividend, Summary, Trade } from "../types";
 import { LedgerFilterBar } from "../ui/LedgerFilterBar";
+import { NumInput } from "../ui/NumInput";
 import { SubPortSelect } from "../ui/SubPortSelect";
+import { LedgerWalletStrip } from "../ui/ledger-client";
 
 type SubTab = "cash" | "dividends" | "reinvest";
 
@@ -543,6 +545,7 @@ export function CashTab({
 
   return (
     <div>
+      <LedgerWalletStrip accountId={accountId} thbPerUsd={summary?.thb_per_usd} colors={colors} />
       {/* Header bar */}
       <div
         className="flex items-center gap-2 px-3 py-1.5 border-b flex-wrap"
@@ -802,9 +805,8 @@ export function CashTab({
               >
                 AMOUNT (THB)
               </label>
-              <input
+              <NumInput
                 id="cash-amount"
-                type="number"
                 min={0}
                 style={inputStyle}
                 value={cashForm.amount || ""}
@@ -960,9 +962,8 @@ export function CashTab({
               >
                 AMOUNT
               </label>
-              <input
+              <NumInput
                 id="tr-amount"
-                type="number"
                 style={inputStyle}
                 value={transferForm.amount || ""}
                 onChange={(e) =>
@@ -1128,9 +1129,8 @@ export function CashTab({
               >
                 AMOUNT / UNIT
               </label>
-              <input
+              <NumInput
                 id="div-amount"
-                type="number"
                 step="0.01"
                 style={inputStyle}
                 value={divForm.amount_per_unit || ""}
@@ -1152,9 +1152,8 @@ export function CashTab({
               >
                 TOTAL RECEIVED (after tax)
               </label>
-              <input
+              <NumInput
                 id="div-total"
-                type="number"
                 step="0.01"
                 style={inputStyle}
                 value={divForm.total_received || ""}
@@ -1170,9 +1169,8 @@ export function CashTab({
               <label htmlFor="div-reinvest-amt" className="text-[8px]" style={{ color: "#c084fc" }}>
                 REINVEST AMOUNT
               </label>
-              <input
+              <NumInput
                 id="div-reinvest-amt"
-                type="number"
                 step="0.01"
                 style={inputStyle}
                 value={divForm.reinvested_amount || ""}
@@ -1210,9 +1208,8 @@ export function CashTab({
               >
                 PRICE / UNIT
               </label>
-              <input
+              <NumInput
                 id="div-reinvest-price"
-                type="number"
                 step="0.01"
                 style={inputStyle}
                 value={divForm.reinvest_price || ""}
@@ -1233,9 +1230,8 @@ export function CashTab({
                 >
                   UNITS
                 </label>
-                <input
+                <NumInput
                   id="div-reinvest-units"
-                  type="number"
                   step="0.001"
                   style={inputStyle}
                   value={divForm.reinvest_units || ""}

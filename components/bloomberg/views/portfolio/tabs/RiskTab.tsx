@@ -13,6 +13,7 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { type Colors, fmt, fmtAmt, fmtPx, fmtQty, pnlColor } from "../helpers";
 import { CotCrowdingPanel } from "../ui/CotCrowdingPanel";
+import { MarginCard } from "../ui/MarginCard";
 import { TradeGuardCard } from "../ui/TradeGuardCard";
 import { VarValidationCard } from "../ui/VarValidationCard";
 import { WhatIfSimPanel } from "../ui/WhatIfSimPanel";
@@ -330,6 +331,7 @@ export function RiskTab({
 
       {subTab === "overview" && (
         <div className="space-y-2 mb-2">
+          <MarginCard scope="port" accountId={accountId} colors={colors} />
           <TradeGuardCard accountId={accountId} currency={currency} colors={colors} />
           <WhatIfSimPanel accountId={accountId} colors={colors} erc={metrics?.trim_signals} />
         </div>

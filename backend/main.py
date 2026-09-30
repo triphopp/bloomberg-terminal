@@ -59,6 +59,7 @@ from db import (
     init_alerts_schema,
     init_thesis_schema,
     init_guard_schema,
+    init_margin_schema,
     init_zettel_schema,
     init_graphs_schema,
     init_series_schema,
@@ -80,12 +81,16 @@ from routers import changes as changes_router
 from change_feed import init_change_feed
 from routers.chart_drawings import init_chart_drawings_schema
 from routers import dev as dev_router
+from routers import margin as margin_router
+from routers import ledger as ledger_router
+import ledger as ledger_core
 import sync
 from sync import oplog
 from sources.errors import UpstreamRateLimited, is_rate_limit
 from sync.gate import is_synced_write, should_gate
 from alerts import scheduler as alert_scheduler
 import guard_scheduler
+import margin_scheduler
 import iv_scheduler
 import series_scheduler
 
@@ -107,6 +112,10 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Market Data API", lifespan=lifespan)
 
+# Ledger v2: X-Ledger-Correction header → reason for booking a legacy edit that
+# reaches into a closed period (backend/ledger.py).
+app.add_middleware(ledger_router.LedgerCorrectionMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -119,6 +128,7 @@ init_db()
 init_portfolio_v2()
 init_thesis_schema()   # must precede init_sync_layer(): it adds updated_at + triggers
 init_guard_schema()    # same: guard_overrides is synced
+init_margin_schema()   # same: margin_settings is synced
 init_zettel_schema()   # same ordering reason as the thesis schema above
 init_graphs_schema()   # index for research/graphs; no sync triggers, order free
 init_series_schema()   # generic indicator series; must precede init_sync_layer()
@@ -156,6 +166,9 @@ alert_scheduler.start_background_scan()
 
 # ── TRADE GUARD: flag transitions → alert feed (backend/guard_scheduler.py) ──
 guard_scheduler.start_background_scan()
+
+# ── MARGIN: account level worsens → alert feed (backend/margin_scheduler.py) ──
+margin_scheduler.start_background_scan()
 
 # ── ATM IV snapshots: daily recorder (no-ops once the day is covered) ─────────
 # The provider exposes no IV history, so a day nobody records is a permanent hole
@@ -202,6 +215,7 @@ app.include_router(circuit_breaker.router)
 app.include_router(listing_gate.router)
 app.include_router(sectors.router)
 app.include_router(portfolio_v2.router)
+app.include_router(ledger_router.router, tags=["Ledger"])
 from routers import slip_ocr as slip_ocr_router  # noqa: E402  (engine in backend/slip_ocr/)
 app.include_router(slip_ocr_router.router, tags=["Slip OCR"])
 app.include_router(theses.router, tags=["Theses"])
@@ -212,6 +226,7 @@ app.include_router(chart_drawings.router)
 app.include_router(changes_router.router, tags=["Changes"])
 app.include_router(backtest_v2.router)
 app.include_router(risk.router)
+app.include_router(margin_router.router, tags=["Margin"])
 app.include_router(allocation.router)
 app.include_router(country_rotation.router)
 app.include_router(sector.router)
@@ -294,6 +309,13 @@ def _rate_limited_response(request: Request, exc: BaseException) -> JSONResponse
     err = UpstreamRateLimited("Yahoo Finance")
     return JSONResponse(status_code=err.status_code, content={"detail": err.detail},
                         headers=err.headers)
+
+
+@app.exception_handler(ledger_core.LedgerError)
+async def _ledger_error_handler(request: Request, exc: ledger_core.LedgerError):
+    """Refusals from the ledger — including a legacy PORT write refused because
+    it reaches into a closed period (db.get_db → ledger.flush_dirty)."""
+    return JSONResponse(status_code=exc.status, content=exc.as_dict())
 
 
 @app.exception_handler(Exception)

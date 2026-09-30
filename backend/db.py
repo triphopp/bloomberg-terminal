@@ -70,14 +70,29 @@ def get_db():
     # _ensure_wal_mode() at startup, instead of on all 150+ get_db() call
     # sites' every invocation.
     conn.execute("PRAGMA foreign_keys = ON")
+    mark = _ledger_mark(conn)
     try:
         yield conn
+        # SHADOW accounts: project this transaction's legacy writes into the
+        # ledger before committing, so a write the ledger refuses (a closed
+        # period) never lands in the legacy tables either.
+        if mark is not None and conn.total_changes:
+            import ledger
+            ledger.flush_dirty(conn, mark)
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
+
+
+def _ledger_mark(conn: sqlite3.Connection) -> Optional[int]:
+    """Highest ledger_dirty id before this connection writes (None = no table)."""
+    try:
+        return conn.execute("SELECT COALESCE(MAX(id), 0) FROM ledger_dirty").fetchone()[0]
+    except sqlite3.OperationalError:
+        return None
 
 
 def _ensure_wal_mode() -> None:
@@ -1109,69 +1124,275 @@ LEDGER_EVENT_TYPES: tuple[str, ...] = (
     "DEPOSIT", "WITHDRAW", "TRANSFER_IN", "TRANSFER_OUT",
     "BUY", "SELL", "DIVIDEND", "WHT", "FEE", "INTEREST",
     "FX_CONVERT", "SPLIT", "ADJUST", "REVERSAL",
+    # v2 (plans/port-ledger-v2.md)
+    "OPENING", "OPTION_EXPIRE", "ASSIGN", "EXERCISE",
 )
+LEDGER_SOURCES: tuple[str, ...] = ("MANUAL", "IMPORT", "BACKFILL", "BACKFILL_ESTIMATE", "SHADOW")
+LEDGER_MODES: tuple[str, ...] = ("LEGACY", "SHADOW", "PRIMARY")
+# Legacy tables whose writes are projected into the ledger for SHADOW accounts.
+LEDGER_PROJECTED_TABLES: tuple[str, ...] = (
+    "trades", "cash_ledger", "dividends", "cash_adjustments", "option_trades",
+)
+_NOW_MS = "strftime('%Y-%m-%d %H:%M:%f','now')"
+
+
+def _ledger_events_ddl(table: str = "ledger_events") -> str:
+    types = ",".join(f"'{t}'" for t in LEDGER_EVENT_TYPES)
+    sources = ",".join(f"'{s}'" for s in LEDGER_SOURCES)
+    # Money and quantities are canonical decimal strings (ledger.py writes them
+    # with Decimal), the same as broker_statements: a REAL column cannot hold
+    # 0.1 exactly, and "equal to the statement" must mean equal, not close.
+    return f"""
+        CREATE TABLE IF NOT EXISTS {table} (
+            id              TEXT PRIMARY KEY,
+            account_id      TEXT NOT NULL,
+            wallet          TEXT NOT NULL,
+            trade_date      TEXT NOT NULL,
+            book_date       TEXT NOT NULL,
+            settle_date     TEXT,
+            trade_time      TEXT,
+            type            TEXT NOT NULL CHECK(type IN ({types})),
+            symbol          TEXT,
+            qty             TEXT,
+            price           TEXT,
+            multiplier      TEXT,
+            position_effect TEXT CHECK(position_effect IS NULL OR position_effect IN ('OPEN','CLOSE')),
+            gross           TEXT,
+            fee             TEXT NOT NULL DEFAULT '0',
+            vat             TEXT NOT NULL DEFAULT '0',
+            tax             TEXT NOT NULL DEFAULT '0',
+            fee_basis       TEXT CHECK(fee_basis IS NULL OR fee_basis IN ('ESTIMATED','POSTED')),
+            net_cash        TEXT NOT NULL DEFAULT '0',
+            currency        TEXT NOT NULL,
+            fx_rate         TEXT,
+            broker_ref      TEXT,
+            link_id         TEXT,
+            reverses_id     TEXT,
+            category        TEXT,
+            evidence_ref    TEXT,
+            source          TEXT NOT NULL DEFAULT 'MANUAL' CHECK(source IN ({sources})),
+            source_key      TEXT,
+            source_ref      TEXT,
+            note            TEXT NOT NULL DEFAULT '',
+            created_at      TEXT NOT NULL DEFAULT ({_NOW_MS}),
+            updated_at      TEXT NOT NULL DEFAULT ({_NOW_MS})
+        )
+    """
+
+
+def _append_only(conn: sqlite3.Connection, table: str) -> None:
+    for op in ("UPDATE", "DELETE"):
+        conn.execute(f"DROP TRIGGER IF EXISTS trg_{table}_no_{op.lower()}")
+        conn.execute(f"""
+            CREATE TRIGGER trg_{table}_no_{op.lower()}
+            BEFORE {op} ON {table}
+            WHEN (SELECT active FROM _ledger_guard LIMIT 1) = 0
+            BEGIN
+                SELECT RAISE(ABORT, '{table} is append-only: post a REVERSAL instead');
+            END
+        """)
 
 
 def _init_ledger_events(conn: sqlite3.Connection) -> None:
-    """Append-only journal (plans/port-accounting-ledger.md).
+    """Append-only journal (plans/port-ledger-v2.md).
 
     One row per economic event, never edited: a mistake is corrected by a
     REVERSAL row pointing at it plus a fresh row. Positions, average cost and
     cash are all derived from this table, so it can be replayed at any time.
-    `net_cash` is signed (in +, out −) in the event's own `currency`.
-    `source_ref` lists the rows this event was built from (backfill trail).
+
+    * `net_cash` is signed (in +, out −) in `currency`, inside `wallet` — Dime
+      keeps USD, FCD and a THB saving account apart, and a buy is paid from one.
+    * `trade_date` is when it happened; `book_date` is the accounting day it
+      lands on. They differ only for a correction to a closed period, which is
+      booked today so the closed balance never moves.
+    * `source_key` names the legacy row(s) a SHADOW/BACKFILL event projects;
+      MANUAL events have none and projection never touches them.
     """
-    types = ",".join(f"'{t}'" for t in LEDGER_EVENT_TYPES)
-    conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS ledger_events (
-            id          TEXT PRIMARY KEY,
-            account_id  TEXT NOT NULL,
-            trade_date  TEXT NOT NULL,
-            settle_date TEXT,
-            trade_time  TEXT,
-            type        TEXT NOT NULL CHECK(type IN ({types})),
-            symbol      TEXT,
-            qty         REAL,
-            price       REAL,
-            gross       REAL,
-            fee         REAL NOT NULL DEFAULT 0,
-            vat         REAL NOT NULL DEFAULT 0,
-            tax         REAL NOT NULL DEFAULT 0,
-            net_cash    REAL NOT NULL DEFAULT 0,
-            currency    TEXT NOT NULL DEFAULT 'THB',
-            fx_rate     REAL,
-            broker_ref  TEXT,
-            link_id     TEXT,
-            reverses_id TEXT,
-            source      TEXT NOT NULL DEFAULT 'MANUAL'
-                        CHECK(source IN ('MANUAL','IMPORT','BACKFILL','BACKFILL_ESTIMATE')),
-            source_ref  TEXT,
-            note        TEXT DEFAULT '',
-            created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now'))
-        )
-    """)
+    conn.execute("CREATE TABLE IF NOT EXISTS _ledger_guard (active INTEGER NOT NULL)")
+    if conn.execute("SELECT COUNT(*) FROM _ledger_guard").fetchone()[0] == 0:
+        conn.execute("INSERT INTO _ledger_guard (active) VALUES (0)")
+    # Same DDL as init_sync_layer: the lock and dirty triggers below read it,
+    # and a DB initialised without the sync layer (tests, scripts) must work.
+    conn.execute("CREATE TABLE IF NOT EXISTS _sync_guard (active INTEGER NOT NULL)")
+    if conn.execute("SELECT COUNT(*) FROM _sync_guard").fetchone()[0] == 0:
+        conn.execute("INSERT INTO _sync_guard (active) VALUES (0)")
+
+    cols = _table_columns(conn, "ledger_events")
+    if cols and "wallet" not in cols:
+        # v1 table. It never held posted rows on any machine (2026-09-29), so
+        # an empty one is simply rebuilt; a non-empty one is kept and migrated.
+        n = conn.execute("SELECT COUNT(*) FROM ledger_events").fetchone()[0]
+        for op in ("update", "delete"):
+            conn.execute(f"DROP TRIGGER IF EXISTS trg_ledger_events_no_{op}")
+        conn.execute("DROP INDEX IF EXISTS idx_le_broker_ref")
+        if n == 0:
+            conn.execute("DROP TABLE ledger_events")
+        else:
+            conn.execute("ALTER TABLE ledger_events RENAME TO ledger_events_v1")
+            conn.execute(_ledger_events_ddl())
+            keep = [c for c in _table_columns(conn, "ledger_events_v1")
+                    if c in _table_columns(conn, "ledger_events")]
+            sel = ", ".join(keep)
+            conn.execute(
+                f"INSERT INTO ledger_events ({sel}, wallet, book_date) "
+                f"SELECT {sel}, currency, trade_date FROM ledger_events_v1"
+            )
+            conn.execute("DROP TABLE ledger_events_v1")
+    conn.execute(_ledger_events_ddl())
     conn.execute("CREATE INDEX IF NOT EXISTS idx_le_pos ON ledger_events(account_id, symbol, trade_date)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_le_date ON ledger_events(account_id, trade_date)")
-    conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_le_broker_ref "
-        "ON ledger_events(account_id, broker_ref) WHERE broker_ref IS NOT NULL"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_le_book ON ledger_events(account_id, wallet, book_date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_le_source_key ON ledger_events(account_id, source_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_le_broker_ref2 ON ledger_events(account_id, broker_ref)")
+    # An event is reversed at most once — a second reversal would double the fix.
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_le_reverses "
+                 "ON ledger_events(reverses_id) WHERE reverses_id IS NOT NULL")
     # Immutability lives in the DB, not the API, so no future endpoint or
     # script can quietly rewrite history. `_ledger_guard.active = 1` is the one
     # maintenance escape hatch (backfill --replace), set and cleared inside a
     # single transaction.
-    conn.execute("CREATE TABLE IF NOT EXISTS _ledger_guard (active INTEGER NOT NULL)")
-    if conn.execute("SELECT COUNT(*) FROM _ledger_guard").fetchone()[0] == 0:
-        conn.execute("INSERT INTO _ledger_guard (active) VALUES (0)")
-    for op in ("UPDATE", "DELETE"):
-        conn.execute(f"""
-            CREATE TRIGGER IF NOT EXISTS trg_ledger_events_no_{op.lower()}
-            BEFORE {op} ON ledger_events
-            WHEN (SELECT active FROM _ledger_guard LIMIT 1) = 0
-            BEGIN
-                SELECT RAISE(ABORT, 'ledger_events is append-only: post a REVERSAL instead');
-            END
-        """)
+    _append_only(conn, "ledger_events")
+
+    # Period close: a wallet's balance agreed with a broker statement up to a
+    # day. Append-only too — reopening is a new row with an earlier date and a
+    # reason, so who moved the line, and why, stays on record.
+    conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS ledger_period_close (
+            id             TEXT PRIMARY KEY,
+            account_id     TEXT NOT NULL,
+            wallet         TEXT NOT NULL,
+            currency       TEXT NOT NULL,
+            action         TEXT NOT NULL CHECK(action IN ('CLOSE','REOPEN')),
+            closed_through TEXT,
+            balance        TEXT,
+            statement_id   TEXT,
+            source_ref     TEXT,
+            reason         TEXT NOT NULL DEFAULT '',
+            created_at     TEXT NOT NULL DEFAULT ({_NOW_MS}),
+            updated_at     TEXT NOT NULL DEFAULT ({_NOW_MS})
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_lpc_wallet "
+                 "ON ledger_period_close(account_id, wallet, created_at)")
+    _append_only(conn, "ledger_period_close")
+
+    # Wallets per account. A row is a setting (edited in place → synced LWW).
+    # Without one, an event's wallet is its currency code.
+    conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS ledger_wallets (
+            account_id TEXT NOT NULL,
+            wallet     TEXT NOT NULL,
+            currency   TEXT NOT NULL,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            note       TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT ({_NOW_MS}),
+            PRIMARY KEY (account_id, wallet)
+        )
+    """)
+
+    # Rows whose book_date falls inside a closed period are refused. Local
+    # writes only: a peer's event that was posted before it saw our close
+    # still lands (refusing it would split the devices for good) and check L3
+    # reports it for review.
+    conn.execute("DROP TRIGGER IF EXISTS trg_ledger_events_period_lock")
+    conn.execute("""
+        CREATE TRIGGER trg_ledger_events_period_lock
+        BEFORE INSERT ON ledger_events
+        WHEN (SELECT active FROM _sync_guard LIMIT 1) = 0
+         AND (SELECT active FROM _ledger_guard LIMIT 1) = 0
+         AND NEW.book_date <= COALESCE((
+                SELECT closed_through FROM ledger_period_close
+                WHERE account_id = NEW.account_id AND wallet = NEW.wallet
+                ORDER BY created_at DESC, rowid DESC LIMIT 1), '')
+        BEGIN
+            SELECT RAISE(ABORT, 'LEDGER_PERIOD_CLOSED');
+        END
+    """)
+    # A reversal must point at a live, non-reversal event in the same wallet.
+    conn.execute("DROP TRIGGER IF EXISTS trg_ledger_events_reversal_target")
+    conn.execute("""
+        CREATE TRIGGER trg_ledger_events_reversal_target
+        BEFORE INSERT ON ledger_events
+        WHEN NEW.type = 'REVERSAL'
+         AND (SELECT active FROM _sync_guard LIMIT 1) = 0
+         AND NOT EXISTS (SELECT 1 FROM ledger_events o
+                         WHERE o.id = NEW.reverses_id AND o.type <> 'REVERSAL'
+                           AND o.account_id = NEW.account_id AND o.wallet = NEW.wallet
+                           AND o.currency = NEW.currency)
+        BEGIN
+            SELECT RAISE(ABORT, 'LEDGER_BAD_REVERSAL');
+        END
+    """)
+
+    # Which accounts write to the ledger. LEGACY = not at all, SHADOW = every
+    # legacy write is projected in the same transaction, PRIMARY = the ledger
+    # is the book (read switch; not enabled until a pilot passes).
+    _ensure_column(conn, "portfolio_accounts", "ledger_mode",
+                   "ledger_mode TEXT NOT NULL DEFAULT 'LEGACY'")
+    # First day of the journal: earlier history is summed into OPENING events
+    # from a broker statement rather than replayed from legacy rows.
+    _ensure_column(conn, "portfolio_accounts", "ledger_cutover", "ledger_cutover TEXT")
+    _ensure_column(conn, "portfolio_accounts", "ledger_cutover_baseline", "ledger_cutover_baseline TEXT")
+    # The statement's moment (UTC). A trade dated the cutover day but filled
+    # after it is not in the OPENING balances (ledger._in_opening).
+    _ensure_column(conn, "portfolio_accounts", "ledger_cutover_at", "ledger_cutover_at TEXT")
+
+    # Which wallet a legacy row paid from / was paid into (plans/port-ledger-v2.md).
+    # Set at entry for SHADOW accounts (typed, read off the slip, or routed by
+    # rule); NULL = the currency's default wallet. Sync carries them like any column.
+    _ensure_column(conn, "trades", "wallet_entry", "wallet_entry TEXT")
+    _ensure_column(conn, "trades", "wallet_exit", "wallet_exit TEXT")
+    _ensure_column(conn, "cash_ledger", "wallet", "wallet TEXT")
+    _ensure_column(conn, "dividends", "wallet", "wallet TEXT")
+    # The name the broker prints for a wallet on its slips ("Dime! FCD").
+    _ensure_column(conn, "ledger_wallets", "broker_label", "broker_label TEXT")
+    # Per-account routing: an instrument that always settles in one wallet
+    # (Dime gold → FCD). `symbol_pattern` is an fnmatch pattern.
+    conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS ledger_wallet_rules (
+            id             TEXT PRIMARY KEY,
+            account_id     TEXT NOT NULL,
+            symbol_pattern TEXT NOT NULL,
+            wallet         TEXT NOT NULL,
+            note           TEXT NOT NULL DEFAULT '',
+            updated_at     TEXT NOT NULL DEFAULT ({_NOW_MS}),
+            UNIQUE (account_id, symbol_pattern)
+        )
+    """)
+
+    # Projection queue: which SHADOW accounts a statement just touched.
+    # Machine-local, never synced; get_db() drains the rows its own transaction
+    # added before it commits (ledger.flush_dirty).
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ledger_dirty (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id TEXT NOT NULL,
+            table_name TEXT NOT NULL
+        )
+    """)
+    for table in LEDGER_PROJECTED_TABLES:
+        if not _table_columns(conn, table):
+            continue
+        for op in ("ins", "upd", "del"):
+            conn.execute(f"DROP TRIGGER IF EXISTS trg_{table}_ledger_dirty_{op}")
+        shadow = ("(SELECT ledger_mode FROM portfolio_accounts WHERE id = {row}.account_id) "
+                  "IN ('SHADOW','PRIMARY')")
+        guard = "(SELECT active FROM _sync_guard LIMIT 1) = 0"
+        for op, event, rows in (("ins", "INSERT", ("NEW",)), ("upd", "UPDATE", ("NEW", "OLD")),
+                                ("del", "DELETE", ("OLD",))):
+            cond = " OR ".join(shadow.format(row=r) for r in rows)
+            body = "\n".join(
+                f"INSERT INTO ledger_dirty (account_id, table_name) "
+                f"SELECT {r}.account_id, '{table}' WHERE {shadow.format(row=r)};"
+                for r in rows)
+            conn.execute(f"""
+                CREATE TRIGGER trg_{table}_ledger_dirty_{op}
+                AFTER {event} ON {table} FOR EACH ROW
+                WHEN {guard} AND ({cond})
+                BEGIN
+                    {body}
+                END
+            """)
 
 
 def init_thesis_schema() -> None:
@@ -1845,6 +2066,38 @@ def init_guard_schema() -> None:
         """)
 
 
+def init_margin_schema() -> None:
+    """MARGIN tables (backend/margin.py, routers/margin.py). Before
+    init_sync_layer(): margin_settings is synced."""
+    with get_db() as conn:
+        # Per-account Reg T parameters the user chose. scope = 'port' (a
+        # portfolio_accounts id) or 'paper' (a paper_accounts id). `enabled`
+        # turns the model on; overrides_json = {"SYMBOL": maint rate} for
+        # IBKR house rates; thresholds_json = cushion floors per level.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS margin_settings (
+                scope           TEXT NOT NULL CHECK(scope IN ('port','paper')),
+                account_id      TEXT NOT NULL,
+                enabled         INTEGER NOT NULL DEFAULT 0,
+                maint_long      REAL NOT NULL DEFAULT 0.25,
+                maint_short     REAL NOT NULL DEFAULT 0.30,
+                initial         REAL NOT NULL DEFAULT 0.50,
+                overrides_json  TEXT NOT NULL DEFAULT '{}',
+                thresholds_json TEXT NOT NULL DEFAULT '{}',
+                PRIMARY KEY (scope, account_id)
+            )
+        """)
+        # Last level the margin scheduler saw per account, so an alert fires on
+        # the transition, not on every scan. Machine-local like guard_state.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS margin_state (
+                key        TEXT PRIMARY KEY,
+                level      TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+
 def init_alerts_schema() -> None:
     """Alert Rule Engine tables (memory/plans/alert-rule-engine.md §5)."""
     from alerts.schema import create_alert_tables
@@ -1862,7 +2115,7 @@ def init_sync_layer() -> None:
     All triggers are gated by `_sync_guard.active`; the restore path raises that
     flag so importing remote rows neither re-stamps `updated_at` nor fabricates
     tombstones. Safe to call on every startup (idempotent)."""
-    from sync.config import SYNC_TABLES, TOMB_SEP
+    from sync.config import APPEND_ONLY_TABLES, SYNC_TABLES, TOMB_SEP
     sep = TOMB_SEP  # char(31) unit separator, embedded literally below
 
     with get_db() as conn:
@@ -1904,6 +2157,12 @@ def init_sync_layer() -> None:
             conn.execute("DELETE FROM sync_tombstones WHERE table_name = ?", (table,))
 
         for table, pk in SYNC_TABLES:
+            if table in APPEND_ONLY_TABLES:
+                # updated_at comes from the column DEFAULT; stamping it would be
+                # an UPDATE (refused), and a delete never happens to tombstone.
+                for suffix in ("ins", "upd", "del"):
+                    conn.execute(f"DROP TRIGGER IF EXISTS trg_{table}_sync_{suffix}")
+                continue
             # 1) updated_at column (skip if table absent or column exists)
             try:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN updated_at TEXT")

@@ -68,6 +68,10 @@ mcp = MCPServer(
         "get_fundamental_spec FIRST and follow it exactly — which data to pull "
         "(get_stock_data, get_filings, get_fiscal_data, get_news, the earnings call), "
         "the 12 Thai sections, and its rules: facts only, say unclear when unclear. "
+        "WHERE TO LOOK: before searching for any data (macro, country, rates, "
+        "company, news) call get_data_sources and follow its order — these MCP tools, "
+        "then the backend endpoints it lists, then the free external APIs it lists, "
+        "and only then the open web. "
         "SOURCES — ALWAYS: every number or factual claim you write (thesis body, "
         "note, zettel, graph, chat answer) names its source: publisher/tool + URL or "
         "filing (form, period, filed date) + the date of the fact. Tool results carry "
@@ -86,13 +90,19 @@ mcp = MCPServer(
 # resource) so agents outside the repo — Claude Desktop, HTTP clients — follow
 # the same 12 sections. Read on every call: edits need no MCP restart.
 SPEC_FILE = Path(__file__).resolve().parent.parent / "memory" / "reference" / "fundamental-analysis.md"
+# Same idea for the data-source registry: where to look, in which order.
+SOURCES_FILE = SPEC_FILE.with_name("data-sources.md")
+
+
+def _read_ref(path: Path, what: str) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ToolError(f"{what} not found at {path}") from exc
 
 
 def _spec_text() -> str:
-    try:
-        return SPEC_FILE.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ToolError(f"fundamental-analysis spec not found at {SPEC_FILE}") from exc
+    return _read_ref(SPEC_FILE, "fundamental-analysis spec")
 
 
 # ── HTTP helpers ─────────────────────────────────────────────────────────────
@@ -712,6 +722,24 @@ def get_fundamental_spec() -> str:
               mime_type="text/markdown")
 def fundamental_spec_resource() -> str:
     return _spec_text()
+
+
+# ── Data-source registry ─────────────────────────────────────────────────────
+
+@mcp.tool()
+def get_data_sources() -> str:
+    """Where to look for data, in order: these MCP tools → backend endpoints that
+    exist but have no tool yet → verified free external APIs (IMF, World Bank, BIS,
+    OECD, BOT, …) with example queries and known traps → only then the web.
+    Call this BEFORE searching for any data you don't already have a tool for."""
+    return _read_ref(SOURCES_FILE, "data-source registry")
+
+
+@mcp.resource("spec://data-sources", name="data-sources",
+              description="Data-source registry: lookup order, in-house endpoints, free APIs, traps",
+              mime_type="text/markdown")
+def data_sources_resource() -> str:
+    return _read_ref(SOURCES_FILE, "data-source registry")
 
 
 # ── Prompts ──────────────────────────────────────────────────────────────────

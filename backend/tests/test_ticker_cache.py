@@ -12,9 +12,14 @@ import pytest
 
 import routers.ticker as tk
 
+_real_quiet = tk._market_quiet  # captured before the autouse stub
+
 
 @pytest.fixture(autouse=True)
-def clean_cache():
+def clean_cache(monkeypatch):
+    # Weekday cadence unless a test says otherwise — the suite must not change
+    # behaviour depending on whether CI runs on a Saturday.
+    monkeypatch.setattr(tk, "_market_quiet", lambda now=None: False)
     tk._cache.clear() if hasattr(tk._cache, "clear") else tk._cache._store.clear()
     with tk._refresh_lock:
         tk._inflight.clear()
@@ -74,7 +79,7 @@ def test_stale_entry_is_served_and_refreshed_in_background(monkeypatch):
     out = tk.get_ticker(account_id="all")
     elapsed = time.monotonic() - t0
 
-    assert out["stale"] is True
+    assert out["stale"] is False, "past FRESH_TTL but inside the grace is a normal poll"
     assert len(out["items"]) == 2, "serves the old payload, not the new one"
     assert elapsed < 0.5, "stale read must not wait on the refresh"
 
@@ -117,11 +122,66 @@ def test_every_account_id_reads_the_same_entry(monkeypatch):
     assert len(builds) == 1, "a per-account key would rebuild for each caller"
 
 
-def test_fresh_window_sits_under_the_frontend_poll():
-    # The bug this replaced: a 60s cache polled every 60s expired exactly as the
-    # next request arrived, so nearly every poll paid the full cold fan-out.
+def test_entry_past_the_grace_is_flagged_stale(monkeypatch):
+    key = tk._CACHE_KEY
+    monkeypatch.setattr(tk, "_build_ticker", lambda: _payload(2))
+    tk._build_and_store(key)
+    fetched_at, payload = tk._cache.get(key)
+    tk._cache.set(key, (fetched_at - tk.FRESH_TTL - tk.STALE_GRACE - 1, payload))
+
+    out = tk.get_ticker(account_id="all")
+    assert out["stale"] is True, "refreshes have been failing — the bar must say so"
+
+
+def test_a_healthy_poll_cycle_never_reads_stale():
+    """The bug this replaced: the flag was tied to FRESH_TTL, and with refresh-on-
+    read every 90s poll finds an entry ~81s old, so the bar said STALE on
+    nearly every poll while the data was fine."""
+    poll = 90
+    # One failed refresh still reads live; two in a row reads STALE.
+    assert 2 * poll < tk.FRESH_TTL + tk.STALE_GRACE <= 3 * poll
+
+
+def test_ttls_are_ordered():
     assert tk.FRESH_TTL < 90, "frontend polls /api/ticker every 90s"
-    assert tk.FRESH_TTL < tk.STALE_TTL
+    # A quiet TTL at or past STALE_TTL would evict the entry before the refresh
+    # and turn every weekend read into a blocking cold build.
+    assert tk.FRESH_TTL < tk.QUIET_FRESH_TTL < tk.STALE_TTL
+
+
+@pytest.mark.parametrize(
+    "utc, quiet",
+    [
+        ("2026-09-25T20:59:00+00:00", False),  # Fri 16:59 EDT
+        ("2026-09-25T21:00:00+00:00", True),   # Fri 17:00 EDT — FX closes
+        ("2026-09-26T12:00:00+00:00", True),   # Sat
+        ("2026-09-27T20:59:00+00:00", True),   # Sun 16:59 EDT
+        ("2026-09-27T21:00:00+00:00", False),  # Sun 17:00 EDT — FX opens
+        ("2026-09-29T03:00:00+00:00", False),  # Mon night ET
+        ("2026-12-11T22:00:00+00:00", True),   # Fri 17:00 EST (winter)
+    ],
+)
+def test_quiet_window_follows_the_fx_week(utc, quiet):
+    from datetime import datetime
+
+    # The autouse fixture stubs _market_quiet; test the real one.
+    assert _real_quiet(datetime.fromisoformat(utc)) is quiet
+
+
+def test_weekend_reads_do_not_refresh_every_poll(monkeypatch):
+    monkeypatch.setattr(tk, "_market_quiet", lambda now=None: True)
+    key = tk._CACHE_KEY
+    monkeypatch.setattr(tk, "_build_ticker", lambda: _payload(2))
+    tk._build_and_store(key)
+    fetched_at, payload = tk._cache.get(key)
+    tk._cache.set(key, (fetched_at - 5 * 60, payload))  # 5 min old
+
+    def boom():
+        raise AssertionError("weekend entry inside QUIET_FRESH_TTL must not rebuild")
+
+    monkeypatch.setattr(tk, "_build_ticker", boom)
+    out = tk.get_ticker(account_id="all")
+    assert out["stale"] is False
 
 
 # ── Process shutdown ──────────────────────────────────────────────────────────

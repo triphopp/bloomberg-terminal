@@ -16,6 +16,10 @@ export async function GET(request: Request) {
     case "search":
       pythonUrl = `${PYTHON_API}/api/stock/search?q=${encodeURIComponent(symbol)}`;
       break;
+    case "resolve":
+      if (!symbol) return NextResponse.json({ error: "Missing symbol" }, { status: 400 });
+      pythonUrl = `${PYTHON_API}/api/stock/resolve?q=${encodeURIComponent(symbol)}`;
+      break;
     case "quote":
       if (!symbol) return NextResponse.json({ error: "Missing symbol" }, { status: 400 });
       pythonUrl = `${PYTHON_API}/api/stock/quote/${encodeURIComponent(symbol)}`;

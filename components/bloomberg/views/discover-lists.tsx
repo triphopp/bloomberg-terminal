@@ -14,7 +14,12 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { memo, useCallback, useEffect, useMemo } from "react";
-import { type SessionQuote, extendedSessionMove, staleMoveStyle } from "../core/market-session";
+import {
+  type SessionQuote,
+  extendedSessionMove,
+  sessionConfig,
+  staleMoveStyle,
+} from "../core/market-session";
 import { useWatchlistQuotes } from "../hooks/useWatchlistData";
 import { fmtPriceStd } from "../lib/number-format";
 import { SEARCH_HIT_EVENT } from "../lib/search-stats";
@@ -41,18 +46,13 @@ function fmtVol(n: number | null | undefined) {
   return n.toFixed(0);
 }
 
-function Head({
-  extra,
-  colors,
-  extLabel,
-}: { extra: string; colors: Colors; extLabel?: string | null }) {
+function Head({ extra, colors }: { extra: string; colors: Colors }) {
   return (
     <thead>
       <tr className={TICK_HEAD} style={{ background: "#050505", color: colors.textSecondary }}>
         <th className="px-1 py-0 text-left">SYM</th>
         <th className="px-1 py-0 text-right">LAST</th>
         <th className="px-1 py-0 text-right">CHG</th>
-        {extLabel && <ExtHead label={extLabel} />}
         <th className="px-1 py-0 text-right">{extra}</th>
       </tr>
     </thead>
@@ -64,66 +64,6 @@ function Notice({ text, colors, warn }: { text: string; colors: Colors; warn?: b
     <div className={`px-1 ${TICK_NOTE}`} style={{ color: warn ? "#facc15" : colors.textSecondary }}>
       {text}
     </div>
-  );
-}
-
-/**
- * Extended hours, inline: two extra columns (price · %chg) right after CHG, on
- * the same line as the regular-session numbers.
- *
- * The columns exist only while a pre/after-hours session is actually trading
- * (`extLabelOf` finds one in the list) — `extendedSessionMove` returns null in
- * regular hours and in the closed PREPRE/POSTPOST stretches, so outside those
- * windows the table keeps its plain four columns. Rows with no extended quote
- * (e.g. an index) get empty cells so the columns stay aligned.
- * Shared by WATCH (LIST view), FREQ and ACTIVE.
- */
-export function extLabelOf(quotes: (SessionQuote | null | undefined)[]): string | null {
-  for (const q of quotes) {
-    const move = extendedSessionMove(q);
-    if (move) return move.short;
-  }
-  return null;
-}
-
-export function ExtHead({ label }: { label: string }) {
-  return (
-    <th className="px-1 py-0 text-right" colSpan={2} title="Extended-hours price · %chg">
-      {label}
-    </th>
-  );
-}
-
-export function ExtCells({
-  quote,
-  colors,
-}: {
-  quote: SessionQuote | null | undefined;
-  colors: Colors;
-}) {
-  const move = extendedSessionMove(quote);
-  if (!move) {
-    return (
-      <>
-        <td />
-        <td />
-      </>
-    );
-  }
-  const pct = move.pct;
-  return (
-    <>
-      <td className={CELL} style={{ color: colors.text }} title={move.label}>
-        {fmtPrice(move.price)}
-      </td>
-      <td
-        className={CELL}
-        style={{ color: pct == null ? colors.textSecondary : pct >= 0 ? UP : DOWN }}
-        title={move.label}
-      >
-        {pct != null ? fmtPct(pct) : "—"}
-      </td>
-    </>
   );
 }
 
@@ -139,7 +79,6 @@ const FeedRow = memo(function FeedRow({
   onOpen,
   onForget,
   ext,
-  showExt,
 }: {
   symbol: string;
   price: number | null | undefined;
@@ -154,37 +93,55 @@ const FeedRow = memo(function FeedRow({
   onForget?: (symbol: string) => void;
   /** quote carrying pre/post fields */
   ext?: SessionQuote | null;
-  /** render the two extended-hours columns (the list is in PRE/AH) */
-  showExt?: boolean;
 }) {
+  // PRE/AH: the extended print takes over LAST/CHG, same as the WATCHLIST LIST
+  // view — two extra columns squeezed SYM to 2 letters in a narrow panel. The
+  // regular close moves to the tooltip; a P/A mark says which price this is.
+  const move = extendedSessionMove(ext);
+  const moveColor = move ? sessionConfig(ext?.marketState)?.color : undefined;
+  const shownPrice = move ? move.price : price;
+  const shownPct = move ? move.pct : pct;
+  const rowTitle = move
+    ? [
+        title,
+        `${move.label} ${fmtPrice(move.price)}${move.pct != null ? ` ${fmtPct(move.pct)}` : ""} · close ${
+          price != null ? fmtPrice(price) : "—"
+        }${pct != null ? ` ${fmtPct(pct)}` : ""}`,
+      ].join("\n")
+    : title;
   return (
     <>
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: click shortcut, like TICK DATA rows */}
       <tr
         className="group cursor-pointer hover:bg-[#111]"
         style={{ borderBottom: "1px solid #111" }}
-        title={title}
+        title={rowTitle}
         onClick={() => onOpen(symbol)}
       >
         <td
-          className="px-1 py-0 text-left font-bold truncate max-w-0 w-full"
+          className="px-1 py-0 text-left font-bold truncate max-w-0 w-full min-w-[5ch]"
           style={{ color: colors.accent }}
         >
           {symbol}
         </td>
         <td className={CELL} style={{ color: colors.text }}>
-          {price != null ? fmtPrice(price) : "—"}
+          {shownPrice != null ? fmtPrice(shownPrice) : "—"}
+          {move && (
+            <sup className="text-[7px] ml-px font-bold" style={{ color: moveColor }}>
+              {move.short.charAt(0)}
+            </sup>
+          )}
         </td>
         <td
           className={CELL}
           style={{
-            color: pct == null ? colors.textSecondary : pct >= 0 ? UP : DOWN,
-            opacity: dim,
+            color: shownPct == null ? colors.textSecondary : shownPct >= 0 ? UP : DOWN,
+            // the extended move is live — only a past session's regular move dims
+            opacity: move ? undefined : dim,
           }}
         >
-          {pct != null ? fmtPct(pct) : "—"}
+          {shownPct != null ? fmtPct(shownPct) : "—"}
         </td>
-        {showExt && <ExtCells quote={ext} colors={colors} />}
         <td className={CELL} style={{ color: extraColor ?? colors.textSecondary }}>
           {onForget ? (
             <>
@@ -241,7 +198,6 @@ export const FrequentSearchList = memo(function FrequentSearchList({
   const items = data?.items ?? [];
   const symbols = useMemo(() => items.map((i) => i.symbol), [items]);
   const { quotes } = useWatchlistQuotes(symbols);
-  const extLabel = extLabelOf(symbols.map((sym) => quotes[sym]));
 
   const forget = useCallback(
     (symbol: string) => {
@@ -264,7 +220,7 @@ export const FrequentSearchList = memo(function FrequentSearchList({
 
   return (
     <table className={TICK_TABLE} style={{ borderCollapse: "collapse" }}>
-      <Head extra="HITS" colors={colors} extLabel={extLabel} />
+      <Head extra="HITS" colors={colors} />
       <tbody>
         {items.map((it) => {
           const q = quotes[it.symbol];
@@ -288,7 +244,6 @@ export const FrequentSearchList = memo(function FrequentSearchList({
               onOpen={onSymbolClick}
               onForget={forget}
               ext={q}
-              showExt={extLabel != null}
             />
           );
         })}
@@ -325,7 +280,6 @@ export const MostActiveList = memo(function MostActiveList({
     refetchInterval: 120_000,
   });
   const items = data?.items ?? [];
-  const extLabel = extLabelOf(items);
 
   if (data?.error) return <Notice text={data.error} colors={colors} warn />;
   if (isLoading) return <Notice text="loading…" colors={colors} />;
@@ -351,7 +305,7 @@ export const MostActiveList = memo(function MostActiveList({
         colors={colors}
       />
       <table className={TICK_TABLE} style={{ borderCollapse: "collapse" }}>
-        <Head extra="VOL" colors={colors} extLabel={extLabel} />
+        <Head extra="VOL" colors={colors} />
         <tbody>
           {items.map((it) => (
             <FeedRow
@@ -372,7 +326,6 @@ export const MostActiveList = memo(function MostActiveList({
               colors={colors}
               onOpen={onSymbolClick}
               ext={it}
-              showExt={extLabel != null}
             />
           ))}
         </tbody>

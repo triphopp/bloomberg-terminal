@@ -1,4 +1,5 @@
 import { PYTHON_API as API } from "@/lib/constants";
+import { ledgerHeaders } from "@/lib/ledger-proxy";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
@@ -6,6 +7,7 @@ export async function POST(req: Request) {
     const formData = await req.formData();
     const r = await fetch(`${API}/api/v2/portfolio/import/excel`, {
       method: "POST",
+      headers: ledgerHeaders(req),
       body: formData,
       signal: AbortSignal.timeout(120_000),
     });
