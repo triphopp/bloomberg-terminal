@@ -112,6 +112,10 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Market Data API", lifespan=lifespan)
 
+# Ledger v2: X-Ledger-Correction header → reason for booking a legacy edit that
+# reaches into a closed period (backend/ledger.py).
+app.add_middleware(ledger_router.LedgerCorrectionMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -211,6 +215,7 @@ app.include_router(circuit_breaker.router)
 app.include_router(listing_gate.router)
 app.include_router(sectors.router)
 app.include_router(portfolio_v2.router)
+app.include_router(ledger_router.router, tags=["Ledger"])
 from routers import slip_ocr as slip_ocr_router  # noqa: E402  (engine in backend/slip_ocr/)
 app.include_router(slip_ocr_router.router, tags=["Slip OCR"])
 app.include_router(theses.router, tags=["Theses"])
@@ -304,6 +309,13 @@ def _rate_limited_response(request: Request, exc: BaseException) -> JSONResponse
     err = UpstreamRateLimited("Yahoo Finance")
     return JSONResponse(status_code=err.status_code, content={"detail": err.detail},
                         headers=err.headers)
+
+
+@app.exception_handler(ledger_core.LedgerError)
+async def _ledger_error_handler(request: Request, exc: ledger_core.LedgerError):
+    """Refusals from the ledger — including a legacy PORT write refused because
+    it reaches into a closed period (db.get_db → ledger.flush_dirty)."""
+    return JSONResponse(status_code=exc.status, content=exc.as_dict())
 
 
 @app.exception_handler(Exception)

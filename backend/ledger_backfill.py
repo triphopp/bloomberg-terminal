@@ -104,14 +104,19 @@ class Event:
     fill_timed: bool = False
 
     def row(self) -> dict:
+        # ledger_events v2 stores numbers as canonical decimal strings, in a
+        # wallet named after the currency, booked on the trade date; the id is
+        # also the source_key, so SHADOW projection recognises these rows.
+        from ledger import txt
         return {
-            "id": self.id, "account_id": self.account_id, "trade_date": self.trade_date,
+            "id": self.id, "account_id": self.account_id, "wallet": (self.currency or "THB").upper(),
+            "trade_date": self.trade_date, "book_date": self.trade_date,
             "settle_date": self.settle_date, "trade_time": self.trade_time, "type": self.type, "symbol": self.symbol,
-            "qty": self.qty, "price": self.price, "gross": self.gross,
-            "fee": round(self.fee, 6), "vat": self.vat, "tax": self.tax,
-            "net_cash": round(self.net_cash, 6), "currency": self.currency,
-            "fx_rate": self.fx_rate, "broker_ref": self.broker_ref, "link_id": self.link_id,
-            "reverses_id": None, "source": self.source,
+            "qty": txt(self.qty), "price": txt(self.price), "gross": txt(self.gross),
+            "fee": txt(round(self.fee, 6)) or "0", "vat": txt(self.vat) or "0", "tax": txt(self.tax) or "0",
+            "net_cash": txt(round(self.net_cash, 6)) or "0", "currency": (self.currency or "THB").upper(),
+            "fx_rate": txt(self.fx_rate), "broker_ref": self.broker_ref, "link_id": self.link_id,
+            "reverses_id": None, "source": self.source, "source_key": self.id,
             "source_ref": json.dumps(self.source_ref), "note": self.note,
         }
 

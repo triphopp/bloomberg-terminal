@@ -1,4 +1,5 @@
 import { PYTHON_API } from "@/lib/constants";
+import { ledgerHeaders } from "@/lib/ledger-proxy";
 import { NextResponse } from "next/server";
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -6,6 +7,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   try {
     const r = await fetch(`${PYTHON_API}/api/options/trades/${id}`, {
       method: "DELETE",
+      headers: ledgerHeaders(_req),
       signal: AbortSignal.timeout(10_000),
     });
     return NextResponse.json(await r.json(), { status: r.status });
@@ -20,7 +22,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   try {
     const r = await fetch(`${PYTHON_API}/api/options/trades/${id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...ledgerHeaders(req) },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15_000),
     });

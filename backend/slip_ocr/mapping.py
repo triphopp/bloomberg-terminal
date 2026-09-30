@@ -26,6 +26,9 @@ def to_form(slip: dict, checks: list[dict]) -> tuple[dict | None, list[str]]:
         "broker_order_ref": ref,
         "executed_at": f["executed_at"]["value"],
         "fee_breakdown": d.get("fee_breakdown"),
+        # The wallet the slip paid from / into ("DIME! FCD"); the host maps it
+        # to one of its ledger wallets by the wallet's broker_label.
+        "settlement_wallet": ((f.get("settlement") or {}).get("value") or {}).get("wallet"),
     }
     price, fee, day = d.get("exact_price") or "", d.get("fee_total") or "", d.get("trade_date") or ""
     if side == "BUY":

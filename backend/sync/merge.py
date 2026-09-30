@@ -39,7 +39,7 @@ the behaviour that predates this file. Field-level merging starts from the
 second time the two devices meet, which under the 20s auto-pull is immediate.
 Guessing an ancestor instead is what produced the revert above.
 """
-from .config import MONEY_TABLES, SYNC_TABLES, TOMB_SEP
+from .config import APPEND_ONLY_TABLES, MONEY_TABLES, SYNC_TABLES, TOMB_SEP
 
 # Bookkeeping columns that must never take part in field comparison.
 _META = {"updated_at"}
@@ -54,6 +54,11 @@ def _ua(row: dict | None) -> str:
 
 def _payload(row: dict) -> dict:
     return {k: v for k, v in row.items() if k not in _META}
+
+
+def _append_payload(row: dict) -> dict:
+    """An append-only row's content; its stamps differ per device by design."""
+    return {k: v for k, v in row.items() if k not in ("updated_at", "created_at")}
 
 
 def _key(row: dict, pk: list[str]) -> tuple:
@@ -184,6 +189,14 @@ def merge_snapshots(snaps: list[dict], base: dict | None = None) -> tuple[dict, 
                 if cur is None:
                     best[key] = row
                     continue
+                if table in APPEND_ONLY_TABLES:
+                    # Union: the first copy (ours, since snaps[0] is local)
+                    # stands. Two different rows under one key are never merged
+                    # field by field — that would be an edit — only reported.
+                    if _append_payload(cur) != _append_payload(row):
+                        conflicts.append({"table": table, "key": list(key), "fields": ["__append_only__"],
+                                          "winner": cur, "loser": row})
+                    continue
                 peer_anc = anc.get(key) if anc is not None else None
                 if peer_anc is None:
                     best[key] = _lww_row(table, pk, cur, row, conflicts)
@@ -195,7 +208,7 @@ def merge_snapshots(snaps: list[dict], base: dict | None = None) -> tuple[dict, 
         out = []
         for key, row in best.items():
             rid = TOMB_SEP.join(str(row.get(c, "")) for c in pk)
-            d = tomb.get((table, rid))
+            d = tomb.get((table, rid)) if table not in APPEND_ONLY_TABLES else None
             if d:
                 ua = _ua(row)
                 deleted = d > ua if table in MONEY_TABLES else d >= ua

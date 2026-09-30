@@ -6,6 +6,7 @@ import type { AuditEvent } from "../types";
 import { AccountingChecksPanel } from "../ui/AccountingChecksPanel";
 import { AccountingPreparePanel } from "../ui/AccountingPreparePanel";
 import { EvidenceMatchPanel } from "../ui/EvidenceMatchPanel";
+import { LedgerPanel } from "../ui/LedgerPanel";
 
 const TABLES: { id: string; label: string }[] = [
   { id: "", label: "ALL" },
@@ -68,7 +69,9 @@ function describe(e: AuditEvent): string {
  * including imports and sells. Deleted rows stay readable here.
  */
 export function AuditTab({ accountId, colors }: { accountId: string; colors: Colors }) {
-  const [mode, setMode] = useState<"events" | "checks" | "evidence" | "prepare">("checks");
+  const [mode, setMode] = useState<"events" | "checks" | "evidence" | "prepare" | "ledger">(
+    "checks"
+  );
   const [table, setTable] = useState("");
   const [action, setAction] = useState("");
   const [events, setEvents] = useState<AuditEvent[]>([]);
@@ -116,7 +119,7 @@ export function AuditTab({ accountId, colors }: { accountId: string; colors: Col
         className="shrink-0 flex gap-2 px-3 py-2 border-b text-[10px]"
         style={{ borderColor: colors.border }}
       >
-        {(["checks", "evidence", "prepare", "events"] as const).map((m) => (
+        {(["checks", "ledger", "evidence", "prepare", "events"] as const).map((m) => (
           <button
             type="button"
             key={m}
@@ -126,17 +129,23 @@ export function AuditTab({ accountId, colors }: { accountId: string; colors: Col
           >
             {m === "checks"
               ? "ACCOUNTING CHECK"
-              : m === "evidence"
-                ? "BROKER EVIDENCE"
-                : m === "prepare"
-                  ? "PREPARE RECORDS"
-                  : "CHANGE LOG"}
+              : m === "ledger"
+                ? "LEDGER"
+                : m === "evidence"
+                  ? "BROKER EVIDENCE"
+                  : m === "prepare"
+                    ? "PREPARE RECORDS"
+                    : "CHANGE LOG"}
           </button>
         ))}
       </div>
       {mode === "checks" ? (
         <div className="flex-1 min-h-0">
           <AccountingChecksPanel accountId={accountId} colors={colors} />
+        </div>
+      ) : mode === "ledger" ? (
+        <div className="flex-1 min-h-0">
+          <LedgerPanel accountId={accountId} colors={colors} />
         </div>
       ) : mode === "evidence" ? (
         <div className="flex-1 min-h-0">

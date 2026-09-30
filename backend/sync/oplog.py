@@ -42,7 +42,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import MONEY_TABLES, SYNC_TABLES, TABLE_PK, TOMB_SEP, sync_dir
+from .config import APPEND_ONLY_TABLES, MONEY_TABLES, SYNC_TABLES, TABLE_PK, TOMB_SEP, sync_dir
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +257,10 @@ def _same(a: dict | None, b: dict | None, table: str) -> bool:
     return strip(a) == strip(b)
 
 
+def _append_payload(row: dict | None) -> dict | None:
+    return None if row is None else {k: v for k, v in row.items() if k not in ("updated_at", "created_at")}
+
+
 def _dumps(row: dict | None) -> str | None:
     return None if row is None else json.dumps(row, sort_keys=True, default=str, ensure_ascii=False)
 
@@ -436,11 +440,17 @@ def _upsert_row(conn, table: str, row: dict) -> None:
     setters = [c for c in cols if c not in pk and c != "id"]
     sql = (f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)}) "
            f"ON CONFLICT({', '.join(pk)}) DO ")
-    sql += ("UPDATE SET " + ", ".join(f"{c}=excluded.{c}" for c in setters)) if setters else "NOTHING"
+    append_only = table in APPEND_ONLY_TABLES
+    sql += ("UPDATE SET " + ", ".join(f"{c}=excluded.{c}" for c in setters)) if setters and not append_only \
+        else "NOTHING"
     conn.execute(sql, [row[c] for c in cols])
 
 
 def _delete_row(conn, table: str, row_key: str) -> None:
+    if table in APPEND_ONLY_TABLES:
+        # No device deletes from an append-only table; a peer op claiming to
+        # is refused (apply records it as a conflict via DatabaseError).
+        raise sqlite3.IntegrityError(f"{table} is append-only: delete refused")
     conn.execute(f"DELETE FROM {table} WHERE {_key_where(conn, table)}", row_key.split(TOMB_SEP))
 
 
@@ -487,7 +497,10 @@ def _apply_one(conn, op: dict) -> str:
                      (f"resolved on {op['device']}", op["resolves"]))
 
     fast_forward = head is None or op.get("parent") == head["op_id"]
-    wins = fast_forward or (op["hlc"], op["device"], op["op_id"]) > (head["hlc"], head["device"], head["op_id"])
+    # Append-only rows never compete: the insert either adds a missing row or
+    # does nothing (a differing row is flagged below), whatever the clocks say.
+    wins = (fast_forward or table in APPEND_ONLY_TABLES
+            or (op["hlc"], op["device"], op["op_id"]) > (head["hlc"], head["device"], head["op_id"]))
     if wins:
         try:
             with conn_savepoint(conn):
@@ -501,6 +514,13 @@ def _apply_one(conn, op: dict) -> str:
             return "failed"
         _record_op(conn, op, local=False)
         _close_superseded(conn, op)
+        if table in APPEND_ONLY_TABLES:
+            # DO NOTHING kept our row; a different peer row under the same key
+            # is a conflict for review (stamps aside — they differ by design).
+            if current is not None and _append_payload(current) != _append_payload(op.get("row")):
+                _record_conflict(conn, table, row_key, head or {"op_id": "local", "device": "local"},
+                                 current, op, op.get("row"), reason="append-only: differing row")
+            return "applied"
         if not fast_forward and not _same(current, op.get("row"), table):
             _record_conflict(conn, table, row_key, op, op.get("row"), head, current)
         return "applied"

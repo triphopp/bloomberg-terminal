@@ -22,6 +22,8 @@ export interface SlipForm {
   broker_order_ref: string | null;
   executed_at: string | null;
   fee_breakdown: Record<string, string> | null;
+  /** The slip's paying / receiving account as printed ("DIME! FCD"). */
+  settlement_wallet?: string | null;
   date_entry?: string;
   price_entry?: string;
   fee_entry?: string;

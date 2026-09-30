@@ -208,7 +208,7 @@ def test_posted_backfill_cannot_silently_diverge_after_legacy_edit(book):
     with book[1].get_db() as conn:
         with pytest.raises(ValueError, match="reviewed reversal"):
             ledger_backfill.apply(conn, ledger_backfill.build_events(conn)[0])
-        assert conn.execute("SELECT gross FROM ledger_events WHERE type='BUY'").fetchone()[0] == 100
+        assert conn.execute("SELECT gross FROM ledger_events WHERE type='BUY'").fetchone()[0] == "100"  # v2: decimal string
 
 
 def test_cli_exit_code_and_json(book, capsys):

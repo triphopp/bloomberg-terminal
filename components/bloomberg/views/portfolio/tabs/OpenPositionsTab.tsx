@@ -33,6 +33,7 @@ import { TradeEditModal } from "../modals/TradeEditModal";
 import { type OpenPositionsPayload, portfolioQueries } from "../queries";
 import type { Trade } from "../types";
 import { AccBadge } from "../ui/AccBadge";
+import { LEVEL_COLOR, LEVEL_TEXT, pct1, useMarginAssetLevels } from "../ui/margin";
 import { usePortfolioNav } from "../ui/usePortfolioNav";
 import { fmtWeight } from "../weights";
 import type { OptionLot } from "./OptionsTab";
@@ -43,8 +44,9 @@ const NO_POSITIONS: never[] = [];
 
 // Columns actually rendered = user's showCols plus the auto PRE/POST column
 // injected while a live session is active. PRE/POST is intentionally NOT a
-// ColName so it can't be added/removed via the COLS picker.
-type DisplayCol = ColName | "PRE/POST";
+// ColName so it can't be added/removed via the COLS picker. MGN is the same
+// kind of auto column: shown only while an account in view has margin on.
+type DisplayCol = ColName | "PRE/POST" | "MGN";
 
 // Pre-/post-market session quote (from /api/v2/portfolio/premarket)
 interface SessionQuote {
@@ -412,6 +414,7 @@ const NUMERIC_COLS = new Set<DisplayCol>([
   "ENTRY",
   "CURRENT",
   "PRE/POST",
+  "MGN",
   "VOL",
   "COST",
   "% PORT",
@@ -647,13 +650,20 @@ export function OpenPositionsTab({
     [positions, session]
   );
 
+  // MGN: Reg T colour per underlying (ui/MarginCard) — only for margin accounts.
+  const margin = useMarginAssetLevels("port");
+  const marginActive =
+    accountId === "all" ? margin.enabledIds.size > 0 : margin.enabledIds.has(accountId);
+
   const displayCols = useMemo<DisplayCol[]>(() => {
-    if (!sessionActive) return showCols;
     const cols = [...showCols] as DisplayCol[];
-    const i = cols.indexOf("CURRENT");
-    cols.splice(i >= 0 ? i + 1 : cols.length, 0, "PRE/POST");
+    if (sessionActive) {
+      const i = cols.indexOf("CURRENT");
+      cols.splice(i >= 0 ? i + 1 : cols.length, 0, "PRE/POST");
+    }
+    if (marginActive) cols.push("MGN");
     return cols;
-  }, [showCols, sessionActive]);
+  }, [showCols, sessionActive, marginActive]);
 
   const merged = useMemo(() => mergePositions(positions), [positions]);
 
@@ -1314,6 +1324,22 @@ export function OpenPositionsTab({
                                   </span>
                                 )}
                               </span>
+                            </span>
+                          );
+                        })(),
+                        MGN: (() => {
+                          const key = (p.yf_symbol || p.symbol || "").toUpperCase();
+                          const m = margin.map.get(`${p.account_id}|${key}`);
+                          if (!m) return <span style={{ color: colors.textSecondary }}>—</span>;
+                          const c = LEVEL_COLOR[m.asset.level];
+                          const d = m.asset.drop_to_call;
+                          return (
+                            <span
+                              className="font-bold"
+                              style={{ color: c }}
+                              title={`MARGIN ${m.asset.level}: ${LEVEL_TEXT[m.asset.level]}\nตัวนี้ลงอีก ${d == null ? "เท่าไรก็ไม่ถึง call (ตัวเดียว)" : pct1(d)} → Excess Liquidity < 0\nmaint ${fmtAmt(m.asset.maint)} (${pct1(m.asset.mm_share)} ของ MM บัญชี) · บัญชี ${m.account.level} cushion ${pct1(m.account.cushion)}`}
+                            >
+                              ● {d == null ? "" : `−${pct1(d)}`}
                             </span>
                           );
                         })(),

@@ -11,7 +11,7 @@ Layout, top to bottom:
     ภาษีมูลค่าเพิ่ม 7% (VAT)       0.20 USD
     ประเภทคำสั่ง · ช่วงเวลาส่งคำสั่ง · ช่วงเวลาที่คำสั่งมีผล
     วันที่ส่งคำสั่ง / วันที่คำสั่งสำเร็จ   25 ก.ย. 69 - 20:45 น.   Thai local time
-    บัญชีชำระเงิน   Dime! USD 80000472719
+    บัญชีชำระเงิน   Dime! USD 80000472719   (a sell slip: บัญชีรับเงิน — Dime! USD / Dime! FCD)
     เลขที่คำสั่ง     STKBMF2026092501454 1145317   (wraps onto two lines)
 
 The price shown is rounded; value = qty × true price. See validate.py.
@@ -158,7 +158,8 @@ def parse(tokens: list[Token]) -> dict:
             order_ref = _field(joined, parts)
 
     settlement = _field(None, None)
-    st_lab = find_label(tokens, "บัญชีชำระเงิน")
+    # Buy slips print the paying account, sell slips the receiving one.
+    st_lab = find_label(tokens, "บัญชีชำระเงิน") or find_label(tokens, "บัญชีรับเงิน")
     if st_lab:
         row = same_row(tokens, st_lab)
         parts = row + next_row(tokens, st_lab, row)
