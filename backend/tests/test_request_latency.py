@@ -10,8 +10,12 @@ import time
 
 import anyio
 import anyio.to_thread
-import httpx
 import pytest
+
+try:  # CI installs httpx2 only (tests.yml) — the same order starlette uses
+    import httpx2 as httpx
+except ImportError:
+    import httpx
 from fastapi import FastAPI
 
 import request_latency as rl
