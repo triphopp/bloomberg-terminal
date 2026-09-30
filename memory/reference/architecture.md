@@ -14,6 +14,8 @@ Python backend serves yfinance + FRED + Alpha Vantage + Ollama + BOT data to Nex
 
 `ledger_backfill.build_events` reconstructs legacy transactions → `ledger_engine.replay` calculates deterministic Decimal AVCO/FIFO cards → `accounting_checks` registry supplies read-only API/CLI findings. Legacy `stock_card` AVCO diagnostics remain tolerant so damaged histories can still be reported; strict preview rejects impossible sales. The live sell/summary/read paths have not switched.
 
+**Ledger v2 (2026-09-29, `backend/ledger.py`)** — posting service over `ledger_events`: Decimal strings, wallets, `book_date` vs `trade_date`, period close against a broker figure (DB trigger lock), reversal groups, fee true-up. SHADOW accounts: triggers on legacy money tables queue `ledger_dirty`; `db.get_db()` calls `ledger.flush_dirty` before commit → `ledger.project` (desired = `ledger_backfill.build_events`, keyed `source_key`, fingerprint diff → reverse + repost). A closed-period hit raises `PeriodClosed` → the whole legacy write rolls back (409) unless `X-Ledger-Correction`. Screens still read legacy (`PRIMARY` locked).
+
 - `backend/accounting_io.py`: read-only consistent SQLite transaction + `.backup()` (includes WAL) + integrity check.
 - `backend/accounting_preflight.py`: explicit dividend tax arithmetic, XD eligibility/sub-accounts, validated trade dates, opening market value vs cost, wallet FX coverage, transfer in-transit calculator. No persistence/scheduler.
 - `backend/scripts/accounting_audit.py`: local audit; optional localhost endpoint samples C1 and live NAV samples N1. Missing evidence never counts as pass.
@@ -184,3 +186,6 @@ Signals cache per symbol900s; alert closed-bar trimming remains after the shared
 - **Edit-driven data:** DB-trigger change feed (`change_feed.py`) → heartbeat → `useChangeFeed` invalidation.
 - **CPU:** I/O-bound work stays on threads. `http_tls.py` shares one TLS context (no per-connection CA load); `cpu_pool.py` (spawn ProcessPool, 2 workers, inline fallback) runs pure-Python parses that would hold the GIL for seconds — today the NY Fed ACM `.xls` (`cpu_tasks.parse_acm_xls`).
 - **Multi-instance / Postgres:** design in `plans/completed/stream-sessions-change-feed.md` — feed leader via advisory lock, `NOTIFY market_ticks` fan-out, `stream_interest` table, per-instance sessions, change feed → plpgsql / `change_seq`.
+
+### Margin (IBKR Reg T) — 2026-09-29
+`backend/margin.py` is pure (Book → evaluate/analyse, shock search for distance to liquidation). `routers/margin.py` builds the Book from the same valuation PORT/PAPER already use and exposes status/overview/settings; `margin_scheduler.py` turns worsening levels into `alert_events` (`margin:<LEVEL>`). PAPER order paths call `routers.margin.paper_check` when margin is enabled for the account. UI: `MarginCard`, `MarginRibbon`, MGN column.

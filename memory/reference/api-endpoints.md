@@ -28,7 +28,8 @@ Audit CLI: `python scripts/accounting_audit.py --api-url http://localhost:9317 -
 - `GET /api/heatmap` — sectors, commodities, bonds, indicators heatmap groups
 
 ## Stock (`routers/stock.py`)
-- `GET /api/stock/search` — ticker autocomplete
+- `GET /api/stock/resolve?q=` — typed bare ticker → Yahoo symbol `{input, symbol}` (`CPALL`→`CPALL.BK`; `.BK` wins on collisions like BH/TU/SCC — also first in search results; US line = pick it from the dropdown; anything with `. = ^ -` untouched). Rides the search cache. Proxy `/api/stock?type=resolve`. Frontend `lib/resolve-symbol.ts` (2026-09-30)
+- `GET /api/stock/search` — ticker autocomplete. Cost order (2026-09-29): case-insensitive cache 6h (hits + confirmed empty, per-key coalescing) → one `yf.Search` → one query1 REST call only if that failed/empty; `.BK` probe cached per ticker 24h; outage = last-good or `[]` with 30s down-mark, never the 6h cache. Frontend (`global-search.tsx`) keeps a 200-entry/10-min session cache and aborts superseded requests. Test: `tests/test_stock_search_cache.py`
 - `GET /api/stock/sector/{symbol}` — classification for the ENTRY form. Returns the raw provider fields (`sector`, `industry`, `sector_raw`, `industry_raw`, `quote_type`) **plus** `asset_class` (`equity`/`etf`/`fund`/`crypto`/`fx`/`index`/`future`/`option`/`dw`/`warrant`) and the sector in BOTH vocabularies: `set_sector` (SET codes — BANK, COMM, ENERG…) and `us_sector` (GICS labels — Financials, Consumer Staples…). Mapping lives in `backend/sector_map.py`, never a string match: "Healthcare" does not contain "Health Care" and "Consumer Defensive" matches "Consumer Discretionary" on its first word. Unknown resolves to `"Other"`, never `null`. ETFs also get `etf_kind` and `us_sector` `ETF - Leveraged` / `ETF - Inverse` (2026-09-28). No cache (one `.info` call)
 - `GET /api/stock/quote/{symbol}` — real-time quote
 - `GET /api/stock/history/{symbol}` — OHLCV history (1d/1w/1m/3m/ytd/1y/5y/max). For a daily final row whose Yahoo `Close` is null, the router checks the same-day regular quote and a separate raw-history frame; it restores the bar only when raw O/H/L/volume are finite and the quote close falls within that day's high/low. An incomplete response is not stored in the router cache, so a later request can recover when vendor data arrives. Response `{quotes, yf_symbol, interval, utc_offset_min}` (last three added 2026-09-26 for the live stream).
@@ -186,6 +187,28 @@ US listings only (EDGAR ไม่มี `.BK`/`.KS` → ใช้ `routers/sec_v
 - `GET /api/portfolio/db/holdings` — computed holdings (avg cost method)
 - `POST /api/portfolio/db/import` — bulk import CSV
 
+## Ledger v2 (`routers/ledger.py`, core `backend/ledger.py`) — 2026-09-29
+
+Proxy: `app/api/v2/ledger/[[...path]]/route.ts` (GET/POST/PUT). Errors: `{code, detail, evidence}` — 409 `LEDGER_PERIOD_CLOSED` / `LEDGER_CLOSE_MISMATCH`, 422 otherwise. Header `X-Ledger-Correction: <url-encoded reason>` (middleware `LedgerCorrectionMiddleware`) lets a write into a closed period book today; every money-write proxy forwards it (`lib/ledger-proxy.ts`), PORT retries with a prompt (`lib/ledger-correction.ts`).
+
+- `GET /accounts` — `{accounts:[{id,name,currency,ledger_mode,ledger_cutover,wallets[],balances[],rules[],matched?,agreed?}]}` (`matched`/`agreed` only for non-LEGACY)
+- `PUT /accounts/{id}/mode` `{mode: LEGACY|SHADOW, reason, cutover?, cutover_at?}` (`cutover_at` = statement moment, e.g. `2026-09-30T00:54+07:00`) — SHADOW runs the first projection; `cutover` (YYYY-MM-DD) = journal starts there: legacy rows dated ≤ cutover are not projected (post OPENING from a statement instead); a fingerprint baseline of that history is stored for L10
+- `PUT /wallets` `{account_id,wallet,currency,is_default,note,broker_label?}` — `broker_label` = name the broker prints on slips ("Dime! FCD")
+- `GET /wallet-rules?account_id` · `PUT /wallet-rules` `{account_id,symbol_pattern,wallet,note}` (fnmatch, e.g. `GC=F`) · `DELETE /wallet-rules/{id}`
+- `GET /route?account_id&currency&symbol?&label?&wallet?` — `{mode, wallet, reason, choices[]}`; order: typed → slip label (broker_label, same currency) → rule → currency default; LEGACY → `wallet: null`
+- Legacy writes carry the wallet (SHADOW accounts; fixed at entry): `POST /api/v2/portfolio/trades` `wallet_entry?/wallet_exit?/settlement_label?` · `PATCH /trades/{id}` `wallet_entry/wallet_exit` (validated vs trade currency) · `POST /sell` + `/sell-all-lots` `wallet?/settlement_label?` → `trades.wallet_exit` · `POST /cash` `wallet?` (THB) · `POST /dividends` `wallet?`
+- `GET /events?account_id&wallet&date_from&date_to&limit` — rows + `reversed`
+- `GET /balances?account_id&as_of` — `[{account_id,wallet,currency,balance,events,closed_through}]`
+- `GET /positions/{account_id}?as_of`
+- `GET /check?account_id&stale_fee_days` — L1 FX unpaired · L2 negative wallet · L3 late in closed · L4 fee estimated · L5 adjust/opening unexplained · L6 projection pending · L7 option effect · L8 duplicate order · L9 bad reversal
+- `GET /pilot/{account_id}?as_of` — per wallet vs the later of latest `broker_statements` (same currency) or latest CLOSE (`statement_kind: statement|period_close`); `matched`, `adjust_events`
+- `GET /closes?account_id`
+- `POST /events/trade` (refused in SHADOW) · `/events/position` · `/events/cash` · `/events/dividend` (+WHT) · `/events/transfer` (pair) · `/events/fx-convert` (two legs + fee) · `/events/opening` (needs evidence_ref) · `/events/adjust` (category ≠ UNKNOWN + reason)
+- `POST /events/move` `{account_id, from_wallet, to_wallet, amount, trade_date, to_amount?, fee?, evidence_ref?}` — same currency → TRANSFER pair; different → FX_CONVERT pair (`to_amount` from the slip required)
+- `POST /events/{id}/reverse` `{reason}` — reverses the whole link group · `POST /events/{id}/fee-trueup` `{posted_fee}`
+- `POST /close` `{account_id,wallet,as_of,statement_balance|statement_id,source_ref}` — exact match at minor unit or 409 with `difference` · `POST /reopen` `{reason, reopen_to?}`
+- `POST /project/{account_id}` `{correction_reason?, dry_run?}`
+
 ## Portfolio v2 (`routers/portfolio_v2.py`)
 - `GET /api/v2/portfolio/resolve-symbol?q=X&account_id=Y` — resolve bare ticker → canonical provider symbols, filtered to account's markets (`markets` JSON col; default US+TH, crypto→CRYPTO); returns `{query, markets, matches:[{resolved_symbol, market, currency, name, exchange}]}`; TTLCache 1h, home-country ranked first (`plans/port-redesign.md` Step 1)
 - `GET /api/v2/portfolio/accounts` — list accounts (no default seed; users create their own)
@@ -319,6 +342,15 @@ HTTP client over the running backend (`PYTHON_API_URL`, default :9317) — never
 - `GET /api/v2/portfolio/risk/guard/report?account_id=` — closed trades in R-multiples (1R = guard stop distance at entry): summary / followed / broke / overridden, `capped_expectancy_r` (breaks cut at −1R, upper bound), `break_counts` (LOSS_PAST_STOP = loss past 1.5R, HELD_LOSER = loser held ≥28d), monthly, by_strategy, worst 10. Cached 15 min. **2026-09-29:** replays each closed lot on RAW daily bars (`history_future(..., auto_adjust=False)`): per trade `mae_pct`, `mfe_pct`, `cf_return_pct` (with the guard stop; open ≤ stop → open fill), `entry_mismatch` (price_entry outside ±10% of the entry-day range = AVCO carried from an earlier holding → not replayed); `counterfactual` {actual vs stop avg/sum/win/worst, stopped_pct, winners_cut, losses_saved, coverage_pct, entry_mismatch[]}; `sweep` over −3…−20% and 1…4×ATR (no clamp).
 - `POST /api/v2/portfolio/risk/guard/apply-stops` body `{account_id?, dry_run=true}` — writes the guard's ATR auto stop into `price_stoploss` of OPEN lots that have none (DEFAULT-8% holdings skipped, existing stops untouched); a real run first backs up to `backend/backups/portfolio.db.bak-<ts>-pre-guard-stops`. Returns `{dry_run, lots, plan[{symbol, stop, stop_distance_pct, below_stop, lot_ids}], skipped, backup?}`. UI: TRADE GUARD → WRITE STOPS → CONFIRM WRITE.
 - Notifier `backend/guard_scheduler.py` (every `TRADE_GUARD_SCAN_INTERVAL`, default 900s): flag TRANSITIONS → `alert_events` rows `rule_id = guard:<CODE>` (ticker + toast; named in `alert_rules.list_events`). First run seeds `guard_state` silently.
+
+## Margin — IBKR Reg T (`routers/margin.py`, model `backend/margin.py`) — 2026-09-29
+Proxy: `app/api/v2/portfolio/margin/[[...path]]` (GET + PUT, 60 s timeout). No cache — each call values the account.
+- `GET /api/v2/portfolio/margin/status?scope=port|paper&account_id=X` → full status (see data-shapes "Margin"); `{enabled:false,…}` when off
+- `GET /api/v2/portfolio/margin/overview` → `{accounts:[…], worst}` every enabled account, worst level first (status-row ribbon)
+- `GET|PUT /api/v2/portfolio/margin/settings` — body `{scope, account_id, enabled, maint_long, maint_short, initial, overrides:{SYM: rate}, thresholds:{WATCH,WARNING,DANGER}}`. PUT on a `port` account also sets `portfolio_accounts.account_type='margin'`.
+- PORT book = `_open_positions_enriched` + `get_summary().cash_base` (derived cash → `cash_is_estimate` until reconciled). PAPER book = `paper_positions` @ live + `_get_cash` (now incl. option premium) + open options valued by `portfolio_options.value_option_rows`.
+- PAPER with margin on: market/pending buys and option orders must keep Reg T Available Funds ≥ 0 (`paper_check`), else 400 "Insufficient margin (Reg T)…".
+- Notifier `backend/margin_scheduler.py` (`MARGIN_SCAN_INTERVAL`, default 300 s): level worsens → `alert_events` `rule_id = margin:<LEVEL>`, symbol = account name; first sight fires for WARNING+.
 - Proxies `app/api/v2/portfolio/risk/guard/{route,override/route,override/[id]/route,size/route,report/route}.ts`
 
 ## Rates (`routers/rates.py`)

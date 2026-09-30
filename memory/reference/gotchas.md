@@ -7,6 +7,12 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### `UNIQUE constraint failed: sync_pending.table_name, sync_pending.row_key` on a save (2026-09-29)
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| Second save of the same row → 500 with the error above | An UPSERT (`INSERT … ON CONFLICT DO UPDATE`) on a table in `SYNC_TABLES`: its conflict policy overrides the `INSERT OR IGNORE INTO sync_pending` inside the op-log capture triggers (`sync/oplog.py`), so a row still pending flush collides | Write synced rows with UPDATE, then INSERT when `rowcount == 0` (see `routers/margin.py put_settings`). Six older UPSERT sites listed in `reports/sqlite-upsert-oplog-risk-report.md` |
+
 ### Watchlist pin on one machine never shows on the other, sync says in_sync (2026-09-28)
 
 | Symptom | Root cause | Fix |
@@ -113,6 +119,7 @@ IV scheduler test `test_run_once_skips_without_touching_the_network` depends on 
 |---|---|---|
 | Bottom crawl shows `MARKET DATA LOADING...` for ~25s on every boot | Nothing warmed the market/heatmap/FX caches at startup, so the first reader paid the whole cold fan-out. Measured `/api/ticker`: **23.5s cold, 0.21s warm** | `ticker.prewarm()` in `backend/main.py`, on a worker thread (must not delay the port bind) |
 | Crawl goes BACK to `MARKET DATA LOADING...` mid-session, for about a minute | Every fetcher in `routers/ticker.py` catches its own errors and returns `[]`; the assembled empty result was then `_cache.set()` like any other. One upstream 429 blanked the bar for the full TTL | A degraded build (no index/commodity/FX row at all) never replaces a payload that still has rows. Plus stale-while-revalidate: past `FRESH_TTL` the old payload goes out flagged `stale` while a thread refreshes behind it |
+| Ticker badge reads **STALE** nearly all the time, data looks fine (`degraded: false`, full rows) | Refresh-on-read: each 90s poll finds an entry ~81s old (the refresh the previous poll started). The `stale` flag was tied to `FRESH_TTL` (45s), so a perfectly healthy cycle flagged every poll. Rule: **with stale-while-revalidate, "time to refresh" ≠ "too old to trust"** | ✅ FIXED 2026-09-29 — `routers/ticker.py`: refresh still starts past `FRESH_TTL`, `stale` only past `FRESH_TTL + STALE_GRACE` (180s ≈ two failed refreshes). Weekend (Fri 17:00 → Sun 17:00 ET, FX closed) uses `QUIET_FRESH_TTL` 600s: ~6 builds/h instead of ~40. Tests `test_ticker_cache.py` |
 | Nearly every 60s poll is slow, not just the first | Ticker TTL 60s == frontend `refetchInterval` 60s == `CACHE_TTL` 60s on market+heatmap. The whole chain expired at the instant the next request arrived | `FRESH_TTL = 45` against a 90s poll. **Keep the server window strictly under the client interval** |
 | Any `download_quotes()` call is ~0.9s per symbol | `yf.Tickers(...)` *looks* batched, but `fast_info` is lazy — each symbol is its own HTTP round-trip. 20 FX pairs = 18.7s, almost the entire cold cost of the endpoint | `ThreadPoolExecutor` over the symbols in `sources/yfinance_source.py:download_quotes`. 18.7s → 3.5s. Benefits `fx.py` and `crypto.py` alike |
 
@@ -133,7 +140,7 @@ first call evicts the entry the second one wanted. `routers/ticker.py` keeps the
 timestamp inside the cached value (`(fetched_at, payload)`) and compares ages
 itself, asking the cache only for the outer `STALE_TTL` window.
 
-Tests: `backend/tests/test_ticker_cache.py` (5). Related:
+Tests: `backend/tests/test_ticker_cache.py` (20). Related:
 [heatmap tile silent-drop report](../reports/heatmap-tile-silent-drop-risk-report.md).
 
 ### Windows NEWS DCF/REGIME 404 and Raw SVI 405 after a pull (2026-09-13)
@@ -1569,6 +1576,8 @@ Option มีสองตัว: `% PORT` จาก premium MV (short lot = ล�
 2. **error ต้อง raise `ToolError`** (`mcp.server.mcpserver.exceptions`) — exception ชนิดอื่น SDK ซ่อนข้อความ agent เห็นแค่ "Error executing tool X". `BackendError` จึง subclass `ToolError`.
 3. **Actor ต้องตั้งใน async dependency** — `_capture_actor` ใน `routers/theses.py` เป็น `async def` เพื่อ set ContextVar ใน request task แล้วถูก copy เข้า threadpool ที่ sync route รัน. ถ้าเปลี่ยนเป็น `def` จะรันใน thread แยก และ `_log_event` อ่านได้ "user" ทุกครั้ง. Test: `test_actor_header_is_stamped_on_events`.
 
+4. **macOS: `ENOENT: python` (2026-09-29)** — `.mcp.json` สั่ง `python` (ใช้ได้บน Windows) แต่บน Mac `python` เป็นแค่ zsh alias ซึ่ง process ที่ spawn MCP มองไม่เห็น และ `/usr/bin/python3` (3.9 ของ Apple) ไม่มี `requests`/`mcp`. อย่าแก้ `.mcp.json` (แชร์กับ Windows) — override เฉพาะเครื่องด้วย local scope: `claude mcp add bloomberg-terminal -s local -e PYTHON_API_URL=http://localhost:9317 -e MCP_AGENT_NAME=claude -- /usr/local/bin/python3 backend/mcp_server.py` แล้วเช็ก `claude mcp get bloomberg-terminal` → Connected.
+
 MCP ต้องให้ backend รันอยู่ (HTTP client) — ไม่เปิด `portfolio.db` เอง เพื่อให้ validation / event log / sync triggers เหมือน UI ทุกอย่าง.
 
 ## FTS5 external-content + sync trigger = "database disk image is malformed" (2026-09-18)
@@ -2170,7 +2179,7 @@ picklable, light imports; Windows spawns). `CPU_POOL_WORKERS=0` disables it.
 `main.py` `_http_exception_handler` replaces the detail of every `HTTPException` ≥ 500 with "Internal server error" (logged server-side only). An upstream condition the caller must act on — vendor 429, missing API key — must use a 4xx (`429` + `Retry-After`, `424` for a missing key) or the agent/MCP sees a useless message. `google_trends.py` and `fiscal_ai.py` follow this; `sources/errors.UpstreamRateLimited` is the Yahoo-flavoured 429.
 
 ## TRADE GUARD notifier is silent on its first run (2026-09-28)
-`guard_scheduler.apply` seeds `guard_state` without writing events when the table is empty, so the flags that already exist on first boot never toast (the RISK card shows them). A flag toasts only when it APPEARS on a holding. Env `TRADE_GUARD_SCAN_INTERVAL` (default 900, `0` disables). Guard events live in `alert_events` with `rule_id = 'guard:<CODE>'` and no `alert_rules` row — `alert_rules.list_events` names them; anything else that joins `alert_events` to `alert_rules` sees them as orphans.
+`guard_scheduler.apply` seeds `guard_state` without writing events when the table is empty, so the flags that already exist on first boot never toast (the RISK card shows them). A flag toasts only when it APPEARS on a holding. Env `TRADE_GUARD_SCAN_INTERVAL` (default 900, `0` disables). MARGIN works the same way (`margin_scheduler.py`, `MARGIN_SCAN_INTERVAL` default 300, `rule_id = 'margin:<LEVEL>'`) except the first scan DOES fire for WARNING and worse. Guard events live in `alert_events` with `rule_id = 'guard:<CODE>'` and no `alert_rules` row — `alert_rules.list_events` names them; anything else that joins `alert_events` to `alert_rules` sees them as orphans.
 
 ## Yahoo `^SET.BK` returns ONE bar (2026-09-29)
 `yf.Ticker("^SET.BK").history(period="1y")` → 1 row (same for `^SET50.BK`). Anything needing SET index history must use a
@@ -2207,3 +2216,61 @@ bar while Close is real (2026-09-28: close 101.82, O/H/L 0) — raw yfinance, no
 **Fix:** `routers/stock.py` `_repair_zero_ohl` rebuilds such bars (open = previous close, high/low = range of open and
 close) in `/api/stock/history`. Test `tests/test_history_zero_ohl.py`. Anything else reading Yahoo OHLC for these
 series (ATR, MAE/MFE, stop sims) must treat a 0 price as missing, not as a price.
+
+## Append-only tables and the sync layer (2026-09-29)
+`init_sync_layer` stamps `updated_at` with an AFTER INSERT trigger that runs an **UPDATE** — on an append-only table
+(`ledger_events`, `ledger_period_close`) the no-update trigger aborts every insert. Such tables go in
+`sync.config.APPEND_ONLY_TABLES`: `updated_at` comes from the column DEFAULT, no stamp/tombstone triggers, snapshot merge is a
+union (a differing row under one key = conflict `__append_only__`, never overwritten), restore/oplog insert with `DO NOTHING`
+and refuse deletes. Any new append-only table must be listed there too.
+
+## Legacy PORT write refused with 409 LEDGER_PERIOD_CLOSED (2026-09-29)
+For a `ledger_mode = SHADOW` account, every write to trades/cash/dividends/cash_adjustments/option_trades is projected into
+`ledger_events` inside the same `get_db()` transaction (`ledger.flush_dirty`). If the change moves an event dated inside a
+closed period, the whole write rolls back. Expected — PORT prompts for a reason and retries with `X-Ledger-Correction`; the
+correction is booked today (`book_date`), the closed balance does not move. A new write proxy for a money table must forward
+the header (`lib/ledger-proxy.ts ledgerHeaders`). Writes through `db.connect()` (scripts) are not flushed — `/api/v2/ledger/check`
+L6 shows them; run PROJECT.
+
+## Dime cash in the ledger: THB wallet large, USD wallet negative (2026-09-29)
+Legacy `cash_ledger` deposits are THB and trades are USD with **no FX conversion recorded**; the derived cash hid this by
+converting at a rate. In ledger v2 the pilot copy showed THB +฿816,640 / USD −$24,062 (L2). Not a ledger bug: post the real
+FX_CONVERT legs from Dime's statement (LEDGER → FX CONVERT) before closing a period.
+
+## Thai ticker typed without `.BK` → empty chart / "no data" (2026-09-30)
+Search found `CPALL.BK`, but every path that uses the **typed** text instead of a picked result (MKT SYMBOL `<GO>`,
+global-search Enter before results load, terminal `compare(CPALL, PTT)` / bare lookup) sent `CPALL` to Yahoo, which has
+no such symbol. Fix: run typed input through `resolveSymbol()` (`components/bloomberg/lib/resolve-symbol.ts` →
+`/api/stock/resolve`). The terminal executor resolves symbol args for `group: "analysis"` commands only — HEATMAP takes
+market codes (TH, US) and metrics that must never become `TH.BK`. New input box that accepts a ticker → resolve it too.
+
+## Backend ค้างทั้งตัวหลังแก้ไฟล์ (`--reload`) (2026-09-30)
+Reloader ถือ port แต่ worker เก่าไม่ยอมออกตอน SIGTERM (idle, 0% CPU) → ทุก request timeout. ดู worker ด้วย
+`ps -A -o pid,ppid,etime,%cpu,command | awk '$2==<reloader>'`; `kill -9` worker ที่ค้าง → ได้ worker ใหม่ใน ~2s.
+[risk report](../reports/backend-reload-hang-risk-report.md)
+
+## Dime gold (GC=F) sale shows fees the slip does not have (2026-09-30)
+`broker_fees.profile_for` keys on account + currency only, so a Dime USD gold order gets the `DIME_US` stock schedule
+(3.98 USD on 0.5875 oz, slip = 0.00). Type commission 0 for gold, or fix `profile_for`. See
+[risk report](../reports/dime-gold-fee-estimate-risk-report.md).
+
+## Ledger cutover: history before the start day is an OPENING, not a replay (2026-09-30)
+Dime went SHADOW with `ledger_cutover = 2026-09-29`: wallets USD 10,408.21 / FCD 2,442.63 (USD) / SAVE 10,000.34 THB from the
+app screens 2026-09-30 00:54, closed through 2026-09-29. Legacy rows dated ≤ cutover are never projected — editing them changes
+legacy screens but not the ledger; L10 reports it against the baseline stored at cutover. A forgotten pre-cutover trade must be
+posted as today's event, not back-dated. Dime display rate that day = 33.55 THB/USD for USD and FCD alike. Legacy CASH tile
+(derived) still differs from the app by ≈฿2.6K of FX mixing — the ledger is the reconciled figure. Backup before setup:
+`backend/backups/portfolio-before-ledger-dime-20260930.db`.
+
+## UPSERT on a synced table fails with "UNIQUE constraint failed: sync_pending" (2026-09-30)
+`INSERT … ON CONFLICT DO UPDATE` on a table with op-log capture triggers: the outer statement's conflict clause overrides the
+trigger's `INSERT OR IGNORE INTO sync_pending`, so updating a row whose key is still pending sync aborts. First save works,
+second save (before a flush) fails with a 500. Use UPDATE, then INSERT if rowcount = 0 (`ledger.set_wallet`).
+
+## Ledger cutover is a MOMENT, not a day (2026-09-30)
+Dime's snapshot was 00:54 Bangkok on 30 Sep, but US trades filled 01:46–01:51 the same night carry trade date 29 Sep (= the
+cutover day). With a date-only cutover they were treated as "inside the opening" and skipped while their sales (dated 30 Sep)
+were posted → USD wallet overstated by $13,135.98. `portfolio_accounts.ledger_cutover_at` (UTC) now marks the snapshot; an
+event dated ≤ cutover day is in the opening only if the book knew of it before that moment (slip `executed_at`, else row
+`created_at`, `ledger._in_opening`). Later ones are booked the day after the cutover so the agreed close stays put.
+Always give `cutover_at` when switching an account to SHADOW.
