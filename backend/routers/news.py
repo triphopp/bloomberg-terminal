@@ -6,13 +6,13 @@ import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 
-import feedparser
 import requests
 import yfinance as yf  # yf.Search for topic-based news (no typed wrapper yet)
 from fastapi import APIRouter, Query
 
 from cache import TTLCache
 from config import FACEBOOK_TOKEN, RSSHUB_URL, FB_CACHE_TTL
+from rss import fetch_feed
 from sources import market_data
 
 router = APIRouter()
@@ -22,12 +22,13 @@ _fb_cache   = TTLCache(ttl=FB_CACHE_TTL, maxsize=50)
 _feed_cache = TTLCache(ttl=300, maxsize=100)  # 5-min cache
 
 # ── Curated free RSS feeds (no auth) ─────────────────────────────────────────
+# Dropped 2026-09-30: Reuters (feeds.reuters.com no longer resolves) and
+# Investopedia (403 with a 680 KB error page on every call). MarketWatch points
+# at the Dow Jones URL its old address 301s to.
 _RSS_FEEDS: dict[str, str] = {
     "Yahoo Finance": "https://finance.yahoo.com/rss/topfinstories",
     "CNBC":          "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
-    "MarketWatch":   "https://feeds.marketwatch.com/marketwatch/topstories/",
-    "Reuters Biz":   "https://feeds.reuters.com/reuters/businessNews",
-    "Investopedia":  "https://www.investopedia.com/feedbuilder/feed/getfeed?feedName=rss_articles",
+    "MarketWatch":   "https://feeds.content.dowjones.io/public/rss/mw_topstories",
 }
 
 
@@ -48,9 +49,9 @@ def _extract_fb_username(raw: str) -> str:
 
 def _fetch_via_rsshub(username: str, limit: int) -> list[dict]:
     """Fetch Facebook page posts via RSSHub RSS feed."""
-    feed = feedparser.parse(
+    feed = fetch_feed(
         f"{RSSHUB_URL}/facebook/page/{username}",
-        request_headers={"User-Agent": "Mozilla/5.0 (compatible; BloombergTerminal/1.0)"},
+        headers={"User-Agent": "Mozilla/5.0 (compatible; BloombergTerminal/1.0)"},
     )
     if feed.get("bozo") and not feed.entries:
         raise RuntimeError(f"feedparser bozo: {feed.get('bozo_exception')}")
@@ -212,9 +213,9 @@ def _fetch_yfinance_topic(topic: str, count: int) -> list[dict]:
 
 def _fetch_rss(name: str, url: str, limit: int) -> list[dict]:
     try:
-        feed = feedparser.parse(
+        feed = fetch_feed(
             url,
-            request_headers={"User-Agent": "Mozilla/5.0 (compatible; BloombergTerminal/1.0)"},
+            headers={"User-Agent": "Mozilla/5.0 (compatible; BloombergTerminal/1.0)"},
         )
         out = []
         for entry in feed.entries[:limit]:
@@ -240,11 +241,12 @@ def _fetch_rss(name: str, url: str, limit: int) -> list[dict]:
 def news_feed(
     topics: str = Query(default="market", description="Comma-separated search terms or ticker symbols"),
     limit: int = Query(default=60, le=150),
+    fresh: int = Query(default=0, description="1 = skip the cache (REFRESH button)"),
 ):
     """Multi-source financial newswire: yfinance Search + curated RSS feeds."""
     topic_list = [t.strip() for t in topics.split(",") if t.strip()][:10]
     cache_key = f"feed:{','.join(sorted(topic_list))}:{limit}"
-    cached = _feed_cache.get(cache_key)
+    cached = None if fresh else _feed_cache.get(cache_key)
     if cached is not None:
         return cached
 

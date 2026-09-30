@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from portfolio_currency import trade_currency
+from sub_port import pool_of, split_accounts
 
 EPS = 1e-6
 _NS = uuid.UUID("6f1c2d0e-9a57-4f0b-8a8e-4c6b3d2a1f00")
@@ -67,6 +68,7 @@ class Issue:
     account_id: str
     symbol: Optional[str]
     message: str
+    sub_port: str = ""   # set when the account pools this symbol per sub-port
 
     def as_dict(self) -> dict:
         return self.__dict__.copy()
@@ -102,6 +104,9 @@ class Event:
     broker_ref: Optional[str] = None
     # trade_time is the broker's fill time, not the time it was typed in
     fill_timed: bool = False
+    # not stored: the sub-port whose average cost this BUY/SELL moves
+    # ("" = the account's only pool; see sub_port.py)
+    sub_port: str = ""
 
     def row(self) -> dict:
         # ledger_events v2 stores numbers as canonical decimal strings, in a
@@ -174,10 +179,13 @@ def _thb_rate(conn, ccy: str, date: str, stored) -> Optional[float]:
 
 # ── build ────────────────────────────────────────────────────────────────────
 
-def build_events(conn, scope: Optional[tuple[str, str]] = None) -> tuple[list[Event], list[Issue]]:
-    """All events, or with `scope=(account_id, symbol)` only that position's
-    BUY/SELL events (no cash, dividends or options) — what avco_replay needs."""
+def build_events(conn, scope: Optional[tuple] = None) -> tuple[list[Event], list[Issue]]:
+    """All events, or with `scope=(account_id, symbol)` only that symbol's
+    BUY/SELL events (no cash, dividends or options) — what avco_replay needs.
+    `scope=(account_id, symbol, sub_port)` narrows to one sub-port's pool."""
     issues: list[Issue] = []
+    pool_filter = scope[2] if scope and len(scope) > 2 else None
+    scope = tuple(scope[:2]) if scope else None
     accounts = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM portfolio_accounts")}
     trades = {}
     rows = (conn.execute("SELECT * FROM trades WHERE account_id = ? AND symbol = ?", scope)
@@ -207,6 +215,19 @@ def build_events(conn, scope: Optional[tuple[str, str]] = None) -> tuple[list[Ev
     family: dict[str, list[str]] = defaultdict(list)
     for tid in trades:
         family[root_of(tid)].append(tid)
+
+    # A lot's sub-port is its buy's: a row split off by a partial sale belongs
+    # to the pool its parent was bought in, whatever its own note says.
+    split = split_accounts(conn)
+    pool: dict[str, str] = {}
+    for root_id, members in family.items():
+        acct = trades[root_id]["account_id"]
+        p = pool_of(conn, acct, trades[root_id].get("note"), split)
+        if not p:
+            p = next((q for q in (pool_of(conn, acct, trades[m].get("note"), split)
+                                  for m in members) if q), "")
+        for m in members:
+            pool[m] = p
 
     events: list[Event] = []
 
@@ -282,7 +303,7 @@ def build_events(conn, scope: Optional[tuple[str, str]] = None) -> tuple[list[Ev
                 fx_rate=_thb_rate(conn, ccy, day, root.get("exchange_rate")),
                 source="BACKFILL" if confidence != "ESTIMATE" else "BACKFILL_ESTIMATE",
                 source_ref=sorted(part), confidence=confidence,
-                trade_time=str(root.get("created_at") or ""),
+                trade_time=str(root.get("created_at") or ""), sub_port=pool[root_id],
                 note=f"lot {root_id[:8]}" + (f" + {len(part) - 1} split" if len(part) > 1 else ""),
             ))
         # Buy commission + VAT: its own cash event, never in the cost basis
@@ -310,13 +331,20 @@ def build_events(conn, scope: Optional[tuple[str, str]] = None) -> tuple[list[Ev
             issues.append(Issue("ERROR", "B_CLOSED_NO_EXIT", t["account_id"], t["symbol"],
                 f"row {t['id'][:8]} is closed ({t.get('win_loss')}) but has no exit date/price"))
             continue
-        key = (t["account_id"], t["symbol"], _d(t["date_exit"]), round(_f(t["price_exit"]), 8))
+        key = (t["account_id"], t["symbol"], _d(t["date_exit"]), round(_f(t["price_exit"]), 8),
+               pool[t["id"]])
         sales[key].append(t)
         if _d(t["date_exit"]) < _d(t["date_entry"]):
             issues.append(Issue("ERROR", "I7", t["account_id"], t["symbol"],
                 f"row {t['id'][:8]}: sold {_d(t['date_exit'])} before bought {_d(t['date_entry'])}"))
 
-    for (acct, sym, date, price), legs in sales.items():
+    # Two sub-ports selling the same stock at the same price on the same day
+    # are two sales; the id names the sub-port only then, so every other
+    # sale keeps the id ledger v2 already knows it by.
+    pools_per_sale: dict[tuple, int] = defaultdict(int)
+    for k in sales:
+        pools_per_sale[k[:4]] += 1
+    for (acct, sym, date, price, sub), legs in sales.items():
         qty = sum(_f(t["volume"]) for t in legs)
         gross = qty * price
         fee = 0.0
@@ -338,7 +366,9 @@ def build_events(conn, scope: Optional[tuple[str, str]] = None) -> tuple[list[Ev
                   if a["action"] in ("SELL_FULL", "SELL_PARTIAL_CREATED", "SELL_ALL_LOTS")]
         stamps = stamps or [str(t.get("created_at") or "") for t in legs]
         events.append(Event(
-            id=_eid(f"sell|{acct}|{sym}|{date}|{price}"), account_id=acct, trade_date=date,
+            id=_eid(f"sell|{acct}|{sym}|{date}|{price}"
+                    + (f"|{sub}" if pools_per_sale[(acct, sym, date, price)] > 1 else "")),
+            account_id=acct, trade_date=date, sub_port=sub,
             type="SELL", symbol=sym, qty=qty, price=price, gross=gross, fee=fee,
             net_cash=gross - fee, currency=ccy,
             fx_rate=_thb_rate(conn, ccy, date, legs[0].get("exit_exchange_rate")),
@@ -348,6 +378,8 @@ def build_events(conn, scope: Optional[tuple[str, str]] = None) -> tuple[list[Ev
         ))
 
     if scope:
+        if pool_filter is not None:
+            events = [e for e in events if e.sub_port == pool_filter]
         return events, issues
 
     # ── options: each fill is a BUY/SELL of the contract ─────────────────────
@@ -490,25 +522,39 @@ def stock_card(events: list[Event], method: str = "AVCO") -> list[dict]:
 
 def check(conn, events: list[Event], issues: list[Issue]) -> dict:
     """Replay every position and every account's cash; append findings."""
+    # One position per (account, symbol) — or per sub-port too, keyed
+    # (account, symbol, sub_port), where the account pools by sub-port.
+    def pos_key(acct, sym, sub):
+        return (acct, sym, sub) if sub else (acct, sym)
+
     positions: dict[tuple, list[Event]] = defaultdict(list)
     for e in events:
         if e.type in ("BUY", "SELL"):
-            positions[(e.account_id, e.symbol)].append(e)
+            positions[pos_key(e.account_id, e.symbol, e.sub_port)].append(e)
 
+    split = split_accounts(conn)
     open_rows: dict[tuple, list[dict]] = defaultdict(list)
-    for r in conn.execute("SELECT account_id, symbol, volume, price_entry FROM trades WHERE win_loss = 'P'"):
-        open_rows[(r["account_id"], r["symbol"])].append(dict(r))
+    for r in conn.execute("SELECT account_id, symbol, volume, price_entry, note FROM trades WHERE win_loss = 'P'"):
+        open_rows[pos_key(r["account_id"], r["symbol"],
+                          pool_of(conn, r["account_id"], r["note"], split))].append(dict(r))
     overrides = {(r["account_id"], r["symbol"]): _f(r["avg_cost"])
                  for r in conn.execute("SELECT account_id, symbol, avg_cost FROM position_cost_overrides")}
 
     cards = {}
-    for (acct, sym), evs in sorted(positions.items(), key=lambda kv: (kv[0][0], str(kv[0][1]))):
+    for key, evs in sorted(positions.items(), key=lambda kv: (kv[0][0], str(kv[0][1]), kv[0][2:])):
+        acct, sym = key[0], key[1]
+        sub = key[2] if len(key) > 2 else ""
+
+        def add(issue: Issue) -> None:
+            issue.sub_port = sub
+            issues.append(issue)
+
         card = stock_card(evs)
-        cards[(acct, sym)] = card
+        cards[key] = card
         # I6 — never hold a negative number of shares
         neg = next((r for r in card if r["bal_qty"] < -EPS), None)
         if neg:
-            issues.append(Issue("ERROR", "I6", acct, sym,
+            add(Issue("ERROR", "I6", acct, sym,
                 f"sold more than bought on {neg['event'].trade_date}: balance {neg['bal_qty']:g} "
                 f"— buy history is incomplete, P&L of this position cannot be verified"))
         # Same-day buy and sale: under average cost their order changes the
@@ -522,23 +568,23 @@ def check(conn, events: list[Event], issues: list[Issue]) -> dict:
                 untimed.add(e.trade_date)
         # A day whose every fill carries the broker's fill time is ordered.
         for day in sorted(d for d, ts in days.items() if {"BUY", "SELL"} <= ts and d in untimed):
-            issues.append(Issue("WARN", "I8_SAME_DAY", acct, sym,
+            add(Issue("WARN", "I8_SAME_DAY", acct, sym,
                 f"bought and sold on {day}: order taken from record time — check the contract notes"))
         if any(e.note.startswith("option") for e in evs):
             continue  # open options live in option_trades, not in trades — no I1/I2 twin
         # I1 — end quantity vs the open lots the app shows
         end_qty = card[-1]["bal_qty"] if card else 0.0
-        app_qty = sum(_f(r["volume"]) for r in open_rows.get((acct, sym), []))
+        app_qty = sum(_f(r["volume"]) for r in open_rows.get(key, []))
         if abs(end_qty - app_qty) > 1e-4 * max(1.0, app_qty):
-            issues.append(Issue("ERROR", "I1", acct, sym,
+            add(Issue("ERROR", "I1", acct, sym,
                 f"stock card ends at {end_qty:g} shares, open lots hold {app_qty:g}"))
         # I2 — end average cost vs what the open lots carry
         if app_qty > EPS and card and card[-1]["avg"] is not None:
-            app_avg = sum(_f(r["volume"]) * _f(r["price_entry"]) for r in open_rows[(acct, sym)]) / app_qty
+            app_avg = sum(_f(r["volume"]) * _f(r["price_entry"]) for r in open_rows[key]) / app_qty
             ledger_avg = card[-1]["avg"]
             if abs(app_avg - ledger_avg) > 1e-4 * max(1.0, ledger_avg):
-                ov = overrides.get((acct, sym))
-                issues.append(Issue("WARN", "I2", acct, sym,
+                ov = overrides.get((acct, key[1]))
+                add(Issue("WARN", "I2", acct, sym,
                     f"avg cost: stock card {ledger_avg:.4f} vs open lots {app_avg:.4f} "
                     f"({(app_avg / ledger_avg - 1) * 100:+.2f}%)"
                     + (f"; manual override {ov:.4f} in place" if ov else "")))
@@ -549,7 +595,7 @@ def check(conn, events: list[Event], issues: list[Issue]) -> dict:
                 continue
             diff = e.stored_pnl - r["realized"]
             if abs(diff) > max(1.0, 0.001 * (e.gross or 0)):
-                issues.append(Issue("WARN", "I3", acct, sym,
+                add(Issue("WARN", "I3", acct, sym,
                     f"sale {e.trade_date} {e.qty:g} @ {e.price:g}: app booked {e.stored_pnl:,.2f}, "
                     f"stock card gives {r['realized']:,.2f} (diff {diff:+,.2f})"))
 

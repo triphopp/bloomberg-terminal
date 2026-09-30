@@ -7,7 +7,9 @@
  * The backend owns exactly one channel (`webhook`); the other three are
  * rendering decisions that only the browser can make, so they live here:
  *
- *   toast   → sonner popup, once per event
+ *   toast   → sonner popup, once per event — except RED TRADE GUARD /
+ *             MARGIN events (stop hit, day-loss cap, liquidation), which go
+ *             to <GuardAlertModal/> and stay until acknowledged
  *   sound   → short WebAudio beep, no asset to ship or fail to load
  *   ticker  → handed to <AlertTicker/> to render inline (see `tickerEvents`)
  *
@@ -27,8 +29,18 @@
  * §11.5).
  */
 
-import { useCallback, useEffect, useRef } from "react";
+import { useSetAtom } from "jotai";
+import { type CSSProperties, useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
+import {
+  SEVERITY_COLOR,
+  describeGuard,
+  guardModalQueueAtom,
+  headlineOf,
+  isGuardEvent,
+  isModalEvent,
+  severityOf,
+} from "../alerts/guard-alert";
 import { type AlertEvent, ruleDisplayName, useAlertEvents } from "./useAlertRules";
 
 const WATERMARK_KEY = "bt.alerts.lastAnnouncedEventId";
@@ -103,15 +115,31 @@ export function useAlertNotifications(): UseAlertNotificationsResult {
   // firing and the write landing, and keeps working when storage is blocked.
   const announcedRef = useRef<number | null>(null);
 
-  const announce = useCallback((event: AlertEvent) => {
-    const title = `${event.symbol} · ${ruleDisplayName(event.ruleName, event.symbol)}`;
-    if (event.notify.includes("toast")) {
-      toast(title, { description: describe(event) });
-    }
-    if (event.notify.includes("sound")) {
-      playBeep();
-    }
-  }, []);
+  const enqueueModal = useSetAtom(guardModalQueueAtom);
+
+  const announce = useCallback(
+    (event: AlertEvent) => {
+      if (event.notify.includes("toast")) {
+        if (isModalEvent(event)) {
+          enqueueModal((q) => (q.some((e) => e.id === event.id) ? q : [...q, event]));
+        } else if (isGuardEvent(event)) {
+          // The left rule carries the severity (see .bb-toast in globals.css).
+          toast(`${event.symbol} · ${headlineOf(event)}`, {
+            description: describeGuard(event),
+            style: { "--bb-toast-rule": SEVERITY_COLOR[severityOf(event)] } as CSSProperties,
+          });
+        } else {
+          toast(`${event.symbol} · ${ruleDisplayName(event.ruleName, event.symbol)}`, {
+            description: describe(event),
+          });
+        }
+      }
+      if (event.notify.includes("sound")) {
+        playBeep();
+      }
+    },
+    [enqueueModal]
+  );
 
   useEffect(() => {
     if (!events.length) return;

@@ -243,11 +243,77 @@ def test_report_uses_manual_stop_and_flags_overridden():
 # ── Notifications ────────────────────────────────────────────────────────────
 
 def test_transitions_fire_on_appearance_only():
+    # entry 100, stop 92 → NEAR_STOP inside 92..94.67
+    snap = _book(_pos(price=94, first="2026-09-20"))
+    state, events = tg.transitions({}, snap)
+    assert [e["code"] for e in events] == ["NEAR_STOP"]
+    _, again = tg.transitions(state, snap)
+    assert again == []
+
+
+def test_stop_hit_reminds_every_call_while_it_stands():
     snap = _book(_pos(price=90, first="2026-09-20"))
     state, events = tg.transitions({}, snap)
     assert [e["code"] for e in events] == ["STOP_HIT"]
     _, again = tg.transitions(state, snap)
-    assert again == []
+    assert [e["code"] for e in again] == ["STOP_HIT"]
+    assert again[0]["snapshot"]["to_stop_pct"] < 0
+
+
+def test_hold_expires_on_review_date():
+    ov = {tg.override_key("a", "AAA", "2026-09-20"): {
+        "id": "x", "codes": ["STOP_HIT"], "reason": "r", "review_on": "2026-09-28"}}
+    out = tg.evaluate([_pos(price=90, first="2026-09-20")], {}, today=TODAY, overrides=ov)
+    assert out["light"] == "RED"
+    hit = next(a for a in out["actions"] if a["code"] == "STOP_HIT")
+    assert hit["level"] == "RED" and "HOLD หมดอายุ" in hit["text"]
+    assert out["positions"][0]["override"]["ended"] == "REVIEW"
+    _, events = tg.transitions({}, out)
+    assert [e["code"] for e in events] == ["STOP_HIT"] and events[0]["snapshot"]["hold_ended"] == 1
+
+
+def test_hold_review_defaults_from_created_at():
+    ov = {tg.override_key("a", "AAA", "2026-09-20"): {
+        "id": "x", "codes": ["STOP_HIT"], "reason": "r", "created_at": "2026-09-01 10:00:00"}}
+    out = tg.evaluate([_pos(price=90, first="2026-09-20")], {}, today=TODAY, overrides=ov)
+    assert out["positions"][0]["override"]["review_on"] == "2026-09-15"
+    assert out["light"] == "RED"
+
+
+def test_hold_breaks_below_its_floor():
+    ov = {tg.override_key("a", "AAA", "2026-09-20"): {
+        "id": "x", "codes": ["STOP_HIT"], "reason": "r", "floor_price": 84}}
+    held = tg.evaluate([_pos(price=85, first="2026-09-20")], {}, today=TODAY, overrides=ov)
+    assert next(a for a in held["actions"] if a["code"] == "STOP_HIT")["level"] == "INFO"
+    broken = tg.evaluate([_pos(price=84, first="2026-09-20")], {}, today=TODAY, overrides=ov)
+    assert broken["light"] == "RED"
+    assert broken["positions"][0]["override"]["ended"] == "FLOOR"
+    assert "floor" in next(a for a in broken["actions"] if a["code"] == "STOP_HIT")["text"]
+
+
+def test_hold_without_floor_only_expires_by_date():
+    ov = {tg.override_key("a", "AAA", "2026-09-20"): {"id": "x", "codes": ["STOP_HIT"], "reason": "r"}}
+    out = tg.evaluate([_pos(price=10, first="2026-09-20")], {}, today=TODAY, overrides=ov)
+    assert out["positions"][0]["override"]["active"] is True
+
+
+def test_proposed_floor_is_one_r_below_stop_or_below_price():
+    assert tg.hold_floor(100, 92) == 84                 # R 8 below the stop
+    assert tg.hold_floor(100, 92, price=70) == 62       # already under: R 8 below price
+    assert tg.hold_floor(100, 110) == pytest.approx(104.5)  # trailing stop: 5% of stop
+
+
+def test_missing_data_is_a_yellow_action_not_green():
+    out = _book(_pos(price=None), _pos("SH", volume=-5))
+    assert out["light"] == "YELLOW"
+    assert sorted(a["symbol"] for a in out["actions"] if a["code"] == "DATA") == ["AAA", "SH"]
+
+
+def test_unknown_nav_drawdown_halves_size():
+    rows = [_pos(f"S{i}", sector=f"s{i}", price=103) for i in range(10)]
+    out = tg.evaluate(rows, {}, today=TODAY, nav_drawdown_unknown=True)
+    assert out["size_multiplier"] == 0.5
+    assert out["light"] == "YELLOW" and out["actions"][0]["code"] == "DATA"
 
 
 def test_transitions_skip_overridden_codes():
@@ -277,7 +343,29 @@ def test_scheduler_apply_seeds_silently_then_writes_events():
     assert [e["code"] for e in written] == ["STOP_HIT"]
     row = conn.execute("SELECT rule_id, symbol, bar_time FROM alert_events").fetchone()
     assert tuple(row) == ("guard:STOP_HIT", "AAA", "2026-09-28")
-    assert guard_scheduler.apply(conn, hit, now) == []            # still hit → no repeat
+    assert guard_scheduler.apply(conn, hit, now) == []            # same day → capped
+    tomorrow = datetime(2026, 9, 29, 3, 0, tzinfo=timezone.utc)
+    assert [e["code"] for e in guard_scheduler.apply(conn, hit, tomorrow)] == ["STOP_HIT"]
+
+
+def test_scheduler_status_states(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    import guard_scheduler as gs
+
+    now = datetime(2026, 9, 30, 3, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(gs, "_started", True)
+    monkeypatch.setattr(gs, "_status", {**gs._status, "interval": 900, "started_at": now - timedelta(seconds=60),
+                                        "last_ok_at": None, "last_error": None})
+    assert gs.status(now)["state"] == "STARTING"
+    gs._status["started_at"] = now - timedelta(hours=2)
+    assert gs.status(now)["state"] == "STALE"
+    gs._status["last_ok_at"] = now - timedelta(minutes=5)
+    assert gs.status(now)["state"] == "OK"
+    gs._status["last_error"] = "HTTPError: 429"
+    assert gs.status(now)["state"] == "ERROR"
+    monkeypatch.setattr(gs, "_started", False)
+    assert gs.status(now)["state"] == "OFF"
 
 
 def test_size_buckets_floor_to_board_lot():

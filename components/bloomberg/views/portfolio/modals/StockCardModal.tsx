@@ -11,11 +11,14 @@ const number = (value: number | null, digits = 2) =>
 export function StockCardModal({
   accountId,
   symbol,
+  subPort,
   colors,
   onClose,
 }: {
   accountId: string;
   symbol: string;
+  /** One sub-port's pool (Finansia 6065151); omitted = the whole account */
+  subPort?: string;
   colors: Colors;
   onClose: () => void;
 }) {
@@ -25,9 +28,10 @@ export function StockCardModal({
     dialog.current?.showModal();
   }, []);
   const { data, error, isFetching } = useQuery<StockCard>({
-    queryKey: ["portfolio-stock-card", accountId, symbol, method],
+    queryKey: ["portfolio-stock-card", accountId, symbol, method, subPort ?? ""],
     queryFn: async ({ signal }) => {
       const qs = new URLSearchParams({ account_id: accountId, symbol, method });
+      if (subPort) qs.set("sub_port", subPort);
       const r = await fetch(`/api/v2/portfolio/ledger/stock-card?${qs}`, { signal });
       const body = await r.json();
       if (!r.ok) throw new Error(body.detail || "Stock card failed");
@@ -50,6 +54,7 @@ export function StockCardModal({
         >
           <strong className="text-xs" style={{ color: colors.accent }}>
             STOCK CARD · {symbol} · {accountId}
+            {subPort ? ` · ${subPort}` : ""}
           </strong>
           {(["AVCO", "FIFO"] as const).map((m) => (
             <button

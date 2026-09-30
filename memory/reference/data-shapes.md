@@ -586,7 +586,14 @@ Two bases at once — the ALLOCATION (OPEN) card used to weight sectors by cost 
 ```
 Action rows: `{level: RED|YELLOW|INFO, code, symbol, text, account_id?, yf_symbol?, first_entry?, override_id?}` — per-holding
 codes carry the holding key (HOLD needs it); INFO = a HOLD is recorded, not counted in `light`. Book codes: DAY_LOSS, DD_STOP, DD_HALF, STREAK, SECTOR.
-`override` on a position: `{id, account_id, yf_symbol, symbol, first_entry, codes[], reason, created_at, cleared_at}`.
+`override` on a position: `{id, account_id, yf_symbol, symbol, first_entry, codes[], reason, created_at, cleared_at,
+review_on, floor_price, active, ended: null|"REVIEW"|"FLOOR"}` (2026-09-30) — `review_on` is the stored date or created_at + `rules.hold_review_days` (14);
+`floor_price` null = no floor (legacy / API without one); `active: false` → its codes are back at full level and the action text says why.
+Position rows also carry `hold_floor_default` (one R below the stop, or below price when already under it — the HOLD form's proposal).
+Action code **DATA** (YELLOW, 2026-09-30): a holding the guard could not check (no live price / no entry / short) or NAV drawdown unknown
+(then `size_multiplier` ≤ 0.5, why "NAV drawdown ไม่ทราบ"). SECTOR actions carry `{sector, weight_pct}`.
+`scan` (2026-09-30, `guard_scheduler.status()`): `{state: OK|STARTING|ERROR|STALE|OFF, started_at, interval, last_run_at, last_ok_at, last_error, last_events}` —
+the notifier heartbeat; STALE = no good tick for 2 intervals + startup.
 
 `GET /risk/guard/size` → `{ok, symbol, price, currency, fx, base_currency, nav_value, nav_includes_cash, light, multiplier, multiplier_why[],
 atr_pending, buckets: {S|M|L: {pct_nav, notional_base, volume, risk_base, risk_pct_nav}}, stop, stop_distance_pct, stop_source, atr_pct, lot}`.
@@ -1630,7 +1637,7 @@ SQLite: `search_hits(symbol TEXT PK, count INTEGER, last_at TEXT)` — local onl
 `acquisition_type TEXT` (`'TRANSFER_IN'` = lot received in kind at a portfolio takeover; NULL = normal buy), `original_price_entry REAL` (previous owner's cost/unit, memo), `transfer_price_entry REAL` (fair value/unit on the transfer date). For these lots `price_entry`/`amount`/`date_entry` = fair value on the transfer date, so every return starts there. Both memo prices are copied on partial-sell splits and never AVCO-rebased.
 `lot_price REAL` (2026-09-28) — what the lot cost per unit when bought; never AVCO-rebased, copied on splits. `price_entry` is DERIVED (pooled AVCO at the row's sale, or the current average on an open lot) and rewritten by `avco_replay.replay()` after every POST/PATCH/DELETE `/trades`, `/sell`, `/sell-all-lots`. A PATCH that changes `price_entry` is stored as a `lot_price` correction (carried to the lot's split rows). NULL on older rows until their position is first replayed (backfilled from `trade_audit_log`). Those endpoints' responses carry `replay: {skipped, warnings, avg, rows_changed, sales_repriced}` (PATCH: a list, or null when no history field changed).
 `/takeover?account_id&base_currency` → `{ base_currency, transfer_dates[], lots[{id, account_id, symbol, date_transfer, date_exit, open, volume, currency, original_price_entry, transfer_price_entry, original_cost_base, transfer_value_base, inherited_pnl_base, realized_since_base}], totals{original_cost, transfer_value, inherited_pnl, realized_since} }`. `inherited_pnl = (transfer − original) × volume` (pre-takeover, fixed). Unrealized since takeover = open-positions `unrealized_pnl_base` matched by `id`. Types `TakeoverPayload`/`TakeoverLot` in `views/portfolio/queries.ts`.
-`scopes[{account_id, sub_port, transfer_date, inherited_pnl, realized_since}]` (2026-09-27) = **takeover debt** per sub-portfolio (sub-port parsed from the note, `_sub_port` ↔ `subPortLabel`): `realized_since` sums EVERY trade closed in that account+sub-port on/after the transfer date, not just the transferred lots. PORT group header shows `TAKEOVER DEBT = inherited + realized_since + open unrealized of the scope` while < 0 (live; reappears if the book falls back). Closed rows with an empty note have no sub-port and are not counted. Type `TakeoverScope`.
+`scopes[{account_id, sub_port, transfer_date, inherited_pnl, realized_since}]` (2026-09-27) = **takeover debt** per sub-portfolio (sub-port parsed from the note, `sub_port.sub_port_of` ↔ `sub-ports.ts subPortOf` — first segment only, since 2026-09-30): `realized_since` sums EVERY trade closed in that account+sub-port on/after the transfer date, not just the transferred lots. PORT group header shows `TAKEOVER DEBT = inherited + realized_since + open unrealized of the scope` while < 0 (each sub-port section header its own; filtered to one sub-port, the group header shows that one) (live; reappears if the book falls back). Closed rows with an empty note have no sub-port and are not counted. Type `TakeoverScope`.
 
 ## Stop simulator (`GET /api/v2/portfolio/risk/stop-sim`)
 ```json
@@ -1689,3 +1696,4 @@ PAPER `GET /api/paper/accounts/{id}/summary` gained `options_value`; `equity` = 
 `pinned_assets.symbol` is UNIQUE (`ux_pa_symbol`; `init_db` first collapses duplicates via `db.dedupe_pinned_assets`, keeping the row with most info / newest `updated_at`, merging tags, normalising symbol to UPPER(TRIM)). New rows use id `pin:<SYMBOL>`; older rows keep their ids. Index `idx_pa_group_sort(group_id, sort_order)`. Multi-category membership = pin tags, not duplicate rows.
 
 `PUT /api/pins/by-symbol/{symbol}` → `{action, pin: {id,symbol,group_id,comment,buy_target,sell_target,price_at_pin,priority,sort_order,added_at,updated_at,tags[]}, group: {id,name,color,sort_order,...}}`
+

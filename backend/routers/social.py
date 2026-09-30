@@ -7,11 +7,11 @@ import datetime
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import feedparser
 from fastapi import APIRouter, Query
 
 from cache import TTLCache
 from config import RSSHUB_URL
+from rss import fetch_feed
 
 router = APIRouter()
 
@@ -39,7 +39,7 @@ def _struct_to_iso(struct) -> str:
 
 
 def _parse_rss(url: str, platform: str, handle: str, limit: int) -> list[dict]:
-    feed = feedparser.parse(url, request_headers={"User-Agent": _UA})
+    feed = fetch_feed(url, headers={"User-Agent": _UA})
     if feed.get("bozo") and not feed.entries:
         exc_str = str(feed.get("bozo_exception", ""))
         if "not well-formed" in exc_str or "invalid token" in exc_str:
@@ -131,6 +131,7 @@ _FETCHERS = {
 def social_feed(
     handles: str = Query(..., description='JSON map: {"facebook":["page"],"youtube":["UCxxx"],"reddit":["sub"],"twitter":["handle"],"rss":["url"]}'),
     limit: int = Query(default=50, le=200),
+    fresh: int = Query(default=0, description="1 = skip the cache (REFRESH button)"),
 ):
     """Unified multi-platform social feed — Facebook, Twitter/X, YouTube, Reddit, generic RSS."""
     try:
@@ -139,7 +140,7 @@ def social_feed(
         return {"posts": [], "errors": ["Invalid handles JSON"]}
 
     cache_key = f"social:{handles}:{limit}"
-    cached = _social_cache.get(cache_key)
+    cached = None if fresh else _social_cache.get(cache_key)
     if cached is not None:
         return cached
 

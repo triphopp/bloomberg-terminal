@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -31,6 +32,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_INTERVAL = 15 * 60
 STARTUP_DELAY = 120
 _started = False
+
+# Heartbeat for the UI (`status()` → GET /risk/guard "scan"). In memory: it
+# describes THIS process, and a reload that restarts the loop resets it.
+_status: dict = {"started_at": None, "interval": None, "last_run_at": None,
+                 "last_ok_at": None, "last_error": None, "last_events": 0}
 
 
 def interval_seconds() -> int:
@@ -112,12 +118,46 @@ def run_once() -> dict:
     return {"light": snapshot.get("light"), "events": len(written), "var_forecast": bool(forecast)}
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def status(now: datetime | None = None) -> dict:
+    """Is the notifier alive? `state`: OFF (disabled) · STARTING (first tick not
+    due yet) · OK · ERROR (last tick failed) · STALE (no good tick for 2 intervals
+    — the alerts the user relies on are not being produced)."""
+    now = now or _now()
+    out = {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in _status.items()}
+    interval = _status["interval"]
+    if not _started or not interval:
+        out["state"] = "OFF"
+        return out
+    ok, started = _status["last_ok_at"], _status["started_at"]
+    budget = 2 * interval + STARTUP_DELAY
+    if ok is None:
+        late = started is not None and (now - started).total_seconds() > budget
+        out["state"] = "STALE" if late else ("ERROR" if _status["last_error"] else "STARTING")
+    elif (now - ok).total_seconds() > budget:
+        out["state"] = "STALE"
+    elif _status["last_error"]:
+        out["state"] = "ERROR"
+    else:
+        out["state"] = "OK"
+    return out
+
+
 def _loop(interval: int) -> None:
     time.sleep(STARTUP_DELAY)
     while True:
+        _status["last_run_at"] = _now()
         try:
-            run_once()
+            res = run_once()
+            _status["last_ok_at"] = _now()
+            _status["last_error"] = None
+            _status["last_events"] = int(res.get("events") or 0)
         except Exception as e:  # noqa: BLE001 — a bad tick must not kill the loop
+            # Shown in the UI: never a URL (they can carry API keys).
+            _status["last_error"] = re.sub(r"https?://\S+", "<url>", f"{type(e).__name__}: {e}")[:300]
             logger.exception("trade guard tick failed (will retry next interval): %s", e)
         time.sleep(interval)
 
@@ -131,5 +171,7 @@ def start_background_scan() -> None:
         logger.info("trade guard: disabled (TRADE_GUARD_SCAN_INTERVAL=0)")
         return
     _started = True
+    _status["started_at"] = _now()
+    _status["interval"] = interval
     threading.Thread(target=_loop, args=(interval,), daemon=True, name="trade-guard").start()
     logger.info("trade guard: notifier started (every %ds)", interval)

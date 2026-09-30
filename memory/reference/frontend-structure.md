@@ -21,7 +21,8 @@ All paths below are relative to `components/bloomberg/views/portfolio/`.
 | `ui/AccountingChecksPanel.tsx` | `AccountingChecksPanel`: React Query findings, severity filters, evidence, explicit read-switch gates, incomplete coverage labels, card drill-down |
 | `ui/AccountingPreparePanel.tsx` | `AccountingPreparePanel`: dividend XD/sub-account and opening preview; records cited broker statement revision only after arithmetic preview; shows dated cash/quantity differences; edits invalidate stale responses |
 | `tabs/AuditTab.tsx` | ACCOUNTING CHECK / PREPARE RECORDS / CHANGE LOG under PORT → TOOLS → AUDIT; BROKER FILLS filter shows cited Dime execution rows and expandable image/hash fields |
-| `tabs/OpenPositionsTab.tsx` | CARD button per displayed symbol opens account-wide stock card (combines its sub-accounts) |
+| `tabs/OpenPositionsTab.tsx` | CARD button opens the stock card of that row's sub-port (`sub_port`). An account with ≥2 sub-ports renders one section per sub-port under its group header (MV · % · cost · TAKEOVER DEBT · unreal, collapsible `${group}::${sub}`); toolbar chips ALL/sub-ports filter (`localStorage["bloomberg_portfolio_subport"]`). Rows merge per account+symbol+sub-port |
+| `sub-ports.ts` | `splitNote`, `subPortOf`, `subPortSections`, `subPortsIn` — pure, tested (`__tests__/sub-ports.test.ts`); same rule as `backend/sub_port.py` |
 
 Preview POSTs do not write data. Choosing FIFO here does not change the live sell method. Next proxies: `app/api/v2/portfolio/ledger/{check,stock-card,prepare-dividend,check-opening}/route.ts`.
 
@@ -51,6 +52,7 @@ components/bloomberg/
 │   │   ├── polymarket-column.tsx← {SYM} IMPLIED ladder + WATCHLIST MARKETS + MACRO SIGNALS + search
 │   │   ├── prediction-ladder.tsx← implied distribution panel (CLOSE ABOVE CDF + TOUCH LADDER)
 │   │   ├── useWatchlistNews.ts  ← useWatchlistSymbols() (pins atom → localStorage fallback) + React Query
+│   │   ├── useNewsQueries.ts    ← React Query for NEWSFEED / SOCIAL (one query per handle) / Polymarket signals+search; REFRESH → `fresh=1`
 │   │   ├── constants.ts / helpers.ts / types.ts
 │   ├── heatmap-view.tsx         ← HMAP: `heatmap(MARKET)` sector treemap (replaced GMOV 2026-09-25)
 │   ├── tail-risk-view.tsx       ← TAIL: 6 dimensions + macro context (EventStrip under HealthStrip, MacroPanel in left column, EVENT tag on VIX signals, event ReferenceLines on 90D chart)
@@ -348,7 +350,8 @@ components/bloomberg/
 | `views/news/newsfeed-tab.tsx` | `NewsFeedTab` |
 | `views/news/social-tab.tsx` | `SocialTab` |
 | `views/news/polymarket-column.tsx` | `PolymarketColumn`, `ProbBar` |
-| `views/news/useWatchlistNews.ts` | `useWatchlistSymbols()`, `useWatchlistNews()` |
+| `views/news/useWatchlistNews.ts` | `useWatchlistSymbols()`, `useWatchlistNews()` (returns query + `refresh()` that bypasses the backend cache) |
+| `views/news/useNewsQueries.ts` | `useNewsFeed()`, `useSocialFeed()`, `usePolymarketSignals()`, `usePolymarketSearch()`, `useFreshFlag()` |
 | `views/news/prediction-ladder.tsx` | `PredictionLadder` |
 | `hooks/useStockPredictions.ts` | `useStockPrediction()`, `useStockPredictionSummaries()`, `probColor()` + prediction types |
 | `hooks/useCompanyOutlook.ts` | `useCompanyOutlook()`, `useCompanyXbrl()`, `useCompanyFilings()`, `isUsListing()`, `shortMetric()` |
@@ -564,3 +567,11 @@ The browser transport permits three batch requests concurrently. Quote jobs have
 - `tabs/CashTab.tsx` DIVIDENDS form (2026-09-25): live unit check via `/dividends/check` (500 ms debounce) → line `MARKET … · HELD … → gross …` + issues with one-click fixes; currency follows the asset until the user picks one (`currencyTouched`); save handles 422 with **SAVE ANYWAY** (`force: true`).
 
 - `views/portfolio/ui/EvidenceMatchPanel.tsx` — PORT → TOOLS → AUDIT → **BROKER EVIDENCE** (2026-09-26): per-symbol broker fills vs book, expand for fill ↔ row table + IMAGE link; exports `EvidenceMatchPanel`. Types `EvidenceReport/EvidenceSymbol/EvidenceRow/EvidenceStatus` in `accounting-types.ts`.
+
+## Guard alert modal + terminal toasts — 2026-09-30
+
+- **`alerts/GuardAlertModal.tsx`** (mounted once in `layout/terminal-layout.tsx`) — blocking `alertdialog` for RED TRADE GUARD / MARGIN events: `guard:STOP_HIT`, `guard:DAY_LOSS`, `guard:DD_STOP`, `margin:DANGER`, `margin:LIQUIDATION`. Queue with 1/N counter. **OPEN RISK ↵** = ack + PORT → RISK (SELL/HOLD live there) · **ACK** = ack · **LATER / ESC** = hide for this session only (event stays unacked in the ticker). It never sends an order.
+- **`alerts/guard-alert.ts`** — split + presentation: `isModalEvent`, `severityOf` (RED/YELLOW/INFO), `headlineOf`, `nextStepOf`, `fieldsOf` (PRICE/STOP/RETURN · DAY P&L/NAV DD/STREAK · CUSHION/EXCESS LIQ/NLV), `describeGuard`, `guardModalQueueAtom`.
+- `hooks/useAlertNotifications.ts` routes: RED guard/margin → modal queue; other guard/margin → toast titled `SYMBOL · HEADLINE` with a labelled description and a severity rule (`--bb-toast-rule`); user alert rules → toast as before.
+- **`components/ui/sonner.tsx`** is now `unstyled` + `.bb-toast*` classes in `styles/globals.css` (black surface, 1px border, square, mono, 2px left rule by severity / sonner `data-type`). The old shadcn default followed next-themes with no provider mounted → rendered white rounded cards. Every `toast()` in the app gets the new look.
+- **TradeGuardCard layout (2026-09-30)** — light → KPI strip (TODAY · NAV DD · STREAK · HEAT · SIZE · ALERTS, modal-style cells) → one CSS grid `ROW_GRID` (● · CODE · SYMBOL · 3 labelled readings · next step · buttons) grouped ACT NOW / WATCH / HELD. `readingsOf()` picks the three numbers per code (STOP: LAST/STOP/UNDER · OVERWEIGHT: WEIGHT/CAP/TRIM ฿ · …); the long Thai sentence is the row tooltip. HOLD form = reason + REVIEW select + FLOOR `NumInput` (prefilled `hold_floor_default`). Rules footer is a label/value grid. `guard-ribbon.tsx` shows `ALERTS STALE|OFF|ERROR` from `scan`.

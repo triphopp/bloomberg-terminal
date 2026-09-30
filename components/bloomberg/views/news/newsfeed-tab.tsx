@@ -2,65 +2,53 @@
 
 import { useAtomValue } from "jotai";
 import { ExternalLink, Plus, RefreshCw, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { stockSearchSymbolAtom } from "../../atoms";
 import { BloombergButton } from "../../core/bloomberg-button";
 import { DEFAULT_TOPICS, TOPICS_KEY, sourceColor } from "./constants";
 import { timeAgo } from "./helpers";
 import type { Article, ThemeColors } from "./types";
+import { useNewsFeed } from "./useNewsQueries";
+
+const NO_ARTICLES: Article[] = [];
 
 /** Topic-driven macro newswire — yfinance search + curated RSS (unchanged behaviour). */
 export function NewsFeedTab({ colors }: { colors: ThemeColors }) {
   const stockSymbol = useAtomValue(stockSearchSymbolAtom);
 
-  const [topics, setTopics] = useState<string[]>(DEFAULT_TOPICS);
-  const [newTopic, setNewTopic] = useState("");
-  const [articles, setArticles] = useState<Article[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [filterText, setFilterText] = useState("");
-  const topicInputRef = useRef<HTMLInputElement>(null);
-
-  // Mount-only: stockSymbol seeds topics the FIRST time nothing is saved.
-  // Depending on it would overwrite the saved list on every stock navigation.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: see above
-  useEffect(() => {
+  // Read saved topics in the initializer: seeding DEFAULT_TOPICS and loading the
+  // saved list from an effect fired two feed requests on every mount, and the
+  // first could land last and overwrite the right answer. stockSymbol seeds the
+  // list only the FIRST time nothing is saved.
+  const [topics, setTopics] = useState<string[]>(() => {
+    if (typeof window === "undefined") return DEFAULT_TOPICS;
     try {
       const saved = localStorage.getItem(TOPICS_KEY);
       if (saved) {
         const parsed: string[] = JSON.parse(saved);
-        if (parsed.length > 0) setTopics(parsed);
+        if (parsed.length > 0) return parsed;
       } else if (stockSymbol) {
-        const initial = [...DEFAULT_TOPICS, stockSymbol];
-        setTopics(initial);
-        localStorage.setItem(TOPICS_KEY, JSON.stringify(initial));
+        return [...DEFAULT_TOPICS, stockSymbol];
       }
     } catch {
       /* ignore */
     }
-  }, []);
-
-  const fetchFeed = useCallback(async (topicList: string[]) => {
-    if (!topicList.length) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(
-        `/api/news/feed?topics=${encodeURIComponent(topicList.join(","))}&limit=80`
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setArticles(data.articles ?? []);
-    } catch {
-      setError("Failed to fetch news. Make sure the Python backend is running.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    return DEFAULT_TOPICS;
+  });
+  const [newTopic, setNewTopic] = useState("");
+  const [filterText, setFilterText] = useState("");
+  const topicInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (topics.length > 0) fetchFeed(topics);
-  }, [topics, fetchFeed]);
+    localStorage.setItem(TOPICS_KEY, JSON.stringify(topics));
+  }, [topics]);
+
+  const feed = useNewsFeed(topics);
+  const articles: Article[] = feed.data?.articles ?? NO_ARTICLES;
+  const loading = feed.isFetching;
+  const error = feed.error
+    ? "Failed to fetch news. Make sure the Python backend is running."
+    : null;
 
   const addTopic = () => {
     const t = newTopic.trim().toUpperCase();
@@ -70,7 +58,6 @@ export function NewsFeedTab({ colors }: { colors: ThemeColors }) {
     }
     const updated = [...topics, newTopic.trim()];
     setTopics(updated);
-    localStorage.setItem(TOPICS_KEY, JSON.stringify(updated));
     setNewTopic("");
   };
 
@@ -78,7 +65,6 @@ export function NewsFeedTab({ colors }: { colors: ThemeColors }) {
     const updated = topics.filter((x) => x !== t);
     if (!updated.length) return; // keep at least one
     setTopics(updated);
-    localStorage.setItem(TOPICS_KEY, JSON.stringify(updated));
   };
 
   const filtered = filterText
@@ -157,7 +143,7 @@ export function NewsFeedTab({ colors }: { colors: ThemeColors }) {
               {articles.length} articles
             </span>
           )}
-          <BloombergButton color="default" onClick={() => fetchFeed(topics)} disabled={loading}>
+          <BloombergButton color="default" onClick={() => feed.refresh()} disabled={loading}>
             <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : "mr-1"}`} />
             {!loading && "REFRESH"}
           </BloombergButton>
@@ -178,7 +164,7 @@ export function NewsFeedTab({ colors }: { colors: ThemeColors }) {
           </div>
         )}
 
-        {loading ? (
+        {loading && articles.length === 0 ? (
           <div className="flex items-center justify-center py-16">
             <RefreshCw className="h-4 w-4 animate-spin mr-2" style={{ color: colors.accent }} />
             <span className="text-xs" style={{ color: colors.textSecondary }}>

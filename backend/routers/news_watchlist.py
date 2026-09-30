@@ -14,6 +14,8 @@ from __future__ import annotations
 import calendar
 import datetime
 import re
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote_plus
 
@@ -24,13 +26,21 @@ from fastapi import APIRouter, Query
 
 from cache import TTLCache
 from db import get_db
+from rss import fetch_feed
 from sources import market_data
 
 router = APIRouter()
 
 # ── Caches ────────────────────────────────────────────────────────────────────
 _meta_cache = TTLCache(ttl=86_400, maxsize=500)   # symbol → sector/company (24h)
-_news_cache = TTLCache(ttl=300, maxsize=500)      # symbol → merged articles (5 min)
+# symbol → {"items", "ts"}. Fresh for 5 min; up to 30 min old it is served at
+# once while a background refresh replaces it (stale-while-revalidate), so a
+# return visit never waits on the ~7 upstream calls per symbol.
+_news_cache = TTLCache(ttl=1800, maxsize=500)
+_NEWS_FRESH_S = 300
+_news_refresh_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="wl-news-swr")
+_news_inflight: set[str] = set()
+_news_inflight_lock = threading.Lock()
 _poly_cache = TTLCache(ttl=900, maxsize=200)      # symbol → polymarket matches (15 min)
 
 _UA = {"User-Agent": "Mozilla/5.0 (compatible; BloombergTerminal/1.0; +news)"}
@@ -240,7 +250,7 @@ def _search_terms(symbol: str, company: str) -> list[str]:
 
 def _rss(url: str, source: str, limit: int) -> list[dict]:
     try:
-        feed = feedparser.parse(url, request_headers=_UA)
+        feed = fetch_feed(url, headers=_UA)
     except Exception as exc:
         print(f"[news/watchlist] {source}: {exc}")
         return []
@@ -422,13 +432,42 @@ def _mentions(item: dict, symbol: str, company: str) -> bool:
 
 
 def _fetch_symbol_news(symbol: str, company: str, per_source: int,
-                       enabled: list[str]) -> list[dict]:
-    """All enabled sources for one symbol, merged + deduped. Cached 5 min."""
-    key = f"{symbol}:{','.join(sorted(enabled))}:{per_source}"
-    cached = _news_cache.get(key)
-    if cached is not None:
-        return cached
+                       enabled: list[str], fresh: bool = False) -> list[dict]:
+    """All enabled sources for one symbol, merged + deduped.
 
+    Fresh for 5 min. Older than that (up to 30 min) the cached list comes back
+    immediately and one background refresh per key replaces it.
+    """
+    key = f"{symbol}:{','.join(sorted(enabled))}:{per_source}"
+    cached = None if fresh else _news_cache.get(key)
+    if cached is not None:
+        if time.time() - cached["ts"] >= _NEWS_FRESH_S:
+            _refresh_in_background(key, symbol, company, per_source, enabled)
+        return cached["items"]
+    return _load_symbol_news(key, symbol, company, per_source, enabled)
+
+
+def _refresh_in_background(key: str, symbol: str, company: str, per_source: int,
+                           enabled: list[str]) -> None:
+    with _news_inflight_lock:
+        if key in _news_inflight:
+            return
+        _news_inflight.add(key)
+
+    def run() -> None:
+        try:
+            _load_symbol_news(key, symbol, company, per_source, enabled)
+        except Exception as exc:  # noqa: BLE001 - the stale copy stays in place
+            print(f"[news/watchlist] refresh {symbol}: {exc}")
+        finally:
+            with _news_inflight_lock:
+                _news_inflight.discard(key)
+
+    _news_refresh_pool.submit(run)
+
+
+def _load_symbol_news(key: str, symbol: str, company: str, per_source: int,
+                      enabled: list[str]) -> list[dict]:
     items: list[dict] = []
     with ThreadPoolExecutor(max_workers=len(enabled) or 1) as pool:
         futures = {
@@ -458,7 +497,7 @@ def _fetch_symbol_news(symbol: str, company: str, per_source: int,
         unique.append(it)
 
     unique.sort(key=lambda x: x.get("published_at", ""), reverse=True)
-    _news_cache.set(key, unique)
+    _news_cache.set(key, {"items": unique, "ts": time.time()})
     return unique
 
 
@@ -522,6 +561,7 @@ def watchlist_news(
     per_source: int = Query(default=6, ge=1, le=20),
     sources: str = Query(default="all", description="Comma-separated source ids, or 'all'"),
     polymarket: int = Query(default=1, description="1 = attach matching prediction markets"),
+    fresh: int = Query(default=0, description="1 = re-pull headlines, skipping the 5-min cache"),
 ):
     """Per-symbol news for the watchlist, grouped by resolved sector."""
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()][:30]
@@ -549,11 +589,20 @@ def watchlist_news(
                 metas[sym] = {"symbol": sym, "sector": "Unclassified",
                               "industry": None, "company": sym, "country": None}
 
-    # 2 — news per symbol in parallel
+    # 2 — Polymarket needs only the company names, so it runs alongside the news
+    # fan-out instead of after it (collected in step 5).
+    poly_pool = ThreadPoolExecutor(max_workers=4) if polymarket else None
+    poly_futures = {
+        poly_pool.submit(_poly_for_symbol, sym, metas[sym]["company"], 3): sym
+        for sym in symbol_list
+    } if poly_pool else {}
+
+    # 3 — news per symbol in parallel
     per_symbol_items: dict[str, list[dict]] = {}
     with ThreadPoolExecutor(max_workers=6) as pool:
         futures = {
-            pool.submit(_fetch_symbol_news, sym, metas[sym]["company"], per_source, enabled): sym
+            pool.submit(_fetch_symbol_news, sym, metas[sym]["company"], per_source, enabled,
+                        bool(fresh)): sym
             for sym in symbol_list
         }
         for fut in as_completed(futures):
@@ -564,7 +613,7 @@ def watchlist_news(
                 errors.append(f"news {sym}: {exc}")
                 per_symbol_items[sym] = []
 
-    # 3 — merge + cross-tag. An article keeps every watchlist name it mentions.
+    # 4 — merge + cross-tag. An article keeps every watchlist name it mentions.
     name_index: list[tuple[str, list[str]]] = []
     for sym in symbol_list:
         needles = [sym.lower()]
@@ -608,7 +657,7 @@ def watchlist_news(
 
     articles = sorted(merged.values(), key=lambda a: a.get("published_at", ""), reverse=True)
 
-    # 4 — per-symbol / per-sector counts
+    # 5 — per-symbol / per-sector counts
     counts: dict[str, int] = {s: 0 for s in symbol_list}
     for a in articles:
         for s in a["symbols"]:
@@ -638,16 +687,12 @@ def watchlist_news(
             bucket["article_count"] += 1
     sectors_out = sorted(sector_map.values(), key=lambda s: -s["article_count"])
 
-    # 5 — Polymarket
+    # 6 — Polymarket (started in step 2)
     markets: list[dict] = []
-    if polymarket:
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            futures = {
-                pool.submit(_poly_for_symbol, sym, metas[sym]["company"], 3): sym
-                for sym in symbol_list
-            }
-            for fut in as_completed(futures):
-                sym = futures[fut]
+    if poly_pool:
+        with poly_pool:
+            for fut in as_completed(poly_futures):
+                sym = poly_futures[fut]
                 try:
                     for m in fut.result():
                         markets.append({**m, "sector": metas[sym]["sector"]})

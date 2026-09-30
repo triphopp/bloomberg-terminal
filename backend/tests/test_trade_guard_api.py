@@ -43,6 +43,20 @@ def test_create_requires_codes(risk):
     assert _hold(risk, codes=())["ok"] is False
 
 
+def test_create_requires_reason_and_stores_review_date(risk):
+    assert _hold(risk, reason="  ")["error"] == "reason required"
+    out = risk.create_guard_override(risk.GuardOverrideIn(
+        account_id="a", yf_symbol="goog", first_entry="2026-09-01", symbol="GOOG",
+        codes=["STOP_HIT"], reason="earnings", review_days=7, floor_price=150.0))
+    from datetime import date, timedelta
+    assert out["review_on"] == (date.today() + timedelta(days=7)).isoformat()
+    row = risk._guard_overrides(None)[0]
+    assert row["review_on"] == out["review_on"] and row["floor_price"] == 150.0
+    bad = risk.GuardOverrideIn(account_id="a", yf_symbol="g", first_entry="2026-09-01",
+                               codes=["STOP_HIT"], reason="x", review_days=0)
+    assert risk.create_guard_override(bad)["ok"] is False
+
+
 def _lot(conn, tid, sl=None, acct="finansia", sym="AOT", wl="P"):
     conn.execute(
         "INSERT INTO trades (id, account_id, symbol, resolved_symbol, price_entry, volume, "

@@ -21,6 +21,9 @@ A position is left alone (and the reason returned) when a manual cost override
 is set, when the history sells more than it bought (I6), or when a row exits
 before it entered (I7): a replay would only move the error somewhere else.
 Every changed row gets an AVCO_REPAIR audit record.
+
+An account with sub-ports (Finansia 6065151 / 6065157) pools each one apart:
+`replay()` runs once per sub-port of the symbol (see sub_port.py).
 """
 from __future__ import annotations
 
@@ -71,8 +74,14 @@ def _leg_fee(row: dict) -> float:
     return implied if 0.005 < implied <= 0.05 * px * vol else 0.0
 
 
-def plan(conn, account_id: str, symbol: str) -> dict:
-    """What replay() would write, without writing anything but lot_price."""
+def pools(conn, account_id: str, symbol: str) -> list[str]:
+    """The sub-port pools this symbol has in the account ("" = the only one)."""
+    events, _ = lb.build_events(conn, scope=(account_id, symbol))
+    return sorted({e.sub_port for e in events if e.type in ("BUY", "SELL")}) or [""]
+
+
+def plan(conn, account_id: str, symbol: str, sub_port: str = "") -> dict:
+    """What replay() would write for one pool, without writing anything but lot_price."""
     if conn.execute(
         "SELECT 1 FROM position_cost_overrides WHERE account_id = ? AND symbol = ?",
         (account_id, symbol),
@@ -80,7 +89,8 @@ def plan(conn, account_id: str, symbol: str) -> dict:
         return {"skipped": "manual cost override in place", "changes": [], "warnings": []}
 
     warnings = _fill_lot_prices(conn, account_id, symbol)
-    events, issues = lb.build_events(conn, scope=(account_id, symbol))
+    events, issues = lb.build_events(conn, scope=(account_id, symbol, sub_port))
+    in_pool = {i for e in events for i in e.source_ref}
     bad = [i for i in issues if i.code == "I7"]
     if bad:
         return {"skipped": bad[0].message, "changes": [], "warnings": warnings}
@@ -90,7 +100,8 @@ def plan(conn, account_id: str, symbol: str) -> dict:
                 "changes": [], "warnings": warnings}
 
     rows = {r["id"]: dict(r) for r in conn.execute(
-        "SELECT * FROM trades WHERE account_id = ? AND symbol = ?", (account_id, symbol))}
+        "SELECT * FROM trades WHERE account_id = ? AND symbol = ?", (account_id, symbol))
+        if r["id"] in in_pool}
     target: dict[str, dict] = {}
     for c in card:
         e = c["event"]
@@ -128,7 +139,8 @@ def plan(conn, account_id: str, symbol: str) -> dict:
                 diff[k] = v
         if diff:
             changes.append({"id": tid, "old": old, "new": diff})
-    return {"skipped": None, "changes": changes, "warnings": warnings, "avg": end_avg}
+    return {"skipped": None, "changes": changes, "warnings": warnings, "avg": end_avg,
+            "sub_port": sub_port}
 
 
 def replay(conn, account_id: str, symbol: str,
@@ -138,14 +150,25 @@ def replay(conn, account_id: str, symbol: str,
     `audit(conn, trade_id, action, old_row, new_values, reason)` — the router's
     _write_audit_log; injected so this module does not import the router.
     """
-    result = plan(conn, account_id, symbol)
     why = f"AVCO replay by date{': ' + reason if reason else ''}"
-    for ch in result["changes"]:
-        cols = ", ".join(f"{k} = ?" for k in ch["new"])
-        conn.execute(f"UPDATE trades SET {cols} WHERE id = ?", [*ch["new"].values(), ch["id"]])
-        if audit:
-            audit(conn, ch["id"], ACTION, ch["old"], ch["new"], why)
-    return {k: v for k, v in result.items() if k != "changes"} | {
-        "rows_changed": len(result["changes"]),
-        "sales_repriced": sum(1 for c in result["changes"] if "pnl_amount" in c["new"]),
-    }
+    results = []
+    for sub in pools(conn, account_id, symbol):
+        result = plan(conn, account_id, symbol, sub)
+        for ch in result["changes"]:
+            cols = ", ".join(f"{k} = ?" for k in ch["new"])
+            conn.execute(f"UPDATE trades SET {cols} WHERE id = ?", [*ch["new"].values(), ch["id"]])
+            if audit:
+                audit(conn, ch["id"], ACTION, ch["old"], ch["new"],
+                      why + (f" [sub-port {sub}]" if sub else ""))
+        results.append(result)
+    # One pool (every account without sub-ports) reads exactly as before; with
+    # several, the first skip is reported and each pool's outcome is listed.
+    head = next((r for r in results if r.get("skipped")), results[0])
+    out = {k: v for k, v in head.items() if k not in ("changes", "sub_port")}
+    out["warnings"] = [w for r in results for w in r["warnings"]]
+    out["rows_changed"] = sum(len(r["changes"]) for r in results)
+    out["sales_repriced"] = sum(1 for r in results for c in r["changes"] if "pnl_amount" in c["new"])
+    if len(results) > 1:
+        out["pools"] = {r["sub_port"]: {"skipped": r["skipped"], "avg": r.get("avg"),
+                                        "rows_changed": len(r["changes"])} for r in results}
+    return out

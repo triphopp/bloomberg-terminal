@@ -95,7 +95,7 @@ export function sourceColor(name: string): string {
   return SOURCE_COLORS[name] ?? "#888";
 }
 
-/** Every source id the backend exposes — the default is "all on". */
+/** Every source id the backend exposes. */
 export const ALL_SOURCE_IDS = [
   "yahoo",
   "yfinance",
@@ -105,6 +105,10 @@ export const ALL_SOURCE_IDS = [
   "nasdaq",
   "sec",
 ] as const;
+
+/** On until the user picks otherwise. Bing is off: it is the slowest source
+ *  (~2.2 s per symbol, measured 2026-09-30) and mostly repeats Google News. */
+export const DEFAULT_SOURCE_IDS: string[] = ALL_SOURCE_IDS.filter((id) => id !== "bing");
 
 export const SOURCE_LABELS: Record<string, string> = {
   yahoo: "YAHOO",

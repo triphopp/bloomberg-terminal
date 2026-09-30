@@ -1,10 +1,11 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { type PinnedAsset, pinnedAssetsAtom } from "../../atoms";
 import type { WatchlistNewsResponse } from "./types";
+import { useFreshFlag } from "./useNewsQueries";
 
 const LS_PINS = "bloomberg_pinned_assets";
 
@@ -52,23 +53,35 @@ export function useWatchlistNews({ symbols, sources, perSymbol = 6, enabled = tr
   // Sorted key so reordering the watchlist doesn't force a refetch.
   const symKey = useMemo(() => [...symbols].sort().join(","), [symbols]);
   const srcKey = useMemo(() => [...sources].sort().join(","), [sources]);
+  const fresh = useFreshFlag();
 
-  return useQuery<WatchlistNewsResponse>({
+  const query = useQuery<WatchlistNewsResponse>({
     queryKey: ["watchlist-news", symKey, srcKey, perSymbol],
     enabled: enabled && symbols.length > 0 && sources.length > 0,
     staleTime: 5 * 60_000,
     gcTime: 15 * 60_000,
     retry: 1,
-    queryFn: async () => {
+    // Changing per-symbol / sources / the watchlist keeps the current list on
+    // screen until the new one lands. The backend caches per symbol on
+    // per_source, not per_symbol, so a per-symbol change is a cache hit there.
+    placeholderData: keepPreviousData,
+    queryFn: async ({ signal }) => {
       const qs = new URLSearchParams({
         symbols: symKey,
         sources: srcKey,
         per_symbol: String(perSymbol),
         polymarket: "1",
       });
-      const res = await fetch(`/api/news/watchlist?${qs.toString()}`);
+      if (fresh.take()) qs.set("fresh", "1");
+      const res = await fetch(`/api/news/watchlist?${qs.toString()}`, { signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
   });
+
+  const refresh = useCallback(() => {
+    fresh.arm();
+    return query.refetch();
+  }, [fresh, query.refetch]);
+  return { ...query, refresh };
 }

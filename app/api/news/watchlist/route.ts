@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   if (!symbols.trim()) return NextResponse.json(EMPTY);
 
   const qs = new URLSearchParams({ symbols });
-  for (const key of ["per_symbol", "per_source", "sources", "polymarket"]) {
+  for (const key of ["per_symbol", "per_source", "sources", "polymarket", "fresh"]) {
     const v = searchParams.get(key);
     if (v) qs.set(key, v);
   }
