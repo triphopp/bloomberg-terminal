@@ -16,6 +16,7 @@ import { portfolioQueries } from "../queries";
 import type { Account, Trade } from "../types";
 import { EntryValueCheck } from "../ui/EntryValueCheck";
 import { GuardSizePicker } from "../ui/GuardSizePicker";
+import { NumInput } from "../ui/NumInput";
 import { OptionEntryForm, type OptionEntryPrefill } from "../ui/OptionEntryForm";
 import {
   type OptionSlipForm,
@@ -25,6 +26,7 @@ import {
   isOptionSlip,
 } from "../ui/SlipReader";
 import { SubPortSelect } from "../ui/SubPortSelect";
+import { WalletSelect, useInvalidateLedger } from "../ui/ledger-client";
 import { ExtraFieldToggles, useEntryExtras } from "../ui/useEntryExtras";
 
 const FALLBACK_ACCOUNTS: Account[] = [
@@ -125,6 +127,11 @@ export function ImportTab({
   // The slip the form came from: saved with the trade as its evidence (order
   // number, fill time, image) while the symbol is still the slip's.
   const [slipSrc, setSlipSrc] = useState<{ sha: string; symbol: string } | null>(null);
+  // Ledger v2: the wallet this fill settles in ("" = auto: slip → rule → default)
+  // and the account the slip printed, which the auto choice reads.
+  const [wallet, setWallet] = useState("");
+  const [slipWallet, setSlipWallet] = useState<string | null>(null);
+  const invalidateLedger = useInvalidateLedger();
   // Optional fields start hidden: a trade needs account, symbol, date, price,
   // volume and strategy, and showing the other seven at once buries those six.
   const { extras, toggleExtra, showExtra } = useEntryExtras();
@@ -331,6 +338,8 @@ export function ImportTab({
     const fee = (s.side === "buy" ? s.fee_entry : s.fee_exit) ?? "";
     setSlipFees(s.fee_breakdown && fee ? { fee, side: s.side, items: s.fee_breakdown } : null);
     setSlipSrc(res.image_sha256 ? { sha: res.image_sha256, symbol: s.symbol } : null);
+    setSlipWallet(s.settlement_wallet ?? null);
+    setWallet("");
     setSaveOk(false);
     setSaveErr("");
     // What the slip filled is on screen to be checked, not behind a toggle.
@@ -463,6 +472,8 @@ export function ImportTab({
         ...(slipSrc && slipSrc.symbol === form.symbol.toUpperCase()
           ? { slip_sha256: slipSrc.sha }
           : {}),
+        ...(wallet ? { [side === "sell" ? "wallet_exit" : "wallet_entry"]: wallet } : {}),
+        ...(slipWallet ? { settlement_label: slipWallet } : {}),
       };
       const r = await fetch("/api/v2/portfolio/trades", {
         method: "POST",
@@ -479,6 +490,9 @@ export function ImportTab({
       setResolve({ status: "idle" });
       setSlipFees(null);
       setSlipSrc(null);
+      setWallet("");
+      setSlipWallet(null);
+      invalidateLedger();
     } catch (e: unknown) {
       setSaveErr(e instanceof Error ? e.message : "Network error");
     } finally {
@@ -699,6 +713,7 @@ export function ImportTab({
                   target={heldLots[0]}
                   avgEntry={heldAvg}
                   allLots={heldLots}
+                  settlementLabel={slipWallet}
                   colors={colors}
                   onClose={() => setSellFromLots(false)}
                   onSold={() => {
@@ -707,6 +722,24 @@ export function ImportTab({
                     setSaveOk(true);
                   }}
                 />
+              )}
+
+              {instrument === "stock" && form.account_id && (
+                <div className="max-w-xs">
+                  <WalletSelect
+                    accountId={form.account_id}
+                    currency={
+                      (resolve.status === "resolved" ? resolve.picked.currency : null) ??
+                      activeAccount?.currency
+                    }
+                    symbol={form.symbol}
+                    label={slipWallet}
+                    value={wallet}
+                    onChange={setWallet}
+                    colors={colors}
+                    caption={side === "sell" ? "WALLET (proceeds land in)" : "WALLET (paid from)"}
+                  />
+                </div>
               )}
 
               <ExtraFieldToggles extras={extras} onToggle={toggleExtra} colors={colors} />
@@ -974,11 +1007,10 @@ export function ImportTab({
                   >
                     PRICE ENTRY *
                   </div>
-                  <input
+                  <NumInput
                     className={inputCls}
                     style={iStyle}
                     placeholder="0.00"
-                    type="number"
                     step="any"
                     value={form.price_entry}
                     onChange={set("price_entry")}
@@ -993,11 +1025,10 @@ export function ImportTab({
                     >
                       PRICE EXIT *
                     </div>
-                    <input
+                    <NumInput
                       className={inputCls}
                       style={iStyle}
                       placeholder="0.00"
-                      type="number"
                       step="any"
                       value={form.price_exit}
                       onChange={set("price_exit")}
@@ -1026,11 +1057,10 @@ export function ImportTab({
                   >
                     VOLUME *
                   </div>
-                  <input
+                  <NumInput
                     className={inputCls}
                     style={iStyle}
                     placeholder="0"
-                    type="number"
                     step="any"
                     value={form.volume}
                     onChange={set("volume")}
@@ -1045,7 +1075,8 @@ export function ImportTab({
                     >
                       P&L AMOUNT
                     </div>
-                    <input
+                    <NumInput
+                      allowNegative
                       className={inputCls}
                       style={{
                         ...iStyle,
@@ -1056,7 +1087,6 @@ export function ImportTab({
                           : colors.text,
                       }}
                       placeholder="auto"
-                      type="number"
                       step="any"
                       value={form.pnl_amount}
                       onChange={set("pnl_amount")}
@@ -1081,11 +1111,10 @@ export function ImportTab({
                           <span style={{ color: colors.textDimmed }}> auto</span>
                         )}
                     </div>
-                    <input
+                    <NumInput
                       className={inputCls}
                       style={{ ...iStyle, color: "#f87171" }}
                       placeholder="0.00"
-                      type="number"
                       step="any"
                       value={form.price_stoploss}
                       onChange={set("price_stoploss")}
@@ -1100,11 +1129,10 @@ export function ImportTab({
                     >
                       TARGET
                     </div>
-                    <input
+                    <NumInput
                       className={inputCls}
                       style={{ ...iStyle, color: "#4ade80" }}
                       placeholder="0.00"
-                      type="number"
                       step="any"
                       value={form.price_target}
                       onChange={set("price_target")}
@@ -1120,11 +1148,10 @@ export function ImportTab({
                     >
                       BUY FEE
                     </div>
-                    <input
+                    <NumInput
                       className={inputCls}
                       style={{ ...iStyle, color: "#facc15" }}
                       placeholder={feePlaceholder(feeEst.buy)}
-                      type="number"
                       step="any"
                       value={form.fee_entry}
                       onChange={set("fee_entry")}
@@ -1140,11 +1167,10 @@ export function ImportTab({
                     >
                       SELL FEE
                     </div>
-                    <input
+                    <NumInput
                       className={inputCls}
                       style={{ ...iStyle, color: "#facc15" }}
                       placeholder={feePlaceholder(feeEst.sell)}
-                      type="number"
                       step="any"
                       value={form.fee_exit}
                       onChange={set("fee_exit")}

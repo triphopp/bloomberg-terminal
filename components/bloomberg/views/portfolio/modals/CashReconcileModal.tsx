@@ -4,6 +4,7 @@ import { Loader2, Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { type Colors, fmtAmt, pnlColor } from "../helpers";
 import type { CashAdjustment, Summary } from "../types";
+import { NumInput } from "../ui/NumInput";
 
 interface Props {
   summary: Summary;
@@ -184,8 +185,8 @@ export function CashReconcileModal({ summary, currency, colors, accountId, onClo
         <div className="text-[9px] mb-1" style={{ color: colors.textSecondary }}>
           ACTUAL BALANCE AT BROKER ({currency})
         </div>
-        <input
-          type="number"
+        <NumInput
+          allowNegative
           step="0.01"
           value={actual}
           onChange={(e) => setActual(e.target.value)}
