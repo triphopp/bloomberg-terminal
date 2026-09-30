@@ -271,7 +271,7 @@ dividends           (..., currency)  -- record-level instrument currency; never 
 fx_rates            (date, base, quote, rate, source, updated_at) PK(date,base,quote)
 -- dated FX lookup uses same day or nearest prior trading day; open MTM uses live FX
 pin_groups          (id, name, color, sort_order, created_at)
-pinned_assets       (id, symbol, group_id, comment, buy_target, sell_target, price_at_pin, priority 1-3, added_at, updated_at)
+pinned_assets       (id, symbol UNIQUE, group_id, comment, buy_target, sell_target, price_at_pin, priority 1-3, added_at, updated_at) — one symbol = one pin; new ids `pin:<SYMBOL>`
 pin_tags            (id, name, color)
 pinned_asset_tags   (asset_id, tag_id)   -- many-to-many
 sector_classifications (id, symbol, country, exchange, sector_gics, industry_gics, sector_local,
@@ -456,6 +456,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 13. **Options** data is ~15 min delayed (⏱ badge). **Volume Profile** is disabled for zero-volume symbols (yields, FX, VIX) — data-driven gate.
 14. **Heatmap/GMOV leftovers**: `/api/heatmap*` endpoints and `app/api/heatmap/*` proxies have no UI consumer; `clippings.py` has no UI.
 15. **Doc drift fixed 2026-09-26**: `CLAUDE.md` Views table had `3` = HMAP and `4` = BOND; code is `3` BOND · `4` PORT · `5` TAIL · `h` HMAP.
+16. **DB latency (2026-09-30)**: "DB slow" was per-call connection opens (schema re-parse, 396 triggers) + 40-thread pool queueing during bursts, not disk I/O. Fixed with a `get_db` pool (`DB_POOL_SIZE`) and a local thread lane for DB-only routers; check `/api/health/latency` or `logs/latency.jsonl`. Still open: routes in the shared thread queue (portfolio, alerts, margin) can wait seconds during large uncached Yahoo bursts. Schema has no `user_id`; multi-user needs `user_id` + indexes, then Postgres via `DB_MODE` (`reports/db-latency-risk-report.md`).
 
 ---
 
@@ -518,6 +519,7 @@ Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished pl
 
 ### Done (newest first)
 
+- [x] **PINS redesign** — done 2026-09-30: one symbol = one pin in one group (`ux_pa_symbol` + dedupe migration), `PUT /api/pins/by-symbol/{symbol}` upsert (create/move, `new_group` in the same transaction), shared `PinGroupPicker` + `usePinActions` with "+ New group…" in search / stock view / WATCHLIST ADD (`plans/completed/pins-redesign.md`)
 - [x] **Portfolio takeover as in-kind transfer** — done 2026-09-26 (no plan file): Finansia 6065151/6065157 lots re-booked at fair value on 2026-02-08 (`acquisition_type='TRANSFER_IN'`, previous owner's cost as memo, `/api/v2/portfolio/takeover`, TAKEOVER strip in POSITIONS); script `backend/scripts/apply_portfolio_takeover.py`; commit `20b4294`
 - [x] **NAV index start-of-day flows** — done 2026-09-26 (no plan file): capital dated before the snapshot day counts in that day's base (`invested_before_day`); commit `840ecaa`
 - [x] **2024-25 history reconciliation** — done 2026-09-26 (partial import by design): workbook v2 with price-checked dates, AVCO replay, missing buys, cash books; 20/165 trades imported, 145 `REVIEW_REQUIRED` (`sessions/2026-09-26-portfolio-history-db-backfill.md`)

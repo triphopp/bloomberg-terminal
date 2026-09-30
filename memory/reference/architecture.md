@@ -189,3 +189,9 @@ Signals cache per symbol900s; alert closed-bar trimming remains after the shared
 
 ### Margin (IBKR Reg T) — 2026-09-29
 `backend/margin.py` is pure (Book → evaluate/analyse, shock search for distance to liquidation). `routers/margin.py` builds the Book from the same valuation PORT/PAPER already use and exposes status/overview/settings; `margin_scheduler.py` turns worsening levels into `alert_events` (`margin:<LEVEL>`). PAPER order paths call `routers.margin.paper_check` when margin is enabled for the account. UI: `MarginCard`, `MarginRibbon`, MGN column.
+
+
+## Request latency + DB pool (2026-09-30)
+
+- `backend/request_latency.py` — outermost ASGI middleware + `anyio.to_thread.run_sync` wrapper: per-request thread-queue / handler / DB timing → `logs/latency.jsonl` (>200 ms, route pattern only) and `/api/health/latency`. Also the "local lane": DB-only routers run on their own 16-thread limiter so upstream-bound routes cannot starve them.
+- `db.get_db()` — pooled connections (see gotchas "DB read sometimes slow"); `db.connect()` is still the only opener; `db.close_pool()` for tests / before swapping the DB file.

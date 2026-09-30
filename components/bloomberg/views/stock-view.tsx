@@ -30,15 +30,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import {
-  type PinGroup,
-  type PinnedAsset,
-  chartTypeAtom,
-  isDarkModeAtom,
-  pinGroupsAtom,
-  pinnedAssetsAtom,
-  stockAnalysisTabAtom,
-} from "../atoms";
+import { chartTypeAtom, isDarkModeAtom, stockAnalysisTabAtom } from "../atoms";
 import {
   ChartTimeframeBar,
   EventDetailPopover,
@@ -72,84 +64,13 @@ import { calcHurst } from "../lib/market-utils";
 import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import { displayName, displaySymbol } from "../lib/symbol-display";
 import { bloombergColors } from "../lib/theme-config";
+import { PinGroupPicker } from "../pins/PinGroupPicker";
+import { type PinTarget, usePinActions } from "../pins/usePinActions";
 import { OptionsTab } from "./options-tab";
 import { CotTab } from "./stock/cot";
 import { DcfTab } from "./stock/dcf";
 import { MarketStateTab } from "./stock/market-state";
 import { RateStressTab } from "./stock/rate-stress";
-
-// ─── Pin helpers (shared with global-search) ─────────────────────────────────────
-
-import { DEFAULT_WATCHLIST_GROUP } from "../core/global-search";
-const LS_GROUPS = "bloomberg_pin_groups";
-const LS_PINS = "bloomberg_pinned_assets";
-
-function loadPinGroups(): PinGroup[] {
-  try {
-    const s = localStorage.getItem(LS_GROUPS);
-    return s ? JSON.parse(s) : [DEFAULT_WATCHLIST_GROUP];
-  } catch {
-    return [DEFAULT_WATCHLIST_GROUP];
-  }
-}
-
-function savePinToStorage(pin: PinnedAsset) {
-  try {
-    const existing: PinnedAsset[] = JSON.parse(localStorage.getItem(LS_PINS) ?? "[]");
-    if (!existing.some((p) => p.symbol === pin.symbol && p.groupId === pin.groupId)) {
-      localStorage.setItem(LS_PINS, JSON.stringify([...existing, pin]));
-    }
-  } catch {
-    /* ignore */
-  }
-}
-
-// ─── GroupPicker popover ──────────────────────────────────────────────────────────
-
-function PinGroupPicker({
-  groups,
-  onPick,
-  onClose,
-  colors,
-}: {
-  groups: PinGroup[];
-  onPick: (g: PinGroup) => void;
-  onClose: () => void;
-  colors: typeof bloombergColors.dark;
-}) {
-  return (
-    <div
-      className="absolute right-0 top-full mt-1 z-[200] border min-w-[160px]"
-      style={{ background: colors.surface, borderColor: colors.border }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div
-        className="px-3 py-1.5 text-xs font-bold border-b"
-        style={{ color: colors.accent, borderColor: colors.border }}
-      >
-        PIN TO GROUP
-      </div>
-      {groups.map((g) => (
-        <button
-          key={g.id}
-          className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:opacity-70 transition-opacity"
-          style={{ color: colors.text }}
-          onClick={() => onPick(g)}
-        >
-          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: g.color }} />
-          {g.name}
-        </button>
-      ))}
-      <button
-        className="w-full text-left px-3 py-1.5 text-xs border-t"
-        style={{ color: colors.textSecondary, borderColor: colors.border }}
-        onClick={onClose}
-      >
-        Cancel
-      </button>
-    </div>
-  );
-}
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
@@ -4461,69 +4382,38 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   // ── Pin state ────────────────────────────────────────────────────────────────
-  const [pins, setPins] = useAtom(pinnedAssetsAtom);
-  const [groups, setGroups] = useAtom(pinGroupsAtom);
+  const { groups, groupOf, ensureLoaded, pin: pinTo } = usePinActions();
   const [pinPickerOpen, setPinPickerOpen] = useState(false);
   const [pinFeedback, setPinFeedback] = useState<string | null>(null);
 
-  // Sync groups from localStorage on mount / symbol change
-  useEffect(() => {
-    setGroups(loadPinGroups());
-  }, [setGroups]);
-
+  const currentPinGroup = activeSymbol ? groupOf(activeSymbol) : undefined;
   const isPinned = useCallback(
-    (sym: string | null) => !!sym && pins.some((p) => p.symbol === sym),
-    [pins]
+    (sym: string | null) => !!sym && groupOf(sym) !== undefined,
+    [groupOf]
   );
 
   const doPin = useCallback(
-    (group: PinGroup) => {
+    async (target: PinTarget) => {
       if (!activeSymbol) return;
-      if (pins.some((p) => p.symbol === activeSymbol && p.groupId === group.id)) {
-        setPinFeedback(`Already in ${group.name}`);
-        setTimeout(() => setPinFeedback(null), 2000);
-        return;
-      }
-      const newPin: PinnedAsset = {
-        id: Date.now().toString(),
-        symbol: activeSymbol,
-        groupId: group.id,
-        comment: "",
-        addedAt: new Date().toISOString().split("T")[0],
-      };
-      setPins((ps) => [...ps, newPin]);
-      savePinToStorage(newPin);
       setPinPickerOpen(false);
-      setPinFeedback(`Pinned to ${group.name}`);
+      const result = await pinTo(activeSymbol, target);
+      if (!result) return; // rolled back + reported by usePinActions
+      const verb = result.action === "moved" ? "Moved to" : "Pinned to";
+      setPinFeedback(
+        result.action === "unchanged"
+          ? `Already in ${result.group.name}`
+          : `${verb} ${result.group.name}`
+      );
       setTimeout(() => setPinFeedback(null), 2500);
-      fetch("/api/pins/assets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: newPin.id,
-          symbol: newPin.symbol,
-          group_id: newPin.groupId,
-          comment: "",
-          buy_target: null,
-          sell_target: null,
-          price_at_pin: null,
-          priority: 1,
-          added_at: newPin.addedAt,
-          tags: [],
-        }),
-      }).catch((err) => console.error("[doPin stock-view]", err));
     },
-    [activeSymbol, pins, setPins]
+    [activeSymbol, pinTo]
   );
 
+  // Always open the picker: it is also where a new group is created.
   const handlePinClick = useCallback(() => {
-    const effectiveGroups = groups.length ? groups : [DEFAULT_WATCHLIST_GROUP];
-    if (effectiveGroups.length === 1) {
-      doPin(effectiveGroups[0]);
-    } else {
-      setPinPickerOpen((v) => !v);
-    }
-  }, [groups, doPin]);
+    void ensureLoaded();
+    setPinPickerOpen((v) => !v);
+  }, [ensureLoaded]);
 
   useEffect(() => {
     if (inputValue.length >= 1) {
@@ -4801,7 +4691,11 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                         color: isPinned(activeSymbol) ? "#4ade80" : colors.accent,
                         border: `1px solid ${isPinned(activeSymbol) ? "#22c55e44" : `${colors.accent}44`}`,
                       }}
-                      title={isPinned(activeSymbol) ? "Already pinned" : "Pin this asset"}
+                      title={
+                        isPinned(activeSymbol)
+                          ? "Pinned - click to move to another group"
+                          : "Pin this asset"
+                      }
                     >
                       {isPinned(activeSymbol) ? (
                         <>
@@ -4819,8 +4713,10 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                     {/* Group picker popover */}
                     {pinPickerOpen && (
                       <PinGroupPicker
-                        groups={groups.length ? groups : [DEFAULT_WATCHLIST_GROUP]}
-                        onPick={doPin}
+                        groups={groups}
+                        currentGroupId={currentPinGroup}
+                        onPick={(g) => doPin({ groupId: g.id })}
+                        onCreate={(name) => doPin({ newGroup: { name } })}
                         onClose={() => setPinPickerOpen(false)}
                         colors={colors}
                       />

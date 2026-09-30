@@ -47,6 +47,8 @@ memory/
 
 | Plan | สถานะ |
 |------|--------|
+| [PINS redesign](plans/completed/pins-redesign.md) | ✅ done 2026-09-30 — one symbol = one pin, PUT /api/pins/by-symbol, "+ New group…" picker |
+| [DB latency report](reports/db-latency-risk-report.md) | 📋 report 2026-09-30 — schema re-parse per connection + thread queue; get_db pool + local lane; scalability |
 | [PORT Margin Maintenance](plans/completed/port-margin-maintenance.md) | ✅ done 2026-09-29 — IBKR Reg T, PORT + PAPER, alerts, PAPER order checks |
 | [PORT AVCO dated replay](plans/port-avco-dated-replay.md) | 🔄 in progress 2026-09-28 |
 | [PORT Risk validity + stop simulator](plans/completed/port-risk-validity.md) | ✅ done 2026-09-29 — STOP SIM, OOS VaR + forecast log, GICS sectors, MAE/MFE replay, NAV-basis VaR |

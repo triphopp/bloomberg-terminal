@@ -185,6 +185,10 @@ def test_millisecond_stamps(cloud, tmp_path, monkeypatch):
     tid = _add_trade(db, aid, "BBL.BK", 10)
     with db.get_db() as c:
         first = c.execute("SELECT updated_at FROM trades WHERE id=?", (tid,)).fetchone()[0]
+        # Same second, different millisecond. Until get_db() pooled connections
+        # (2026-09-30) opening one re-parsed the schema (~2 ms) and supplied this
+        # gap by accident; two writes in the same millisecond still tie.
+        time.sleep(0.003)
         c.execute("UPDATE trades SET volume=20 WHERE id=?", (tid,))
         second = c.execute("SELECT updated_at FROM trades WHERE id=?", (tid,)).fetchone()[0]
     assert "." in first, f"stamp is not sub-second: {first}"

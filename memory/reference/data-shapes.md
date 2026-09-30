@@ -1682,3 +1682,10 @@ All money in the ACCOUNT currency (`currency`). Fractions, not percent.
 `overview` → `{accounts: [{scope, account_id, name, currency, level, cushion, excess_liquidity, available_funds, nlv, maint_margin, loan, drop_to_call, rise_to_call, restricted, uses_margin, cash_is_estimate, error?}], worst}`.
 PAPER `GET /api/paper/accounts/{id}/summary` gained `options_value`; `equity` = cash + stocks + options, and `cash` now includes option premium flows.
 
+
+
+## Pins — one symbol = one pin (2026-09-30)
+
+`pinned_assets.symbol` is UNIQUE (`ux_pa_symbol`; `init_db` first collapses duplicates via `db.dedupe_pinned_assets`, keeping the row with most info / newest `updated_at`, merging tags, normalising symbol to UPPER(TRIM)). New rows use id `pin:<SYMBOL>`; older rows keep their ids. Index `idx_pa_group_sort(group_id, sort_order)`. Multi-category membership = pin tags, not duplicate rows.
+
+`PUT /api/pins/by-symbol/{symbol}` → `{action, pin: {id,symbol,group_id,comment,buy_target,sell_target,price_at_pin,priority,sort_order,added_at,updated_at,tags[]}, group: {id,name,color,sort_order,...}}`

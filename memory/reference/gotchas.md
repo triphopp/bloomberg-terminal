@@ -357,6 +357,9 @@ HTTP 200 / `status: ok`; live SNDK 2026-10-16 SVI returned `ok` for 56 call and
 | `QUOTE_STREAM_MAX_SYMBOLS` (optional, default 900) | Too low → rows past the budget stay on REST (listed in `/api/stream/status` `denied`, SSE `coverage`); too high → more Yahoo sockets (400 tested clean) |
 | `YAHOO_MAX_CONCURRENT` (optional, default 6) | Too high → page-load burst returns (100+ sockets, Yahoo 429, home net drop); too low → cold TAIL > 60s (proxy now 180s) |
 | `ANTHROPIC_API_KEY` | Portfolio AI analysis tab fails |
+| `DB_POOL_SIZE` (optional, default 16) | `get_db()` connection pool; `0` = open-per-call (old behaviour, ~35 ms reads under concurrency) |
+| `LATENCY_SLOW_MS` / `LATENCY_LOG` (optional, 200 / `logs/latency.jsonl`) | slow-request log threshold / path |
+| `LATENCY_LOCAL_LANE` / `LATENCY_LOCAL_TOKENS` (optional, on / 16) | DB-only routers' own thread lane; `0` = share the 40-thread pool with Yahoo-bound routes |
 | `OLLAMA_URL` (wrong) | Clippings AI panel fails (default: `http://localhost:11434`) |
 | `BOT_API_TOKEN` | `/api/bot/auctions` → 401 |
 | `BOT_IR_TOKEN` | `/api/bot/rates/*` → 401 |
@@ -2274,3 +2277,17 @@ were posted → USD wallet overstated by $13,135.98. `portfolio_accounts.ledger_
 event dated ≤ cutover day is in the opening only if the book knew of it before that moment (slip `executed_at`, else row
 `created_at`, `ledger._in_opening`). Later ones are booked the day after the cutover so the agreed close stays put.
 Always give `cutover_at` when switching an account to SHADOW.
+
+
+## "Move to another group" made a copy (PINS, 2026-09-30)
+
+Symptom: pinning AAPL to group B from global search / stock view while it was in A left it in both groups.
+Cause: those call sites only checked (symbol, group) and always POSTed a new row; `pinned_assets` had no uniqueness on symbol; both also wrote localStorage separately (stale groups).
+Fix: one symbol = one pin (`ux_pa_symbol` + dedupe migration), `PUT /api/pins/by-symbol` upsert (created/moved), shared `usePinActions` + `PinGroupPicker`. Multi-category = tags.
+Sync: new ids are `pin:<SYMBOL>` so two devices produce one op-log row key; legacy random-id duplicates across devices fail the unique index on apply and are recorded as an "apply failed" sync conflict (each DB keeps one pin). The dedupe DELETEs are intentionally not captured by the op-log (guard raised) — a captured delete could remove the survivor another device chose.
+
+## "DB read sometimes slow" = connection open + thread queue, not I/O (measured 2026-09-30)
+
+Every new SQLite connection re-parses the whole schema (~228 KB, 396 sync/oplog/audit/change-feed triggers) on its first statement: 2.3 ms alone, 33 ms each when 3 threads open at once, 97 ms with 8. `/api/v2/portfolio/summary` opened ~50 per call, so a 2 ms pins read took ~37 ms whenever anything else was reading. Fix: `db.get_db()` reuses connections from a LIFO pool (`DB_POOL_SIZE`, 0 = old behaviour), keyed by DB file identity; nested get_db gets its own connection; the ledger-flush check compares `total_changes` since acquire (cumulative on a reused connection).
+Separately, during an 80-request uncached Yahoo burst all 40 anyio threads were busy and pins waited 4.8 s in the queue (ran 3.5 ms). Fix: `backend/request_latency.py` gives DB-only routers (`LOCAL_PREFIXES`) their own 16-token CapacityLimiter. Write-lock waits measured < 1 ms, so busy_timeout was not the problem.
+Diagnose: `curl -s localhost:9317/api/health/latency` or `logs/latency.jsonl` (queue_ms vs run_ms vs db_*_ms). Only add a router to `LOCAL_PREFIXES` if it never calls a vendor on the request path. Report: `reports/db-latency-risk-report.md`.

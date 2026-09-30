@@ -5,8 +5,10 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
+from time import perf_counter
 from typing import Optional
 
+import request_latency
 from config import DB_MODE, DB_PATH
 
 DB_MODES = ("local",)
@@ -34,11 +36,12 @@ def occ_symbol(underlying: str, expiry: str, strike: float, option_type: str) ->
     return f"{root}{ymd}{cp}{int(round(float(strike) * 1000)):08d}"
 
 
-def connect(path=None, *, readonly: bool = False) -> sqlite3.Connection:
+def connect(path=None, *, readonly: bool = False, check_same_thread: bool = True) -> sqlite3.Connection:
     """The one place a portfolio database is opened.
 
     `path` defaults to DB_PATH; scripts pass another file (a backup, a copy under
-    review). Every opener going through here is what lets DB_MODE later swap the
+    review). check_same_thread=False only for get_db()'s pool, which hands a
+    connection to one caller at a time. Every opener going through here is what lets DB_MODE later swap the
     local file for a cloud-primary replica without touching 76 callers
     (memory/plans/central-db-cloud-primary.md). tests/test_db_single_opener.py
     keeps raw sqlite3.connect() out of everything else.
@@ -53,14 +56,113 @@ def connect(path=None, *, readonly: bool = False) -> sqlite3.Connection:
         conn = sqlite3.connect(target.resolve().as_uri() + "?mode=ro", uri=True)
         conn.execute("PRAGMA query_only = ON")
     else:
-        conn = sqlite3.connect(str(target))
+        conn = sqlite3.connect(str(target), check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
     return conn
 
 
+# ── Connection pool for get_db() ──────────────────────────────────────────────
+# Measured 2026-09-30 (memory/reports/db-latency-risk-report.md): the schema is
+# ~230 KB of SQL (396 triggers — sync, op-log, audit, change feed), and SQLite
+# re-parses all of it on the FIRST statement of every new connection: 2.3 ms
+# alone, but 33 ms each with 3 threads opening at once and 97 ms with 8
+# (the parse contends inside SQLite). /api/v2/portfolio/summary opens ~50
+# connections per call, and the UI fires its panels in parallel, so a "2 ms"
+# pins read took 37 ms whenever anything else was reading. A reused connection
+# answers the same queries in ~0.02-0.2 ms under the same concurrency.
+#
+# Idle connections wait in a small LIFO list (any thread may take one; SQLite is
+# built serialized, and a connection is only ever used by one get_db() at a
+# time). Keyed by the DB file's identity, so a test that points DB_PATH at a new
+# file — or deletes and recreates it — never gets a connection to the old one.
+# DB_POOL_SIZE=0 restores open-per-call.
+import os as _os
+import threading as _threading
+
+_POOL_MAX = max(0, int(_os.getenv("DB_POOL_SIZE", "16") or 0))
+# importlib.reload(db) (many tests do) re-runs this module in the same globals:
+# close the previous pool instead of orphaning its connections.
+for _k, _c in globals().get("_pool", None) or ():
+    try:
+        _c.close()
+    except Exception:
+        pass
+_pool: list[tuple[tuple, sqlite3.Connection]] = []
+_pool_lock = _threading.Lock()
+
+
+def _pool_key() -> tuple:
+    target = Path(DB_PATH)
+    try:
+        st = _os.stat(target)
+    except OSError:
+        return (str(target), None)
+    born = getattr(st, "st_birthtime_ns", None) or getattr(st, "st_birthtime", None) or st.st_ctime_ns
+    return (str(target.resolve()), st.st_dev, st.st_ino, born)
+
+
+def _acquire() -> tuple[sqlite3.Connection, Optional[tuple]]:
+    """(connection, pool key) — key None = not poolable, close after use."""
+    if _POOL_MAX <= 0 or DB_MODE != "local":
+        return connect(), None
+    key = _pool_key()
+    if key[1] is None:           # file not created yet — init_db's first open
+        return connect(), None
+    stale = []
+    conn = None
+    with _pool_lock:
+        while _pool:
+            k, c = _pool.pop()
+            if k == key:
+                conn = c
+                break
+            stale.append(c)
+    for c in stale:
+        _close_quietly(c)
+    if conn is None:
+        conn = connect(check_same_thread=False)
+    return conn, key
+
+
+def _release(conn: sqlite3.Connection, key: Optional[tuple], healthy: bool) -> None:
+    if key is not None and healthy:
+        try:
+            if conn.in_transaction:      # never hand on a half-open write
+                conn.rollback()
+            conn.row_factory = sqlite3.Row
+            with _pool_lock:
+                if len(_pool) < _POOL_MAX:
+                    _pool.append((key, conn))
+                    return
+        except sqlite3.Error:
+            pass
+    _close_quietly(conn)
+
+
+def _close_quietly(conn: sqlite3.Connection) -> None:
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def close_pool() -> None:
+    """Close every idle pooled connection (tests; before replacing the DB file)."""
+    with _pool_lock:
+        conns = [c for _, c in _pool]
+        _pool.clear()
+    for c in conns:
+        _close_quietly(c)
+
+
+import atexit as _atexit
+_atexit.register(close_pool)
+
+
 @contextmanager
 def get_db():
-    conn = connect()
+    t0 = perf_counter()
+    conn, key = _acquire()
     # foreign_keys is genuinely per-connection (SQLite resets it on every
     # new connection) so this has to run here. journal_mode is NOT — it's a
     # persistent property stored in the DB file header, so re-issuing
@@ -68,23 +170,40 @@ def get_db():
     # that always no-ops once the file is already WAL (~0.65ms measured,
     # dwarfing every other query this function runs). Set it once, in
     # _ensure_wal_mode() at startup, instead of on all 150+ get_db() call
-    # sites' every invocation.
-    conn.execute("PRAGMA foreign_keys = ON")
-    mark = _ledger_mark(conn)
+    # sites' every invocation. (Re-issued on a pooled connection too: ~µs,
+    # and it keeps a body that turned it off from leaking that to the next.)
+    healthy = False
+    t_open = t_commit = None
+    locked = False
     try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        changes_before = conn.total_changes   # cumulative on a reused connection
+        mark = _ledger_mark(conn)
+        t_open = perf_counter()
         yield conn
         # SHADOW accounts: project this transaction's legacy writes into the
         # ledger before committing, so a write the ledger refuses (a closed
         # period) never lands in the legacy tables either.
-        if mark is not None and conn.total_changes:
+        t_commit = perf_counter()
+        if mark is not None and conn.total_changes != changes_before:
             import ledger
             ledger.flush_dirty(conn, mark)
         conn.commit()
-    except Exception:
-        conn.rollback()
+        healthy = True
+    except Exception as exc:
+        locked = isinstance(exc, sqlite3.OperationalError) and "locked" in str(exc)
+        try:
+            conn.rollback()
+            healthy = True
+        except sqlite3.Error:
+            pass
         raise
     finally:
-        conn.close()
+        _release(conn, key, healthy)
+        # Phase timings for request_latency (logs/latency.jsonl, /api/health/latency).
+        end = perf_counter()
+        request_latency.note_db((t_open or end) - t0, end - t0,
+                                (end - t_commit) if t_commit is not None else 0.0, locked)
 
 
 def _ledger_mark(conn: sqlite3.Connection) -> Optional[int]:
@@ -102,6 +221,77 @@ def _ensure_wal_mode() -> None:
     conn = connect()
     conn.execute("PRAGMA journal_mode = WAL")
     conn.close()
+
+
+def dedupe_pinned_assets(conn: sqlite3.Connection) -> int:
+    """Collapse pins that share a symbol into one row (idempotent). Returns rows removed.
+
+    One symbol = one pin in exactly one group; multi-category membership is what
+    pin tags are for. Keeps the row with the most information (comment, targets,
+    price_at_pin, tags), then the most recently updated, then the smallest id
+    (so two machines holding the same rows choose the same survivor). Fields the
+    survivor lacks are filled from the discarded rows and their tags are merged.
+
+    The DELETEs run with the sync guard raised: op-log / tombstone capture is
+    skipped on purpose. Every device runs this same migration on its own copy;
+    if each captured a delete, a machine that kept row X would receive "delete X"
+    from the machine that kept row Y and lose the pin entirely.
+    """
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT p.*, (SELECT COUNT(*) FROM pinned_asset_tags t WHERE t.asset_id = p.id) AS n_tags "
+        "FROM pinned_assets p"
+    ).fetchall()
+    by_sym: dict[str, list[sqlite3.Row]] = {}
+    for r in rows:
+        by_sym.setdefault(str(r["symbol"] or "").strip().upper(), []).append(r)
+
+    def info(r) -> int:
+        return (bool(r["comment"]) + (r["buy_target"] is not None) + (r["sell_target"] is not None)
+                + (r["price_at_pin"] is not None) + (r["n_tags"] or 0))
+
+    doomed: list[str] = []
+    for sym, group in by_sym.items():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda r: str(r["id"]))
+        group.sort(key=lambda r: str(r["updated_at"] or ""), reverse=True)
+        group.sort(key=info, reverse=True)  # stable: info desc, then updated desc, then id asc
+        keep, rest = group[0], group[1:]
+        fill: dict = {}
+        for col in ("comment", "buy_target", "sell_target", "price_at_pin"):
+            if keep[col] in (None, ""):
+                for r in rest:
+                    if r[col] not in (None, ""):
+                        fill[col] = r[col]
+                        break
+        if fill:
+            sets = ", ".join(f"{c} = ?" for c in fill)
+            conn.execute(f"UPDATE pinned_assets SET {sets} WHERE id = ?", [*fill.values(), keep["id"]])
+        for r in rest:
+            conn.execute(
+                "INSERT OR IGNORE INTO pinned_asset_tags (asset_id, tag_id) "
+                "SELECT ?, tag_id FROM pinned_asset_tags WHERE asset_id = ?",
+                (keep["id"], r["id"]),
+            )
+            doomed.append(r["id"])
+
+    if doomed:
+        has_guard = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_sync_guard'"
+        ).fetchone()
+        if has_guard:
+            conn.execute("UPDATE _sync_guard SET active = 1")
+        try:
+            for pid in doomed:
+                conn.execute("DELETE FROM pinned_asset_tags WHERE asset_id = ?", (pid,))
+                conn.execute("DELETE FROM pinned_assets WHERE id = ?", (pid,))
+        finally:
+            if has_guard:
+                conn.execute("UPDATE _sync_guard SET active = 0")
+    # normalise stray case/whitespace so the unique index means what it says
+    conn.execute("UPDATE pinned_assets SET symbol = UPPER(TRIM(symbol)) WHERE symbol != UPPER(TRIM(symbol))")
+    return len(doomed)
 
 
 def init_db() -> None:
@@ -168,6 +358,9 @@ def init_db() -> None:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pa_group ON pinned_assets(group_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pa_sym   ON pinned_assets(symbol)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pa_group_sort ON pinned_assets(group_id, sort_order)")
+        dedupe_pinned_assets(conn)
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_pa_symbol ON pinned_assets(symbol)")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS symbol_lists (

@@ -113,6 +113,8 @@ Audit CLI: `python scripts/accounting_audit.py --api-url http://localhost:9317 -
 - `DELETE /api/pins/assets/{id}/tags/{tagId}` — untag
 - `DELETE /api/pins/tags/{tagId}` — delete tag
 - `POST /api/pins/import` — bulk import
+- `PUT /api/pins/by-symbol/{symbol}` — upsert the symbol's single pin (2026-09-30). Body: `group_id` XOR `new_group{name,color?}`, `comment?`, `buy_target?`, `sell_target?`, `price_at_pin?`, `priority?`, `tags?`. Omitted = keep; null target = clear. Group + pin in one transaction. Returns `{action: created|moved|updated|unchanged, pin, group}`. New pin id `pin:<SYMBOL>`. No groups at all → creates `watchlist`. 422 both/blank, 404 unknown group_id. Proxy `app/api/pins/by-symbol/[symbol]/route.ts`
+- `POST /api/pins/assets` → 409 if the symbol is already pinned (use PUT by-symbol to move); `POST /api/pins/import` skips already-pinned symbols (`skipped` in response)
 
 ## Clippings + AI (`routers/clippings.py`)
 - `GET /api/clippings` — list .md files with YAML frontmatter
@@ -640,6 +642,7 @@ import) is a different thing and still exists.
 | Endpoint | Returns |
 |----------|---------|
 | `GET /upstream` | `upstream_health.snapshot()` + `yahoo_gate` — answered from memory, **no outbound call**. Backend only (no Next proxy, no UI — removed 2026-09-24); history is in `logs/upstream.jsonl` |
+| `GET /latency` | (2026-09-30) per-route p50/p95/max, thread-queue p95, DB p95, live thread-pool usage (busy/waiting/peak), local-lane usage, last 20 slow requests, long background DB holds. From memory, async (answers while every thread is busy). Source `backend/request_latency.py`; slow requests (>200 ms) in `logs/latency.jsonl` |
 
 Fed by `backend/upstream_health.py` (wraps `requests.Session.send`) and `backend/yahoo_gate.py` (wraps `YfData._make_request`). Both imported in `main.py` before any router. Stale serves come from `backend/last_good.py`.
 
