@@ -98,7 +98,7 @@ def main() -> int:
     conn = _connect(read_only=True)
     rep = lb.report(conn)
 
-    def keep(acct, sym):
+    def keep(acct, sym, *_sub):
         return ((not args.account or acct == args.account)
                 and (not args.symbol or (sym or "").upper() == args.symbol.upper()))
 
@@ -114,22 +114,24 @@ def main() -> int:
     print(f"\n== positions checked: {len(rep['cards'])}")
     by_pos: dict = {}
     for i in issues:
-        by_pos.setdefault((i.account_id, i.symbol), []).append(i)
+        by_pos.setdefault((i.account_id, i.symbol, i.sub_port) if i.sub_port
+                          else (i.account_id, i.symbol), []).append(i)
     clean = [k for k in rep["cards"] if k not in by_pos and keep(*k)]
     print(f"   clean (all invariants hold): {len(clean)}  "
-          + ", ".join(f"{a}:{s}" for a, s in clean))
+          + ", ".join(":".join(map(str, k)) for k in clean))
 
     print(f"\n== issues: {len(issues)}  "
           + "  ".join(f"{s}={sum(1 for i in issues if i.severity == s)}" for s in ("ERROR", "WARN")))
-    for (acct, sym), its in sorted(by_pos.items(), key=lambda kv: (min(sev_order[i.severity] for i in kv[1]), kv[0][0], str(kv[0][1]))):
-        print(f"\n  [{acct}] {sym or ''}")
+    for pk, its in sorted(by_pos.items(), key=lambda kv: (min(sev_order[i.severity] for i in kv[1]), kv[0][0], str(kv[0][1]))):
+        acct, sym = pk[0], pk[1]
+        print(f"\n  [{acct}] {sym or ''}" + (f" [{pk[2]}]" if len(pk) > 2 else ""))
         for i in sorted(its, key=lambda i: sev_order[i.severity]):
             print(f"    {i.severity:5} {i.code:16} {i.message}")
-        if args.card and (acct, sym) in rep["cards"]:
-            _print_card(rep["cards"][(acct, sym)])
+        if args.card and pk in rep["cards"]:
+            _print_card(rep["cards"][pk])
     if args.card:
         for k in clean:
-            print(f"\n  [{k[0]}] {k[1]}  (clean)")
+            print(f"\n  [{k[0]}] {k[1]}" + (f" [{k[2]}]" if len(k) > 2 else "") + "  (clean)")
             _print_card(rep["cards"][k])
 
     print("\n== I4 cash: ledger vs broker balance you typed in (EDIT / reconcile)")

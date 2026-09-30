@@ -101,7 +101,8 @@ def cash_reconciliation(ctx):
 
 @check("I9", "error", "position")
 def cost_conservation(ctx):
-    for (aid, symbol), old_card in ctx.book["cards"].items():
+    for key, old_card in ctx.book["cards"].items():
+        aid, symbol = key[0], key[1]  # key[2], when present, is the sub-port pool
         events = [r["event"] for r in old_card]
         if any(e.note.startswith("option") for e in events):
             continue  # option position direction is handled by option matching
@@ -502,15 +503,25 @@ def run(conn, *, account_id=None, codes=None, today=None, endpoint_samples=None,
             "read_switch_reason": "Posted journal, broker reconciliation, cost policy, and shadow comparison are required."}
 
 
-def stock_card(conn, account_id, symbol, method="AVCO"):
+def stock_card(conn, account_id, symbol, method="AVCO", sub_port=None):
+    """One position's stock card. `sub_port` narrows it to that sub-port's
+    pool; None combines every sub-port of the symbol in the account. A label
+    on an account that does not pool per sub-port is ignored."""
+    from sub_port import split_accounts
+    sub_port = sub_port or None
+    if sub_port and account_id not in split_accounts(conn):
+        sub_port = None
     events, issues = lb.build_events(conn)
-    chosen = [e for e in events if e.account_id == account_id and e.symbol == symbol and e.type in ("BUY", "SELL")]
+    chosen = [e for e in events if e.account_id == account_id and e.symbol == symbol
+              and e.type in ("BUY", "SELL") and (sub_port is None or e.sub_port == sub_port)]
     if not chosen:
         raise ValueError("No matching position history")
     rows = replay(chosen, method)
     return {"account_id": account_id, "symbol": symbol, "currency": chosen[0].currency,
             "method": method, "source": "reconstructed", "rows": [dict(r, event=asdict(r["event"])) for r in rows],
-            "findings": [i.as_dict() for i in issues if i.account_id == account_id and i.symbol == symbol],
+            "sub_port": sub_port,
+            "findings": [i.as_dict() for i in issues if i.account_id == account_id and i.symbol == symbol
+                         and (sub_port is None or i.sub_port == sub_port)],
             "cost_in": sum(r["cost_in"] for r in rows), "cost_out": sum(r["cost_out"] for r in rows),
             "remaining_cost": rows[-1]["bal_cost"], "remaining_qty": rows[-1]["bal_qty"],
             "realized": sum(r["realized"] or 0 for r in rows)}

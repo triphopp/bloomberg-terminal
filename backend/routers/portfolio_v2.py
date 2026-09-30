@@ -21,6 +21,7 @@ from sources import market_data
 from cache import TTLCache
 from db import audit_reason, get_db
 import ledger
+from sub_port import pool_of, sub_port_of, sub_port_segment
 from market_session import is_current_session, is_today_at, local_date_of, session_date_for
 from portfolio_options import (
     capture_daily_greeks,
@@ -1165,7 +1166,11 @@ def patch_trade(trade_id: str, body: TradePatch):
                                      {"lot_price": updates["lot_price"]},
                                      f"buy price corrected on split row {trade_id[:8]}")
         replayed = None
-        if _HISTORY_FIELDS & updates.keys():
+        # The note carries the sub-port: moving a lot to another sub-port
+        # moves it to another average-cost pool (sub_port.py).
+        moved_pool = ("note" in updates
+                      and sub_port_of(updates["note"]) != sub_port_of(old_dict.get("note")))
+        if _HISTORY_FIELDS & updates.keys() or moved_pool:
             positions = {(old_dict["account_id"], old_dict["symbol"]),
                          (updates.get("account_id", old_dict["account_id"]),
                           updates.get("symbol", old_dict["symbol"]))}
@@ -1293,13 +1298,14 @@ def check_ledger_opening(body: OpeningPreparationIn):
 
 
 @router.get("/ledger/stock-card")
-def get_ledger_stock_card(account_id: str, symbol: str, method: str = "AVCO"):
+def get_ledger_stock_card(account_id: str, symbol: str, method: str = "AVCO",
+                          sub_port: Optional[str] = None):
     from config import DB_PATH
     from accounting_io import read_book
     from accounting_checks import stock_card
     try:
         with read_book(DB_PATH) as conn:
-            return stock_card(conn, account_id, symbol.strip().upper(), method.upper())
+            return stock_card(conn, account_id, symbol.strip().upper(), method.upper(), sub_port)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -1581,7 +1587,7 @@ def get_takeover(account_id: Optional[str] = Query(None), base_currency: str = Q
     # the frontend adds the unrealized P&L of the scope's open positions.
     scopes: dict[tuple[str, str], dict] = {}
     for t, lot in zip(rows, lots):
-        key = (t["account_id"], _sub_port(t["note"]))
+        key = (t["account_id"], sub_port_of(t["note"]))
         s = scopes.setdefault(key, {"account_id": key[0], "sub_port": key[1],
                                     "transfer_date": lot["date_transfer"],
                                     "inherited_pnl": 0.0, "realized_since": 0.0})
@@ -1595,7 +1601,7 @@ def get_takeover(account_id: Optional[str] = Query(None), base_currency: str = Q
                 sorted({k[0] for k in scopes}),
             ).fetchall()]
         for t in closed:
-            s = scopes.get((t["account_id"], _sub_port(t["note"])))
+            s = scopes.get((t["account_id"], sub_port_of(t["note"])))
             if s and t["date_exit"] >= s["transfer_date"]:
                 s["realized_since"] += realized_pnl_in_report(t, base_currency)
     return {
@@ -1606,18 +1612,6 @@ def get_takeover(account_id: Optional[str] = Query(None), base_currency: str = Q
         "scopes": [{**s, "inherited_pnl": round(s["inherited_pnl"], 2),
                     "realized_since": round(s["realized_since"], 2)} for s in scopes.values()],
     }
-
-
-def _sub_port(note: Optional[str]) -> str:
-    """Sub-port label from a trade note, e.g. "Finansia (6065151) | …" → "6065151".
-    Mirrors `splitNote` / `subPortLabel` in views/portfolio/helpers.ts."""
-    # Closed rows append "\n[SOLD …]" to the sub-port segment, so lines split too.
-    for part in re.split(r" \| |\n", note or ""):
-        part = part.strip()
-        m = re.fullmatch(r".+\s\(([^)]+)\)", part)
-        if m and not part.startswith("VAT:"):
-            return m.group(1)
-    return ""
 
 
 @router.post("/cost-overrides")
@@ -1674,8 +1668,9 @@ def bulk_patch_sector(body: dict):
 
 
 def _rebase_open_lots_to_avco(conn, account_id, symbol, avg_cost: float,
-                              exclude_id: str | None = None) -> int:
-    """Set every still-open lot of this symbol to the pooled average cost.
+                              exclude_id: str | None = None, pool: str = "") -> int:
+    """Set every still-open lot of this symbol in `pool` (its sub-port, see
+    sub_port.py) to the pooled average cost.
 
     A sell is priced off the AVCO of all open lots, so the shares left behind
     must carry that same average — otherwise selling the cheap lot silently
@@ -1683,11 +1678,11 @@ def _rebase_open_lots_to_avco(conn, account_id, symbol, avg_cost: float,
     matching the broker. Cost basis is conserved: after the rewrite the pool is
     avg_cost x remaining_volume, exactly the pre-sale pool minus what was sold.
     """
-    lots = conn.execute(
-        "SELECT id, price_entry, volume FROM trades "
+    lots = [l for l in conn.execute(
+        "SELECT id, price_entry, volume, note FROM trades "
         "WHERE account_id = ? AND symbol = ? AND win_loss = 'P'",
         (account_id, symbol),
-    ).fetchall()
+    ).fetchall() if pool_of(conn, account_id, l["note"]) == pool]
     touched = 0
     for lot in lots:
         if exclude_id and lot["id"] == exclude_id:
@@ -1750,7 +1745,11 @@ def sell_position(body: SellIn):
         if sell_vol > total_volume:
             raise HTTPException(status_code=400, detail=f"Sell volume ({sell_vol}) exceeds position volume ({total_volume})")
 
-        # Cost override takes priority; fall back to AVCO across all open lots
+        # The sub-port this lot sits in: a sale is priced off that pool only —
+        # 6065151 and 6065157 hold the same stock as two positions at the broker.
+        pool = pool_of(conn, pos["account_id"], pos.get("note"))
+
+        # Cost override takes priority; fall back to AVCO across the pool's open lots
         override_row = conn.execute(
             "SELECT avg_cost FROM position_cost_overrides WHERE account_id = ? AND symbol = ?",
             (pos["account_id"], pos["symbol"])
@@ -1758,10 +1757,11 @@ def sell_position(body: SellIn):
         if override_row:
             avg_cost = float(override_row["avg_cost"])
         else:
-            all_lots = conn.execute(
-                "SELECT price_entry, volume FROM trades WHERE account_id = ? AND symbol = ? AND win_loss = 'P'",
+            all_lots = [l for l in conn.execute(
+                "SELECT price_entry, volume, note FROM trades "
+                "WHERE account_id = ? AND symbol = ? AND win_loss = 'P'",
                 (pos["account_id"], pos["symbol"])
-            ).fetchall()
+            ).fetchall() if pool_of(conn, pos["account_id"], l["note"]) == pool]
             total_vol_all = sum(float(l["volume"]) for l in all_lots)
             if total_vol_all > 0:
                 avg_cost = sum(float(l["price_entry"]) * float(l["volume"]) for l in all_lots) / total_vol_all
@@ -1807,7 +1807,8 @@ def sell_position(body: SellIn):
                              f"full sell {total_volume} @ {exit_price}, avg_cost={round(avg_cost, 4)}")
             # Other lots of the same symbol may still be open — keep them on the
             # same average this sale was priced at.
-            _rebase_open_lots_to_avco(conn, pos["account_id"], pos["symbol"], avg_cost)
+            _rebase_open_lots_to_avco(conn, pos["account_id"], pos["symbol"], avg_cost,
+                                      pool=pool)
             # The pool above is what is open now; a sale dated before a buy
             # already in the book is re-priced by date here.
             replayed = _replay_position(conn, pos["account_id"], pos["symbol"],
@@ -1854,7 +1855,9 @@ def sell_position(body: SellIn):
                    FROM trades WHERE id = ?""",
                 (sold_id, body.sell_date, avg_cost, exit_price, sold_volume,
                   sold_pnl_net, sold_wl, sold_pnl_pct, exit_fx,
-                  "", fee_exit,
+                  # Only the sub-port tag travels: the sold part still belongs
+                  # to its sub-port; the rest of the note stays the user's.
+                  sub_port_segment(pos.get("note")), fee_exit,
                   body.trade_id),
             )
 
@@ -1867,7 +1870,7 @@ def sell_position(body: SellIn):
             )
             # Any sibling lot still open carries the same average from here on.
             _rebase_open_lots_to_avco(conn, pos["account_id"], pos["symbol"], avg_cost,
-                                      exclude_id=body.trade_id)
+                                      exclude_id=body.trade_id, pool=pool)
 
             # Log on BOTH the original lot (volume reduced) and the new sold record
             _write_audit_log(conn, body.trade_id, "SELL_PARTIAL", pos,
@@ -1909,24 +1912,33 @@ class SellAllLotsIn(BaseModel):
     commission: Optional[float] = None
     wallet: Optional[str] = None
     settlement_label: Optional[str] = None
+    sub_port: Optional[str] = None       # only this sub-port's lots; None = every sub-port
 
 
 @router.post("/sell-all-lots", status_code=201)
 def sell_all_lots(body: SellAllLotsIn):
     """Close ALL open lots for a given account+symbol in one call.
-    Uses AVCO across all lots. Calls the same full-sell logic per lot.
+    Each sub-port is priced at its own AVCO (sub_port.py); `sub_port` limits
+    the sale to one of them.
     """
     with get_db() as conn:
-        lots = conn.execute(
+        lots = [dict(r) for r in conn.execute(
             "SELECT * FROM trades WHERE account_id = ? AND symbol = ? AND win_loss = 'P'",
             (body.account_id, body.symbol),
-        ).fetchall()
+        ).fetchall()]
+        for l in lots:
+            l["_pool"] = pool_of(conn, body.account_id, l.get("note"))
+        if body.sub_port is not None:
+            lots = [l for l in lots if l["_pool"] == body.sub_port]
         if not lots:
             raise HTTPException(status_code=404, detail="No open positions found")
 
-        lots = [dict(r) for r in lots]
         total_vol = sum(float(l["volume"]) for l in lots)
-        avg_cost  = sum(float(l["price_entry"]) * float(l["volume"]) for l in lots) / total_vol
+        pool_avg = {}
+        for p in {l["_pool"] for l in lots}:
+            mine = [l for l in lots if l["_pool"] == p]
+            pool_avg[p] = (sum(float(l["price_entry"]) * float(l["volume"]) for l in mine)
+                           / sum(float(l["volume"]) for l in mine))
         exit_price = float(body.sell_price)
         closed_ids = []
         # One order: fees on the whole sale, shared across the lots by volume.
@@ -1935,6 +1947,7 @@ def sell_all_lots(body: SellAllLotsIn):
         fee_total = fee_total or 0.0
 
         for pos in lots:
+            avg_cost = pool_avg[pos.pop("_pool")]
             vol = float(pos["volume"])
             pnl = round((exit_price - avg_cost) * vol, 2)
             pnl_pct = round(((exit_price / avg_cost) - 1) * 100, 2) if avg_cost > 0 else 0
@@ -4529,15 +4542,9 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
             "value":  cost,
         })
 
-    # Sub-port breakdown. New trades store "AccName (subport-id) | freeform | VAT: x"
-    # (see helpers.ts splitNote). Sold trades additionally get "\n[SOLD ...]"
-    # appended directly (see /sell, /sell-all-lots) — so the sub-port tag is only
-    # ever guaranteed to be the leading segment of the note. Match from the start.
+    # Sub-port breakdown: "AccName (subport-id) | freeform | VAT: x" — sub_port.py.
     def _extract_subport(note: Optional[str]) -> Optional[str]:
-        if not note:
-            return None
-        m = re.match(r"^[^(\n|]*\(([^)]+)\)", note.strip())
-        return m.group(1) if m else None
+        return sub_port_of(note) or None
 
     subport_agg: dict = _dd(lambda: {"cnt": 0, "wins": 0, "pnl": 0.0})
     for r in subport_rows:
