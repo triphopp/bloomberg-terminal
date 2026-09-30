@@ -18,3 +18,11 @@ def get_upstream():
     snap = upstream_health.snapshot()
     snap["yahoo_gate"] = {"installed": yahoo_gate.INSTALLED, "max_concurrent": yahoo_gate.MAX_CONCURRENT}
     return snap
+
+
+@router.get("/latency")
+async def get_latency():
+    """Where slow requests spent their time (thread queue / DB / handler).
+    async on purpose: it must answer while every worker thread is busy."""
+    import request_latency
+    return request_latency.snapshot()

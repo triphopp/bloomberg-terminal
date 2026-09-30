@@ -50,6 +50,7 @@ from config import CORS_ORIGINS
 import upstream_health  # noqa: F401 — observes every outbound call; must load before routers
 import yahoo_gate  # noqa: F401 — caps concurrent Yahoo requests app-wide; must load before routers
 import http_tls  # noqa: F401 — one preloaded TLS context for requests (was 0.3 s CPU per connection)
+import request_latency  # per-request queue/db/run timing → logs/latency.jsonl, /api/health/latency
 from db import (
     init_db,
     init_portfolio_v2,
@@ -275,6 +276,12 @@ async def _gate_on_sync(request: Request, call_next):
         sync.request_push()
         oplog.request_sync()
     return response
+
+
+# ── Request latency — outermost, so its clock starts before every other layer ──
+# (starlette: the last add_middleware wraps all the others). See request_latency.py.
+request_latency.install()
+app.add_middleware(request_latency.LatencyMiddleware)
 
 
 @app.exception_handler(StarletteHTTPException)
