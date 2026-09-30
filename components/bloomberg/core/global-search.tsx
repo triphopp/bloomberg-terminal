@@ -37,6 +37,7 @@ import {
   stockSearchSymbolAtom,
   tickerEnabledAtom,
 } from "../atoms";
+import { resolveSymbol } from "../lib/resolve-symbol";
 import { recordSearchHit } from "../lib/search-stats";
 import { displayName, displaySymbol } from "../lib/symbol-display";
 import { bloombergColors } from "../lib/theme-config";
@@ -66,6 +67,36 @@ interface SearchResult {
   // prefix stripped from Thai names (BH_BUMRUNGRAD → BUMRUNGRAD)
   display_symbol?: string;
   display_name?: string;
+}
+
+// Session cache for symbol search — backspacing or retyping a query costs no
+// request. Keyed like the backend (trimmed, lower-case); bounded LRU.
+const SEARCH_CACHE_MAX = 200;
+const SEARCH_CACHE_TTL = 10 * 60_000;
+const searchCache = new Map<string, { at: number; results: SearchResult[] }>();
+
+function searchKey(q: string): string {
+  return q.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function cachedSearch(key: string): SearchResult[] | null {
+  const hit = searchCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > SEARCH_CACHE_TTL) {
+    searchCache.delete(key);
+    return null;
+  }
+  searchCache.delete(key); // refresh LRU position
+  searchCache.set(key, hit);
+  return hit.results;
+}
+
+function storeSearch(key: string, results: SearchResult[]) {
+  searchCache.set(key, { at: Date.now(), results });
+  if (searchCache.size > SEARCH_CACHE_MAX) {
+    const oldest = searchCache.keys().next().value;
+    if (oldest !== undefined) searchCache.delete(oldest);
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -512,7 +543,9 @@ export function GlobalSearch() {
     []
   );
 
-  // ── Debounced stock search ─────────────────────────────────────────────────
+  // ── Stock search — cheapest source first ───────────────────────────────────
+  // synthetic (client) → session cache (no request) → backend (debounced,
+  // superseded requests aborted so an old reply never overwrites a newer one)
   useEffect(() => {
     if (!query.trim() || isCommandMode) {
       setResults([]);
@@ -520,57 +553,73 @@ export function GlobalSearch() {
       setSearchError(null);
       return;
     }
+    const q = query.trim().toUpperCase();
+    if (
+      "FEAR-GREED".startsWith(q) ||
+      "FEAR".startsWith(q) ||
+      "GREED".startsWith(q) ||
+      q === "FG" ||
+      q === "F&G" ||
+      q === "SENTIMENT"
+    ) {
+      setResults([
+        {
+          symbol: "FEAR-GREED",
+          shortname: "Fear & Greed Index",
+          longname:
+            "CNN-style Fear & Greed composite (VIX, momentum, safe-haven, junk bonds, breadth)",
+          typeDisp: "Index",
+        },
+      ]);
+      setSearchError(null);
+      setActiveIdx(0);
+      setLoading(false);
+      return;
+    }
+
+    const key = searchKey(query);
+    const cached = cachedSearch(key);
+    if (cached) {
+      setResults(cached);
+      setSearchError(null);
+      setActiveIdx(0);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setSearchError(null);
+    const ctrl = new AbortController();
     const t = setTimeout(async () => {
       try {
-        // ── Synthetic symbols (client-side, no backend needed) ────────────────
-        const q = query.trim().toUpperCase();
-        const syntheticResults: SearchResult[] = [];
-        if (
-          "FEAR-GREED".startsWith(q) ||
-          "FEAR".startsWith(q) ||
-          "GREED".startsWith(q) ||
-          q === "FG" ||
-          q === "F&G" ||
-          q === "SENTIMENT"
-        ) {
-          syntheticResults.push({
-            symbol: "FEAR-GREED",
-            shortname: "Fear & Greed Index",
-            longname:
-              "CNN-style Fear & Greed composite (VIX, momentum, safe-haven, junk bonds, breadth)",
-            typeDisp: "Index",
-          });
-        }
-        if (syntheticResults.length > 0) {
-          setResults(syntheticResults.slice(0, 10));
-          setSearchError(null);
-          setActiveIdx(0);
-          setLoading(false);
-          return;
-        }
-
-        // ── Backend stock search ───────────────────────────────────────────────
-        const res = await fetch(`/api/stock?type=search&symbol=${encodeURIComponent(query)}`);
+        const res = await fetch(`/api/stock?type=search&symbol=${encodeURIComponent(key)}`, {
+          signal: ctrl.signal,
+        });
         const data = await res.json();
+        if (ctrl.signal.aborted) return;
         if (!res.ok || data?.error) {
           setSearchError(data?.error ?? `Backend error ${res.status}`);
           setResults([]);
           return;
         }
-        const arr = Array.isArray(data) ? data : (data.quotes ?? []);
-        setResults(arr.slice(0, 10));
+        const arr: SearchResult[] = (Array.isArray(data) ? data : (data.quotes ?? [])).slice(0, 10);
+        // Empty may be an upstream outage (backend serves [] then) — don't pin it
+        if (arr.length) storeSearch(key, arr);
+        setResults(arr);
         setSearchError(null);
         setActiveIdx(0);
       } catch {
+        if (ctrl.signal.aborted) return;
         setSearchError("Cannot reach backend — is the Python server running?");
         setResults([]);
       } finally {
-        setLoading(false);
+        if (!ctrl.signal.aborted) setLoading(false);
       }
     }, 200);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
   }, [query, isCommandMode]);
 
   // ── Clear result when query changes ───────────────────────────────────────
@@ -782,6 +831,14 @@ export function GlobalSearch() {
       if (e.key === "Enter" && isCommandMode) {
         e.preventDefault();
         runCommand(query);
+        return;
+      }
+
+      // Enter before the result list arrives: resolve what was typed
+      // (CPALL → CPALL.BK) instead of doing nothing
+      if (!isCommandMode && !results.length && e.key === "Enter" && query.trim()) {
+        e.preventDefault();
+        void resolveSymbol(query).then(openEquity);
         return;
       }
 

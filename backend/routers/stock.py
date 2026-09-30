@@ -125,123 +125,195 @@ def _parse_balance_sheet(df: Any) -> list[dict]:
 
 
 # ── Stock Search (MUST be above /api/stock/{symbol}) ─────────────────────────
+#
+# Cost order, cheapest first: in-process cache → one yf.Search → (only if that
+# failed or came back empty) one direct REST call. The .BK probe is cached per
+# ticker on its own, so "BH", "bh", "BH " share it. Ticker lists barely move,
+# so hits live for hours; a clean empty answer is a confirmed absence and is
+# cached too; an outage serves the last good answer or a short-lived [] so a
+# dead Yahoo is not re-hit on every keystroke (gotchas: negative-cache only
+# confirmed absence).
+
+_SEARCH_TTL = 6 * 3600       # results / confirmed empty
+_SEARCH_DOWN_TTL = 30        # upstream unreachable — retry soon
+_SEARCH_STALE_TTL = 7 * 86400
+_search_cache = TTLCache(ttl=_SEARCH_TTL, maxsize=2000)
+_search_last_good = TTLCache(ttl=_SEARCH_STALE_TTL, maxsize=2000)
+_search_down = TTLCache(ttl=_SEARCH_DOWN_TTL, maxsize=500)
+_probe_cache = TTLCache(ttl=24 * 3600, maxsize=2000)  # "BH.BK" → result dict | False
+
+_SEARCH_REST = "https://query1.finance.yahoo.com/v1/finance/search"  # yf.Search uses query2
+_SEARCH_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept":     "application/json",
+    "Referer":    "https://finance.yahoo.com",
+}
+
+
+def _with_display(entry: dict) -> dict:
+    """Central display normalisation: hide exchange suffixes and strip the
+    duplicated ticker prefix Yahoo puts on Thai names
+    ("BH.BK – BH_BUMRUNGRAD HOSPITAL" → "BH – BUMRUNGRAD HOSPITAL")."""
+    sym = entry["symbol"]
+    base = sym.split(".")[0]
+    name = entry.get("shortname") or entry.get("longname") or ""
+    if name.upper().startswith(f"{base.upper()}_"):
+        name = name[len(base) + 1:]
+    entry["display_symbol"] = base if sym.upper().endswith(".BK") else sym
+    entry["display_name"] = name.strip()
+    return entry
+
+
+def _normalise_search(items: list) -> list[dict]:
+    """yf.Search().quotes are proxy objects and market_data.search() returns
+    dataclasses — FastAPI serialises *after* return, so a KeyError inside a
+    proxy would escape any try/except. Convert to plain dicts here."""
+    out = []
+    for item in items:
+        try:
+            if isinstance(item, dict):
+                d = item
+            else:
+                d = {
+                    "symbol":    str(getattr(item, "symbol",     "") or ""),
+                    "shortname": str(getattr(item, "short_name", "") or ""),
+                    "longname":  str(getattr(item, "long_name",  "") or ""),
+                    "exchDisp":  str(getattr(item, "exchange",   "") or ""),
+                    "typeDisp":  str(getattr(item, "quote_type", "") or ""),
+                }
+            sym = str(d.get("symbol") or d.get("Symbol") or "").strip()
+            if not sym:
+                continue
+            out.append(_with_display({
+                "symbol":    sym,
+                "shortname": str(d.get("shortname") or d.get("shortName") or ""),
+                "longname":  str(d.get("longname")  or d.get("longName")  or ""),
+                "exchDisp":  str(d.get("exchDisp")  or d.get("exchange")  or ""),
+                "typeDisp":  str(d.get("typeDisp")  or d.get("quoteType") or ""),
+            }))
+        except Exception:
+            pass
+    return out
+
+
+def _probe_bk(cand: str) -> dict | None:
+    """Exact {TICKER}.BK lookup, cached per ticker (hit or miss) for a day.
+    A failed probe is not cached — the next query tries again."""
+    cached = _probe_cache.get(cand)
+    if cached is not None:
+        return cached or None
+    try:
+        probe = _normalise_search(market_data.search(cand, max_results=3))
+    except Exception:
+        return None
+    exact = next((r for r in probe if r["symbol"].upper() == cand), None)
+    _probe_cache.set(cand, exact or False)
+    return exact
+
+
+def _add_suffix_probes(q: str, results: list[dict]) -> list[dict]:
+    """Bare-ticker queries never surface Thai listings from Yahoo's search
+    relevance — probe {q}.BK explicitly so the user can type BH instead of
+    BH.BK. House rule (2026-09-30): on a clash the Thai listing wins, so it
+    goes first when the exact match is a bare-ticker hit (SCC.BK before the
+    SCC ETF); otherwise it goes first anyway, since q is the Thai ticker."""
+    if not re.fullmatch(r"[A-Za-z0-9]{1,8}", q):
+        return results
+    cand = f"{q.upper()}.BK"
+    have = next((r for r in results if r["symbol"].upper() == cand), None)
+    exact = have or _probe_bk(cand)
+    if not exact:
+        return results
+    rest = [r for r in results if r["symbol"].upper() != cand]
+    return [dict(exact), *rest]
+
+
+def _search_upstream(q: str) -> list[dict]:
+    """At most two search calls (+ one cached probe). Returns [] on outage but
+    marks the query down so the caller can skip the long TTL."""
+    answered = False  # an upstream replied cleanly (even if empty)
+    try:
+        result = _normalise_search(market_data.search(q, max_results=10))
+        answered = True
+        if result:
+            result = _add_suffix_probes(q, result)
+            _search_last_good.set(q, result)
+            return result
+    except Exception as exc:
+        print(f"[search/yf] {q}: {exc}")
+
+    # yf.Search swallows some bad replies as "no quotes" — one direct REST call
+    # decides whether this is a real empty answer or an outage.
+    try:
+        res = requests.get(
+            _SEARCH_REST,
+            params={"q": q, "quotesCount": 10, "newsCount": 0, "listsCount": 0},
+            headers=_SEARCH_HEADERS,
+            timeout=6,
+        )
+        res.raise_for_status()
+        block = ((res.json().get("finance", {}).get("result") or [{}])[0])
+        answered = True
+        result = _normalise_search(block.get("quotes", []))
+        # Thai tickers still resolve through the probe when Yahoo lists nothing
+        result = _add_suffix_probes(q, result)
+        if result:
+            _search_last_good.set(q, result)
+        return result
+    except Exception as exc:
+        print(f"[search/http] {q}: {exc}")
+
+    if answered:
+        return _add_suffix_probes(q, [])
+    # Outage: keep the long cache clean, remember the failure briefly
+    _search_down.set(q, True)
+    return _search_last_good.get(q) or []
+
 
 @router.get("/api/stock/search")
 def stock_search(q: str = Query(..., min_length=1)):
     """
     Ticker search — MUST be declared before /api/stock/{symbol} so FastAPI
     matches the static path 'search' before the dynamic {symbol} catch-all.
-
-    Root-cause note: yf.Search().quotes returns yfinance proxy objects, not plain dicts.
-    FastAPI serializes the return value *after* our function returns, so any KeyError
-    raised inside those objects (e.g. 'currentTradingPeriod') escapes the try/except.
-    Fix: convert every item to a plain str-keyed dict *before* returning.
+    Case/whitespace-insensitive; identical concurrent queries share one call.
     """
+    key = " ".join(q.split()).lower()  # Yahoo search ignores case
+    if not key:
+        return []
+    hit = _search_cache.get(key)
+    if hit is not None:
+        return hit
+    if _search_down.get(key) is not None:
+        return _search_last_good.get(key) or []
+    result = _search_cache.get_or_set(key, lambda: _search_upstream(key))
+    if _search_down.get(key) is not None:
+        _search_cache.delete(key)  # outage answer must not sit in the 6h cache
+    return result
 
-    def _with_display(entry: dict) -> dict:
-        """Central display normalisation: hide exchange suffixes and strip the
-        duplicated ticker prefix Yahoo puts on Thai names
-        ("BH.BK – BH_BUMRUNGRAD HOSPITAL" → "BH – BUMRUNGRAD HOSPITAL")."""
-        sym = entry["symbol"]
-        base = sym.split(".")[0]
-        name = entry.get("shortname") or entry.get("longname") or ""
-        if name.upper().startswith(f"{base.upper()}_"):
-            name = name[len(base) + 1:]
-        entry["display_symbol"] = base if sym.upper().endswith(".BK") else sym
-        entry["display_name"] = name.strip()
-        return entry
 
-    def _normalise(items: list) -> list[dict]:
-        out = []
-        for item in items:
-            try:
-                # After data-source-contract: market_data.search() returns list[SearchResult]
-                # (dataclass), not list[dict]. dict(dataclass) raises TypeError.
-                # Use getattr for dataclass objects; fall back to dict access for plain dicts.
-                if isinstance(item, dict):
-                    d = item
-                else:
-                    d = {
-                        "symbol":    str(getattr(item, "symbol",     "") or ""),
-                        "shortname": str(getattr(item, "short_name", "") or ""),
-                        "longname":  str(getattr(item, "long_name",  "") or ""),
-                        "exchDisp":  str(getattr(item, "exchange",   "") or ""),
-                        "typeDisp":  str(getattr(item, "quote_type", "") or ""),
-                    }
-                sym = str(d.get("symbol") or d.get("Symbol") or "").strip()
-                if not sym:
-                    continue
-                out.append(_with_display({
-                    "symbol":    sym,
-                    "shortname": str(d.get("shortname") or d.get("shortName") or ""),
-                    "longname":  str(d.get("longname")  or d.get("longName")  or ""),
-                    "exchDisp":  str(d.get("exchDisp")  or d.get("exchange")  or ""),
-                    "typeDisp":  str(d.get("typeDisp")  or d.get("quoteType") or ""),
-                }))
-            except Exception:
-                pass
-        return out
+_BARE_TICKER = re.compile(r"[A-Za-z0-9]{1,8}")
 
-    def _add_suffix_probes(results: list[dict]) -> list[dict]:
-        """Bare-ticker queries never surface Thai listings from Yahoo's search
-        relevance — probe {q}.BK explicitly and append the exact match so the
-        user can type BH instead of BH.BK."""
-        if not re.fullmatch(r"[A-Za-z0-9]{1,8}", q):
-            return results
-        cand = f"{q.upper()}.BK"
-        if any(r["symbol"].upper() == cand for r in results):
-            return results
-        try:
-            probe = _normalise(market_data.search(cand, max_results=3))
-            exact = next((r for r in probe if r["symbol"].upper() == cand), None)
-            if exact:
-                # Thai match goes right after the first exact bare-symbol hit
-                # (if any) so it's visible without scrolling
-                pos = next(
-                    (i + 1 for i, r in enumerate(results) if r["symbol"].upper() == q.upper()),
-                    0,
-                )
-                results.insert(pos, exact)
-        except Exception:
-            pass
-        return results
 
-    # ── Primary: yfinance.Search ──────────────────────────────────────────────
-    try:
-        raw_quotes = market_data.search(q, max_results=10)  # returns list[dict]
-        result     = _add_suffix_probes(_normalise(raw_quotes))
-        if result:
-            return result
-    except Exception as exc:
-        print(f"[search/yf] {q}: {exc}")
+def resolve_symbol(q: str) -> str:
+    """Typed ticker → the symbol Yahoo actually knows. Only a bare ticker is
+    touched (anything with . = ^ - is taken as meant): {TICKER}.BK wins when
+    it exists — also over a US listing of the same name (SCC → SCC.BK, house
+    rule 2026-09-30); else the input unchanged. Rides the search cache, so a
+    repeat costs nothing."""
+    sym = q.strip().upper()
+    if not _BARE_TICKER.fullmatch(sym):
+        return sym
+    found = {r["symbol"].upper() for r in stock_search(sym)}
+    if f"{sym}.BK" in found:
+        return f"{sym}.BK"
+    return sym
 
-    # ── Fallback: Yahoo Finance REST API ─────────────────────────────────────
-    _headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept":     "application/json",
-        "Referer":    "https://finance.yahoo.com",
-    }
-    for base in (
-        "https://query2.finance.yahoo.com/v1/finance/search",
-        "https://query1.finance.yahoo.com/v1/finance/search",
-    ):
-        try:
-            res    = requests.get(
-                base,
-                params={"q": q, "quotesCount": 8, "newsCount": 0, "listsCount": 0},
-                headers=_headers,
-                timeout=6,
-            )
-            data   = res.json()
-            result_block = ((data.get("finance", {}).get("result") or [{}])[0])
-            quotes = result_block.get("quotes", [])
-            result = _add_suffix_probes(_normalise(quotes))
-            if result:
-                return result
-        except Exception as exc:
-            print(f"[search/http:{base}] {q}: {exc}")
 
-    return []
+@router.get("/api/stock/resolve")
+def stock_resolve(q: str = Query(..., min_length=1)):
+    """`CPALL` → `CPALL.BK`, `SCC` → `SCC.BK`, `AAPL` → `AAPL`. MUST sit above /api/stock/{symbol}."""
+    sym = resolve_symbol(q)
+    return {"input": q.strip().upper(), "symbol": sym}
 
 
 # ── Earnings Quality Monitor (Layer 2) — MUST be above /{symbol} catch-all ───
