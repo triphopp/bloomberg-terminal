@@ -229,6 +229,9 @@ def test_run_once_skips_without_touching_the_network(env, monkeypatch):
         raise AssertionError("must not hit the provider when the day is covered")
 
     monkeypatch.setattr(opt, "record_snapshot_now", boom)
+    # Pinned: after 16:00 ET a pre-close row is re-recorded on purpose, so the
+    # result would depend on when CI runs.
+    monkeypatch.setattr(env["iv"], "_after_us_close", lambda *a, **k: False)
 
     out = env["iv"].run_once()
     assert out["skipped"] == "all covered"
