@@ -168,7 +168,7 @@ Core portfolio tables first; the full per-table notes follow.
 
 ```sql
 portfolio_accounts  (id, name, broker, country, currency, account_type, is_active, markets JSON, created_at, updated_at)
-                    -- finansia (THB, sub-accounts 0153717 / 6065151 / 6065157 live in trades.note), dime (USD), innovestx (THB crypto)
+                    -- finansia (THB, sub-accounts 0153717 / 6065151 / 6065157 live in trades.note — leading "Finansia (id)" tag; AVCO pooled per sub-port, backend/sub_port.py), dime (USD), innovestx (THB crypto)
 trades              (id, account_id, symbol, sector, date_entry, date_exit, price_entry, price_exit,
                      price_stoploss, price_target, volume, amount, pnl_amount, win_loss W|L|P, pnl_percent,
                      currency, exchange_rate, exit_exchange_rate, resolved_symbol, market, is_reinvest,
@@ -465,6 +465,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished plan becomes `- [x] … done YYYY-MM-DD` only with a Completion Evidence section.
 
 - [x] **PORT Margin Maintenance (IBKR Reg T)** — done 2026-09-29: NLV/ELV/IM/MM/EL/AF/cushion per account (PORT + PAPER), level colours per account + per underlying, drop-to-liquidation, `margin:<LEVEL>` alerts, MGN ribbon + POSITIONS column, PAPER Reg T order checks (`plans/completed/port-margin-maintenance.md`)
+- [ ] **PORT sub-port split** — Finansia sub-ports แยก AVCO/sell/stock card/check + section ต่อ sub-port ใน POSITIONS + filter; เหลือ apply repair + เงินสดต่อ sub-port (`plans/port-subport-split.md`)
 - [ ] **PORT Ledger v2** — append-only ledger ที่ใช้ได้จริง: wallet ต่อสกุลเงิน, ปิดงวดกับ statement, FX convert 2 ขา, Decimal, sync append-only, SHADOW projection จาก ENTRY (`plans/port-ledger-v2.md`)
 - [x] **RISK OVERVIEW redesign + WHAT-IF SIM** — done 2026-09-29: STOP SIM → WHAT-IF SIM ทำ vs ไม่ทำ บนหุ้นจริง (guard/ERC suggestions หรือแก้ qty เอง, toggle ทำตาม stop) รวมใน OVERVIEW; ตัด trim chips/ERC table/Backtest block ซ้ำ (`plans/completed/risk-overview-whatif-sim.md`)
 - [x] **PORT Risk validity + stop simulator** — done 2026-09-29: STOP SIM (±SD, follow stop vs hold), rolling OOS VaR + daily forecast log, GICS sector cap, MAE/MFE replay + stop sweep, NAV-basis VaR (cash/short/option Δ) (`plans/completed/port-risk-validity.md`)
