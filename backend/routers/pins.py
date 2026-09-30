@@ -5,7 +5,7 @@ import uuid
 import datetime
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 from db import get_db
 
@@ -49,6 +49,32 @@ class PinnedAssetPatch(BaseModel):
     priority: int | None = None
 
 
+class NewGroupIn(BaseModel):
+    name: str
+    color: str | None = None
+
+
+class PinUpsertIn(BaseModel):
+    """PUT /api/pins/by-symbol/{symbol}. Fields left out are preserved on an
+    existing pin; targets sent as null are cleared."""
+    group_id: str | None = None
+    new_group: NewGroupIn | None = None
+    comment: str | None = None
+    buy_target: float | None = None
+    sell_target: float | None = None
+    price_at_pin: float | None = None
+    priority: int | None = Field(default=None, ge=1, le=3)
+    tags: list[str] | None = None
+
+    @model_validator(mode="after")
+    def _one_destination(self):
+        if self.group_id and self.new_group:
+            raise ValueError("send group_id or new_group, not both")
+        if self.new_group and not self.new_group.name.strip():
+            raise ValueError("new_group.name is empty")
+        return self
+
+
 class PinTagIn(BaseModel):
     id: str
     name: str
@@ -80,6 +106,117 @@ def _asset_with_tags(conn, row) -> dict:
     ).fetchall()
     asset["tags"] = [r["tag_id"] for r in tag_rows]
     return asset
+
+
+DEFAULT_GROUP_ID = "watchlist"
+DEFAULT_GROUP_NAME = "Watchlist"
+DEFAULT_GROUP_COLOR = "#f59e0b"
+
+
+def pin_id_for(symbol: str) -> str:
+    """Deterministic id for a NEW pin: two devices pinning the same symbol
+    produce the same op-log row key instead of two colliding rows."""
+    return f"pin:{symbol}"
+
+
+def norm_symbol(symbol: str) -> str:
+    return (symbol or "").strip().upper()
+
+
+def _now() -> str:
+    return datetime.datetime.utcnow().isoformat()
+
+
+def _create_group(conn, name: str, color: str | None, group_id: str | None = None) -> dict:
+    """Insert a group (reusing one with the same name, case-insensitively)."""
+    name = name.strip()
+    same = conn.execute(
+        "SELECT * FROM pin_groups WHERE LOWER(name) = LOWER(?) ORDER BY sort_order LIMIT 1", (name,)
+    ).fetchone()
+    if same:
+        return dict(same)
+    gid = group_id or f"grp-{uuid.uuid4().hex[:12]}"
+    order = conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM pin_groups").fetchone()[0]
+    conn.execute(
+        "INSERT INTO pin_groups (id, name, color, sort_order) VALUES (?, ?, ?, ?)",
+        (gid, name, color or DEFAULT_GROUP_COLOR, order),
+    )
+    return dict(conn.execute("SELECT * FROM pin_groups WHERE id = ?", (gid,)).fetchone())
+
+
+def _resolve_group(conn, body: "PinUpsertIn", existing) -> dict:
+    """The group the pin should end up in (creating it when asked)."""
+    if body.new_group:
+        return _create_group(conn, body.new_group.name, body.new_group.color)
+    if body.group_id:
+        row = conn.execute("SELECT * FROM pin_groups WHERE id = ?", (body.group_id,)).fetchone()
+        if row:
+            return dict(row)
+        if conn.execute("SELECT 1 FROM pin_groups LIMIT 1").fetchone():
+            raise HTTPException(status_code=404, detail="Group not found")
+    elif existing is not None:  # no destination given: stay where the pin is
+        return dict(conn.execute("SELECT * FROM pin_groups WHERE id = ?", (existing["group_id"],)).fetchone())
+    # nothing usable: first group, or a default one when none exist at all
+    first = conn.execute("SELECT * FROM pin_groups ORDER BY sort_order ASC, rowid ASC LIMIT 1").fetchone()
+    if first:
+        return dict(first)
+    return _create_group(conn, DEFAULT_GROUP_NAME, DEFAULT_GROUP_COLOR, group_id=DEFAULT_GROUP_ID)
+
+
+def upsert_pin(conn, symbol: str, body: "PinUpsertIn", *, new_id: str | None = None,
+               added_at: str | None = None) -> dict:
+    """Create the pin for `symbol`, or move/update the existing one. Caller owns
+    the transaction (get_db commits on success, rolls back on any exception)."""
+    symbol = norm_symbol(symbol)
+    if not symbol:
+        raise HTTPException(status_code=422, detail="symbol is empty")
+    existing = conn.execute("SELECT * FROM pinned_assets WHERE symbol = ?", (symbol,)).fetchone()
+    group = _resolve_group(conn, body, existing)
+    sent = body.model_fields_set
+
+    if existing is None:
+        pid = new_id or pin_id_for(symbol)
+        order = conn.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM pinned_assets WHERE group_id = ?", (group["id"],)
+        ).fetchone()[0]
+        conn.execute(
+            """INSERT INTO pinned_assets
+               (id, symbol, group_id, comment, buy_target, sell_target, price_at_pin, priority, sort_order, added_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (pid, symbol, group["id"], body.comment or "", body.buy_target, body.sell_target,
+             body.price_at_pin, body.priority or 1, order, added_at or _now(), _now()),
+        )
+        action = "created"
+    else:
+        pid = existing["id"]
+        updates: dict = {}
+        if existing["group_id"] != group["id"]:
+            updates["group_id"] = group["id"]
+            updates["sort_order"] = conn.execute(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM pinned_assets WHERE group_id = ?", (group["id"],)
+            ).fetchone()[0]
+        for col in ("comment", "buy_target", "sell_target", "price_at_pin", "priority"):
+            if col in sent:
+                v = getattr(body, col)
+                if v is None and col in ("comment", "priority"):
+                    continue  # NOT NULL columns: null means "no change"
+                if v != existing[col]:
+                    updates[col] = v
+        action = "moved" if "group_id" in updates else "unchanged"
+        if updates:
+            updates["updated_at"] = _now()
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            conn.execute(f"UPDATE pinned_assets SET {set_clause} WHERE id = ?", [*updates.values(), pid])
+            if action == "unchanged":
+                action = "updated"
+
+    if body.tags is not None:
+        conn.execute("DELETE FROM pinned_asset_tags WHERE asset_id = ?", (pid,))
+        for tag_id in dict.fromkeys(body.tags):
+            conn.execute("INSERT OR IGNORE INTO pinned_asset_tags (asset_id, tag_id) VALUES (?, ?)", (pid, tag_id))
+
+    row = conn.execute("SELECT * FROM pinned_assets WHERE id = ?", (pid,)).fetchone()
+    return {"action": action, "pin": _asset_with_tags(conn, row), "group": group}
 
 
 # ─── Groups ─────────────────────────────────────────────────────────────────
@@ -182,33 +319,51 @@ def list_assets():
         return [{**dict(row), "tags": tags.get(row["id"], [])} for row in rows]
 
 
+@router.put("/api/pins/by-symbol/{symbol}")
+def put_pin_by_symbol(symbol: str, body: PinUpsertIn):
+    """Upsert the one pin of `symbol`: create it, or MOVE it to another group.
+
+    One symbol = one pin in exactly one group (multi-category is what tags are
+    for). Group creation and pin write share one transaction, so a failure
+    leaves neither behind. Returns {action: created|moved|updated|unchanged, pin, group}.
+    """
+    try:
+        with get_db() as conn:
+            return upsert_pin(conn, symbol, body)
+    except sqlite3.Error as e:
+        raise HTTPException(status_code=500, detail=f"pin write failed: {e}")
+
+
 @router.post("/api/pins/assets", status_code=201)
 def create_asset(body: PinnedAssetIn):
-    added_at = body.added_at or datetime.datetime.utcnow().isoformat()
+    """Legacy create. A symbol can only be pinned once, so a second POST for the
+    same symbol is refused (409) instead of adding a duplicate - use
+    PUT /api/pins/by-symbol/{symbol} to move it."""
+    symbol = norm_symbol(body.symbol)
+    if not symbol:
+        raise HTTPException(status_code=422, detail="symbol is empty")
     with get_db() as conn:
-        conn.execute(
-            """INSERT INTO pinned_assets
-               (id, symbol, group_id, comment, buy_target, sell_target, price_at_pin, priority, added_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                body.id,
-                body.symbol,
-                body.group_id,
-                body.comment,
-                body.buy_target,
-                body.sell_target,
-                body.price_at_pin,
-                body.priority,
-                added_at,
-            ),
-        )
-        # Attach tags
+        taken = conn.execute("SELECT id, group_id FROM pinned_assets WHERE symbol = ?", (symbol,)).fetchone()
+        if taken:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "symbol already pinned", "id": taken["id"], "group_id": taken["group_id"]},
+            )
+        try:
+            conn.execute(
+                """INSERT INTO pinned_assets
+                   (id, symbol, group_id, comment, buy_target, sell_target, price_at_pin, priority, added_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (body.id, symbol, body.group_id, body.comment, body.buy_target, body.sell_target,
+                 body.price_at_pin, body.priority, body.added_at or _now()),
+            )
+        except sqlite3.IntegrityError as e:
+            raise HTTPException(status_code=409, detail=f"pin rejected: {e}")
         for tag_id in body.tags:
             conn.execute(
                 "INSERT OR IGNORE INTO pinned_asset_tags (asset_id, tag_id) VALUES (?, ?)",
                 (body.id, tag_id),
             )
-        conn.commit()
     return {"ok": True, "id": body.id}
 
 
@@ -344,14 +499,23 @@ def bulk_import(body: PinImportRequest):
                     g.get("sort_order", 0),
                 ),
             )
+        skipped = 0
         for a in body.assets:
+            symbol = norm_symbol(a.get("symbol", ""))
+            if not symbol:
+                skipped += 1
+                continue
+            clash = conn.execute("SELECT id FROM pinned_assets WHERE symbol = ?", (symbol,)).fetchone()
+            if clash and clash["id"] != a.get("id"):
+                skipped += 1  # already pinned under another id: never a second row
+                continue
             conn.execute(
                 """INSERT OR REPLACE INTO pinned_assets
                    (id, symbol, group_id, comment, buy_target, sell_target, price_at_pin, priority, added_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     a.get("id", str(uuid.uuid4())),
-                    a.get("symbol", ""),
+                    symbol,
                     a.get("group_id", ""),
                     a.get("comment", ""),
                     a.get("buy_target"),
@@ -362,4 +526,4 @@ def bulk_import(body: PinImportRequest):
                 ),
             )
         conn.commit()
-    return {"ok": True, "groups": len(body.groups), "assets": len(body.assets)}
+    return {"ok": True, "groups": len(body.groups), "assets": len(body.assets) - skipped, "skipped": skipped}

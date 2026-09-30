@@ -2,7 +2,7 @@
 
 import { type StockQuote as Quote, quoteQueryOptions } from "@/lib/market-data-client";
 import { useQueryClient } from "@tanstack/react-query";
-import { useAtom, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   AlertTriangle,
   Check,
@@ -95,9 +95,16 @@ const PALETTE = [
   { label: "Slate", hex: "#94a3b8" },
 ];
 
-import { DEFAULT_WATCHLIST_GROUP as DEFAULT_GROUP } from "../core/global-search";
 import { fmtPriceStd } from "../lib/number-format";
 import { TICK_HEAD, TICK_REGION, TICK_TABLE } from "../lib/tick-grammar";
+import {
+  DEFAULT_WATCHLIST_GROUP as DEFAULT_GROUP,
+  type PinExtras,
+  type PinTarget,
+  markPinsHydrated,
+  pinErrorAtom,
+  usePinActions,
+} from "../pins/usePinActions";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -879,6 +886,8 @@ function TagManagerPanel({
 
 // ── AddCardForm ───────────────────────────────────────────────────────────────
 
+const NEW_GROUP = "__new__";
+
 function AddCardForm({
   groupId,
   groups,
@@ -889,10 +898,11 @@ function AddCardForm({
   groupId: string;
   groups: PinGroup[];
   colors: typeof bloombergColors.dark;
-  onAdd: (p: PinnedAsset) => void;
+  onAdd: (symbol: string, target: PinTarget, extras: PinExtras) => void;
   onCancel: () => void;
 }) {
   const [symbol, setSymbol] = useState("");
+  const [newGroupName, setNewGroupName] = useState("");
   const [comment, setComment] = useState("");
   const [buyTarget, setBuyTarget] = useState("");
   const [sellTarget, setSellTarget] = useState("");
@@ -902,20 +912,23 @@ function AddCardForm({
 
   const iSt = { background: colors.background, color: colors.text, borderColor: colors.border };
 
+  const creatingGroup = selGroup === NEW_GROUP;
+  const canSubmit = !!symbol.trim() && (!creatingGroup || !!newGroupName.trim());
+
   const submit = () => {
     const sym = symbol.trim().toUpperCase();
-    if (!sym) return;
-    onAdd({
-      id: Date.now().toString(),
-      symbol: sym,
-      groupId: selGroup,
-      comment: comment.trim(),
-      addedAt: new Date().toISOString().split("T")[0],
-      buyTarget: buyTarget ? Number.parseFloat(buyTarget) : undefined,
-      sellTarget: sellTarget ? Number.parseFloat(sellTarget) : undefined,
-      priority: 1,
-      tags: [],
-    });
+    if (!sym || !canSubmit) return;
+    // Only send what the user typed: an already-pinned symbol is MOVED here and
+    // must keep its own note / targets unless the form overrides them.
+    const extras: PinExtras = {};
+    if (comment.trim()) extras.comment = comment.trim();
+    if (buyTarget) extras.buyTarget = Number.parseFloat(buyTarget);
+    if (sellTarget) extras.sellTarget = Number.parseFloat(sellTarget);
+    onAdd(
+      sym,
+      creatingGroup ? { newGroup: { name: newGroupName.trim() } } : { groupId: selGroup },
+      extras
+    );
   };
 
   return (
@@ -935,19 +948,32 @@ function AddCardForm({
           if (e.key === "Escape") onCancel();
         }}
       />
-      {groups.length > 1 && (
-        <select
-          className="text-[9px] px-0.5 py-0.5 border font-mono"
+      <select
+        className="text-[9px] px-0.5 py-0.5 border font-mono"
+        style={iSt}
+        value={selGroup}
+        onChange={(e) => setSelGroup(e.target.value)}
+      >
+        {groups.map((g) => (
+          <option key={g.id} value={g.id}>
+            {g.name}
+          </option>
+        ))}
+        <option value={NEW_GROUP}>+ New group…</option>
+      </select>
+      {creatingGroup && (
+        <input
+          className="text-[10px] px-1.5 py-0.5 border outline-none font-mono w-24"
           style={iSt}
-          value={selGroup}
-          onChange={(e) => setSelGroup(e.target.value)}
-        >
-          {groups.map((g) => (
-            <option key={g.id} value={g.id}>
-              {g.name}
-            </option>
-          ))}
-        </select>
+          placeholder="Group name"
+          maxLength={40}
+          value={newGroupName}
+          onChange={(e) => setNewGroupName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+            if (e.key === "Escape") setSelGroup(groupId);
+          }}
+        />
       )}
       <input
         className="text-[10px] px-1 py-0.5 border outline-none font-mono w-14"
@@ -993,7 +1019,7 @@ function AddCardForm({
           type="button"
           className="text-[9px] px-2 py-0.5 font-bold flex items-center gap-0.5 disabled:opacity-40"
           style={{ background: colors.accent, color: "#000" }}
-          disabled={!symbol.trim()}
+          disabled={!canSubmit}
           onClick={submit}
         >
           <Pin className="h-2.5 w-2.5" />
@@ -1581,6 +1607,14 @@ export const PinnedAssets = memo(function PinnedAssets({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // WATCHLIST's offline cache follows the atoms, so pins/moves made elsewhere
+  // (global search, stock view, ADD row via usePinActions) reach it too.
+  useEffect(() => {
+    if (syncStatus !== "ok") return;
+    markPinsHydrated();
+    saveToLS(groups, pins, tags);
+  }, [syncStatus, groups, pins, tags, saveToLS]);
+
   // All groups share per-symbol queries. Metadata edits/reordering do not refetch.
   const symbolKey = [...new Set(pins.map((p) => p.symbol))].sort().join(",");
   const signalSymbols = useMemo(() => (symbolKey ? symbolKey.split(",") : []), [symbolKey]);
@@ -1674,54 +1708,45 @@ export const PinnedAssets = memo(function PinnedAssets({
     }
   };
 
-  const handleAddPin = async (pin: PinnedAsset) => {
-    const cached = queryClient.getQueryData<Quote>(quoteQueryOptions(pin.symbol).queryKey);
-    const fetchedAt =
-      queryClient.getQueryState(quoteQueryOptions(pin.symbol).queryKey)?.dataUpdatedAt ?? 0;
-    const price = Date.now() - fetchedAt < 60_000 ? (cached?.regularMarketPrice ?? null) : null;
-    const added = { ...pin, priceAtPin: price ?? undefined };
-    const newPins = [...pins, added];
-    setPins(newPins);
-    saveToLS(groups, newPins, tags);
+  // Add (or MOVE, when the symbol is already pinned) through the shared hook:
+  // optimistic, rolled back and reported on failure, one PUT per pin.
+  const { pin: pinTo } = usePinActions();
+  const pinError = useAtomValue(pinErrorAtom);
+  useEffect(() => {
+    if (pinError) setMutError(pinError);
+  }, [pinError]);
+
+  const handleAddPin = async (rawSymbol: string, target: PinTarget, extras: PinExtras) => {
+    const symbol = rawSymbol.trim().toUpperCase();
+    const already = pins.some((p) => p.symbol === symbol);
+    let price: number | null = null;
+    if (!already) {
+      const cached = queryClient.getQueryData<Quote>(quoteQueryOptions(symbol).queryKey);
+      const fetchedAt =
+        queryClient.getQueryState(quoteQueryOptions(symbol).queryKey)?.dataUpdatedAt ?? 0;
+      price = Date.now() - fetchedAt < 60_000 ? (cached?.regularMarketPrice ?? null) : null;
+    }
     setShowAddRow(false);
     setMutError("");
-    try {
-      // Membership is saved immediately; a slow quote cannot delay the write.
-      await apiPost("/api/pins/assets", {
-        id: pin.id,
-        symbol: pin.symbol,
-        group_id: pin.groupId,
-        comment: pin.comment,
-        buy_target: pin.buyTarget ?? null,
-        sell_target: pin.sellTarget ?? null,
-        price_at_pin: price,
-        priority: pin.priority ?? 1,
-        added_at: pin.addedAt,
-        tags: pin.tags ?? [],
-      });
-    } catch {
-      setPins((current) => {
-        const rolledBack = current.filter((p) => p.id !== pin.id);
-        saveToLS(groups, rolledBack, tags);
-        return rolledBack;
-      });
-      setMutError(`Could not save ${pin.symbol}. Please try again.`);
-      return;
-    }
-    if (price == null) {
+    // Membership is saved immediately; a slow quote cannot delay the write.
+    const result = await pinTo(
+      symbol,
+      target,
+      price != null ? { ...extras, priceAtPin: price } : extras
+    );
+    if (!result) return; // usePinActions rolled back; pinError shows in the header
+    if (result.action === "created" && price == null) {
       try {
         // Joins the row/chart query; no second or third quote request on ADD.
-        const quote = await queryClient.fetchQuery(quoteQueryOptions(pin.symbol));
-        await apiPatch(`/api/pins/assets/${encodeURIComponent(pin.id)}`, {
+        const quote = await queryClient.fetchQuery(quoteQueryOptions(symbol));
+        await apiPatch(`/api/pins/assets/${encodeURIComponent(result.pin.id)}`, {
           price_at_pin: quote.regularMarketPrice,
         });
-        setPins((current) => {
-          const updated = current.map((p) =>
-            p.id === pin.id ? { ...p, priceAtPin: quote.regularMarketPrice } : p
-          );
-          saveToLS(groups, updated, tags);
-          return updated;
-        });
+        setPins((current) =>
+          current.map((p) =>
+            p.id === result.pin.id ? { ...p, priceAtPin: quote.regularMarketPrice } : p
+          )
+        );
       } catch {
         // The pin is already saved. Missing entry price must remain unknown.
       }

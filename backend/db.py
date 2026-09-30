@@ -104,6 +104,77 @@ def _ensure_wal_mode() -> None:
     conn.close()
 
 
+def dedupe_pinned_assets(conn: sqlite3.Connection) -> int:
+    """Collapse pins that share a symbol into one row (idempotent). Returns rows removed.
+
+    One symbol = one pin in exactly one group; multi-category membership is what
+    pin tags are for. Keeps the row with the most information (comment, targets,
+    price_at_pin, tags), then the most recently updated, then the smallest id
+    (so two machines holding the same rows choose the same survivor). Fields the
+    survivor lacks are filled from the discarded rows and their tags are merged.
+
+    The DELETEs run with the sync guard raised: op-log / tombstone capture is
+    skipped on purpose. Every device runs this same migration on its own copy;
+    if each captured a delete, a machine that kept row X would receive "delete X"
+    from the machine that kept row Y and lose the pin entirely.
+    """
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT p.*, (SELECT COUNT(*) FROM pinned_asset_tags t WHERE t.asset_id = p.id) AS n_tags "
+        "FROM pinned_assets p"
+    ).fetchall()
+    by_sym: dict[str, list[sqlite3.Row]] = {}
+    for r in rows:
+        by_sym.setdefault(str(r["symbol"] or "").strip().upper(), []).append(r)
+
+    def info(r) -> int:
+        return (bool(r["comment"]) + (r["buy_target"] is not None) + (r["sell_target"] is not None)
+                + (r["price_at_pin"] is not None) + (r["n_tags"] or 0))
+
+    doomed: list[str] = []
+    for sym, group in by_sym.items():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda r: str(r["id"]))
+        group.sort(key=lambda r: str(r["updated_at"] or ""), reverse=True)
+        group.sort(key=info, reverse=True)  # stable: info desc, then updated desc, then id asc
+        keep, rest = group[0], group[1:]
+        fill: dict = {}
+        for col in ("comment", "buy_target", "sell_target", "price_at_pin"):
+            if keep[col] in (None, ""):
+                for r in rest:
+                    if r[col] not in (None, ""):
+                        fill[col] = r[col]
+                        break
+        if fill:
+            sets = ", ".join(f"{c} = ?" for c in fill)
+            conn.execute(f"UPDATE pinned_assets SET {sets} WHERE id = ?", [*fill.values(), keep["id"]])
+        for r in rest:
+            conn.execute(
+                "INSERT OR IGNORE INTO pinned_asset_tags (asset_id, tag_id) "
+                "SELECT ?, tag_id FROM pinned_asset_tags WHERE asset_id = ?",
+                (keep["id"], r["id"]),
+            )
+            doomed.append(r["id"])
+
+    if doomed:
+        has_guard = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_sync_guard'"
+        ).fetchone()
+        if has_guard:
+            conn.execute("UPDATE _sync_guard SET active = 1")
+        try:
+            for pid in doomed:
+                conn.execute("DELETE FROM pinned_asset_tags WHERE asset_id = ?", (pid,))
+                conn.execute("DELETE FROM pinned_assets WHERE id = ?", (pid,))
+        finally:
+            if has_guard:
+                conn.execute("UPDATE _sync_guard SET active = 0")
+    # normalise stray case/whitespace so the unique index means what it says
+    conn.execute("UPDATE pinned_assets SET symbol = UPPER(TRIM(symbol)) WHERE symbol != UPPER(TRIM(symbol))")
+    return len(doomed)
+
+
 def init_db() -> None:
     _ensure_wal_mode()
     with get_db() as conn:
@@ -168,6 +239,9 @@ def init_db() -> None:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pa_group ON pinned_assets(group_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pa_sym   ON pinned_assets(symbol)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pa_group_sort ON pinned_assets(group_id, sort_order)")
+        dedupe_pinned_assets(conn)
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_pa_symbol ON pinned_assets(symbol)")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS symbol_lists (

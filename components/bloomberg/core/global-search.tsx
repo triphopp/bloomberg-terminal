@@ -21,8 +21,6 @@ import { useAtom, useSetAtom } from "jotai";
 import { Check, Loader2, Pin, Search, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  type PinGroup,
-  type PinnedAsset,
   chartCompareSymbolsAtom,
   chartScalingUnitAtom,
   chartTypeAtom,
@@ -31,8 +29,6 @@ import {
   heatmapMetricAtom,
   isDarkModeAtom,
   isGlobalSearchOpenAtom,
-  pinGroupsAtom,
-  pinnedAssetsAtom,
   showYTDAtom,
   stockSearchSymbolAtom,
   tickerEnabledAtom,
@@ -41,6 +37,8 @@ import { resolveSymbol } from "../lib/resolve-symbol";
 import { recordSearchHit } from "../lib/search-stats";
 import { displayName, displaySymbol } from "../lib/symbol-display";
 import { bloombergColors } from "../lib/theme-config";
+import { PinGroupPicker } from "../pins/PinGroupPicker";
+import { type PinTarget, usePinActions } from "../pins/usePinActions";
 import {
   ALL_COMMANDS,
   type CommandResult,
@@ -100,32 +98,6 @@ function storeSearch(key: string, results: SearchResult[]) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-export const DEFAULT_WATCHLIST_GROUP: PinGroup = {
-  id: "watchlist",
-  name: "Watchlist",
-  color: "#f59e0b",
-};
-const LS_GROUPS = "bloomberg_pin_groups";
-const LS_PINS = "bloomberg_pinned_assets";
-
-function loadGroups(): PinGroup[] {
-  try {
-    const s = localStorage.getItem(LS_GROUPS);
-    return s ? JSON.parse(s) : [DEFAULT_WATCHLIST_GROUP];
-  } catch {
-    return [DEFAULT_WATCHLIST_GROUP];
-  }
-}
-
-function savePin(pin: PinnedAsset) {
-  try {
-    const existing: PinnedAsset[] = JSON.parse(localStorage.getItem(LS_PINS) ?? "[]");
-    localStorage.setItem(LS_PINS, JSON.stringify([...existing, pin]));
-  } catch {
-    /* ignore */
-  }
-}
 
 function typeColor(type?: string): string {
   switch ((type ?? "").toLowerCase()) {
@@ -304,56 +276,6 @@ function SuggestionRow({
   );
 }
 
-/** GroupPicker popover for pinning */
-function GroupPicker({
-  groups,
-  onPick,
-  onClose,
-  colors,
-}: {
-  groups: PinGroup[];
-  onPick: (g: PinGroup) => void;
-  onClose: () => void;
-  colors: typeof bloombergColors.dark;
-}) {
-  return (
-    <div
-      className="absolute right-0 top-full mt-1 z-[200] border min-w-[160px]"
-      style={{ background: colors.surface, borderColor: colors.border }}
-      role="presentation"
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => e.stopPropagation()}
-    >
-      <div
-        className="px-3 py-1.5 text-xs font-bold border-b"
-        style={{ color: colors.accent, borderColor: colors.border }}
-      >
-        PIN TO GROUP
-      </div>
-      {groups.map((g) => (
-        <button
-          type="button"
-          key={g.id}
-          className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:opacity-70"
-          style={{ color: colors.text }}
-          onClick={() => onPick(g)}
-        >
-          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: g.color }} />
-          {g.name}
-        </button>
-      ))}
-      <button
-        type="button"
-        className="w-full text-left px-3 py-1.5 text-xs border-t"
-        style={{ color: colors.textSecondary, borderColor: colors.border }}
-        onClick={onClose}
-      >
-        Cancel
-      </button>
-    </div>
-  );
-}
-
 /** Stock search result row */
 function ResultRow({
   result,
@@ -427,7 +349,7 @@ function ResultRow({
           border: `1px solid ${isPinned ? "#22c55e44" : `${colors.accent}44`}`,
         }}
         onClick={onPinClick}
-        title={isPinned ? "Already pinned" : "Pin this asset (P)"}
+        title={isPinned ? "Pinned - click to move to another group" : "Pin this asset (P)"}
       >
         {isPinned ? (
           <>
@@ -450,8 +372,7 @@ function ResultRow({
 export function GlobalSearch() {
   const [isOpen, setIsOpen] = useAtom(isGlobalSearchOpenAtom);
   const [isDarkMode] = useAtom(isDarkModeAtom);
-  const [pins, setPins] = useAtom(pinnedAssetsAtom);
-  const [groups, setGroups] = useAtom(pinGroupsAtom);
+  const { groups, pins, groupOf, ensureLoaded, pin: pinTo } = usePinActions();
   const setCurrentView = useSetAtom(currentViewAtom);
   const setChartCompare = useSetAtom(chartCompareSymbolsAtom);
   const setChartScalingUnit = useSetAtom(chartScalingUnitAtom);
@@ -472,7 +393,6 @@ export function GlobalSearch() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const [pickerFor, setPickerFor] = useState<string | null>(null);
-  const [pinnedNow, setPinnedNow] = useState<Set<string>>(new Set());
   const [pinFeedback, setPinFeedback] = useState<Record<string, string>>({});
 
   // ── Terminal command state ─────────────────────────────────────────────────
@@ -523,12 +443,11 @@ export function GlobalSearch() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset runs only on open toggle by design
   useEffect(() => {
     if (!isOpen) return;
-    setGroups(loadGroups());
+    void ensureLoaded();
     setQuery("");
     setResults([]);
     setActiveIdx(0);
     setPickerFor(null);
-    setPinnedNow(new Set(pins.map((p) => p.symbol)));
     setExecResult(null);
     setExecLoading(false);
     abortRef.current?.abort();
@@ -718,22 +637,12 @@ export function GlobalSearch() {
   );
 
   const doPin = useCallback(
-    (sym: string, group: PinGroup) => {
-      if (pins.some((p) => p.symbol === sym && p.groupId === group.id)) {
-        setPinnedNow((s) => new Set([...s, sym]));
-        return;
-      }
-      const newPin: PinnedAsset = {
-        id: Date.now().toString(),
-        symbol: sym,
-        groupId: group.id,
-        comment: "",
-        addedAt: new Date().toISOString().split("T")[0],
-      };
-      setPins((ps) => [...ps, newPin]);
-      savePin(newPin);
-      setPinnedNow((s) => new Set([...s, sym]));
-      setPinFeedback((fb) => ({ ...fb, [sym]: group.name }));
+    async (sym: string, target?: PinTarget) => {
+      setPickerFor(null);
+      const result = await pinTo(sym, target);
+      if (!result) return; // usePinActions rolled back and reported the error
+      const verb = result.action === "moved" ? "Moved to" : "Pinned to";
+      setPinFeedback((fb) => ({ ...fb, [sym]: `${verb} ${result.group.name}` }));
       setTimeout(
         () =>
           setPinFeedback((fb) => {
@@ -743,38 +652,17 @@ export function GlobalSearch() {
           }),
         2500
       );
-      setPickerFor(null);
-      fetch("/api/pins/assets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: newPin.id,
-          symbol: newPin.symbol,
-          group_id: newPin.groupId,
-          comment: "",
-          buy_target: null,
-          sell_target: null,
-          price_at_pin: null,
-          priority: 1,
-          added_at: newPin.addedAt,
-          tags: [],
-        }),
-      }).catch((err) => console.error("[doPin global-search]", err));
     },
-    [pins, setPins]
+    [pinTo]
   );
 
   const handlePinClick = useCallback(
     (e: React.MouseEvent, sym: string) => {
       e.stopPropagation();
-      const effectiveGroups = groups.length ? groups : [DEFAULT_WATCHLIST_GROUP];
-      if (effectiveGroups.length === 1) {
-        doPin(sym, effectiveGroups[0]);
-      } else {
-        setPickerFor((v) => (v === sym ? null : sym));
-      }
+      void ensureLoaded();
+      setPickerFor((v) => (v === sym ? null : sym));
     },
-    [groups, doPin]
+    [ensureLoaded]
   );
 
   // ── Keyboard handler inside overlay ───────────────────────────────────────
@@ -856,8 +744,11 @@ export function GlobalSearch() {
         } else if ((e.key === "p" || e.key === "P") && e.ctrlKey) {
           e.preventDefault();
           const sym = results[activeIdx]?.symbol;
-          const grps = groups.length ? groups : [DEFAULT_WATCHLIST_GROUP];
-          if (sym) doPin(sym, grps[0]);
+          if (!sym) return;
+          // Quick pin into the first group; an already-pinned symbol opens the
+          // picker instead so Ctrl+P can never silently move it.
+          if (groupOf(sym) || !groups.length) setPickerFor(sym);
+          else doPin(sym, { groupId: groups[0].id });
         }
       }
     },
@@ -872,13 +763,12 @@ export function GlobalSearch() {
       openEquity,
       doPin,
       groups,
+      groupOf,
       setIsOpen,
     ]
   );
 
   if (!isOpen) return null;
-
-  const effectiveGroups = groups.length ? groups : [DEFAULT_WATCHLIST_GROUP];
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -1060,7 +950,7 @@ export function GlobalSearch() {
                   <ResultRow
                     result={r}
                     isActive={i === activeIdx}
-                    isPinned={pinnedNow.has(r.symbol)}
+                    isPinned={groupOf(r.symbol) !== undefined}
                     onOpen={() => openEquity(r.symbol)}
                     onPinClick={(e) => handlePinClick(e, r.symbol)}
                     colors={colors}
@@ -1072,19 +962,22 @@ export function GlobalSearch() {
                     <div
                       className="absolute right-4 top-1/2 -translate-y-1/2 text-xs px-2 py-1 rounded font-bold pointer-events-none"
                       style={{
-                        background: "#22c55e22",
+                        // Opaque: it sits on top of the row's type/exchange columns.
+                        background: colors.background,
                         color: "#4ade80",
-                        border: "1px solid #22c55e44",
+                        border: "1px solid #22c55e66",
                       }}
                     >
-                      ✓ Pinned to {pinFeedback[r.symbol]}
+                      ✓ {pinFeedback[r.symbol]}
                     </div>
                   )}
                   {pickerFor === r.symbol && (
                     <div className="absolute right-4 top-full" style={{ zIndex: 200 }}>
-                      <GroupPicker
-                        groups={effectiveGroups}
-                        onPick={(g) => doPin(r.symbol, g)}
+                      <PinGroupPicker
+                        groups={groups}
+                        currentGroupId={groupOf(r.symbol)}
+                        onPick={(g) => doPin(r.symbol, { groupId: g.id })}
+                        onCreate={(name) => doPin(r.symbol, { newGroup: { name } })}
                         onClose={() => setPickerFor(null)}
                         colors={colors}
                       />
