@@ -1,8 +1,25 @@
 import { Toaster } from "@/components/ui/sonner";
 import type { Metadata } from "next";
+import { IBM_Plex_Mono, IBM_Plex_Sans_Thai } from "next/font/google";
 import { Suspense } from "react";
 import { BootWatchdog } from "./boot-watchdog";
 import "../styles/globals.css";
+
+// Reading faces for the thesis workspace (`.reading` in globals.css) — the same
+// pair the research pages name. next/font serves them from this app's own
+// origin, so nothing is fetched from Google while the terminal runs.
+const readSans = IBM_Plex_Sans_Thai({
+  weight: ["400", "500", "600", "700"],
+  subsets: ["thai", "latin"],
+  variable: "--font-read",
+  display: "swap",
+});
+const readMono = IBM_Plex_Mono({
+  weight: ["400", "500", "600"],
+  subsets: ["latin"],
+  variable: "--font-read-mono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "Bloomberg Terminal",
@@ -40,7 +57,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${readSans.variable} ${readMono.variable}`}
+    >
       <body>
         <BootWatchdog />
         <Suspense fallback={<AppSkeleton />}>{children}</Suspense>

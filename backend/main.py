@@ -62,6 +62,8 @@ from db import (
     init_guard_schema,
     init_margin_schema,
     init_zettel_schema,
+    init_questions_schema,
+    init_tracking_schema,
     init_graphs_schema,
     init_series_schema,
     init_etf_aum_schema,
@@ -75,7 +77,7 @@ from analytics.regime_v2 import ensure_v2_fresh
 from contextlib import asynccontextmanager
 
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, bonds, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, graphs, series, ir_stress, market_state, dcf, discover, market_heatmap, cot, stream, google_trends, fiscal_ai
+from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, bonds, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, questions, tracking, graphs, reads, series, ir_stress, market_state, dcf, discover, market_heatmap, cot, stream, google_trends, fiscal_ai
 from routers import health as upstream_health_router
 from routers import chart_drawings
 from routers import changes as changes_router
@@ -131,6 +133,8 @@ init_thesis_schema()   # must precede init_sync_layer(): it adds updated_at + tr
 init_guard_schema()    # same: guard_overrides is synced
 init_margin_schema()   # same: margin_settings is synced
 init_zettel_schema()   # same ordering reason as the thesis schema above
+init_questions_schema()  # after zettel (answers cite it); must precede init_sync_layer()
+init_tracking_schema()   # after questions (a miss opens one); must precede init_sync_layer()
 init_graphs_schema()   # index for research/graphs; no sync triggers, order free
 init_series_schema()   # generic indicator series; must precede init_sync_layer()
 init_etf_aum_schema()  # self-built ETF AUM record; must precede init_sync_layer()
@@ -221,7 +225,10 @@ from routers import slip_ocr as slip_ocr_router  # noqa: E402  (engine in backen
 app.include_router(slip_ocr_router.router, tags=["Slip OCR"])
 app.include_router(theses.router, tags=["Theses"])
 app.include_router(zettel.router, tags=["Zettel"])
+app.include_router(questions.router, tags=["Questions"])
+app.include_router(tracking.router, tags=["Tracking"])
 app.include_router(graphs.router, tags=["Graphs"])
+app.include_router(reads.router, tags=["Reads"])
 app.include_router(series.router, tags=["Series"])
 app.include_router(chart_drawings.router)
 app.include_router(changes_router.router, tags=["Changes"])

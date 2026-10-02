@@ -7,8 +7,11 @@
  *                  then, if "ทำตาม stop ต่อ" is on, every stop obeyed.
  *   ไม่ทำ (DON'T) — the book exactly as it is, held.
  *
- * Both run over the same random paths for +1 / 0 / −1 / −2 SD home markets,
- * so the gap between the two lines is the decision and nothing else.
+ * Both run over the same random paths for +1 / 0 / −1 / −2 SD home markets
+ * ("±SD": market pinned, the band is stock-specific noise only) or for an
+ * unpinned market ("สุ่ม": the band includes market risk, so P(loss) reads as
+ * a chance), so the gap between the two lines is the decision and nothing else.
+ * REBALANCE sends its take-profit trims here (`rebalance` + `focus`).
  * Suggested trades come from TRADE GUARD (stop hit → sell, over the 10% cap →
  * trim to the cap) and from the ERC risk-contribution signals.
  *
@@ -33,6 +36,7 @@ import {
 import { LazyResponsiveContainer as ResponsiveContainer } from "../../../ui/LazyResponsiveContainer";
 import type { Colors } from "../helpers";
 import { fmtAmt, fmtPx, fmtQty } from "../helpers";
+import type { RebalTrade } from "./RebalancePanel";
 
 // ── types ────────────────────────────────────────────────────────────────────
 
@@ -46,14 +50,23 @@ interface ModeStats {
   final_p90: number;
   maxdd_p50: number;
   maxdd_p90: number;
+  p_loss?: number;
+  p_loss_gt_5?: number;
   p_loss_gt_10: number;
 }
 
 interface Scenario {
-  k: number;
+  /** null = the unpinned ("สุ่ม") run. */
+  k: number | null;
+  random?: boolean;
   market_move_pct: Record<string, number>;
+  market_move_range?: Record<string, [number, number, number]>;
   disciplined: ModeStats; // DO
   hold: ModeStats; // DON'T
+  /** Per-path DO − DON'T at the horizon, base currency (same draws both sides). */
+  diff_value?: { p10: number; p50: number; p90: number };
+  /** % of paths where DO ends above DON'T. */
+  p_do_better?: number;
   stop_prob: Record<string, number>;
   avg_stops: number;
 }
@@ -88,6 +101,7 @@ interface SimData {
   horizon: number;
   n_paths: number;
   follow_stops: boolean;
+  market?: "sd" | "random";
   do_cash: number;
   do_turnover: number;
   positions: SimPosition[];
@@ -135,7 +149,8 @@ interface Pick {
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 const HORIZONS = [5, 20, 60] as const;
-const kLabel = (k: number) => (k === 0 ? "0 SD" : `${k > 0 ? "+" : "−"}${Math.abs(k)} SD`);
+const kLabel = (k: number | null) =>
+  k === null ? "สุ่ม" : k === 0 ? "0 SD" : `${k > 0 ? "+" : "−"}${Math.abs(k)} SD`;
 const pct = (v: number, d = 1) => `${v >= 0 ? "+" : ""}${v.toFixed(d)}%`;
 const money = (v: number, sym: string) => `${v >= 0 ? "+" : "-"}${sym}${fmtAmt(Math.abs(v))}`;
 const CODE_LABEL: Record<string, string> = {
@@ -143,7 +158,12 @@ const CODE_LABEL: Record<string, string> = {
   OVERWEIGHT: "ลด→10%",
   ERC_TRIM: "ERC ลด",
   ERC_BUY: "ERC ซื้อ",
+  REBAL: "ขายทำกำไร",
 };
+
+/** Median per-path DO − DON'T; older backends only sent the two medians. */
+const gapOf = (data: SimData, s: Scenario) =>
+  s.diff_value?.p50 ?? (data.start_value * (s.disciplined.final_p50 - s.hold.final_p50)) / 100;
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -154,8 +174,9 @@ function useDebounced<T>(value: T, ms: number): T {
   return v;
 }
 
-/** Guard suggestions + ERC signals spread over the accounts that hold the symbol. */
-function buildPicks(data: SimData | undefined, erc: ErcSignal[]): Pick[] {
+/** Guard suggestions + ERC signals + REBALANCE trims, spread over the accounts
+ *  that hold the symbol (pro rata to shares held). */
+function buildPicks(data: SimData | undefined, erc: ErcSignal[], rebal: RebalTrade[]): Pick[] {
   if (!data?.positions) return [];
   const out: Pick[] = data.suggestions.map((s) => ({
     id: `${s.key}:${s.code}`,
@@ -186,6 +207,22 @@ function buildPicks(data: SimData | undefined, erc: ErcSignal[]): Pick[] {
       });
     }
   }
+  for (const t of rebal) {
+    const rows = data.positions.filter((p) => p.symbol.toUpperCase() === t.symbol.toUpperCase());
+    const total = rows.reduce((a, p) => a + p.volume, 0);
+    if (!rows.length || total <= 0 || !t.delta_shares) continue;
+    for (const p of rows) {
+      out.push({
+        id: `${p.key}:REBAL`,
+        key: p.key,
+        code: "REBAL",
+        label: `ขายทำกำไร −${fmtQty(Math.abs((t.delta_shares * p.volume) / total))}`,
+        title: "REBALANCE: กำไรโตจนน้ำหนักเกินเป้า — ขายบางส่วนกลับเข้าสัดส่วน",
+        target: Math.max(0, p.volume + (t.delta_shares * p.volume) / total),
+        defaultOn: false,
+      });
+    }
+  }
   return out;
 }
 
@@ -195,26 +232,43 @@ export function WhatIfSimPanel({
   accountId,
   colors,
   erc = [],
+  rebalance = [],
+  focus = 0,
 }: {
   accountId: string;
   colors: Colors;
   erc?: ErcSignal[];
+  rebalance?: RebalTrade[];
+  /** Bumped by REBALANCE "จำลองแผนนี้": tick only the REBAL picks, stops off. */
+  focus?: number;
 }) {
   const [horizon, setHorizon] = useState<number>(20);
   const [followStops, setFollowStops] = useState(true);
+  const [market, setMarket] = useState<"sd" | "random">("sd");
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   const [manual, setManual] = useState<Record<string, string>>({});
   const [showAll, setShowAll] = useState(false);
   const [showModel, setShowModel] = useState(false);
-  const [selK, setSelK] = useState(-2);
+  const [selK, setSelK] = useState<number | null>(-2);
   const [lastData, setLastData] = useState<SimData | undefined>(undefined);
   const dark = colors.bg === "#000000";
   const C_DO = dark ? "#3b8fd9" : "#2a7bc4";
   const C_DONT = dark ? "#c77700" : "#b86e00";
   const sym = "฿";
 
-  const picks = useMemo(() => buildPicks(lastData, erc), [lastData, erc]);
+  const picks = useMemo(() => buildPicks(lastData, erc, rebalance), [lastData, erc, rebalance]);
   const isOn = (p: Pick) => picked[p.id] ?? p.defaultOn;
+
+  // "จำลองแผนนี้" from REBALANCE: compare the trims alone against holding —
+  // every other suggestion off and stops off, so the gap is the rebalance only.
+  const hasPicks = picks.length > 0;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per focus bump, after picks exist
+  useEffect(() => {
+    if (!focus || !hasPicks) return;
+    setPicked(Object.fromEntries(picks.map((p) => [p.id, p.code === "REBAL"])));
+    setManual({});
+    setFollowStops(false);
+  }, [focus, hasPicks]);
 
   // key → shares after the trade. Typed qty beats ticked suggestions; among
   // ticked ones the deepest cut wins (a sell and a trim on one name = sell).
@@ -239,6 +293,7 @@ export function WhatIfSimPanel({
       horizon,
       n_paths: 1000,
       follow_stops: followStops,
+      market,
       target_volume: target,
     }),
     350
@@ -293,12 +348,14 @@ export function WhatIfSimPanel({
     return (
       <Shell colors={colors} title="WHAT-IF SIM">
         <span style={{ color: colors.textSecondary }}>
-          {data?.note ?? "running 1,000 paths × 4 scenarios…"}
+          {data?.note ??
+            (market === "random" ? "running 1,000 paths…" : "running 1,000 paths × 4 scenarios…")}
         </span>
       </Shell>
     );
   }
 
+  const random = data.market === "random";
   const sel = data.scenarios.find((s) => s.k === selK) ?? data.scenarios[0];
   const factorLabel = (key: string) => data.factors.find((f) => f.key === key)?.label ?? key;
   const posByKey = new Map(data.positions.map((p) => [p.key, p]));
@@ -347,6 +404,30 @@ export function WhatIfSimPanel({
       title="WHAT-IF SIM · ทำ vs ไม่ทำ"
       right={
         <>
+          <span style={{ color: colors.textSecondary }}>ตลาด</span>
+          {(
+            [
+              [
+                "sd",
+                "±SD",
+                "บังคับให้ตลาดจบที่ +1 / 0 / −1 / −2 SD — ตอบว่า 'ถ้าตลาดเป็นแบบนี้ พอร์ตจะเป็นยังไง'",
+              ],
+              ["random", "สุ่ม", "ตลาดสุ่มเองตามความผันผวนจริง ไม่บังคับปลายทาง — ตอบว่า 'มีโอกาสขาดทุนแค่ไหน'"],
+            ] as const
+          ).map(([m, label, title]) => (
+            <button
+              type="button"
+              key={m}
+              title={title}
+              onClick={() => setMarket(m)}
+              style={{
+                color: market === m ? colors.accent : colors.textSecondary,
+                textDecoration: market === m ? "underline" : "none",
+              }}
+            >
+              {label}
+            </button>
+          ))}
           <span style={{ color: colors.textSecondary }}>horizon</span>
           {HORIZONS.map((h) => (
             <button
@@ -386,7 +467,7 @@ export function WhatIfSimPanel({
       {/* Headline: the selected scenario, both ways */}
       <div className="flex gap-x-5 gap-y-1 flex-wrap items-baseline">
         <span style={{ color: colors.textSecondary }}>
-          ตลาด {kLabel(sel.k)} ใน {data.horizon} วันทำการ · พอร์ต {sym}
+          {random ? "ตลาดสุ่ม" : `ตลาด ${kLabel(sel.k)}`} ใน {data.horizon} วันทำการ · พอร์ต {sym}
           {fmtAmt(data.start_value)}
         </span>
         <span>
@@ -398,6 +479,9 @@ export function WhatIfSimPanel({
             {" "}
             ({money((data.start_value * sel.disciplined.final_p50) / 100, sym)}) · DD{" "}
             {pct(sel.disciplined.maxdd_p50)}
+            {random &&
+              sel.disciplined.p_loss != null &&
+              ` · P(ขาดทุน) ${sel.disciplined.p_loss.toFixed(0)}%`}
           </span>
         </span>
         <span>
@@ -409,11 +493,18 @@ export function WhatIfSimPanel({
             {" "}
             ({money((data.start_value * sel.hold.final_p50) / 100, sym)}) · DD{" "}
             {pct(sel.hold.maxdd_p50)}
+            {random && sel.hold.p_loss != null && ` · P(ขาดทุน) ${sel.hold.p_loss.toFixed(0)}%`}
           </span>
         </span>
         <span className="font-bold" style={{ color: colors.text }}>
-          ทำ − ไม่ทำ ≈{" "}
-          {money((data.start_value * (sel.disciplined.final_p50 - sel.hold.final_p50)) / 100, sym)}
+          ทำ − ไม่ทำ ≈ {money(gapOf(data, sel), sym)}
+          {sel.diff_value && (
+            <span className="font-normal" style={{ color: colors.textSecondary }}>
+              {" "}
+              (p10 {money(sel.diff_value.p10, sym)} · p90 {money(sel.diff_value.p90, sym)}
+              {sel.p_do_better != null && ` · ทำดีกว่า ${sel.p_do_better.toFixed(0)}% ของเส้นทาง`})
+            </span>
+          )}
         </span>
         <span style={{ color: colors.textSecondary }}>
           {changed ? (
@@ -599,37 +690,53 @@ export function WhatIfSimPanel({
 
         {/* ── Results ── */}
         <div className="min-w-0 flex flex-col gap-1">
-          <div className="grid grid-cols-4 gap-1">
-            {data.scenarios.map((s) => (
-              <button
-                type="button"
-                key={s.k}
-                onClick={() => setSelK(s.k)}
-                className="text-left px-1 py-0.5"
-                style={{
-                  borderBottom: `2px solid ${s.k === sel.k ? colors.accent : "transparent"}`,
-                }}
-                title={Object.entries(s.market_move_pct)
-                  .map(([k, v]) => `${factorLabel(k)} ${pct(v)}`)
-                  .join(" · ")}
-              >
-                <div
+          {random ? (
+            <div style={{ color: colors.textSecondary, fontSize: 9 }}>
+              ตลาดใน {data.horizon} วัน (p10 / กลาง / p90):{" "}
+              {Object.entries(sel.market_move_range ?? {})
+                .map(
+                  ([k, [lo, mid, hi]]) => `${factorLabel(k)} ${pct(lo)} / ${pct(mid)} / ${pct(hi)}`
+                )
+                .join(" · ")}
+            </div>
+          ) : (
+            <div className="grid grid-cols-4 gap-1">
+              {data.scenarios.map((s) => (
+                <button
+                  type="button"
+                  key={String(s.k)}
+                  onClick={() => setSelK(s.k)}
+                  className="text-left px-1 py-0.5"
                   style={{
-                    color: s.k < 0 ? colors.negative : s.k > 0 ? colors.positive : colors.text,
-                    fontWeight: 700,
-                    fontSize: 9,
+                    borderBottom: `2px solid ${s.k === sel.k ? colors.accent : "transparent"}`,
                   }}
+                  title={Object.entries(s.market_move_pct)
+                    .map(([k, v]) => `${factorLabel(k)} ${pct(v)}`)
+                    .join(" · ")}
                 >
-                  ตลาด {kLabel(s.k)}
-                </div>
-                <div className="tabular-nums" style={{ fontSize: 9 }}>
-                  <span style={{ color: C_DO }}>{pct(s.disciplined.final_p50)}</span>
-                  <span style={{ color: colors.textSecondary }}> / </span>
-                  <span style={{ color: C_DONT }}>{pct(s.hold.final_p50)}</span>
-                </div>
-              </button>
-            ))}
-          </div>
+                  <div
+                    style={{
+                      color:
+                        (s.k ?? 0) < 0
+                          ? colors.negative
+                          : (s.k ?? 0) > 0
+                            ? colors.positive
+                            : colors.text,
+                      fontWeight: 700,
+                      fontSize: 9,
+                    }}
+                  >
+                    ตลาด {kLabel(s.k)}
+                  </div>
+                  <div className="tabular-nums" style={{ fontSize: 9 }}>
+                    <span style={{ color: C_DO }}>{pct(s.disciplined.final_p50)}</span>
+                    <span style={{ color: colors.textSecondary }}> / </span>
+                    <span style={{ color: C_DONT }}>{pct(s.hold.final_p50)}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
           <ScenarioChart s={sel} domains={domains} colors={colors} cDo={C_DO} cDont={C_DONT} />
           <SummaryTable data={data} colors={colors} cDo={C_DO} cDont={C_DONT} sym={sym} />
         </div>
@@ -649,10 +756,14 @@ export function WhatIfSimPanel({
           </span>
         )}
         <span style={{ color: colors.textSecondary, opacity: 0.75 }}>
-          หุ้น = β × ตลาดบ้าน (S&amp;P 500 / SET50 / BTC / ทอง) + ส่วนเฉพาะตัวหางอ้วน (t df 4) ·
-          ตลาดถูกบังคับจบที่ k SD · เทรด "ทำ" ที่ราคาวันนี้ ไม่รวมค่าธรรมเนียม · เงินสด 0% · ค่าเงินคงที่ ·{" "}
-          {data.n_paths.toLocaleString()} เส้นทาง · β/vol ย้อนหลัง ~1 ปี · ภาพประกอบการตัดสินใจ
-          ไม่ใช่การพยากรณ์
+          จำลองจากพอร์ตจริง (จำนวนหุ้น ราคา stop และเงินสดวันนี้) แบบ Monte Carlo · หุ้น = β × ตลาดบ้าน
+          (S&amp;P 500 / SET50 / BTC / ทอง) + ส่วนเฉพาะตัวหางอ้วน (t df 4) ·{" "}
+          {random
+            ? "ตลาดสุ่มเอง (ไม่มี drift) — แถบรวมความเสี่ยงตลาดแล้ว"
+            : "ตลาดถูกบังคับจบที่ k SD — แถบคือความผันผวนเฉพาะตัวหุ้นเท่านั้น ไม่ใช่โอกาสขาดทุน"}{" "}
+          · หุ้นตลาดเดียวกันขยับร่วมกันผ่านดัชนีเท่านั้น (กลุ่มเดียวกันอาจเสี่ยงกว่าที่เห็น) · เทรด "ทำ" ที่ราคาวันนี้
+          ไม่รวมค่าธรรมเนียม · เงินสด 0% · ค่าเงินคงที่ · {data.n_paths.toLocaleString()} เส้นทาง · β/vol
+          ย้อนหลัง ~1 ปี · ภาพประกอบการตัดสินใจ ไม่ใช่การพยากรณ์
         </span>
       </div>
       {showModel && <ModelTable data={data} colors={colors} factorLabel={factorLabel} />}
@@ -662,7 +773,7 @@ export function WhatIfSimPanel({
 
 // ── pieces ───────────────────────────────────────────────────────────────────
 
-function Shell({
+export function Shell({
   colors,
   title,
   right,
@@ -872,13 +983,14 @@ const SummaryTable = memo(function SummaryTable({
           {th("dont-p10", "p10", cDont)}
           {th("dont-dd", "DD p90", cDont)}
           {th("diff", "ต่าง (med)")}
+          {data.market === "random" && th("ploss", "P(ขาดทุน) ทำ / ไม่ทำ")}
         </tr>
       </thead>
       <tbody>
         {data.scenarios.map((s) => {
-          const diff = (data.start_value * (s.disciplined.final_p50 - s.hold.final_p50)) / 100;
+          const diff = gapOf(data, s);
           return (
-            <tr key={s.k}>
+            <tr key={String(s.k)}>
               <td className="px-1" style={{ color: colors.text }}>
                 {kLabel(s.k)}
               </td>
@@ -889,6 +1001,10 @@ const SummaryTable = memo(function SummaryTable({
               {td(pct(s.hold.final_p10), colors.textSecondary)}
               {td(pct(s.hold.maxdd_p90), colors.textSecondary)}
               {td(money(diff, sym), diff >= 0 ? colors.positive : colors.negative)}
+              {data.market === "random" &&
+                td(
+                  `${s.disciplined.p_loss?.toFixed(0) ?? "—"}% / ${s.hold.p_loss?.toFixed(0) ?? "—"}%`
+                )}
             </tr>
           );
         })}

@@ -38,6 +38,7 @@ def _list(mod, **kw):
     return mod.list_theses(
         kw.get("symbol"), kw.get("category"), kw.get("status"),
         kw.get("account_id"), kw.get("include_deleted", False),
+        kw.get("q"), kw.get("kind"), kw.get("sector"), kw.get("tag"),
     )["theses"]
 
 
@@ -291,3 +292,31 @@ def test_actor_header_is_stamped_on_events(env):
     assert by_type["CREATED"][0]["payload"]["actor"] == "agent:claude"
     actors = sorted(str((e["payload"] or {}).get("actor")) for e in by_type["EDITED"])
     assert actors == ["None", "agent:claude"]
+
+
+# ── kind / sector / tags ─────────────────────────────────────────────────────
+
+def test_kind_is_open_and_tags_are_normalised(env):
+    t = _new(env, symbol="TH-RATES", kind=" Macro ", tags="Thailand, #Rates ,thailand")
+    assert t["kind"] == "macro" and t["tags"] == "thailand, rates"
+    own = _new(env, symbol="GOLD", kind="Commodity")
+    assert own["kind"] == "commodity"
+    assert [r["symbol"] for r in _list(env, kind="commodity")] == ["GOLD"]
+    assert [r["symbol"] for r in _list(env, tag="rates")] == ["TH-RATES"]
+
+
+def test_a_row_from_before_the_column_is_placed_by_its_old_category(env):
+    _new(env, symbol="ORCL", category="credit")
+    _new(env, symbol="NVDA", category="GROWTH")
+    kinds = {r["symbol"]: r["kind_eff"] for r in _list(env)}
+    assert kinds == {"ORCL": "credit", "NVDA": "equity"}
+
+
+def test_search_reaches_the_body_and_sector_filters_the_derived_value(env):
+    _new(env, symbol="AXTI", body="InP substrate is the bottleneck", sector="Information Technology")
+    _new(env, symbol="V", body="payments network")
+    assert [r["symbol"] for r in _list(env, q="substrate")] == ["AXTI"]
+    assert [r["symbol"] for r in _list(env, sector="information technology")] == ["AXTI"]
+    facets = env.list_theses(None, None, None, None, False, None, None, None, None)["facets"]
+    assert facets["sector"] == {"Information Technology": 1}
+    assert facets["kind"] == {"equity": 2}

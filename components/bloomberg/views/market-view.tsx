@@ -1406,6 +1406,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     eventMarkers: heatmapEventMarkers,
     showVolumeProfile: heatmapShowVP,
     addIndicator: addHeatmapIndicator,
+    replaceIndicator: replaceHeatmapIndicator,
     removeIndicator: removeHeatmapIndicator,
     windowUnit: heatmapWindowUnit,
     toggleWindowUnit: toggleHeatmapWindowUnit,
@@ -2582,6 +2583,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
               colors={colors}
               activeIndicators={heatmapIndicators}
               onAdd={addHeatmapIndicator}
+              onReplace={replaceHeatmapIndicator}
               onRemove={removeHeatmapIndicator}
               windowUnit={heatmapWindowUnit}
               onToggleWindowUnit={toggleHeatmapWindowUnit}

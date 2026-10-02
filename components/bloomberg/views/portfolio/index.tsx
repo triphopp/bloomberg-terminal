@@ -3,7 +3,7 @@ import { installLedgerCorrectionRetry } from "@/lib/ledger-correction";
 import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
 import { Loader2, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { isDarkModeAtom, portfolioTabRequestAtom } from "../../atoms";
 import { useLiveQuery } from "../../hooks/useLiveQuery";
 import { useTabShortcuts } from "../../hooks/useTabShortcuts";
@@ -25,6 +25,8 @@ import { PaperTradeTab } from "./tabs/PaperTradeTab";
 import { RiskTab } from "./tabs/RiskTab";
 import { ThesesTab } from "./tabs/ThesesTab";
 import { TradeLogTab } from "./tabs/TradeLogTab";
+import { QuestionBadges, QuestionsTab, useQuestionCounts } from "./tabs/questions";
+import { TrackBadges, TrackingTab, useTrackCounts } from "./tabs/tracking";
 import type { Account, Summary } from "./types";
 import type { OptionEntryPrefill } from "./ui/OptionEntryForm";
 import { SummaryBar } from "./ui/SummaryBar";
@@ -32,7 +34,7 @@ import { SummaryBar } from "./ui/SummaryBar";
 type TopTab = "portfolio" | "analytics" | "risk" | "tools" | "paper";
 type PortfolioSub = "positions" | "options" | "trades" | "cash" | "entry";
 type AnalyticsSub = "analytics" | "backtest";
-type ToolsSub = "theses" | "import" | "audit";
+type ToolsSub = "theses" | "questions" | "track" | "import" | "audit";
 type PaperSub = "dashboard" | "trade" | "positions" | "options" | "history";
 
 type Tab<T extends string> = { id: T; label: string };
@@ -60,6 +62,8 @@ const ANALYTICS_SUBS: Tab<AnalyticsSub>[] = [
 
 const TOOLS_SUBS: Tab<ToolsSub>[] = [
   { id: "theses", label: "THESES" },
+  { id: "questions", label: "QUESTIONS" },
+  { id: "track", label: "TRACK" },
   { id: "import", label: "IMPORT" },
   { id: "audit", label: "AUDIT" },
 ];
@@ -82,6 +86,7 @@ function TabStrip<T extends string>({
   setActive,
   colors,
   sub,
+  badges,
 }: {
   tabs: Tab<T>[];
   active: T;
@@ -89,6 +94,8 @@ function TabStrip<T extends string>({
   colors: ThemeColors;
   /** Sub-tabs sit after the top tabs on the same row, a step smaller. */
   sub?: boolean;
+  /** Counts shown after a tab's label (open questions on TOOLS / QUESTIONS). */
+  badges?: Partial<Record<T, ReactNode>>;
 }) {
   return (
     <>
@@ -102,6 +109,7 @@ function TabStrip<T extends string>({
           title={sub ? undefined : `Alt+${i + 1}`}
         >
           {t.label}
+          {badges?.[t.id]}
         </button>
       ))}
     </>
@@ -140,6 +148,15 @@ export function PortfolioView() {
   };
   const [analyticsSub, setAnalyticsSub] = useState<AnalyticsSub>("analytics");
   const [toolsSub, setToolsSub] = useState<ToolsSub>("theses");
+  // Open questions across every thesis — the badge on TOOLS and on QUESTIONS.
+  const { data: qCounts } = useQuestionCounts();
+  // Tracked numbers that came due, missed, or crossed a kill line — same two places.
+  const { data: tCounts } = useTrackCounts();
+  // A miss in TRACK opens a question; this carries the jump to it in QUESTIONS.
+  const [openQuestion, setOpenQuestion] = useState<{
+    thesisId: string | null;
+    questionId: string;
+  } | null>(null);
   const [paperSub, setPaperSub] = useState<PaperSub>("dashboard");
   // Symbol handed over when the positions table jumps to TOOLS → THESES, so the
   // rail can preselect (or pre-fill a new thesis for) that holding.
@@ -320,7 +337,17 @@ export function PortfolioView() {
         sub
       />
     ) : topTab === "tools" ? (
-      <TabStrip tabs={TOOLS_SUBS} active={toolsSub} setActive={setToolsSub} colors={colors} sub />
+      <TabStrip
+        tabs={TOOLS_SUBS}
+        active={toolsSub}
+        setActive={setToolsSub}
+        colors={colors}
+        sub
+        badges={{
+          questions: <QuestionBadges pending={qCounts?.pending ?? 0} watch={qCounts?.watch ?? 0} />,
+          track: <TrackBadges alert={tCounts?.alert ?? 0} setup={tCounts?.setup ?? 0} />,
+        }}
+      />
     ) : topTab === "paper" ? (
       <TabStrip tabs={PAPER_SUBS} active={paperSub} setActive={setPaperSub} colors={colors} sub />
     ) : null;
@@ -478,7 +505,20 @@ export function PortfolioView() {
         className="flex items-center px-1 border-b overflow-x-auto"
         style={{ borderColor: colors.border }}
       >
-        <TabStrip tabs={TOP_TABS} active={topTab} setActive={setTopTab} colors={colors} />
+        <TabStrip
+          tabs={TOP_TABS}
+          active={topTab}
+          setActive={setTopTab}
+          colors={colors}
+          badges={{
+            tools: (
+              <>
+                <QuestionBadges pending={qCounts?.pending ?? 0} watch={0} />
+                <TrackBadges alert={tCounts?.alert ?? 0} setup={0} />
+              </>
+            ),
+          }}
+        />
         {subTabs && (
           <>
             <span className="mx-1.5 text-[9px]" style={{ color: colors.border }}>
@@ -576,6 +616,22 @@ export function PortfolioView() {
                 accountId={activeAccount}
                 initialSymbol={thesisSymbol}
                 onConsumeInitialSymbol={() => setThesisSymbol(null)}
+              />
+            )}
+            {topTab === "tools" && toolsSub === "questions" && (
+              <QuestionsTab
+                colors={colors}
+                initialQuestion={openQuestion}
+                onConsumeInitialQuestion={() => setOpenQuestion(null)}
+              />
+            )}
+            {topTab === "tools" && toolsSub === "track" && (
+              <TrackingTab
+                colors={colors}
+                onOpenQuestion={(thesisId, questionId) => {
+                  setOpenQuestion({ thesisId, questionId });
+                  setToolsSub("questions");
+                }}
               />
             )}
             {topTab === "tools" && toolsSub === "import" && (

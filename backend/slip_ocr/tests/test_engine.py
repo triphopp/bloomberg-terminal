@@ -54,8 +54,8 @@ def test_dime_buy_slip_fills_entry_form():
     assert f["symbol"] == "COST"
     assert f["volume"] == "2.0751791"
     assert f["date_entry"] == "2026-09-25"
-    # value / qty, not the rounded 914.11 on screen
-    assert f["price_entry"] == "914.1187"
+    # the 2 dp price that reproduces the value, not the truncated 914.11 on screen
+    assert f["price_entry"] == "914.12"
     assert f["fee_entry"] == "3.04"
     assert f["fee_breakdown"] == {"commission": "2.84", "vat": "0.20"}
     assert f["broker_order_ref"] == "STKBMF20260925014541145317"
@@ -79,7 +79,7 @@ def test_missing_value_is_derived_from_order_total():
     toks = [t for t in _tokens() if t.text != "1,896.96 usd"]
     out = parse_tokens(toks)
     assert out["slip"]["fields"]["gross_value"]["value"] == "1896.96"
-    assert out["form"]["price_entry"] == "914.1187"
+    assert out["form"]["price_entry"] == "914.12"
     assert out["status"] == "review"
 
 
@@ -111,3 +111,30 @@ def test_label_tolerates_lost_thai_marks():
 
 def test_money_ocr_swaps():
     assert parse_money("1,9O0.00 usd") == (__import__("decimal").Decimal("1900.00"), "USD")
+
+
+def _validate_price(qty, px, gross):
+    from slip_ocr.validate import validate
+    slip = {"fields": {
+        "side": {"value": "BUY"}, "quantity": {"value": qty}, "price": {"value": px},
+        "gross_value": {"value": gross}, "order_amount": {"value": None},
+        "commission": {"value": None}, "vat": {"value": None},
+        "sec_fee": {"value": None}, "taf_fee": {"value": None},
+        "executed_at": {"value": None}, "submitted_at": {"value": None},
+        "order_ref": {"value": None},
+    }, "derived": {}, "display_timezone": "Asia/Bangkok"}
+    validate(slip)
+    return slip["derived"]["exact_price"]
+
+
+def test_shown_price_is_kept_when_it_reproduces_the_value():
+    # SNDK 5.0035766 × 1,735.97 = 8,686.0588 → 8,686.06 = the slip's value
+    assert _validate_price("5.0035766", "1735.97", "8686.06") == "1735.97"
+    # MU 1.7491668 × 1,075.43 = 1,881.109 → 1,881.11
+    assert _validate_price("1.7491668", "1075.43", "1881.11") == "1075.43"
+
+
+def test_rounded_shown_price_is_derived_from_value():
+    # COST 2.0751791 × 914.11 = 1,896.94 but the slip says 1,896.96 → the
+    # fewest-decimals price that reproduces it, nearest value / qty
+    assert _validate_price("2.0751791", "914.11", "1896.96") == "914.12"

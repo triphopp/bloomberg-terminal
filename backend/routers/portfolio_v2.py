@@ -946,6 +946,27 @@ def estimate_fees(account_id: str, side: str, qty: float, price: float,
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+def _fit_trade_sector(label: Optional[str], account_id: str, account_currency: Optional[str],
+                      symbol: Optional[str]) -> Optional[str]:
+    """Keep a trade's sector inside its account's list (sector_map.fit_sector).
+    Only a label that does not fit costs a provider lookup."""
+    from sector_map import classify, fit_sector, sector_vocab
+    vocab = sector_vocab(account_id, account_currency)
+    if not label or label in vocab:
+        return label
+    classified = None
+    if symbol:
+        try:
+            info = market_data.get_ticker(symbol).info or {}
+            classified = classify(symbol, quote_type=info.get("quoteType"),
+                                  sector=info.get("sector"), industry=info.get("industry"),
+                                  name=info.get("longName") or info.get("shortName") or "",
+                                  category=info.get("category"))
+        except Exception:
+            classified = None
+    return fit_sector(label, vocab, classified)
+
+
 @router.post("/trades", status_code=201)
 def create_trade(body: TradeIn):
     import slip_evidence
@@ -1012,6 +1033,8 @@ def create_trade(body: TradeIn):
                                            None if is_closed else label)
         wallet_exit = ledger.entry_wallet(conn, body.account_id, currency, body.symbol, body.wallet_exit,
                                           label) if is_closed else None
+        sector = _fit_trade_sector(body.sector, body.account_id, acc["currency"],
+                                   body.resolved_symbol or body.symbol)
         conn.execute("""
             INSERT INTO trades (id, account_id, symbol, resolved_symbol, market,
                 sector, date_entry, date_exit,
@@ -1026,7 +1049,7 @@ def create_trade(body: TradeIn):
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (trade_id, body.account_id, body.symbol.upper(),
               (body.resolved_symbol or "").upper() or None,
-              (body.market or "").upper() or None, body.sector,
+              (body.market or "").upper() or None, sector,
               body.date_entry, body.date_exit,
               body.price_entry, body.price_exit, body.price_stoploss, body.price_target,
               body.volume, body.amount, pnl_amount, body.win_loss.upper(),
@@ -1131,6 +1154,15 @@ def patch_trade(trade_id: str, body: TradePatch):
                 avco_replay._fill_lot_prices(conn, old["account_id"], old["symbol"])
             old = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
         old_dict = dict(old)
+        if "sector" in updates or "account_id" in updates:
+            acc_id = updates.get("account_id", old_dict["account_id"])
+            acc_row = conn.execute("SELECT currency FROM portfolio_accounts WHERE id = ?",
+                                   (acc_id,)).fetchone()
+            label = updates.get("sector", old_dict.get("sector"))
+            fitted = _fit_trade_sector(label, acc_id, acc_row["currency"] if acc_row else None,
+                                       old_dict.get("resolved_symbol") or old_dict["symbol"])
+            if fitted != old_dict.get("sector") or "sector" in updates:
+                updates["sector"] = fitted
         for col in ("wallet_entry", "wallet_exit"):
             if updates.get(col):
                 updates[col] = ledger.wallet_for(conn, old_dict["account_id"], trade_currency(old_dict),
@@ -4256,6 +4288,7 @@ def get_nav_index(
     on the first snapshot that has a NAV.
     """
     base = report_currency(base_currency)
+    benchmark = (benchmark or "").strip().upper()
     rows = get_nav_history(account_id, days)
 
     # Snapshots are stored in THB; a USD report converts each row at ITS OWN
@@ -4342,6 +4375,9 @@ def get_nav_index(
     }
     if len(points) < 2:
         out["note"] = "ต้องมี snapshot อย่างน้อย 2 วันถึงจะมีเส้นผลตอบแทน"
+        return out
+    # An empty benchmark = the caller draws no index line (GROWTH); skip the download.
+    if not benchmark:
         return out
 
     try:

@@ -59,6 +59,7 @@ import {
 } from "./indicators/rsiScale";
 import { OverlayPrimitive } from "./overlay-primitive";
 import { clampPaneHeight, computePaneLayout, paneKey, subPaneKeyAtOffset } from "./pane-layout";
+import { PointLabelsPrimitive } from "./point-labels-primitive";
 import { createPriceGridOverlay } from "./price-grid-overlay";
 import { setSeriesData } from "./series-data.ts";
 import type {
@@ -214,14 +215,18 @@ function refillSeries(
   indicator: ChartIndicator,
   built: ISeriesApi<SeriesType>[],
   bars: OhlcvBar[],
-  kinds: ReadonlyArray<IndicatorSeriesOutput["type"]>
+  kinds: ReadonlyArray<IndicatorSeriesOutput["type"]>,
+  labelers?: (PointLabelsPrimitive | null)[]
 ): boolean {
   if (bars.length < indicator.minBars) return built.length === 0;
   const outputs = indicator.compute(bars, indicator.config).filter((o) => kinds.includes(o.type));
   if (outputs.length !== built.length) return false;
+  // A series that gained or lost labels needs a primitive attached / removed.
+  if (labelers && outputs.some((o, i) => !!o.labels !== !!labelers[i])) return false;
   for (const [i, output] of outputs.entries()) {
     // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
     setSeriesData(built[i], output.data as any[]);
+    if (output.labels) labelers?.[i]?.setLabels(output.labels);
   }
   return true;
 }
@@ -549,11 +554,18 @@ export function ModularChart({
       // Series in output order, so a refill can recompute and re-point them
       // one-for-one without knowing what the indicator is.
       const built: ISeriesApi<SeriesType>[] = [];
+      const labelers: (PointLabelsPrimitive | null)[] = [];
       for (const output of outputs) {
         if (output.type === "line") {
           const series = chart.addSeries(LineSeries, {
             color: output.color ?? "#ffc107",
             lineWidth: (output.lineWidth ?? 1) as 1 | 2 | 3 | 4,
+            lineStyle:
+              output.lineStyle === "dashed"
+                ? LineStyle.Dashed
+                : output.lineStyle === "dotted"
+                  ? LineStyle.Dotted
+                  : LineStyle.Solid,
             priceLineVisible: false,
             lastValueVisible: false,
             crosshairMarkerVisible: false,
@@ -561,9 +573,14 @@ export function ModularChart({
           // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
           setSeriesData(series, output.data as any[]);
           built.push(series);
+          const labeler = output.labels
+            ? new PointLabelsPrimitive(output.labels, isDarkSurface(container, isDark))
+            : null;
+          if (labeler) series.attachPrimitive(labeler);
+          labelers.push(labeler);
         }
       }
-      refills.push((bars) => refillSeries(indicator, built, bars, ["line"]));
+      refills.push((bars) => refillSeries(indicator, built, bars, ["line"], labelers));
     }
 
     // ── Render pane indicators — each gets its own isolated pane ──

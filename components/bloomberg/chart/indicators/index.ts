@@ -78,6 +78,8 @@ export {
   createSessionVPOverlay,
   createCompositeVPOverlay,
 } from "./volume-profile.ts";
+export { createZigZag, calcZigZag } from "./zigzag.ts";
+export type { ZigZagPivot, ZigZagResult } from "./zigzag";
 export { createFootprintOverlay } from "./order-footprint.ts";
 export type { FootprintData, FootprintCandle, FootprintLevel } from "./order-footprint";
 
@@ -118,6 +120,7 @@ import { createSMA } from "./sma.ts";
 import { createStochastic } from "./stochastic.ts";
 import { createVolume } from "./volume.ts";
 import { createVWAP } from "./vwap.ts";
+import { ZIGZAG_LABELS, ZIGZAG_LIVE, ZIGZAG_SOURCES, createZigZag } from "./zigzag.ts";
 
 // ── Global Indicator Registry ────────────────────────────────────────────────
 
@@ -150,6 +153,41 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     factory: createSMA,
     outputs: [{ key: "value", label: "SMA", unbounded: true }],
     alertLabels: SMA_LABELS,
+  },
+  {
+    id: "zigzag",
+    name: "ZigZag",
+    category: "trend",
+    type: "overlay",
+    description: "Swing highs/lows ≥ N% apart — last leg dashed (repaints until confirmed)",
+    defaultParams: [
+      {
+        key: "deviation",
+        label: "Deviation %",
+        type: "number",
+        default: 5,
+        min: 0.1,
+        max: 50,
+        step: 0.1,
+      },
+      { key: "source", label: "Source", type: "select", default: "hl", options: ZIGZAG_SOURCES },
+      {
+        key: "showLive",
+        label: "Live leg",
+        type: "select",
+        default: "on",
+        options: ZIGZAG_LIVE,
+      },
+      {
+        key: "labels",
+        label: "Pivot labels",
+        type: "select",
+        default: "off",
+        options: ZIGZAG_LABELS,
+      },
+    ],
+    // No timeScalableParams: deviation is a percentage, not a bar count.
+    factory: createZigZag,
   },
 
   // ─── Momentum ───

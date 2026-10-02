@@ -13,6 +13,7 @@ import {
   type NoteStatus,
   type ThesisNote,
 } from "./types";
+import { ReadDot, useReads } from "./useReads";
 
 /** The payload both the create form and an inline edit send. Everything is a
  *  string here, exactly like ThesisDraft — the numeric fields are parsed once,
@@ -447,6 +448,7 @@ function NoteCard({
   const resolved = note.status === "confirmed" || note.status === "dismissed";
   const due = !!note.watch_date && note.watch_date <= today() && !resolved;
   const score = riskScore(note);
+  const reads = useReads();
 
   return (
     <div
@@ -454,6 +456,7 @@ function NoteCard({
       style={{ borderColor: kindColor, opacity: resolved ? 0.55 : 1 }}
     >
       <div className="flex items-center gap-1.5 flex-wrap">
+        <ReadDot type="note" id={note.id} colors={colors} reads={reads} />
         <span className="text-[8px] font-bold tracking-widest" style={{ color: kindColor }}>
           {note.kind}
         </span>

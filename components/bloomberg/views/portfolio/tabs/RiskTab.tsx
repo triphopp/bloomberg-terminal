@@ -14,11 +14,23 @@ import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 
 import { type Colors, fmt, fmtAmt, fmtPx, fmtQty, pnlColor } from "../helpers";
 import { CotCrowdingPanel } from "../ui/CotCrowdingPanel";
 import { MarginCard } from "../ui/MarginCard";
+import { MonteCarloPanel } from "../ui/MonteCarloPanel";
+import { RebalancePanel, useRebalance } from "../ui/RebalancePanel";
+import { RiskSummaryCard } from "../ui/RiskSummaryCard";
 import { TradeGuardCard } from "../ui/TradeGuardCard";
 import { VarValidationCard } from "../ui/VarValidationCard";
 import { WhatIfSimPanel } from "../ui/WhatIfSimPanel";
 
-type SubTab = "overview" | "options";
+/**
+ * PORT → RISK, ordered by the questions a person asks (2026-10-02):
+ *   สรุป       — how risky is the book, in plain words, and what to do (+ margin, TRADE GUARD)
+ *   REBALANCE  — which winners grew past their slice; how much to take off
+ *   WHAT-IF    — do vs don't, simulated on the real book
+ *   MONTE CARLO — hold as is: where the book could end, over thousands of paths
+ *   เชิงลึก     — the methods: VaR/CVaR ensemble, correlation, ERC, EWS, COT
+ *   OPTIONS    — greeks
+ */
+type SubTab = "summary" | "rebalance" | "whatif" | "mc" | "detail" | "options";
 
 interface RiskSnapshot {
   snapshot_date: string;
@@ -229,7 +241,16 @@ export function RiskTab({
   currency: "THB" | "USD";
   colors: Colors;
 }) {
-  const [subTab, setSubTab] = useState<SubTab>("overview");
+  const [subTab, setSubTab] = useState<SubTab>("summary");
+  // WHAT-IF mounts on first visit and then stays mounted (hidden), so ticks
+  // and typed quantities survive a trip to another sub-tab.
+  const [whatIfSeen, setWhatIfSeen] = useState(false);
+  const [simFocus, setSimFocus] = useState(0);
+  const rebal = useRebalance(accountId);
+  const go = (t: SubTab) => {
+    if (t === "whatif") setWhatIfSeen(true);
+    setSubTab(t);
+  };
   const [metrics, setMetrics] = useState<RiskMetrics | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -288,9 +309,14 @@ export function RiskTab({
   }, [subTab, loadOptionsRisk]);
 
   const sym = currency === "THB" ? "฿" : "$";
-  const SUB_TABS: { id: SubTab; label: string }[] = [
-    { id: "overview", label: "OVERVIEW" },
-    { id: "options", label: "OPTIONS RISK" },
+  const trimCount = rebal.data?.counts.TRIM ?? 0;
+  const SUB_TABS: { id: SubTab; label: string; badge?: number }[] = [
+    { id: "summary", label: "สรุป" },
+    { id: "rebalance", label: "REBALANCE", badge: trimCount },
+    { id: "whatif", label: "WHAT-IF" },
+    { id: "mc", label: "MONTE CARLO" },
+    { id: "detail", label: "เชิงลึก" },
+    { id: "options", label: "OPTIONS" },
   ];
 
   const riskColor = (score: number) =>
@@ -310,9 +336,18 @@ export function RiskTab({
               borderBottom:
                 subTab === t.id ? `2px solid ${colors.accent}` : "2px solid transparent",
             }}
-            onClick={() => setSubTab(t.id)}
+            onClick={() => go(t.id)}
           >
             {t.label}
+            {!!t.badge && (
+              <span
+                className="ml-1 px-1 rounded"
+                style={{ background: colors.positive, color: "#000", fontSize: 8 }}
+                title="ตัวที่ขายทำกำไรได้"
+              >
+                {t.badge}
+              </span>
+            )}
           </button>
         ))}
         <button
@@ -329,21 +364,61 @@ export function RiskTab({
         </button>
       </div>
 
-      {subTab === "overview" && (
+      {subTab === "summary" && (
         <div className="space-y-2 mb-2">
+          <RiskSummaryCard
+            metrics={metrics}
+            rebal={rebal.data}
+            colors={colors}
+            sym={sym}
+            onGo={(t) => go(t)}
+          />
           <MarginCard scope="port" accountId={accountId} colors={colors} />
           <TradeGuardCard accountId={accountId} currency={currency} colors={colors} />
-          <WhatIfSimPanel accountId={accountId} colors={colors} erc={metrics?.trim_signals} />
         </div>
       )}
 
-      {!metrics && loading && (
+      {subTab === "rebalance" && (
+        <div className="space-y-2 mb-2">
+          <RebalancePanel
+            accountId={accountId}
+            colors={colors}
+            onSimulate={() => {
+              setSimFocus((n) => n + 1);
+              go("whatif");
+            }}
+          />
+        </div>
+      )}
+
+      {whatIfSeen && (
+        <div
+          className="space-y-2 mb-2"
+          style={{ display: subTab === "whatif" ? undefined : "none" }}
+        >
+          <WhatIfSimPanel
+            accountId={accountId}
+            colors={colors}
+            erc={metrics?.trim_signals}
+            rebalance={rebal.data?.trades}
+            focus={simFocus}
+          />
+        </div>
+      )}
+
+      {subTab === "mc" && (
+        <div className="space-y-2 mb-2">
+          <MonteCarloPanel accountId={accountId} currency={currency} colors={colors} />
+        </div>
+      )}
+
+      {subTab === "detail" && !metrics && loading && (
         <div className="flex items-center justify-center py-10">
           <Loader2 className="h-5 w-5 animate-spin" style={{ color: colors.accent }} />
         </div>
       )}
 
-      {!metrics && !loading && error && (
+      {(subTab === "detail" || subTab === "summary") && !metrics && !loading && error && (
         <div
           className="flex flex-col items-center gap-2 py-10 px-4 text-center"
           style={{ color: colors.textSecondary }}
@@ -364,7 +439,7 @@ export function RiskTab({
         </div>
       )}
 
-      {metrics && subTab === "overview" && (
+      {metrics && subTab === "detail" && (
         <OverviewSection
           metrics={metrics}
           colors={colors}
@@ -388,7 +463,7 @@ export function RiskTab({
           }
         />
       )}
-      {subTab === "overview" && (
+      {subTab === "detail" && (
         <CotCrowdingPanel accountId={accountId} currency={currency} colors={colors} />
       )}
       {subTab === "options" && (

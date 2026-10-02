@@ -95,11 +95,11 @@ function instantiate(spec: IndicatorSpec, ctx: WindowCtx): ChartIndicator | null
       ctx.isCrypto
     );
     const indicator = entry.factory(params);
-    // Keep the user's original units for reopening BB/ATR settings (the factory
-    // receives scaled bar counts in DAYS mode).
-    if (spec.id === "bollinger" || spec.id === "bollinger-b" || spec.id === "atr-regime") {
-      indicator.config.inputParams = spec.params ?? {};
-    }
+    // What the ⚙ settings editor needs to reopen this instance: which registry
+    // entry made it (instance ids like "ema-20" or "bb-20-2" don't say) and the
+    // user's own inputs — the factory got scaled bar counts in DAYS mode.
+    indicator.config.entryId = spec.id;
+    indicator.config.inputParams = spec.params ?? {};
     return indicator;
   } catch {
     return null;
@@ -396,6 +396,46 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
         }
         return [...prev, newSpec];
       });
+    },
+    [setSpecs, windowCtx]
+  );
+
+  /**
+   * Re-edit one instance in place (the ⚙ settings editor). `addIndicator` can't
+   * do this: an overlay's id carries its params ("ema-20" → "ema-50"), so the
+   * edit reads as a new overlay and stacks a second copy beside the first.
+   * The edited spec keeps its slot; another instance that already has the new
+   * id is dropped rather than left as a duplicate.
+   */
+  const replaceIndicator = useCallback(
+    (
+      oldId: string,
+      entry: IndicatorRegistryEntry,
+      configOverrides?: Record<string, number | boolean | string>
+    ) => {
+      const newSpec: IndicatorSpec = { id: entry.id, params: configOverrides };
+      const newId = specInstanceId(newSpec, windowCtx);
+      if (!newId) return;
+      setSpecs((prev) => {
+        const idx = prev.findIndex((s) => specInstanceId(s, windowCtx) === oldId);
+        if (idx < 0) return [...prev, newSpec];
+        if (
+          specParamsKey(prev[idx], entry, windowCtx) === specParamsKey(newSpec, entry, windowCtx)
+        ) {
+          return prev;
+        }
+        return prev.flatMap((s, i) =>
+          i === idx ? [newSpec] : specInstanceId(s, windowCtx) === newId ? [] : [s]
+        );
+      });
+      // Runtime patches (fetched payloads) are keyed by instance id — follow the rename.
+      if (newId !== oldId) {
+        setRuntimeConfig((prev) => {
+          if (!(oldId in prev)) return prev;
+          const { [oldId]: patch, ...rest } = prev;
+          return { ...rest, [newId]: patch };
+        });
+      }
     },
     [setSpecs, windowCtx]
   );
@@ -828,6 +868,7 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     footprintLoading: footprintQuery.isLoading,
     // Indicator CRUD
     addIndicator,
+    replaceIndicator,
     removeIndicator,
     toggleIndicator,
     resetIndicators,

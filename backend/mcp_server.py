@@ -64,6 +64,22 @@ mcp = MCPServer(
         "self-contained HTML page attached to the thesis (graph_list first). "
         "Never rewrite the thesis body or change status/conviction unless asked, and "
         "always give a reason. "
+        "OPEN QUESTIONS: what a thesis does not know yet lives in PORT → TOOLS → "
+        "QUESTIONS, not in the thesis body. question_queue shows what is waiting; "
+        "call get_question_spec BEFORE answering one and follow it — competing "
+        "explanations first, then the signals each would leave, then the search. "
+        "question_answer is refused without evidence (zettel with url + quote); "
+        "inference is allowed only with an assumption someone can test. Your answer "
+        "is a proposal: only the user accepts it or drops a question. "
+        "TRACKED NUMBERS: a number a thesis stands or falls on (a kill condition, a "
+        "margin, an inventory figure, a contract price) lives in PORT → TOOLS → TRACK, "
+        "not as a line in the thesis body: where it is read, what was expected for the "
+        "period and why, and the date it comes out. track_due shows what has come due; "
+        "read the number from the source the row names, then track_record it with its "
+        "evidence. The server compares it with the forecast, and a miss opens a "
+        "question for you to answer. Call get_tracking_spec before the first track_* "
+        "write. You cannot move a kill line, retire a metric or change a thesis's "
+        "status because a line was crossed — report it and let the user decide. "
         "Fundamental analysis (\"วิเคราะห์พื้นฐาน\" a ticker): call "
         "get_fundamental_spec FIRST and follow it exactly — which data to pull "
         "(get_stock_data, get_filings, get_fiscal_data, get_news, the earnings call), "
@@ -92,6 +108,10 @@ mcp = MCPServer(
 SPEC_FILE = Path(__file__).resolve().parent.parent / "memory" / "reference" / "fundamental-analysis.md"
 # Same idea for the data-source registry: where to look, in which order.
 SOURCES_FILE = SPEC_FILE.with_name("data-sources.md")
+# And for answering open questions: the research protocol and the answer levels.
+QUESTION_SPEC_FILE = SPEC_FILE.with_name("question-research.md")
+# And for tracked metrics: how to set one up, forecast it and record the result.
+TRACKING_SPEC_FILE = SPEC_FILE.with_name("thesis-tracking.md")
 
 
 def _read_ref(path: Path, what: str) -> str:
@@ -158,11 +178,19 @@ def list_theses(
     status: Optional[Literal["draft", "active", "watch", "invalidated", "closed"]] = None,
     symbol: Optional[str] = None,
     category: Optional[str] = None,
+    kind: Optional[str] = None,
+    sector: Optional[str] = None,
+    tag: Optional[str] = None,
+    q: Optional[str] = None,
 ) -> str:
     """List investment theses (without the markdown body). Includes event_count
-    and open_note_count per thesis. Use get_thesis for full detail."""
+    and open_note_count per thesis. Use get_thesis for full detail.
+    kind = what the thesis is about (equity, credit, fund, macro, theme, process,
+    or one the user made up); sector = GICS name; tag = one tag; q = text search
+    over symbol, title, tags, strategy and body."""
     rows = _call("GET", THESES, params={"status": status, "symbol": symbol,
-                                        "category": category})["theses"]
+                                        "category": category, "kind": kind,
+                                        "sector": sector, "tag": tag, "q": q})["theses"]
     for r in rows:
         body = r.pop("body", "") or ""
         r["body_chars"] = len(body)
@@ -197,11 +225,21 @@ def create_thesis(
     target_price: Optional[float] = None,
     stop_price: Optional[float] = None,
     currency: Optional[str] = None,
+    kind: Optional[str] = None,
+    sector: Optional[str] = None,
+    tags: Optional[str] = None,
 ) -> str:
     """Create a new thesis. Always starts as status=draft with no conviction —
     promoting it is the user's call. `body` is markdown (## Claim, ## Condition
-    Killers, ## Catalysts, ## Valuation, ## Key Risks are recognised headers)."""
+    Killers, ## Catalysts, ## Valuation, ## Key Risks are recognised headers).
+    Say what it is about with `kind`: equity (default), credit, fund (a fund, an
+    ETF, a manager's product), macro (an economy, rates, inflation), theme (an
+    industry or supply chain), process. A thesis that is not about one ticker
+    still needs `symbol` — use a short handle such as TH-RATES or NAND.
+    `sector` is a GICS name; `tags` is comma-separated. `category` is the
+    portfolio bucket (CORE, GROWTH, …), not the kind."""
     payload = _clean({
+        "kind": kind, "sector": sector, "tags": tags,
         "symbol": symbol, "title": title, "body": body, "category": category,
         "strategy": strategy, "time_horizon": time_horizon, "target_price": target_price,
         "stop_price": stop_price, "currency": currency, "status": "draft",
@@ -222,6 +260,9 @@ def update_thesis(
     time_horizon: Optional[str] = None,
     category: Optional[str] = None,
     strategy: Optional[str] = None,
+    kind: Optional[str] = None,
+    sector: Optional[str] = None,
+    tags: Optional[str] = None,
 ) -> str:
     """Edit thesis fields. Only changed fields are written; the diff plus `reason`
     lands in the history. `body` REPLACES the whole markdown — fetch it with
@@ -232,6 +273,7 @@ def update_thesis(
         "title": title, "body": body, "status": status, "conviction": conviction,
         "target_price": target_price, "stop_price": stop_price,
         "time_horizon": time_horizon, "category": category, "strategy": strategy,
+        "kind": kind, "sector": sector, "tags": tags,
     })
     if conviction is not None and not 1 <= conviction <= 5:
         raise ToolError("conviction must be 1–5")
@@ -611,12 +653,493 @@ def zettel_by_source(url: str) -> str:
     return _out(_call("GET", f"{ZETTEL}/sources/by-url", params={"url": url}))
 
 
+# ── Questions: what a thesis does not know yet ──────────────────────────────
+#
+# A zettel records something found. A question records something NOT known, and
+# stays on the user's badge until it is answered with evidence. The server, not
+# this file, decides whether an answer is good enough — these tools pass the
+# refusal back verbatim so the agent can see exactly what is missing.
+
+QUESTIONS = f"{API}/api/v2/questions"
+
+QLevel = Literal["CONFIRMED", "INFERRED", "UNCLEAR", "UNANSWERABLE"]
+QBasis = Literal["NUMBER", "CIRCUMSTANTIAL", "EVENT"]
+
+
+@mcp.tool()
+def question_queue(thesis_id: Optional[str] = None, limit: int = 20) -> str:
+    """Questions waiting for research, most load-bearing first (`blocks` = how many
+    questions above it are waiting on this one). Includes unanswered questions,
+    ones whose assumption broke, and watched ones whose check date has come.
+    Each row carries its parents with if_a / if_b — why the answer matters.
+    `counts` = the user's two badge numbers (pending, watch)."""
+    return _out(_call("GET", f"{QUESTIONS}/queue", params={"thesis_id": thesis_id, "limit": limit}))
+
+
+@mcp.tool()
+def question_list(
+    thesis_id: Optional[str] = None,
+    symbol: Optional[str] = None,
+    status: Optional[Literal["OPEN", "WATCH", "CLEAR", "DROPPED"]] = None,
+) -> str:
+    """Every tracked question for a thesis or ticker with its derived status.
+    Run this before question_add — asking the same thing twice is refused."""
+    return _out(_call("GET", QUESTIONS,
+                      params={"thesis_id": thesis_id, "symbol": symbol, "status": status}))
+
+
+@mcp.tool()
+def question_tree(thesis_id: str) -> str:
+    """One thesis's questions as a tree (nodes + child→parent edges) with the
+    roll-up: how many leaf questions are answered clearly."""
+    return _out(_call("GET", f"{QUESTIONS}/tree", params={"thesis_id": thesis_id}))
+
+
+@mcp.tool()
+def question_get(ref_or_id: str) -> str:
+    """One question in full: the thought behind it, its parents (if_a / if_b),
+    children, and every answer so far with signals, assumptions, their checks and
+    the user's review — including WHY an earlier answer was rejected. Read this
+    before researching. Accepts the Q-0007 label or the uuid."""
+    return _out(_call("GET", f"{QUESTIONS}/{ref_or_id}"))
+
+
+@mcp.tool()
+def question_add(
+    title: str,
+    thought: str = "",
+    parent: str = "",
+    if_a: str = "",
+    if_b: str = "",
+    thesis_id: Optional[str] = None,
+    is_root: bool = False,
+    priority: Optional[int] = None,
+    next_check: Optional[str] = None,
+) -> str:
+    """Track a new question. Only `title` (the question) and where it belongs
+    (`thesis_id` or a `parent`) are required — capture it now, place it later.
+
+    Do fill in what you know, because it is what makes the question useful:
+    `thought` (what was noticed that raised it), a `parent` (Q-ref or id), and how
+    that parent moves under each outcome — `if_a` (answered one way), `if_b` (the
+    other). Whatever is left out comes back as `gaps` on the question and can be
+    added later (question_add_parent, question_set_effect). The one refusal: if_a
+    equal to if_b says the answer changes nothing. A root (is_root=True,
+    thesis_id set, no parent) is the thesis's decision question; one per thesis.
+    next_check is YYYY-MM-DD, e.g. the earnings date that could answer it."""
+    parents = [{"parent": parent, "if_a": if_a, "if_b": if_b}] if parent else []
+    return _out(_call("POST", QUESTIONS, body=_clean({
+        "title": title, "thought": thought, "thesis_id": thesis_id, "is_root": is_root,
+        "parents": parents, "priority": priority, "next_check": next_check,
+    })))
+
+
+@mcp.tool()
+def question_import(questions: list[dict], thesis_id: Optional[str] = None) -> str:
+    """Add a whole tree of questions in one transaction — use this instead of many
+    question_add calls when breaking a thesis down.
+
+    Each item: {key, title, thought?, is_root?, parents?: [{parent, if_a?, if_b?}],
+    next_check?, priority?, answer?}. `key` is a local handle; a parent may name
+    the key of an item EARLIER in the list, or the Q-ref / id of an existing
+    question. `answer` takes the same fields as question_answer (level, answer,
+    basis, value, as_of, evidence as a LIST of Z-refs, alternatives, signals,
+    assumptions, searched, next_check). Every rule of question_add and
+    question_answer applies; the first item that breaks one is reported by key and
+    NOTHING is written, so fix it and send the whole list again."""
+    return _out(_call("POST", f"{QUESTIONS}/import",
+                      body=_clean({"thesis_id": thesis_id, "questions": questions})))
+
+
+@mcp.tool()
+def question_add_parent(ref_or_id: str, parent: str, if_a: str = "", if_b: str = "") -> str:
+    """Hang an existing question under a parent: the first one for a question that
+    was captured unplaced, or a second one — how two lines of thought come to
+    meet at one question instead of it being asked twice."""
+    return _out(_call("POST", f"{QUESTIONS}/{ref_or_id}/parents",
+                      body={"parent": parent, "if_a": if_a, "if_b": if_b}))
+
+
+@mcp.tool()
+def question_set_effect(edge_id: str, if_a: str, if_b: str) -> str:
+    """Fill in how a parent moves under each answer, for a link that was created
+    without it (the question shows `effect` in its gaps). edge_id comes from
+    question_get → parents[].edge_id."""
+    return _out(_call("PATCH", f"{QUESTIONS}/edges/{edge_id}", body={"if_a": if_a, "if_b": if_b}))
+
+
+@mcp.tool()
+def question_claim(ref_or_id: str) -> str:
+    """Mark a question as being researched by you so another agent skips it.
+    Expires after 2 hours; submitting an answer releases it."""
+    return _out(_call("POST", f"{QUESTIONS}/{ref_or_id}/claim"))
+
+
+@mcp.tool()
+def question_release(ref_or_id: str) -> str:
+    """Give a claimed question back to the queue without answering it."""
+    return _out(_call("POST", f"{QUESTIONS}/{ref_or_id}/release"))
+
+
+@mcp.tool()
+def question_answer(
+    ref_or_id: str,
+    level: QLevel,
+    answer: str,
+    basis: Optional[QBasis] = None,
+    value: Optional[str] = None,
+    unit: Optional[str] = None,
+    as_of: Optional[str] = None,
+    evidence: str = "",
+    alternatives: Optional[list[str]] = None,
+    signals: Optional[list[dict]] = None,
+    assumptions: Optional[list[dict]] = None,
+    searched: str = "",
+    next_check: Optional[str] = None,
+) -> str:
+    """Propose an answer. The server checks its shape and REFUSES (422, with every
+    missing piece listed) an answer that lacks evidence — fix what it lists or
+    answer at a lower level; never fill a field with something you did not find.
+
+    evidence: comma-separated Z-refs; each zettel needs a source with url + quote.
+    signals: [{expectation, result FOUND|NOT_FOUND|CONTRARY|NOT_SEARCHED, finding,
+      zettel, origin, diagnostic, supports, searched_where}] — what you expected to
+      see under each explanation and what you found. NOT_FOUND needs searched_where.
+    assumptions: [{statement, metric, source_hint, check_by YYYY-MM-DD, falsifier}].
+
+    CONFIRMED needs basis: NUMBER (value, as_of, a PRIMARY-source zettel) · EVENT
+    (as_of, evidence) · CIRCUMSTANTIAL (alternatives ≥2, two FOUND signals that are
+    diagnostic and from different origins, none CONTRARY).
+    INFERRED needs evidence or a FOUND signal, plus ≥1 complete assumption.
+    UNCLEAR / UNANSWERABLE need `searched` (where you looked) and next_check.
+
+    The result is a proposal: the question stays on the user's pending count until
+    they accept it. Call get_question_spec first if you have not this session."""
+    return _out(_call("POST", f"{QUESTIONS}/{ref_or_id}/answers", body=_clean({
+        "level": level, "basis": basis, "answer": answer, "value": value, "unit": unit,
+        "as_of": as_of,
+        "evidence": [e.strip() for e in evidence.split(",") if e.strip()],
+        "alternatives": alternatives or [], "signals": signals or [],
+        "assumptions": assumptions or [], "searched": searched, "next_check": next_check,
+    })))
+
+
+@mcp.tool()
+def assumption_check(
+    assumption_id: str,
+    result: Literal["HELD", "BROKEN"],
+    note: str,
+    zettel: str,
+) -> str:
+    """Record that an assumption was tested: what the metric came out as (`note`)
+    and the evidence zettel it was read from. BROKEN sends the question back to
+    pending; HELD on every assumption of an accepted inference clears it.
+    assumption_id comes from question_get → answers[].assumptions[].id."""
+    return _out(_call("POST", f"{QUESTIONS}/assumptions/{assumption_id}/check",
+                      body={"result": result, "note": note, "zettel": zettel}))
+
+
+@mcp.tool()
+def question_calendar(thesis_id: Optional[str] = None, symbol: Optional[str] = None,
+                      include_past: bool = True) -> str:
+    """The dates questions are waiting on, soonest first: what happens, when, whether
+    the date is CONFIRMED or only ESTIMATED, where the date came from, and which
+    questions it could answer (with what to read for each). `due` = the date has
+    arrived and a linked question has not been looked at since."""
+    return _out(_call("GET", f"{QUESTIONS}/calendar", params={
+        "thesis_id": thesis_id, "symbol": symbol, "include_past": include_past}))
+
+
+@mcp.tool()
+def question_date_add(
+    title: str,
+    date: str,
+    source: str,
+    status: Literal["CONFIRMED", "ESTIMATED"] = "ESTIMATED",
+    source_url: str = "",
+    kind: Literal["EARNINGS", "FILING", "DATA_RELEASE", "EVENT", "OTHER"] = "OTHER",
+    symbol: Optional[str] = None,
+    note: str = "",
+    questions: Optional[list[dict]] = None,
+) -> str:
+    """Put a dated event on the question calendar. `title` is what happens ("Intel
+    Q3/26 10-Q"), `date` YYYY-MM-DD.
+
+    A date is a claim like any other: `source` says where it came from (a calendar
+    tool, an IR announcement, or "estimated from <pattern>"). Use CONFIRMED only
+    when the publisher itself announced the date, and pass that announcement as
+    source_url; anything inferred from past schedules is ESTIMATED. Check
+    question_calendar first — one event serves every question that waits on it.
+    questions: [{question: Q-ref, reads: what will be read from it}]."""
+    return _out(_call("POST", f"{QUESTIONS}/calendar", body=_clean({
+        "title": title, "date": date, "status": status, "source": source,
+        "source_url": source_url, "kind": kind, "symbol": symbol, "note": note,
+        "questions": questions or [],
+    })))
+
+
+@mcp.tool()
+def question_date_update(
+    ref_or_id: str,
+    reason: str,
+    date: Optional[str] = None,
+    status: Optional[Literal["CONFIRMED", "ESTIMATED"]] = None,
+    source: Optional[str] = None,
+    source_url: Optional[str] = None,
+    title: Optional[str] = None,
+    note: Optional[str] = None,
+) -> str:
+    """Move a calendar date or confirm an estimated one (D-ref or id). `reason` is
+    required when the date or status changes; the previous value stays in the
+    revision trail. Confirming needs source_url — the announcement."""
+    return _out(_call("PATCH", f"{QUESTIONS}/calendar/{ref_or_id}", body=_clean({
+        "date": date, "status": status, "source": source, "source_url": source_url,
+        "title": title, "note": note, "reason": reason,
+    })))
+
+
+@mcp.tool()
+def question_date_link(date_ref_or_id: str, question: str, reads: str = "") -> str:
+    """Tie a question to a calendar date: this event could answer it. `reads` = the
+    number or statement to look for when the date arrives."""
+    return _out(_call("POST", f"{QUESTIONS}/calendar/{date_ref_or_id}/questions",
+                      body={"question": question, "reads": reads}))
+
+
+@mcp.tool()
+def get_question_spec() -> str:
+    """How to answer an open question: the research order (competing explanations →
+    expected signals → search → zettels → answer), what each answer level needs,
+    and how signals are judged. Call this BEFORE the first question_answer."""
+    return _read_ref(QUESTION_SPEC_FILE, "question-research spec")
+
+
+@mcp.resource("spec://question-research", name="question-research-spec",
+              description="Question research protocol: signals, answer levels, assumptions",
+              mime_type="text/markdown")
+def question_spec_resource() -> str:
+    return _read_ref(QUESTION_SPEC_FILE, "question-research spec")
+
+
+# ── Tracking: the numbers a thesis stands or falls on ────────────────────────
+#
+# A question is something not known. A tracked metric is something that WILL be
+# known on a date. It keeps where the number is read, what was expected and why,
+# and what it came out as — and the server, not this file, decides the verdict
+# and opens the "why" question when a number misses.
+
+TRACKING = f"{API}/api/v2/tracking"
+
+TrackStatus = Literal["KILL", "DUE", "OFF", "SETUP", "WAITING", "RETIRED"]
+TrackCadence = Literal["QUARTERLY", "MONTHLY", "WEEKLY", "DAILY", "EVENT"]
+KillOp = Literal["<", "<=", ">", ">="]
+
+
+@mcp.tool()
+def track_due(days: int = 14, thesis_id: Optional[str] = None) -> str:
+    """What to read now and soon: tracked numbers whose date has come (DUE), misses
+    still waiting for an explanation (OFF), crossed kill lines (KILL), and forecasts
+    due within `days`. Each row carries where the number is read — source_name,
+    source_url, source_locator, source_tool — so go straight there; do not search
+    again. `state.next` = the forecast being waited on (period, expected, low/high,
+    date). `counts.alert` = the user's red badge."""
+    return _out(_call("GET", f"{TRACKING}/due", params={"days": days, "thesis_id": thesis_id}))
+
+
+@mcp.tool()
+def track_list(
+    thesis_id: Optional[str] = None,
+    symbol: Optional[str] = None,
+    status: Optional[TrackStatus] = None,
+) -> str:
+    """Every tracked metric for a thesis or ticker with its derived state and
+    `gaps` (source / kill_rule / expectation still missing), most urgent first.
+    Run this before track_add — tracking the same number twice is refused."""
+    return _out(_call("GET", TRACKING,
+                      params={"thesis_id": thesis_id, "symbol": symbol, "status": status}))
+
+
+@mcp.tool()
+def track_get(ref_or_id: str) -> str:
+    """One tracked metric in full: its source, kill rule, and every period with the
+    forecast (and its revisions), the number that came out (and corrections), the
+    verdict, and the question a miss opened. Accepts the K-0007 label or the uuid."""
+    return _out(_call("GET", f"{TRACKING}/{ref_or_id}"))
+
+
+@mcp.tool()
+def track_add(
+    thesis_id: str,
+    title: str,
+    role: Literal["KILLER", "WATCH"] = "WATCH",
+    unit: str = "",
+    definition: str = "",
+    why: str = "",
+    kill_rule: str = "",
+    kill_op: Optional[KillOp] = None,
+    kill_value: Optional[float] = None,
+    source_name: str = "",
+    source_url: str = "",
+    source_locator: str = "",
+    source_tool: str = "",
+    series_id: Optional[str] = None,
+    question: Optional[str] = None,
+    cadence: TrackCadence = "QUARTERLY",
+    expectation: Optional[dict] = None,
+) -> str:
+    """Track a number a thesis depends on. Only `title` and `thesis_id` are
+    required; whatever else is missing comes back as `gaps` and keeps it in SETUP.
+
+    The point of the row is that the number can be fetched without searching when
+    its date comes — so fill the source: source_name (who publishes it / which
+    document), source_url (a link that opens), source_locator (where inside:
+    statement and line, table, XBRL tag), source_tool (the call that fetches it,
+    e.g. "get_stock_data(MU, kind=balance-sheet)"). `definition` is the formula,
+    applied the same way every period. series_id binds an indicator series the
+    terminal already records (GET /api/v2/series).
+
+    role KILLER = crossing the line breaks the thesis. kill_rule states the whole
+    condition in words; kill_op + kill_value are its numeric part (checked on
+    every reading). `question` = Q-ref this number helps answer; a miss hangs its
+    "why" there. `expectation` = the first forecast, same fields as track_expect,
+    written in the same transaction."""
+    return _out(_call("POST", TRACKING, body=_clean({
+        "thesis_id": thesis_id, "title": title, "role": role, "unit": unit,
+        "definition": definition, "why": why, "kill_rule": kill_rule, "kill_op": kill_op,
+        "kill_value": kill_value, "source_name": source_name, "source_url": source_url,
+        "source_locator": source_locator, "source_tool": source_tool, "series_id": series_id,
+        "question": question, "cadence": cadence, "expectation": expectation,
+    })))
+
+
+@mcp.tool()
+def track_update(
+    ref_or_id: str,
+    title: Optional[str] = None,
+    unit: Optional[str] = None,
+    definition: Optional[str] = None,
+    why: Optional[str] = None,
+    kill_rule: Optional[str] = None,
+    kill_op: Optional[KillOp] = None,
+    kill_value: Optional[float] = None,
+    source_name: Optional[str] = None,
+    source_url: Optional[str] = None,
+    source_locator: Optional[str] = None,
+    source_tool: Optional[str] = None,
+    series_id: Optional[str] = None,
+    question: Optional[str] = None,
+    cadence: Optional[TrackCadence] = None,
+) -> str:
+    """Fill in or correct a tracked metric — usually its source, once you know
+    exactly where the number sits. A kill rule can be filled in while it is empty;
+    one that is already set, and the role, are the user's to change (403 here):
+    propose the change in chat with the reason."""
+    return _out(_call("PATCH", f"{TRACKING}/{ref_or_id}", body=_clean({
+        "title": title, "unit": unit, "definition": definition, "why": why,
+        "kill_rule": kill_rule, "kill_op": kill_op, "kill_value": kill_value,
+        "source_name": source_name, "source_url": source_url, "source_locator": source_locator,
+        "source_tool": source_tool, "series_id": series_id, "question": question,
+        "cadence": cadence,
+    })))
+
+
+@mcp.tool()
+def track_expect(
+    ref_or_id: str,
+    period: str,
+    expected: str,
+    basis: str,
+    low: Optional[float] = None,
+    high: Optional[float] = None,
+    date: Optional[str] = None,
+    new_date: Optional[dict] = None,
+    due_date: Optional[str] = None,
+    release_time: str = "",
+    evidence: str = "",
+) -> str:
+    """Set the forecast for one period: what is expected (`expected`, in words),
+    WHY (`basis` — guidance, a model, a trend; cite Z-refs in `evidence`,
+    comma-separated), and the band that counts as in line (`low` / `high`; either
+    side may be left open; none = a forecast in words only).
+
+    The date the number comes out is one of: `date` (a D-ref already on the
+    question calendar — check question_calendar first, one event serves every
+    metric read from it), `new_date` ({title, date, status CONFIRMED|ESTIMATED,
+    source, source_url, kind EARNINGS|FILING|DATA_RELEASE|EVENT|OTHER} — puts the
+    event on the calendar; CONFIRMED needs the announcement as source_url), or
+    `due_date` (YYYY-MM-DD, a day to look when no event stands behind it).
+
+    Calling it again for the same period revises the forecast and keeps the old
+    one. Refused (409) once the period has its number — a forecast is not written
+    after the result. This is the user's forecast: propose the numbers in chat
+    unless you were asked to set them."""
+    return _out(_call("POST", f"{TRACKING}/{ref_or_id}/expectations", body=_clean({
+        "period": period, "expected": expected, "basis": basis, "low": low, "high": high,
+        "date": date, "new_date": new_date, "due_date": due_date, "release_time": release_time,
+        "evidence": [e.strip() for e in evidence.split(",") if e.strip()],
+    })))
+
+
+@mcp.tool()
+def track_record(
+    ref_or_id: str,
+    as_of: str,
+    value: Optional[float] = None,
+    value_text: str = "",
+    zettel: Optional[str] = None,
+    source_url: str = "",
+    quote: str = "",
+    verdict: Optional[Literal["IN_LINE", "OFF"]] = None,
+    kill: Optional[bool] = None,
+    period: str = "",
+    note: str = "",
+) -> str:
+    """Record what a tracked number came out as. Read it from the source the
+    metric names and compute it by the metric's `definition`.
+
+    Evidence is required: `zettel` (a Z-ref carrying url + quote — preferred, the
+    fact then lives in the knowledge base) or source_url + quote. `as_of` = the
+    date the number refers to or was published.
+
+    When the forecast has a band and `value` is a number, the server decides the
+    verdict (IN_LINE / ABOVE / BELOW) and whether the kill line was crossed; pass
+    `verdict` only for a forecast in words (IN_LINE or OFF) and `kill` only for a
+    kill rule in words. With no `period`, the reading answers the open forecast
+    that is due first; name the period to correct a number already recorded or to
+    record one that had no forecast (UNSCORED).
+
+    A miss or a crossed kill line comes back with `opened_question` — a question
+    now in question_queue asking why. Answer it by get_question_spec. Refused
+    (422) → fix every item in `missing`; never fill a field with something you did
+    not read."""
+    return _out(_call("POST", f"{TRACKING}/{ref_or_id}/readings", body=_clean({
+        "as_of": as_of, "value": value, "value_text": value_text, "zettel": zettel,
+        "source_url": source_url, "quote": quote, "verdict": verdict, "kill": kill,
+        "period": period, "note": note,
+    })))
+
+
+@mcp.tool()
+def get_tracking_spec() -> str:
+    """How tracked numbers work: what a metric row holds (source, kill rule), how a
+    forecast and its date are set, what to do when a date comes due, and what only
+    the user may change. Call this BEFORE the first track_* write."""
+    return _read_ref(TRACKING_SPEC_FILE, "thesis-tracking spec")
+
+
+@mcp.resource("spec://thesis-tracking", name="thesis-tracking-spec",
+              description="Tracked metrics: source, forecast vs actual, kill lines",
+              mime_type="text/markdown")
+def tracking_spec_resource() -> str:
+    return _read_ref(TRACKING_SPEC_FILE, "thesis-tracking spec")
+
+
 # ── Graphs: rendered analysis pages ──────────────────────────────────────────
 #
 # A zettel holds one claim in prose. Some findings are only legible as a picture:
 # a money-flow map, a cycle ladder, a side-by-side of five companies' cash flow.
 # Those go here — one self-contained HTML page per analysis, stored in
-# research/graphs/<slug>/ and listed in PORT → TOOLS → THESES → GRAPHS.
+# research/graphs/<slug>/ and listed in PORT → TOOLS → THESES → RESEARCH.
 #
 # Write the page the way you would write any standalone document: inline <style>,
 # inline SVG for the diagram, no external scripts or fonts (the render CSP blocks
@@ -785,11 +1308,35 @@ def triage_conflicts(thesis_id: str = "") -> str:
 
 
 @mcp.prompt()
+def investigate_questions(thesis_id: str = "", limit: int = 3) -> str:
+    """Work the open-question queue by the house research protocol."""
+    scope = f"thesis {thesis_id}" if thesis_id else "the whole book"
+    return f"""Work the open questions for {scope}, up to {limit} of them.
+
+For each, in order:
+1. question_queue — take the top one that is not claimed; question_claim it.
+2. question_get — read the thought, the parents' if_a / if_b, and why any earlier
+   answer was rejected.
+3. Follow the spec below step by step. Write the competing explanations and the
+   signal list BEFORE searching. Record what you looked for and did not find.
+4. question_answer at the level the evidence supports. If it is refused, fix what
+   `missing` lists or go down a level — never pad a field.
+5. Tell me in chat: the question, the answer and its level, and what would move it.
+
+Do not accept your own answer and do not drop a question — those are mine.
+
+--- SPEC (memory/reference/question-research.md) ---
+{_read_ref(QUESTION_SPEC_FILE, "question-research spec")}"""
+
+
+@mcp.prompt()
 def review_thesis(thesis_id: str) -> str:
     """Stress-test one thesis against current data and record the result."""
     return f"""Review thesis {thesis_id} with me.
 
 1. get_thesis — read the claim, condition killers, targets and open notes.
+   track_list for it — the killers and watch numbers already tracked, what came
+   due, and which condition killers in the body are still only words.
 2. get_positions for its symbol — how much capital rides on it.
 3. Research: get_stock_data (quote, estimates, analyst, earnings-calendar),
    get_news, get_filings. Look for evidence AGAINST the thesis first.

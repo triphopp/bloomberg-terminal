@@ -1,6 +1,9 @@
 "use client";
+import { toolsThesisIdAtom } from "@/components/bloomberg/atoms";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { BookOpen, ChevronLeft, ChevronRight, FlaskConical, Loader2, Plus } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useAtom } from "jotai";
+import { BookOpen, FlaskConical, Loader2, MoreHorizontal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Colors } from "../../helpers";
 import { fmtAmt, fmtQty, pnlColor } from "../../helpers";
@@ -8,11 +11,12 @@ import { ConfirmDeleteModal } from "../../modals/ConfirmDeleteModal";
 import type { Trade } from "../../types";
 import { ReadView } from "./ReadView";
 import { type ThesisDraft, ThesisEditor, draftFrom, emptyDraft } from "./ThesisEditor";
+import { NavRail, ThesisNavigator, useThesisList } from "./ThesisNavigator";
 import { type NoteDraft, ThesisNotes } from "./ThesisNotes";
-import { ThesisRail } from "./ThesisRail";
 import { ThesisTimeline } from "./ThesisTimeline";
 import { GraphsPanel } from "./graphs/GraphsPanel";
 import { renderMarkdown } from "./markdown";
+import { INSTRUMENT_KINDS, kindOf, sectorOf, tagsOf } from "./nav-filter";
 import {
   STATUS_COLOR,
   type Thesis,
@@ -20,12 +24,12 @@ import {
   type ThesisLink,
   type ThesisNote,
 } from "./types";
+import { ReadDot, UnreadBar, useReads } from "./useReads";
 import { ZettelPanel } from "./zettel/ZettelPanel";
 
 type SubTab = "thesis" | "notes" | "kb" | "graphs" | "history" | "trades" | "ai";
 
 const API = "/api/v2/theses";
-const RAIL_KEY = "bloomberg_theses_rail";
 
 export function ThesesTab({
   colors,
@@ -40,8 +44,18 @@ export function ThesesTab({
   initialSymbol?: string | null;
   onConsumeInitialSymbol?: () => void;
 }) {
-  const [theses, setTheses] = useState<Thesis[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const qc = useQueryClient();
+  const { data: listData, isLoading: loadingList } = useThesisList();
+  const theses = useMemo(() => listData?.theses ?? [], [listData]);
+  // Shared with QUESTIONS and TRACK: the three tabs stay on the same thesis.
+  const [toolsThesisId, setToolsThesisId] = useAtom(toolsThesisIdAtom);
+  const selectedId = toolsThesisId || null;
+  const setSelectedId = useCallback(
+    (id: string | null) => setToolsThesisId(id ?? ""),
+    [setToolsThesisId]
+  );
+  const reads = useReads();
+  const [menuOpen, setMenuOpen] = useState(false);
   const [detail, setDetail] = useState<{
     thesis: Thesis;
     events: ThesisEvent[];
@@ -54,7 +68,6 @@ export function ThesesTab({
   const [draft, setDraft] = useState<ThesisDraft>(emptyDraft());
   const [isNew, setIsNew] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [loadingList, setLoadingList] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [positions, setPositions] = useState<Trade[]>([]);
   const [streaming, setStreaming] = useState(false);
@@ -72,38 +85,18 @@ export function ThesesTab({
   // READ is a way of looking at the same thesis, not a tab: it stays on while
   // the user moves between theses, which is what "I am reading tonight" means.
   const [reading, setReading] = useState(false);
-  const [railOpen, setRailOpen] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    try {
-      const s = localStorage.getItem(RAIL_KEY);
-      if (s) return JSON.parse(s) as boolean;
-    } catch {
-      /* ignore */
-    }
-    return true;
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(RAIL_KEY, JSON.stringify(railOpen));
-    } catch {
-      /* ignore */
-    }
-  }, [railOpen]);
   const textRef = useRef<HTMLDivElement>(null);
 
-  const loadList = useCallback(async (signal?: AbortSignal) => {
-    setLoadingList(true);
-    try {
-      const r = await fetch(API, { signal });
-      const d = await r.json();
-      setTheses(Array.isArray(d.theses) ? d.theses : []);
-    } catch (e) {
-      if ((e as Error)?.name !== "AbortError") setTheses([]);
-    } finally {
-      setLoadingList(false);
-    }
-  }, []);
+  // The list belongs to React Query (the navigator, QUESTIONS and TRACK read
+  // the same cache); a write here refreshes it and whatever is unread.
+  const loadList = useCallback(
+    () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ["theses"] }),
+        qc.invalidateQueries({ queryKey: ["reads"] }),
+      ]),
+    [qc]
+  );
 
   const loadDetail = useCallback(async (id: string) => {
     try {
@@ -118,12 +111,6 @@ export function ThesesTab({
       /* ignore */
     }
   }, []);
-
-  useEffect(() => {
-    const ac = new AbortController();
-    loadList(ac.signal);
-    return () => ac.abort();
-  }, [loadList]);
 
   // Open positions power the "what am I actually holding" strip in the header —
   // a thesis is only worth re-reading against the position it justifies.
@@ -153,12 +140,19 @@ export function ThesesTab({
       setDraft(emptyDraft(initialSymbol.toUpperCase()));
     }
     onConsumeInitialSymbol?.();
-  }, [initialSymbol, loadingList, theses, onConsumeInitialSymbol]);
+  }, [initialSymbol, loadingList, theses, onConsumeInitialSymbol, setSelectedId]);
 
   useEffect(() => {
     if (selectedId) loadDetail(selectedId);
     else setDetail(null);
+    setMenuOpen(false);
   }, [selectedId, loadDetail]);
+
+  // A remembered thesis that was deleted on another device would leave a blank pane.
+  useEffect(() => {
+    if (selectedId && theses.length && !theses.some((t) => t.id === selectedId))
+      setSelectedId(null);
+  }, [theses, selectedId, setSelectedId]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: textRef is stable
   useEffect(() => {
@@ -221,6 +215,9 @@ export function ThesesTab({
         symbol: draft.symbol.trim(),
         title: draft.title.trim() || draft.symbol.trim().toUpperCase(),
         category: draft.category,
+        kind: draft.kind,
+        sector: draft.sector,
+        tags: draft.tags,
         sub_portfolio: draft.sub_portfolio,
         strategy: draft.strategy,
         status: draft.status,
@@ -393,92 +390,77 @@ export function ThesesTab({
     }
   };
 
-  const chip = (label: string, value: string, color?: string) => (
-    <div className="px-1.5 py-0.5" style={{ background: "#0a0a0a" }}>
-      <div className="text-[7px] tracking-widest" style={{ color: colors.textSecondary }}>
-        {label}
-      </div>
-      <div className="text-[9px] font-bold font-mono" style={{ color: color ?? colors.text }}>
-        {value}
-      </div>
-    </div>
+  const selectThesis = (id: string) => {
+    setSelectedId(id);
+    setMobileList(false);
+    setEditing(false);
+    setSubTab("thesis");
+    setStreamText("");
+  };
+  const navigator = (
+    <ThesisNavigator
+      colors={colors}
+      selectedId={selectedId ?? ""}
+      onSelect={selectThesis}
+      onNew={startNew}
+      footer={
+        <button
+          type="button"
+          onClick={importMd}
+          title="นำเข้าไฟล์ .md จาก THESES_DIR"
+          className="hover:opacity-80"
+        >
+          นำเข้า .md
+        </button>
+      }
+    />
   );
 
+  const kind = thesis ? kindOf(thesis) : "";
+  const isInstrument = INSTRUMENT_KINDS.has(kind);
+  const unread = (thesis && reads.byThesis[thesis.id]) || null;
+  const dot = (n: number | undefined) => (n ? ` ●${n}` : "");
+  // One line of facts under the title; a field with nothing in it is left out
+  // rather than shown as a dash.
+  const facts: { label: string; value: string; color?: string }[] = thesis
+    ? [
+        ...(thesis.conviction == null
+          ? []
+          : [{ label: "conviction", value: `${thesis.conviction}/5` }]),
+        ...(thesis.time_horizon ? [{ label: "horizon", value: thesis.time_horizon }] : []),
+        ...(isInstrument && thesis.target_price != null
+          ? [{ label: "target", value: String(thesis.target_price) }]
+          : []),
+        ...(isInstrument && thesis.stop_price != null
+          ? [{ label: "stop", value: String(thesis.stop_price) }]
+          : []),
+        ...(thesis.category ? [{ label: "category", value: thesis.category }] : []),
+        ...(thesis.strategy ? [{ label: "strategy", value: thesis.strategy }] : []),
+        ...(isInstrument
+          ? [
+              livePosition
+                ? {
+                    label: "ถืออยู่",
+                    value: `${fmtQty(livePosition.volume)} sh · ${fmtAmt(livePosition.pnl)}${
+                      livePosition.pct == null ? "" : ` (${livePosition.pct.toFixed(1)}%)`
+                    }`,
+                    color: pnlColor(livePosition.pnl),
+                  }
+                : { label: "ถืออยู่", value: "ไม่ได้ถือ" },
+            ]
+          : []),
+        { label: "แก้ล่าสุด", value: (thesis.updated_at ?? "").slice(0, 10) },
+      ]
+    : [];
+  const actionBtn = "text-[9px] px-2 py-0.5 border font-bold";
+
   return (
-    <div className="flex" style={{ minHeight: "400px", height: "100%" }}>
-      {/* Rail */}
-      <div
-        className={`${
-          isMobile ? (mobileList ? "w-full" : "hidden") : `${railOpen ? "w-52" : "w-7"} border-r`
-        } flex flex-col flex-shrink-0 overflow-hidden`}
-        style={{ borderColor: colors.border }}
-      >
-        <div
-          className="px-2 py-1 flex items-center gap-1 border-b shrink-0"
-          style={{ borderColor: colors.border }}
-        >
-          {!isMobile && (
-            <button
-              type="button"
-              onClick={() => setRailOpen((v) => !v)}
-              title={railOpen ? "collapse list" : "expand list"}
-              className="-ml-1 p-0.5 shrink-0"
-              style={{ color: colors.textSecondary }}
-            >
-              {railOpen ? (
-                <ChevronLeft className="h-3 w-3" />
-              ) : (
-                <ChevronRight className="h-3 w-3" />
-              )}
-            </button>
-          )}
-          <span
-            className={`text-[9px] font-bold tracking-widest ${railOpen || isMobile ? "" : "hidden"}`}
-            style={{ color: colors.accent }}
-          >
-            THESES
-          </span>
-          {loadingList && (
-            <Loader2 className="h-2.5 w-2.5 animate-spin" style={{ color: colors.accent }} />
-          )}
-          {(railOpen || isMobile) && (
-            <button
-              type="button"
-              onClick={startNew}
-              title="new thesis"
-              className="ml-auto flex items-center gap-0.5 text-[7px] px-1 py-0.5 border font-bold"
-              style={{ borderColor: colors.accent, color: colors.accent }}
-            >
-              <Plus className="h-2 w-2" />
-              NEW
-            </button>
-          )}
-        </div>
-        {(railOpen || isMobile) && (
-          <ThesisRail
-            theses={theses}
-            selectedId={selectedId}
-            onSelect={(id) => {
-              setSelectedId(id);
-              setMobileList(false);
-              setEditing(false);
-              setSubTab("thesis");
-              setStreamText("");
-            }}
-            colors={colors}
-          />
-        )}
-        {(railOpen || isMobile) && (
-          <button
-            type="button"
-            onClick={importMd}
-            className="border-t px-2 py-1 text-[7px] tracking-widest shrink-0"
-            style={{ borderColor: colors.border, color: colors.textSecondary }}
-          >
-            IMPORT .MD FROM THESES_DIR
-          </button>
-        )}
-      </div>
+    <div className="reading flex" style={{ minHeight: "400px", height: "100%" }}>
+      {isMobile ? (
+        <div className={mobileList ? "w-full flex flex-col min-h-0" : "hidden"}>{navigator}</div>
+      ) : (
+        <NavRail colors={colors}>{navigator}</NavRail>
+      )}
 
       {/* Detail */}
       <div className={`flex-1 flex flex-col min-w-0 ${isMobile && mobileList ? "hidden" : ""}`}>
@@ -489,7 +471,7 @@ export function ThesesTab({
             className="px-3 py-2 text-[10px] text-left border-b tracking-widest shrink-0"
             style={{ borderColor: colors.border, color: colors.textSecondary }}
           >
-            ← THESES
+            ← รายการ thesis
           </button>
         )}
         {banner && (
@@ -515,128 +497,166 @@ export function ThesesTab({
           />
         ) : thesis ? (
           <>
-            <div className="border-b shrink-0" style={{ borderColor: colors.border }}>
-              <div className="flex items-start justify-between px-3 pt-2">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-sm" style={{ color: colors.accent }}>
-                      {thesis.symbol}
+            <div
+              className="border-b shrink-0 px-3 pt-2 pb-1.5"
+              style={{ borderColor: colors.border }}
+            >
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <ReadDot type="thesis" id={thesis.id} colors={colors} reads={reads} />
+                <span className="font-bold font-mono text-sm" style={{ color: colors.accent }}>
+                  {thesis.symbol}
+                </span>
+                <span
+                  className="text-[8px] px-1 font-bold"
+                  style={{
+                    color: STATUS_COLOR[thesis.status],
+                    border: `1px solid ${STATUS_COLOR[thesis.status]}`,
+                  }}
+                >
+                  {thesis.status.toUpperCase()}
+                </span>
+                <span className="text-[9px]" style={{ color: colors.textSecondary }}>
+                  {[kind, sectorOf(thesis)].filter(Boolean).join(" · ")}
+                  {tagsOf(thesis).map((t) => (
+                    <span key={t} className="ml-1.5" style={{ color: colors.textDimmed }}>
+                      #{t}
                     </span>
-                    <span
-                      className="text-[8px] px-1 font-bold"
+                  ))}
+                </span>
+                <span className="ml-auto text-[9px]">
+                  <UnreadBar
+                    count={unread?.total ?? 0}
+                    onMarkAll={() => void reads.markThesis(thesis.id)}
+                    colors={colors}
+                  />
+                </span>
+              </div>
+              <div className="text-[11px] font-bold" style={{ color: colors.text }}>
+                {thesis.title}
+              </div>
+              <div
+                className="text-[9px] flex flex-wrap gap-x-3"
+                style={{ color: colors.textSecondary }}
+              >
+                {facts.map((x) => (
+                  <span key={x.label}>
+                    {x.label}{" "}
+                    <span className="font-mono" style={{ color: x.color ?? colors.text }}>
+                      {x.value}
+                    </span>
+                  </span>
+                ))}
+              </div>
+
+              <div className="flex gap-1 mt-1.5 flex-wrap items-center relative">
+                {!reading &&
+                  (
+                    [
+                      ["thesis", "THESIS"],
+                      ["notes", `NOTES (${openNoteCount})${dot(unread?.note)}`],
+                      ["kb", `${kbLabel}${dot(unread?.zettel)}`],
+                      [
+                        "graphs",
+                        `RESEARCH (${graphCount ?? detail?.counts?.graphs ?? 0})${dot(unread?.graph)}`,
+                      ],
+                      ["history", `HISTORY (${detail?.events.length ?? 0})`],
+                      ["trades", `TRADES (${detail?.links.length ?? 0})`],
+                      ["ai", "AI"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <button
+                      type="button"
+                      key={key}
+                      onClick={() => setSubTab(key as SubTab)}
+                      className={actionBtn}
                       style={{
-                        color: STATUS_COLOR[thesis.status],
-                        border: `1px solid ${STATUS_COLOR[thesis.status]}`,
+                        borderColor: subTab === key ? colors.accent : colors.border,
+                        color: subTab === key ? colors.accent : colors.textSecondary,
+                        background: subTab === key ? "#ff990015" : "transparent",
                       }}
                     >
-                      {thesis.status.toUpperCase()}
-                    </span>
+                      {label}
+                    </button>
+                  ))}
+                <span className="flex-1" />
+                <button
+                  type="button"
+                  onClick={() => setReading((v) => !v)}
+                  title="อ่านทั้ง thesis เป็นเอกสารหน้าเดียว"
+                  className={actionBtn}
+                  style={{
+                    borderColor: reading ? colors.accent : colors.border,
+                    color: reading ? colors.accent : colors.textSecondary,
+                    background: reading ? "#ff990015" : "transparent",
+                  }}
+                >
+                  READ
+                </button>
+                <button
+                  type="button"
+                  onClick={startEdit}
+                  className={actionBtn}
+                  style={{ borderColor: colors.accent, color: colors.accent }}
+                >
+                  EDIT
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMenuOpen((v) => !v)}
+                  title="เพิ่มเติม"
+                  aria-label="เพิ่มเติม"
+                  className={actionBtn}
+                  style={{ borderColor: colors.border, color: colors.textSecondary }}
+                >
+                  <MoreHorizontal className="h-3 w-3" />
+                </button>
+                {menuOpen && (
+                  <div
+                    className="absolute right-0 top-full mt-1 z-20 border flex flex-col text-[10px] min-w-[180px]"
+                    style={{ borderColor: colors.border, background: colors.surface }}
+                  >
+                    <button
+                      type="button"
+                      className="px-2 py-1 text-left hover:opacity-80 flex items-center gap-1"
+                      style={{ color: colors.accent }}
+                      disabled={streaming}
+                      onClick={() => {
+                        setMenuOpen(false);
+                        void runResearch();
+                      }}
+                    >
+                      {streaming ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <FlaskConical className="h-3 w-3" />
+                      )}
+                      วิเคราะห์ด้วย AI
+                    </button>
+                    <button
+                      type="button"
+                      className="px-2 py-1 text-left hover:opacity-80"
+                      style={{ color: colors.text }}
+                      title="เขียน markdown กลับไปที่ THESES_DIR (Obsidian)"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        void exportMd();
+                      }}
+                    >
+                      Export .md
+                    </button>
+                    <button
+                      type="button"
+                      className="px-2 py-1 text-left hover:opacity-80"
+                      style={{ color: "#f87171" }}
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setConfirmDelete(true);
+                      }}
+                    >
+                      ลบ thesis
+                    </button>
                   </div>
-                  <div className="text-[10px]" style={{ color: colors.textSecondary }}>
-                    {thesis.title}
-                  </div>
-                </div>
-                <div className="flex gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setReading((v) => !v)}
-                    title="read the whole thesis as one document"
-                    className="text-[8px] px-2 py-1 border font-bold"
-                    style={{
-                      borderColor: reading ? colors.accent : colors.border,
-                      color: reading ? colors.accent : colors.textSecondary,
-                      background: reading ? "#ff990015" : "transparent",
-                    }}
-                  >
-                    READ
-                  </button>
-                  <button
-                    type="button"
-                    onClick={startEdit}
-                    className="text-[8px] px-2 py-1 border font-bold"
-                    style={{ borderColor: colors.accent, color: colors.accent }}
-                  >
-                    EDIT
-                  </button>
-                  <button
-                    type="button"
-                    onClick={exportMd}
-                    title="write markdown back to THESES_DIR (Obsidian)"
-                    className="text-[8px] px-2 py-1 border font-bold"
-                    style={{ borderColor: colors.border, color: colors.textSecondary }}
-                  >
-                    EXPORT
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmDelete(true)}
-                    className="text-[8px] px-2 py-1 border font-bold"
-                    style={{ borderColor: "#f87171", color: "#f87171" }}
-                  >
-                    DELETE
-                  </button>
-                  <button
-                    type="button"
-                    onClick={runResearch}
-                    disabled={streaming}
-                    className="flex items-center gap-1 text-[8px] px-2 py-1 border font-bold disabled:opacity-40"
-                    style={{ borderColor: colors.accent, color: colors.accent }}
-                  >
-                    {streaming ? (
-                      <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                    ) : (
-                      <FlaskConical className="h-2.5 w-2.5" />
-                    )}
-                    AI
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex gap-px px-3 py-2 flex-wrap">
-                {chip("CONVICTION", thesis.conviction == null ? "—" : `${thesis.conviction}/5`)}
-                {chip("HORIZON", thesis.time_horizon || "—")}
-                {chip("TARGET", thesis.target_price == null ? "—" : String(thesis.target_price))}
-                {chip("STOP", thesis.stop_price == null ? "—" : String(thesis.stop_price))}
-                {chip("CATEGORY", thesis.category || "—")}
-                {chip("STRATEGY", thesis.strategy || "—")}
-                {livePosition
-                  ? chip(
-                      "POSITION (OPEN)",
-                      `${fmtQty(livePosition.volume)} sh · ${fmtAmt(livePosition.pnl)}${
-                        livePosition.pct == null ? "" : ` (${livePosition.pct.toFixed(1)}%)`
-                      }`,
-                      pnlColor(livePosition.pnl)
-                    )
-                  : chip("POSITION (OPEN)", "not held", colors.textSecondary)}
-                {chip("UPDATED", (thesis.updated_at ?? "").slice(0, 10))}
-              </div>
-
-              <div className={`flex gap-1 px-3 pb-1 ${reading ? "hidden" : ""}`}>
-                {(
-                  [
-                    ["thesis", "THESIS"],
-                    ["notes", `NOTES (${openNoteCount})`],
-                    ["kb", kbLabel],
-                    ["graphs", `GRAPHS (${graphCount ?? detail?.counts?.graphs ?? 0})`],
-                    ["history", `HISTORY (${detail?.events.length ?? 0})`],
-                    ["trades", `LINKED TRADES (${detail?.links.length ?? 0})`],
-                    ["ai", "AI ANALYSIS"],
-                  ] as const
-                ).map(([key, label]) => (
-                  <button
-                    type="button"
-                    key={key}
-                    onClick={() => setSubTab(key as SubTab)}
-                    className="text-[8px] px-2 py-0.5 border font-bold"
-                    style={{
-                      borderColor: subTab === key ? colors.accent : colors.border,
-                      color: subTab === key ? colors.accent : colors.textSecondary,
-                      background: subTab === key ? "#ff990015" : "transparent",
-                    }}
-                  >
-                    {label}
-                  </button>
-                ))}
+                )}
               </div>
             </div>
 
@@ -650,13 +670,15 @@ export function ThesesTab({
             )}
 
             {!reading && subTab === "thesis" && (
-              <div className="flex-1 overflow-y-auto p-3">
-                {renderMarkdown(thesis.body ?? "", colors)}
-                {thesis.source_file && (
-                  <div className="mt-3 text-[7px]" style={{ color: "#444" }}>
-                    source file: {thesis.source_file}
-                  </div>
-                )}
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="prose-measure">
+                  {renderMarkdown(thesis.body ?? "", colors, "read")}
+                  {thesis.source_file && (
+                    <div className="mt-3 text-[8px]" style={{ color: colors.textDimmed }}>
+                      source file: {thesis.source_file}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -754,9 +776,9 @@ export function ThesesTab({
             )}
 
             {!reading && subTab === "ai" && (
-              <div className="flex-1 overflow-y-auto p-3" ref={textRef}>
+              <div className="flex-1 overflow-y-auto p-4" ref={textRef}>
                 {streamText ? (
-                  renderMarkdown(streamText, colors)
+                  renderMarkdown(streamText, colors, "read")
                 ) : (
                   <div className="text-[9px]" style={{ color: colors.textSecondary }}>
                     Press AI to run an analysis against this thesis.

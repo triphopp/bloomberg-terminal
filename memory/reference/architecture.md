@@ -195,3 +195,33 @@ Signals cache per symbol900s; alert closed-bar trimming remains after the shared
 
 - `backend/request_latency.py` — outermost ASGI middleware + `anyio.to_thread.run_sync` wrapper: per-request thread-queue / handler / DB timing → `logs/latency.jsonl` (>200 ms, route pattern only) and `/api/health/latency`. Also the "local lane": DB-only routers run on their own 16-thread limiter so upstream-bound routes cannot starve them.
 - `db.get_db()` — pooled connections (see gotchas "DB read sometimes slow"); `db.connect()` is still the only opener; `db.close_pool()` for tests / before swapping the DB file.
+
+## Thesis questions (2026-10-01)
+
+`routers/questions.py` tracks what a thesis does not know yet. A question hangs under a parent with `if_a` / `if_b`
+(how each answer would move the parent); a thesis has one root. Answers are checked by `_check_answer` and refused
+with 422 unless they carry evidence — a zettel with url + quote — at the level claimed; INFERRED needs a testable
+assumption, a circumstantial CONFIRMED needs two diagnostic signals from different origins. Agent answers are
+proposals until the user accepts them. Status is never stored: `_derive` computes it from `question_answers`,
+`question_assumptions` and `question_checks`, all of which are only ever inserted, so the op-log merge is a union
+and two devices cannot hold different statuses for one history. Only `questions` (small head row) is edited.
+MCP: `question_queue` / `question_claim` / `question_get` / `question_answer` / `assumption_check` +
+`get_question_spec` (serves `memory/reference/question-research.md`). UI: PORT → TOOLS → QUESTIONS, badge counts from
+`/api/v2/questions/counts`.
+
+## Thesis tracking (2026-10-02)
+
+`routers/tracking.py` tracks what WILL be known on a date — the kill conditions and watch numbers of a thesis — where
+a question tracks what is not known. One metric keeps three things in three tables: `track_metrics` (what it is, the
+kill line, and WHERE TO READ IT: source name / url / locator / tool, optional `series_id`), `track_expectations` (the
+forecast for a period, its reason, and the release date) and `track_readings` (what came out, its evidence, the
+verdict). It reuses rather than rebuilds: the release date is a `question_dates` row (`questions._insert_date` is
+shared, so a forecast and its calendar event are one transaction and a moved date moves the metric); a reading that
+is not in line or crosses the kill line calls `questions._create` in the same transaction, so the "why" lands in the
+agent queue and closes by the question rules; evidence is a zettel or url + quote. The numbers decide the verdict
+when the forecast is a band. Forecasts and readings are insert-only (a revision or correction is a new row, newest
+stands), a forecast is refused once its period has a reading, and status (KILL / DUE / OFF / SETUP / WAITING) is
+derived by `_derive` — same sync reasoning as the questions. Crossing a kill line never changes the thesis: it is
+shown and logged (`KILLER_HIT`). MCP: `track_due` / `track_list` / `track_get` / `track_add` / `track_update` /
+`track_expect` / `track_record` + `get_tracking_spec` (serves `memory/reference/thesis-tracking.md`). UI: PORT →
+TOOLS → TRACK, badge from `/api/v2/tracking/counts`; QUESTIONS → calendar lists the metrics read on each date.

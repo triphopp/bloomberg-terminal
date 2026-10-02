@@ -258,3 +258,59 @@ body.light select option {
 }
 .bb-toast-action { color: var(--bb-accent); }
 .bb-toast-cancel { color: var(--bb-text-dim); }
+
+/* ── Reading surface — PORT → TOOLS (THESES · QUESTIONS · TRACK) ──────────────
+ * The terminal is set in 7–10px Courier, which is right for a quote board and
+ * wrong for paragraphs of Thai. Anything inside `.reading` is set like the
+ * research pages instead: a proportional face, a real line height, and no text
+ * under 11px. Numbers, refs and symbols keep a monospace face via `.font-mono`.
+ *
+ * The size rules remap the terminal's small arbitrary sizes rather than asking
+ * every panel to restate them — a panel moved under `.reading` is readable
+ * without touching its markup, and one outside it is unchanged.
+ * ------------------------------------------------------------------------- */
+.reading {
+  font-family: var(--font-read), "IBM Plex Sans Thai", system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.6;
+  letter-spacing: 0;
+}
+.reading .font-mono,
+.reading code,
+.reading pre {
+  font-family: var(--font-read-mono), "IBM Plex Mono", ui-monospace, monospace;
+}
+.reading input,
+.reading textarea,
+.reading select,
+.reading button {
+  font-family: inherit;
+}
+.reading .text-\[7px\],
+.reading .text-\[8px\] {
+  font-size: 11px;
+}
+.reading .text-\[9px\] {
+  font-size: 12px;
+}
+.reading .text-\[10px\],
+.reading .text-xs {
+  font-size: 13px;
+}
+.reading .text-\[11px\] {
+  font-size: 13.5px;
+}
+.reading .text-\[13px\],
+.reading .text-sm {
+  font-size: 16px;
+}
+/* Wide tracking is for 8px capitals; on 11px+ it only costs width. */
+.reading .tracking-widest {
+  letter-spacing: 0.04em;
+}
+/* Long-form text: the measure the research pages use. */
+.reading .prose-measure {
+  max-width: 74ch;
+  font-size: 14.5px;
+  line-height: 1.75;
+}

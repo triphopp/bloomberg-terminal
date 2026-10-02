@@ -48,6 +48,7 @@ const HEADLINE: Record<string, string> = {
   "guard:DD_STOP": "DRAWDOWN STOP",
   "guard:DD_HALF": "DRAWDOWN — HALF SIZE",
   "guard:STREAK": "LOSING STREAK",
+  "guard:REBALANCE": "TAKE PROFIT · REBALANCE",
   "margin:WATCH": "MARGIN WATCH",
   "margin:WARNING": "MARGIN WARNING",
   "margin:DANGER": "MARGIN DANGER",
@@ -59,6 +60,7 @@ const NEXT_STEP: Record<string, string> = {
   "guard:STOP_HIT": "ราคาหลุด stop แล้ว → ขายตามแผน หรือกด HOLD ใน PORT → RISK พร้อมเหตุผล",
   "guard:DAY_LOSS": "พอร์ตลงเกินเพดานรายวัน → หยุดเปิดไม้ใหม่วันนี้",
   "guard:DD_STOP": "NAV drawdown ≥10% → หยุดเปิดไม้ใหม่จนกว่าจะฟื้น",
+  "guard:REBALANCE": "กำไรโตจนน้ำหนักเกินเป้า → ดูแผนขายบางส่วนใน PORT → RISK → REBALANCE",
   "margin:DANGER": "ใกล้โดน liquidate → ลดสถานะหรือเติมเงิน",
   "margin:LIQUIDATION": "excess liquidity ติดลบ → โบรกเกอร์จะบังคับขาย",
 };
@@ -103,6 +105,19 @@ export function fieldsOf(e: AlertEvent): { label: string; value: string; color?:
       { label: "CUSHION", value: s.cushion == null ? "—" : `${(s.cushion * 100).toFixed(1)}%` },
       { label: "EXCESS LIQ", value: s.excess_liquidity == null ? "—" : fmtAmt(s.excess_liquidity) },
       { label: "NLV", value: s.nlv == null ? "—" : fmtAmt(s.nlv) },
+    ];
+  }
+  if (e.ruleId === "guard:REBALANCE") {
+    return [
+      {
+        label: "WEIGHT",
+        value:
+          s.weight_pct == null
+            ? "—"
+            : `${s.weight_pct.toFixed(1)}% → เป้า ${s.target_pct?.toFixed(1) ?? "—"}%`,
+      },
+      { label: "GAIN", value: pct(s.growth_pct), color: tone(s.growth_pct) },
+      { label: "SELL", value: s.sell_value == null ? "—" : fmtAmt(s.sell_value) },
     ];
   }
   if (e.symbol === "PORT") {

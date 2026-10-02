@@ -73,6 +73,10 @@ export const chartCompareSymbolsAtom = atom<string[]>([]);
 export const chartScalingUnitAtom = atom<string>("NATIVE");
 export const tickerEnabledAtom = atom(true); // Bloomberg crawl strip
 
+// The thesis picked in PORT → TOOLS, shared by THESES, QUESTIONS and TRACK so
+// moving between the three stays on the same subject. "" = none / every thesis.
+export const toolsThesisIdAtom = atomWithStorage<string>("bloomberg_tools_thesis", "");
+
 // View state atoms
 export const currentViewAtom = atom<
   "market" | "news" | "heatmap" | "stock" | "portfolio" | "tail" | "bonds"
@@ -80,9 +84,9 @@ export const currentViewAtom = atom<
 
 // PORT top tab another component asks to open (the TRADE GUARD status chip →
 // "risk"). PortfolioView consumes it and resets it to null.
-export const portfolioTabRequestAtom = atom<
-  "portfolio" | "analytics" | "risk" | "tools" | "paper" | null
->(null);
+export const portfolioTabRequestAtom = atom<"portfolio" | "analytics" | "risk" | "tools" | null>(
+  null
+);
 
 // Symbol requested by another view for the main MKT chart. The market view
 // consumes and clears this when it becomes active.

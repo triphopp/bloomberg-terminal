@@ -4306,6 +4306,7 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
     clearSelectedEvent,
     showVolumeProfile,
     addIndicator: addChartIndicator,
+    replaceIndicator: replaceChartIndicator,
     removeIndicator: removeChartIndicator,
     windowUnit: chartWindowUnit,
     toggleWindowUnit: toggleChartWindowUnit,
@@ -4909,6 +4910,7 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                       colors={colors}
                       activeIndicators={chartIndicators}
                       onAdd={addChartIndicator}
+                      onReplace={replaceChartIndicator}
                       onRemove={removeChartIndicator}
                       windowUnit={chartWindowUnit}
                       onToggleWindowUnit={toggleChartWindowUnit}

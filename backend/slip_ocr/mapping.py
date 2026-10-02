@@ -2,8 +2,9 @@
 
     date_*   the New York trade date — a Dime fill at 01:30 Bangkok is the
              previous US session, and every other US row is dated that way
-    price_*  value / qty, not the rounded price on screen, so qty × price
-             reproduces the broker's value to the cent
+    price_*  the price on screen when qty × it reproduces the broker's value
+             to the cent; otherwise the fewest-decimals price that does, nearest
+             value / qty (validate._fill_price)
     fee_*    commission + VAT (+ SEC + TAF); typed fees win over the estimate
 """
 from __future__ import annotations

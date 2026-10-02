@@ -441,3 +441,69 @@ def test_avco_carried_lot_is_flagged_not_replayed():
     assert rep["counterfactual"]["n"] == 0
     assert rep["counterfactual"]["entry_mismatch"][0]["symbol"] == "SMR"
     assert rep["worst"][0]["entry_mismatch"] and rep["worst"][0]["cf_return_pct"] is None
+
+
+# ── risk-budget sizing ────────────────────────────────────────────────────────
+
+def _dime_fees(side, qty, price):
+    import broker_fees
+    return broker_fees.estimate("DIME_US", side, qty, price)["total"]
+
+
+def test_volume_for_risk_without_fees_is_risk_over_distance():
+    # ฿20,000 at a 10-dollar stop distance, 33.5 THB/USD → 59.70 shares
+    vol = tg.volume_for_risk(20_000, 120, 110, 33.5)
+    assert vol == pytest.approx(20_000 / (10 * 33.5), abs=1e-6)
+    loss, fees = tg.loss_at_stop(vol, 120, 110, 33.5)
+    assert loss <= 20_000 and fees == 0
+
+
+def test_volume_for_risk_with_fees_never_exceeds_budget():
+    vol = tg.volume_for_risk(20_000, 1739.89, 1530.63, 33.5, _dime_fees)
+    loss, fees = tg.loss_at_stop(vol, 1739.89, 1530.63, 33.5, _dime_fees)
+    assert fees > 0
+    assert loss <= 20_000
+    assert loss > 20_000 * 0.995          # spends the budget, not a fraction of it
+    assert vol < tg.volume_for_risk(20_000, 1739.89, 1530.63, 33.5)  # fees cost shares
+
+
+def test_volume_floors_to_board_lot():
+    vol = tg.volume_for_risk(20_000, 62.5, 58.0, 1, lot=100)
+    assert vol == 4400  # 20,000 / 4.5 = 4,444 → 4,400
+    assert tg.volume_for_risk(100, 62.5, 58.0, 1, lot=100) == 0
+
+
+def test_stop_for_risk_inverts_volume_for_risk():
+    stop = tg.stop_for_risk(20_000, 50, 120, 33.5, _dime_fees)
+    loss, _ = tg.loss_at_stop(50, 120, stop, 33.5, _dime_fees)
+    assert loss == pytest.approx(20_000, rel=1e-6)
+    # fees alone above the budget → no stop exists
+    assert tg.stop_for_risk(1, 50, 120, 33.5, _dime_fees) is None
+
+
+def test_risk_size_ladder_tags_noise_and_cap():
+    out = tg.risk_size(20_000, 100, 33.5, 0.04, nav_base=1_000_000)
+    labels = [r["label"] for r in out["rows"]]
+    assert labels == ["1×ATR", "1.5×ATR", "2×ATR", "3×ATR", "4×ATR"]
+    first, last = out["rows"][0], out["rows"][-1]
+    assert first["noise"] == "TIGHT" and last["noise"] == "OK"
+    assert first["volume"] > last["volume"]         # wider stop → smaller position
+    for r in out["rows"]:
+        assert r["loss_base"] <= 20_000
+    # 1×ATR: 20,000 / (4 × 33.5) = 149 shares ≈ ฿500k = 50% NAV → over the 10% cap
+    assert first["over_weight_cap"] is True
+
+
+def test_risk_size_without_atr_uses_pct_ladder_and_manual_stop():
+    out = tg.risk_size(10_000, 100, 1, None, manual_stop=93)
+    assert [r["label"] for r in out["rows"]] == ["5%", "STOP", "8%", "12%", "20%"]
+    assert all(r["atr_mult"] is None and r["noise"] is None for r in out["rows"])
+
+
+def test_risk_size_notional_plan_gives_the_implied_stop():
+    out = tg.risk_size(20_000, 120, 33.5, 0.03, nav_base=1_000_000, notional_base=200_000)
+    plan = out["notional_plan"]
+    # ฿200,000 / (120 × 33.5) = 49.75 shares; ฿20,000 loss → 10% below entry
+    assert plan["stop_distance_pct"] == pytest.approx(10.0, abs=0.01)
+    assert plan["atr_mult"] == pytest.approx(3.33, abs=0.01)
+    assert plan["noise"] == "OK"

@@ -527,6 +527,11 @@ Two bases at once — the ALLOCATION (OPEN) card used to weight sectors by cost 
 
 ## Thesis (`GET /api/v2/theses/{id}`)
 
+2026-10-02: every thesis row also carries `kind` (open vocabulary, lowercase), `sector` (GICS or `""`), `tags` (`"a, b"`),
+and the derived `kind_eff` / `sector_eff` (fallbacks applied — group and filter by these). The list is
+`{theses: [...], facets: {kind: {equity: 11}, sector: {...}, tags: {...}, default_kinds: [...]}}`.
+TS: `Thesis` in `tabs/theses/types.ts`; `NavState` / `NavCounts` in `tabs/theses/nav-filter.ts`; `ReadType` / `ReadItem` in `tabs/theses/useReads.tsx`.
+
 ```json
 { "thesis": {"id": "uuid", "symbol": "PLTR", "title": "...", "category": "CORE",
              "sub_portfolio": "0153717", "strategy": "growth", "status": "active",
@@ -597,6 +602,7 @@ the notifier heartbeat; STALE = no good tick for 2 intervals + startup.
 
 `GET /risk/guard/size` → `{ok, symbol, price, currency, fx, base_currency, nav_value, nav_includes_cash, light, multiplier, multiplier_why[],
 atr_pending, buckets: {S|M|L: {pct_nav, notional_base, volume, risk_base, risk_pct_nav}}, stop, stop_distance_pct, stop_source, atr_pct, lot}`.
+With `risk=` (2026-10-01) also `risk_plan: {risk_base, fees_included, fee_profile, atr_pct, rows[{label, stop, stop_distance_pct, atr_mult, noise NOISE|TIGHT|OK|null, volume, notional_base, pct_nav, over_weight_cap, loss_base, fees_base}], notional_plan: {volume, stop|null, error?, notional_base, pct_nav, stop_distance_pct, atr_mult, noise, fees_base} | null}`.
 
 `GET /risk/guard/report` → `{summary, followed, broke, overridden: RStats, capped_expectancy_r, break_counts: {LOSS_PAST_STOP, HELD_LOSER},
 manual_stop_pct, monthly: [RStats + month, breaks], by_strategy: [RStats + strategy, breaks], worst: [{account_id, symbol, strategy, date_entry,
@@ -1668,6 +1674,50 @@ Same as the stop simulator above, with `disciplined` = **DO** (the trades, then 
                     "text": "ลดเหลือ 10% ของพอร์ต (ตอนนี้ 14.6%)", "overridden": false }] }
 ```
 `weight_pct` / the 10% cap are on invested value (ex-cash), as in TRADE GUARD. ERC trims are not in `suggestions` — the UI adds them from `/risk/metrics` `trim_signals`, spread over the accounts holding the symbol.
+2026-10-02: request `market: "sd"|"random"`; response `market`. Per scenario: `diff_value {p10,p50,p90}` (THB, per-path DO − DON'T), `p_do_better` (%); `random` scenario: `k: null, random: true, market_move_range {factor: [p10,p50,p90]}`. Per rule add `p_loss`, `p_loss_gt_5`. REBALANCE trims arrive in the UI as picks with code `REBAL`.
+
+## Monte Carlo (`GET /api/v2/portfolio/risk/monte-carlo`, 2026-10-02)
+Every `*_pct` is % of NAV (loss lines are POSITIVE = a loss); `bands` / `sample_paths` are a NAV index (100 = today) aligned to `days` (≤ 127 kept days: every day up to 126, every 2nd for 252). TS: `McData` / `McHolding` in `views/portfolio/ui/MonteCarloPanel.tsx`.
+```json
+{ "model": "FHS", "account_id": "all", "base_currency": "THB", "horizon": 63, "n_paths": 20000,
+  "vol": "current", "drift_annual_pct": 0.0, "nav": 2170379.15, "cash": 6485.85, "option_delta_value": 0.0,
+  "window_days": 750, "window_from": "2023-11-13", "as_of": "2026-09-30", "elapsed_ms": 75.0,
+  "days": [0, 1, 2, "…", 63],
+  "bands": { "p5": [100, "…"], "p25": [], "p50": [], "p75": [], "p95": [] },
+  "sample_paths": [[100, 99.2, "…"]],
+  "final": { "mean": 0.01, "p1": -22.3, "p5": -16.8, "p25": -8.1, "p50": -1.6, "p75": 6.6, "p95": 21.5, "p99": 38.0 },
+  "var95_pct": 16.8, "cvar95_pct": 20.2, "var99_pct": 22.3, "cvar99_pct": 24.9, "p_loss": 55.8,
+  "se": { "var95_pct": 0.1, "cvar95_pct": 0.15, "var99_pct": 0.22, "cvar99_pct": 0.2, "p_loss": 0.3, "p50": 0.07 },
+  "loss_prob": [{ "worse_than_pct": 0, "prob_pct": 55.8 }, { "worse_than_pct": 5, "prob_pct": 36.7 }],
+  "max_dd": { "p50": -11.2, "p95": -21.7, "prob": [{ "worse_than_pct": 10, "prob_pct": 59.8 }] },
+  "hist": { "edges": [-23.0, "… 41 values"], "pct": [0.5, "… 40 values"] },
+  "holdings": [{ "symbol": "SNDK", "yf_symbol": "SNDK", "exposure": 299512.3, "weight_pct": 13.8,
+                 "vol_now_pct": 83.0, "vol_longrun_pct": 103.0, "history_days": 423, "filled_days": 327,
+                 "factor": "S&P 500", "tail_contrib_pct": -6.49, "tail_share_pct": 32.2,
+                 "ret_p5": -55.1, "ret_p50": -6.0, "ret_p95": 86.1 }],
+  "groups": [{ "key": "dime", "tail_contrib_pct": -15.7, "tail_share_pct": 78.0 }],
+  "excluded": [{ "symbol": "NEWCO", "reason": "insufficient history", "bars": 12, "weight_pct": 1.2 }] }
+```
+`se` = sampling error (1 sd, batch means over 10 blocks) of the same-named number — it shrinks with √paths and is what "is N enough?" means. `holdings` sorted by `tail_share_pct` (share of the mean loss in the worst 5% of paths; `tail_contrib_pct` sums to −`cvar95_pct`); `ret_p5/p50/p95` = the holding on its own. `hist` first/last bin include everything beyond (0.5% each side). `max_dd` values are negative; `p95` = the worse tail. `groups` only when the scope spans more than one account (options appear as `options Δ`). Empty book: `{holdings: [], note, excluded}`.
+
+## Take-profit rebalance (`GET /api/v2/portfolio/risk/rebalance`, 2026-10-02)
+```json
+{ "rules": {"min_gain_pct": 20, "band_abs_pp": 5, "band_rel_pct": 25, "rebal_to": "half",
+            "min_hold_days": 30, "min_gap_days": 30, "earn_before_days": 3, "earn_after_days": 5},
+  "as_of": "2026-10-02", "total_value": 2178788.5, "base_currency": "THB",
+  "counts": {"TRIM": 2, "WAIT": 0, "SMALL": 0, "WATCH": 1, "OK": 13, "SKIP": 0},
+  "sell_value": 19578.0, "est_realized": 8152.0,
+  "trades": [{"symbol": "AJ", "delta_shares": -3300}],
+  "rows": [{ "symbol": "AJ", "yf_symbol": "AJ.BK", "sector": "…", "account_id": "finansia",
+             "weight_pct": 2.18, "target_pct": 1.15, "target_source": "cost_weight"|"explicit",
+             "band_pp": 0.29, "over_pp": 1.03, "band_used": 3.55, "gain_used": 4.71,
+             "growth_pct": 94.19, "unrealized": 10620.0, "market_value": 47500.0, "volume": 14200, "price": 3.34,
+             "lot_size": 100, "first_entry": "2026-03-02", "held_days": 214, "last_sell": null,
+             "earnings_window": null | ["2026-10-01","2026-10-09"],
+             "status": "TRIM"|"WAIT"|"SMALL"|"WATCH"|"OK"|"SKIP", "reasons": ["…Thai…"], "ready_on": null | "YYYY-MM-DD",
+             "sell_shares": 3300, "sell_value": 11022.0, "est_realized": 5346.0, "new_weight_pct": 1.67 }] }
+```
+Rows keyed by SYMBOL (allocation-detail folds accounts); `trades` is symbol-level — WHAT-IF spreads `delta_shares` over the accounts holding it pro rata to shares. Rows sorted TRIM → WAIT → SMALL → WATCH → OK → SKIP, then by `over_pp`. `rebalance_rules` table: `id=1, rules_json, updated_at` (machine-local).
 
 ## VaR forecast log (`var_forecasts`, `GET /risk/var-backtest`)
 Row: `forecast_date, account_id, confidence, var_hist_pct, cvar_pct, var_cf_pct, cvar_mc_pct, ensemble_pct, portfolio_value,
@@ -1696,4 +1746,58 @@ PAPER `GET /api/paper/accounts/{id}/summary` gained `options_value`; `equity` = 
 `pinned_assets.symbol` is UNIQUE (`ux_pa_symbol`; `init_db` first collapses duplicates via `db.dedupe_pinned_assets`, keeping the row with most info / newest `updated_at`, merging tags, normalising symbol to UPPER(TRIM)). New rows use id `pin:<SYMBOL>`; older rows keep their ids. Index `idx_pa_group_sort(group_id, sort_order)`. Multi-category membership = pin tags, not duplicate rows.
 
 `PUT /api/pins/by-symbol/{symbol}` → `{action, pin: {id,symbol,group_id,comment,buy_target,sell_target,price_at_pin,priority,sort_order,added_at,updated_at,tags[]}, group: {id,name,color,sort_order,...}}`
+
+## Questions (`/api/v2/questions`) — 2026-10-01
+
+TypeScript: `components/bloomberg/views/portfolio/tabs/questions/types.ts`.
+
+```ts
+QState  { status: "OPEN"|"WATCH"|"CLEAR"|"DROPPED"; reason: string; level: QLevel|null; basis: string|null;
+          answer: string; current_answer_id: string|null; proposed_answer_id: string|null;
+          assumptions: {held, broken, untested}; due: boolean }
+// reason: unanswered | awaiting_review | unclear | assumption_broken | assumptions_untested |
+//         unanswerable | confirmed | assumptions_held | dropped
+QNode   = Question & { state: QState; blocks: number }   // blocks = unresolved ancestors
+// Question.gaps: ("parent"|"effect"|"thought")[] — what is still missing to place it; never a refusal
+QTree   { nodes: QNode[]; edges: {id, child_id, parent_id, if_a, if_b}[]; counts; leaves: {total, clear} }
+QDetail { question; state; parents: {id, ref, title, if_a, if_b, edge_id}[]; children; answers: QAnswer[] }
+QAnswer { id; level; basis; answer; value; unit; as_of; alternatives: string[]; searched; next_check; actor;
+          evidence: ZettelBrief[]; signals: QSignal[]; assumptions: (QAssumption & {check, check_zettel})[];
+          review: {result, note, actor, created_at} | null }
+```
+
+Refused answer: HTTP 422 with `detail = {code: "ANSWER_REFUSED", level, missing: string[], hint}`.
+
+## Tracking (`/api/v2/tracking`) — 2026-10-02
+
+TypeScript: `components/bloomberg/views/portfolio/tabs/tracking/types.ts`.
+
+```ts
+TState   { status: "KILL"|"DUE"|"OFF"|"SETUP"|"WAITING"|"RETIRED";
+           gaps: ("source"|"kill_rule"|"expectation")[];          // what is still missing; never a refusal
+           next: TNext | null;                                    // the open forecast that comes due first
+           due: boolean; last: TLast | null; unexplained: number;
+           waits: {date_id, period, expected, low, high, reading: {value_text, verdict, kill} | null}[] }
+           // waits = every forecast tied to a question_dates row — what the question calendar lists under it
+TNext    { expectation_id; period; expected; low; high; date; date_id; date_ref; date_title;
+           date_status: "CONFIRMED"|"ESTIMATED"|null; release_time; days_until; due }
+TLast    { reading_id; period; as_of; value; value_text; verdict; kill;
+           question: {id, ref, title, status} | null; explained }   // explained = why-question CLEAR / DROPPED / gone
+TMetric  { id; ref "K-0007"; thesis_id; symbol; title; role "KILLER"|"WATCH"; unit; definition; why;
+           kill_rule; kill_op; kill_value; cadence; source_name; source_url; source_locator; source_tool;
+           series_id; question_id; retired_at; retire_reason; actor; created_at; state: TState }
+TDetail  { metric: TMetric; state; periods: TPeriod[];              // newest period first
+           question: {id, ref, title, status} | null;               // the question this number informs
+           series: {id, label, unit, source, source_url, points: {date, value}[2]} | null;
+           opened_question? }                                       // only on the reply to POST …/readings
+TPeriod  { period; expectation: TExpectation | null; reading: TReading | null;
+           revisions: TExpectation[]; corrections: TReading[] }
+TExpectation { id; period; expected; low; high; basis; evidence: ZettelBrief[]; date; calendar: QDate-ish | null;
+               release_time; late /* written after the release date */; actor; created_at }
+TReading { id; period; as_of; value; value_text; verdict "IN_LINE"|"ABOVE"|"BELOW"|"OFF"|"UNSCORED"; kill;
+           note; zettel: ZettelBrief | null; source_url; quote; question; actor; created_at }
+TCounts  { kill; due; off; setup; waiting; retired; alert /* kill + due + off */ }
+```
+
+Refusals: HTTP 422 with `detail = {code: "METRIC_REFUSED" | "EXPECTATION_REFUSED" | "READING_REFUSED", missing: string[]}`.
 
