@@ -37,6 +37,7 @@
 | Symptom | Root cause | Fix |
 |---|---|---|
 | EQUITY CURVE vs SPY shows no SPY line for minutes at a time; `nav-index` returns `bench_index: null` though Yahoo is healthy | `yf.download()` resets yfinance's module-global result dicts on every call, so a concurrent download in another router (here the heatmap's failing `DX=F`) wiped SPY → a 64×0 frame that `_fetch_close_frame` cached for 5 min | `_fetch_close_frame` retries once and never caches a frame with none of the requested columns. 25 other `yf.download` call sites remain exposed — `memory/reports/yf-download-global-state-race-risk-report.md` |
+| ENTRY: slip pasted over another account leaves SECTOR blank/wrong (Dime SNDK got `ETRON`) | `autoFillSector` closed over the render-time `sectorList`; `fillFromSlip` switches `account_id` and looks the sector up in the same tick → previous account's list | pass the account in: `sectorListFor(accountId)` (2026-10-01). Any helper called right after a `setForm` must take the new values as arguments, not read them from the render. Changing ACCOUNT now drops a sector the new list lacks and re-resolves the symbol. **Backend backstop:** `POST /trades` + `PATCH /trades/{id}` fit the sector into the account's list (`sector_map.fit_sector` / `sector_vocab`, provider classification → GICS fallback → blank); 19 legacy rows (ICT/TECH/Electronic Tech/INDU/BOND on Dime, INDU on Finansia) refit via PATCH, reason in `trade_audit_log` |
 
 ### Historical portfolio Excel import (2026-09-26)
 | Symptom | Root cause | Fix / status |
@@ -2119,6 +2120,27 @@ A peer on older code stores ops for an unknown table as `"kept"` and never appli
 (`sync/oplog.py::_apply_one`, no replay after upgrade). Add the table → pull the code on the other
 machine and restart it before it syncs. Details: `memory/reports/oplog-kept-ops-never-replayed-risk-report.md`.
 
+## Question status is derived, not stored — do not add a status column (2026-10-01)
+`questions` has no status. OPEN / WATCH / CLEAR comes from `routers/questions._derive` over answers, reviews and
+assumption checks (insert-only rows). A stored status would be a mutable field two devices edit concurrently →
+`sync_conflicts`, and the badge could disagree between machines. Need it faster? Cache it locally, never sync it.
+Accepting an answer and checking an assumption are INSERTs into `question_checks`, never an UPDATE of the answer.
+The six `question*` tables were added to `SYNC_TABLES` on 2026-10-01 — the rule right above applies: every machine
+runs this code before the first question is written.
+
+## Tracking status is derived too — and a forecast / reading is never edited (2026-10-02)
+`track_metrics` has no status and `track_readings` has no "superseded" flag. KILL / DUE / OFF / SETUP / WAITING comes
+from `routers/tracking._derive`: per period the NEWEST `track_expectations` row is the forecast that stands and the
+newest `track_readings` row is the number that stands. Revising or correcting = INSERT, never UPDATE (an UPDATE would
+be a field two devices can edit at once, and would let a forecast be rewritten after the result — the server refuses a
+new forecast for a period that has a reading). `kill` IS stored on the reading on purpose: it records the line as it
+stood that day, so moving `kill_value` later does not rewrite history. The three `track_*` tables were added to
+`SYNC_TABLES` on 2026-10-02 — same rule as above: every machine runs this code before the first metric is written.
+Testing the UI without writing to the real DB: run a second backend on a copy (`PORTFOLIO_DB=<copy> SYNC_ENABLED=false
+OPLOG_ENABLED=false … --port 9327`); a second `next dev` in this folder is refused by `.next/dev/lock`, so put a small
+proxy in front of the running 9318 that sends `/api/v2/{tracking,questions,theses,zettel}` to 9327 and passes the
+`/_next/webpack-hmr` websocket through (without it the dev client never mounts).
+
 ## `fast_info` = 3–5 Yahoo calls per symbol — ~150 calls/min with the MKT view open (fixed 2026-09-28)
 **Symptom:** `logs/upstream.jsonl` summaries showed Yahoo at exactly `2000` calls every 10 min (the `calls`
 deque was capped at 2000 — the real number was higher); `/api/volatility` pending for seconds in DevTools.
@@ -2302,4 +2324,28 @@ Diagnose: `curl -s localhost:9317/api/health/latency` or `logs/latency.jsonl` (q
 - Dead feeds removed from `/api/news/feed`: Reuters (DNS gone), Investopedia (403 + 680 KB body). MarketWatch → `feeds.content.dowjones.io/public/rss/mw_topstories`.
 - Tabs (NEWSFEED / SOCIAL / Polymarket column) were `fetch`+`useState`, so every tab switch re-pulled; now React Query (`views/news/useNewsQueries.ts`). REFRESH inside a backend 5-min cache used to return the same answer — it now sends `fresh=1`. DCF / MARKET STATE / RATE STRESS panels in the watchlist tab are `next/dynamic`.
 - Frontend: NEWSFEED read saved topics in an effect → two requests per mount, the first could land last. Topics now come from the `useState` initializer; requests abort their predecessor. Bing is off by default (`DEFAULT_SOURCE_IDS`) — slowest source (~1.2–3.2 s/symbol) and mostly repeats Google News.
+
+## Chart: editing an overlay through `addIndicator` stacks a copy (fixed 2026-10-01)
+- Overlay instance ids carry their params (`ema-20`, `bb-20-2`, `zigzag-5-hl`), so `addIndicator` with new params sees a NEW id and appends — the old BB ⚙ turned BB 20 into BB 20 + BB 30.
+- Fix: the ⚙ editor calls `replaceIndicator(oldInstanceId, entry, params)` (`useChartIndicators`), wired as `IndicatorPicker.onReplace` in ChartPanel / market-view / stock-view. A new picker host must pass `onReplace` too.
+- The picker only renders `select` + number boxes — a `type:"boolean"` param shows as a 1/0 number field. Use a select (On/Off) for new indicators.
+
+## A difference of two rounded percentiles is quantised (WHAT-IF "ทำ − ไม่ทำ", fixed 2026-10-02)
+- Symptom: WHAT-IF showed the same "ทำ − ไม่ทำ ≈ +฿871.52" in −2 SD and in the random-market run.
+- Cause: the UI computed `start × (do.final_p50 − hold.final_p50) / 100` from medians the backend had rounded to 2 dp of a percent → steps of 0.01 % of NAV (฿218 on a ฿2.18M book); 871.52 = 4 steps. A difference of medians is also not the median difference.
+- Fix: `stop_sim.simulate` returns `diff_value {p10,p50,p90}` from the per-path gap (same draws on both sides) + `p_do_better`. Rule: compute a DO−DON'T gap per path on the server, never from two rounded summary numbers.
+
+## ERC parity weighted by COST (`/risk/risk-parity`, fixed 2026-10-02)
+- `get_risk_parity_allocation` built current weights from `price_entry × volume`, so a holding that doubled showed its entry weight and the ERC BUY/TRIM sizes were off the cost book. Now live price (entry only when no quote). Any "current weight" must be market value; cost weight is a TARGET (see `/allocation-detail`, `/risk/rebalance`), never a current state.
+
+## Monte Carlo with free drift — mean outcome not 0 when "no view" was intended (fixed while building, 2026-10-02)
+- Symptom: `/risk/monte-carlo` with drift 0 returned `final.mean` +0.8% (ALL) / +3.6% (DIME) per quarter — 20× its sampling error.
+- Cause (the big one): back-filled residuals (`port_mc.backfill`) were not re-centred — the market's residuals do not average 0 over only the filled days, and a mean of +0.03 on a 5%-a-day stock is +10% a quarter. Smaller: log returns with a `−σ²/2` correction are a martingale only under a normal curve, so the model now uses simple returns, where mean-0 residuals are an exact martingale for any tail shape.
+- Fix: simulate SIMPLE returns `P·(1 + σz + drift)` with residuals standardized to mean 0 / sd 1 AFTER back-filling. Test: `test_zero_drift_is_a_martingale_even_with_fat_skewed_tails`. Rule: any simulator claiming "no drift" must assert its mean outcome is 0 within sampling error — a quantile test will not catch it.
+- Also measured: on this book FHS, a normal model and a plain bootstrap gave 95% / 99% breach rates within noise of each other (walk-forward, 1,010 days; FHS 5.0·4.0·3.6·5.3 / 1.3·1.2·1.5·1.6 at 1·10·21·63 d, normal weakest at 99%: 2.0–2.4 at 10–21 d). Past ~10 days the per-day distribution shape hardly matters; the vol level (today vs average ≈ 1 pp of NAV at 63 d) and the drift assumption (~4 pp on the median) do. Do not sell a model switch as "more accurate" without the backtest.
+
+## A joint `yf.download` can lose ONE symbol and the partial frame is cached 5 min (`_fetch_close_frame`, seen 2026-10-02)
+- Symptom: `/risk/monte-carlo` (ALL) listed COST — 11.8% of the book — as `no data` while the DIME scope, a different symbol set, had it. Nothing in `logs/upstream.jsonl` (no failure is recorded).
+- Cause: the existing whole-frame guard only retries a frame with NO columns; a frame missing one column is kept and cached under the joined-symbols key. `_compute_portfolio_risk` then drops that holding and re-spreads its weight — visible only in `excluded_symbols`.
+- Monte Carlo handles it itself (`_mc_inputs` asks for the lost symbols once more on their own and merges). `/risk/metrics`, CAPM and risk-parity do not — see `memory/reports/risk-close-frame-lost-symbol-risk-report.md`.
 

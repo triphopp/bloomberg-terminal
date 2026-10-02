@@ -1,0 +1,1064 @@
+{
+  "as_of": "2026-10-02",
+  "status": "DRAFT — ยังไม่ได้นำเข้า portfolio.db ห้ามนำเข้าจนกว่าทุกเครื่องจะ pull + restart (plans/thesis-tracking.md Step 8)",
+  "how_to_apply": "1) สร้างวันที่ใน `dates` ที่ยังไม่มี ref ด้วย question_date_add  2) ต่อหนึ่งตัวเลข: track_add(metric) → track_record(baseline พร้อม period) → track_expect(expectation โดยแทน date_key ด้วย D-ref) — ข้ามค่าคาดการณ์ของแถว forecast_origin = NEEDS_USER",
+  "forecast_origin": {
+    "GUIDANCE": "ช่วงมาจาก guidance ของบริษัท หรือเกณฑ์ที่ผู้ใช้เขียนไว้เองแล้ว",
+    "SUGGESTED": "ช่วงเป็นข้อเสนอของ agent — ผู้ใช้ต้องยืนยันหรือแก้",
+    "NEEDS_USER": "ไม่มีฐานให้เสนอ — ผู้ใช้ต้องใส่เอง"
+  },
+  "notes": [
+    "ประโยคอ้างอิงของ TrendForce (30 ก.ย. 2026) และ The Register (21 ส.ค. 2026) อ่านผ่านเครื่องมือ fetch ที่สรุปหน้าเว็บ — เปิดหน้าตรวจคำต่อคำก่อนนำเข้า",
+    "series ราคาสัญญาใน series_points (dx.contract.*) มีจุดเดียวคือ 2026-07-31 (SSD 2026-08-05) — ค่าที่แสดงข้างตัวเลขจะเก่าจนกว่า collector จะเก็บจุดใหม่",
+    "บันทึกของ thesis SNDK ใช้ watch_date 2026-11-06 สำหรับงบ Q1 FY27 แต่บริษัทประกาศแล้วว่าเป็น 2026-10-29",
+    "คำถาม Q-0010 ถึง Q-0024 อยู่ใต้ thesis SNDK ทั้งหมด — ตัวเลขของ MU ที่ผูก Q-0015 / Q-0022 จึงชี้ข้าม thesis"
+  ],
+  "dates": [
+    {
+      "key": "INTC_Q3",
+      "ref": "D-0001",
+      "note": "มีอยู่แล้ว — Intel ประกาศงบ Q3/26, 2026-10-22, ESTIMATED (หน้า IR ของ Intel ยังไม่มีวัน ณ 2 ต.ค. 2026)"
+    },
+    {
+      "key": "INTC_10Q",
+      "ref": "D-0002",
+      "note": "มีอยู่แล้ว — Intel ยื่น 10-Q Q3/26, 2026-10-23, ESTIMATED. ข้อควรรู้: 10-Q ของ Q3/25 ยื่น 2025-11-06 = 14 วันหลังวันงบ ไม่ใช่ 1 วัน"
+    },
+    {
+      "key": "MERCURY_Q3",
+      "ref": "D-0005",
+      "note": "มีอยู่แล้ว — Mercury Research ส่วนแบ่ง CPU Q3/26, 2026-11-20, ESTIMATED"
+    },
+    {
+      "key": "SNDK_Q1",
+      "title": "Sandisk ประกาศงบ Q1 FY27",
+      "date": "2026-10-29",
+      "status": "CONFIRMED",
+      "kind": "EARNINGS",
+      "symbol": "SNDK",
+      "source": "ประกาศของบริษัท 29 ก.ย. 2026: conference call พฤหัสบดี 29 ต.ค. 2026 เวลา 13:30 PT",
+      "source_url": "https://investor.sandisk.com/news-releases/news-release-details/sandisk-report-first-quarter-fiscal-year-2027-results-october-29"
+    },
+    {
+      "key": "SNDK_10Q",
+      "title": "Sandisk ยื่น 10-Q ของ Q1 FY27",
+      "date": "2026-10-30",
+      "status": "ESTIMATED",
+      "kind": "FILING",
+      "symbol": "SNDK",
+      "source": "ประมาณเอง: รอบ Q1 FY26 ประกาศงบ 6 พ.ย. 2025 แล้วยื่น 10-Q วันที่ 7 พ.ย. 2025 (SEC EDGAR) จึงบวกหนึ่งวันจากวันงบที่บริษัทประกาศ",
+      "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0002023554&type=10-Q&dateb=&owner=include&count=10"
+    },
+    {
+      "key": "MU_FQ1",
+      "title": "Micron ประกาศงบ FQ1 FY27",
+      "date": "2026-12-23",
+      "status": "ESTIMATED",
+      "kind": "EARNINGS",
+      "symbol": "MU",
+      "source": "ปฏิทิน Yahoo ผ่าน MCP get_stock_data (earnings-calendar) · หน้า IR ของ Micron ยังไม่แสดงวัน (ตรวจ 2 ต.ค. 2026) · รอบก่อนประกาศ 30 ก.ย. = 27 วันหลังสิ้นไตรมาส 3 ก.ย.",
+      "source_url": "https://investors.micron.com/events-and-presentations"
+    },
+    {
+      "key": "HYPER_Q3",
+      "title": "Hyperscaler ประกาศงบ Q3/26 (MSFT · GOOGL · META · AMZN)",
+      "date": "2026-10-29",
+      "status": "ESTIMATED",
+      "kind": "EARNINGS",
+      "symbol": null,
+      "source": "ปฏิทิน Yahoo ผ่าน MCP get_stock_data: MSFT, GOOGL, META 28 ต.ค. · AMZN 29 ต.ค. — ยังไม่ได้เปิดประกาศของแต่ละบริษัท ใช้วันของรายสุดท้าย",
+      "source_url": ""
+    },
+    {
+      "key": "TF_1Q27",
+      "title": "TrendForce คาดการณ์ราคาสัญญาหน่วยความจำ 1Q27",
+      "date": "2027-01-05",
+      "status": "ESTIMATED",
+      "kind": "DATA_RELEASE",
+      "symbol": null,
+      "source": "ประมาณเอง: คาดการณ์ 4Q26 ออก 30 ก.ย. 2026 และ 1Q26 ออก 5 ม.ค. 2026 (TrendForce press center) ไม่มีกำหนดการที่ประกาศไว้",
+      "source_url": "https://www.trendforce.com/presscenter/news/20260930-13258.html"
+    },
+    {
+      "key": "TF_DRAM_3Q26",
+      "title": "TrendForce อันดับรายได้ DRAM 3Q26",
+      "date": "2026-12-07",
+      "status": "ESTIMATED",
+      "kind": "DATA_RELEASE",
+      "symbol": null,
+      "source": "ประมาณเอง: อันดับ 2Q26 ออก 7 ก.ย. 2026 = 69 วันหลังสิ้นไตรมาส ไม่มีกำหนดการที่ประกาศไว้",
+      "source_url": "https://www.trendforce.com/presscenter/news/20260907-13219.html"
+    }
+  ],
+  "metrics": [
+    {
+      "key": "MU-GM",
+      "thesis": "MU",
+      "metric": {
+        "thesis_id": "ea23a3a3-4a55-4de7-a543-73b6d7b65e53",
+        "title": "อัตรากำไรขั้นต้น non-GAAP (GM)",
+        "role": "KILLER",
+        "unit": "%",
+        "cadence": "QUARTERLY",
+        "definition": "Non-GAAP gross margin ÷ Revenue ของไตรมาส จากตาราง reconciliation ใน press release",
+        "why": "ผู้บริหารเรียก FQ1 FY27 ว่าจุดต่ำสุดของ GM ในปีบัญชี 2027 ถ้าหลุดพื้นนี้ แปลว่าราคาเริ่มอ่อนเร็วกว่าที่บริษัทเห็น",
+        "kill_rule": "GM ไตรมาสใดใน FY27 ต่ำกว่าพื้น FQ1 ที่ผู้บริหารให้ไว้ (86.25%)",
+        "kill_op": "<",
+        "kill_value": 86.25,
+        "source_name": "Micron earnings press release (8-K EX-99.1)",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000723125&type=8-K&dateb=&owner=include&count=10",
+        "source_tool": "get_filings(MU, forms=8-K) → EX-99.1 · backend GET /api/company/outlook/MU",
+        "source_locator": "Reconciliation of GAAP to Non-GAAP Results → Non-GAAP gross margin; หารด้วย Revenue"
+      },
+      "baseline": {
+        "period": "FQ4 FY26",
+        "value": 87.0,
+        "as_of": "2026-09-03",
+        "zettel": "Z-0079",
+        "note": "Non-GAAP gross margin $47,204m ÷ Revenue $54,229m = 87.05%"
+      },
+      "expectation": {
+        "period": "FQ1 FY27",
+        "expected": "ไม่ต่ำกว่า 86.25% ตาม guidance",
+        "low": 86.25,
+        "high": null,
+        "basis": "Guidance FQ1 FY27: non-GAAP GM ประมาณ 86.25% และบริษัทระบุว่าเป็นพื้นของ GM ใน FY27 (8-K EX-99.1, 30 ก.ย. 2026)",
+        "evidence": [
+          "Z-0079"
+        ],
+        "date_key": "MU_FQ1"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": "guidance เขียนว่า \"approximately 86.25%\" ไม่มีช่วง ± — ถ้าออกมา 86.2 เส้น killer จะติดทันที ต้องการเผื่อไว้ไหม"
+    },
+    {
+      "key": "MU-DIO",
+      "thesis": "MU",
+      "metric": {
+        "thesis_id": "ea23a3a3-4a55-4de7-a543-73b6d7b65e53",
+        "title": "จำนวนวันสินค้าคงคลัง (DIO) ตามที่บริษัทรายงาน",
+        "role": "KILLER",
+        "unit": "วัน",
+        "cadence": "QUARTERLY",
+        "definition": "DIO ที่บริษัทระบุใน prepared remarks · ตรวจทานด้วย Inventories ÷ Cost of goods sold (GAAP) × 91 — FQ4 FY26 คิดได้ 131 วัน เทียบ 129 ที่บริษัทรายงาน",
+        "why": "สต็อกสะสมคือสัญญาณว่าของเริ่มล้น MU เป็นรายแรกที่ประกาศลดกำลังผลิตในรอบ 2022 ก่อนรายได้ทรุด",
+        "kill_rule": "DIO > 140 วัน พร้อม finished goods เพิ่ม",
+        "kill_op": ">",
+        "kill_value": 140,
+        "source_name": "Micron prepared remarks (CFO) + press release",
+        "source_url": "https://investors.micron.com",
+        "source_locator": "Prepared remarks → ย่อหน้า inventory / days of inventory · press release → Consolidated Balance Sheets → Inventories",
+        "source_tool": "get_stock_data(MU, kind=balance-sheet) · get_filings(MU, forms=8-K)"
+      },
+      "baseline": {
+        "period": "FQ4 FY26",
+        "value": 129,
+        "as_of": "2026-09-03",
+        "zettel": "Z-0079",
+        "note": "+9 วันจาก FQ3"
+      },
+      "expectation": {
+        "period": "FQ1 FY27",
+        "expected": "ลดลงจาก 129 วัน",
+        "low": null,
+        "high": 129,
+        "basis": "บริษัทอธิบายว่า DIO ที่เพิ่มเป็น build-ahead ของ node end-of-life + incentive comp และคาดว่าจะลด (prepared remarks FQ4 FY26)",
+        "evidence": [
+          "Z-0079"
+        ],
+        "date_key": "MU_FQ1"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": ""
+    },
+    {
+      "key": "MU-DSO",
+      "thesis": "MU",
+      "metric": {
+        "thesis_id": "ea23a3a3-4a55-4de7-a543-73b6d7b65e53",
+        "title": "ลูกหนี้การค้า (DSO)",
+        "role": "WATCH",
+        "unit": "วัน",
+        "cadence": "QUARTERLY",
+        "definition": "Receivables ÷ Revenue ของไตรมาส × 91",
+        "why": "DSO ที่ยืดขณะรายได้ยังโต = เริ่มปล่อยเครดิตดันยอด · รอบ 2022–23 ลูกหนี้ของ MU หดเร็วกว่ารายได้ ความเสียหายไปกองที่สินค้าคงคลัง",
+        "source_name": "Micron earnings press release (8-K EX-99.1)",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000723125&type=8-K&dateb=&owner=include&count=10",
+        "source_tool": "get_stock_data(MU, kind=balance-sheet) · get_filings(MU, forms=8-K)",
+        "source_locator": "Consolidated Balance Sheets → Receivables · Consolidated Statements of Operations → Revenue"
+      },
+      "baseline": {
+        "period": "FQ4 FY26",
+        "value": 60.7,
+        "as_of": "2026-09-03",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/723125/000072312526000018/a2026q4ex991-pressrelease.htm",
+        "quote": "Receivables 36,197 31,025 9,265 · Revenue $ 54,229 $ 41,456",
+        "note": "36,197 ÷ 54,229 × 91 = 60.7 วัน · FQ3 = 31,025 ÷ 41,456 × 91 = 68.1 วัน"
+      },
+      "expectation": {
+        "period": "FQ1 FY27",
+        "expected": "ทรงตัวในช่วง FQ3–FQ4",
+        "low": 55,
+        "high": 68,
+        "basis": "ไม่มี guidance — ใช้กรอบสองไตรมาสล่าสุด (FQ4 60.7, FQ3 68.1) ขณะ guide รายได้ +13% QoQ",
+        "date_key": "MU_FQ1"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ไม่มีเกณฑ์ใน thesis — ช่วง 55–68 เป็นข้อเสนอของผม"
+    },
+    {
+      "key": "MU-REV",
+      "thesis": "MU",
+      "metric": {
+        "thesis_id": "ea23a3a3-4a55-4de7-a543-73b6d7b65e53",
+        "title": "รายได้เทียบ guidance",
+        "role": "WATCH",
+        "unit": "$bn",
+        "cadence": "QUARTERLY",
+        "definition": "Revenue ของไตรมาสตาม press release",
+        "why": "สัญญาณแรกของฉากทัศน์ FY27 — ดูคู่กับ guide FQ2 เทียบคอนเซนซัสรายได้ $66.6bn",
+        "source_name": "Micron earnings press release (8-K EX-99.1)",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000723125&type=8-K&dateb=&owner=include&count=10",
+        "source_tool": "get_filings(MU, forms=8-K) → EX-99.1 · backend GET /api/company/outlook/MU",
+        "source_locator": "บรรทัดแรกของ press release · ตาราง Business Outlook สำหรับ guide ไตรมาสถัดไป"
+      },
+      "baseline": {
+        "period": "FQ4 FY26",
+        "value": 54.229,
+        "as_of": "2026-09-03",
+        "zettel": "Z-0079"
+      },
+      "expectation": {
+        "period": "FQ1 FY27",
+        "expected": "$61.5bn ± 1.5 ตาม guidance",
+        "low": 60.0,
+        "high": 63.0,
+        "basis": "Guidance FQ1 FY27: revenue $61.5 billion ± $1.5 billion (8-K EX-99.1, 30 ก.ย. 2026)",
+        "evidence": [
+          "Z-0079"
+        ],
+        "date_key": "MU_FQ1"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": ""
+    },
+    {
+      "key": "MU-DRAM-PX",
+      "thesis": "MU",
+      "metric": {
+        "thesis_id": "ea23a3a3-4a55-4de7-a543-73b6d7b65e53",
+        "title": "ราคาสัญญา DRAM ทั่วไป — QoQ ที่ TrendForce คาดสำหรับไตรมาสถัดไป",
+        "role": "KILLER",
+        "unit": "% QoQ",
+        "cadence": "QUARTERLY",
+        "definition": "ค่ากลางของช่วงที่ TrendForce คาดสำหรับ conventional DRAM contract price ของไตรมาสที่กำลังจะเริ่ม",
+        "why": "รายได้ของ MU โตจากราคามากกว่าบิต — ราคาสัญญาที่หยุดขึ้นคือขั้นแรกของบันไดขาลง ก่อน GM และรายได้",
+        "kill_rule": "ราคาสัญญา DRAM หยุดขึ้น (QoQ ≤ 0%) ก่อนครึ่งหลัง 2027",
+        "kill_op": "<=",
+        "kill_value": 0,
+        "source_name": "TrendForce press center — คาดการณ์ราคาสัญญารายไตรมาส",
+        "source_url": "https://www.trendforce.com/presscenter/news",
+        "source_tool": "WebSearch site:trendforce.com \"<ไตรมาส> contract prices\" → เปิดข่าวแจก",
+        "source_locator": "ข่าวแจกคาดการณ์ราคาสัญญารายไตรมาส → ประโยค \"Conventional DRAM contract prices are projected to …\"",
+        "series_id": "dx.contract.dram.ddr5_8gb_so_dimm",
+        "question": "Q-0022"
+      },
+      "baseline": {
+        "period": "4Q26",
+        "value": 12.5,
+        "value_text": "+10–15% QoQ (ค่ากลาง 12.5)",
+        "as_of": "2026-09-30",
+        "source_url": "https://www.trendforce.com/presscenter/news/20260930-13258.html",
+        "quote": "Conventional DRAM contract prices are projected to grow 10–15% QoQ in 4Q26"
+      },
+      "expectation": {
+        "period": "1Q27",
+        "expected": "ยังขึ้น แต่ช้ากว่า 4Q26",
+        "low": 1,
+        "high": 15,
+        "basis": "Micron: \"more moderate rate of price increases\" หลัง FQ1 (Z-0079) · TrendForce 4Q26 +10–15%",
+        "evidence": [
+          "Z-0079"
+        ],
+        "date_key": "TF_1Q27"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ช่วง 1–15% เป็นข้อเสนอของผม · series ราคาสัญญาในระบบค้างที่ 31 ก.ค. 2026 (ดูหมายเหตุท้ายไฟล์)"
+    },
+    {
+      "key": "MU-CXMT",
+      "thesis": "MU",
+      "metric": {
+        "thesis_id": "ea23a3a3-4a55-4de7-a543-73b6d7b65e53",
+        "title": "ส่วนแบ่งรายได้ DRAM โลกของ CXMT",
+        "role": "KILLER",
+        "unit": "%",
+        "cadence": "QUARTERLY",
+        "definition": "ส่วนแบ่งรายได้ DRAM ทั้งอุตสาหกรรมของ CXMT ตามอันดับรายไตรมาสของ TrendForce",
+        "why": "จีนเป็น supply ก้อนเดียวที่เพิ่มได้เร็วในปี 2027 — ถ้าเกินตลาดในประเทศ จะปล่อย supply ของสามรายใหญ่กลับสู่ตลาดนอกจีน",
+        "kill_rule": "CXMT ส่ง DDR5/LPDDR5 ให้ OEM นอกจีนเป็นจำนวนมาก ส่วนแบ่ง > 13%",
+        "kill_op": ">",
+        "kill_value": 13,
+        "source_name": "TrendForce — DRAM industry revenue ranking รายไตรมาส",
+        "source_url": "https://www.trendforce.com/presscenter/news",
+        "source_locator": "ข่าวแจก \"DRAM Industry Revenue … <ไตรมาส>\" → ย่อหน้า CXMT / ตารางส่วนแบ่ง",
+        "source_tool": "WebSearch site:trendforce.com \"DRAM industry revenue 3Q26\"",
+        "question": "Q-0015"
+      },
+      "baseline": {
+        "period": "2Q26",
+        "value": 9.5,
+        "as_of": "2026-06-30",
+        "zettel": "Z-0086",
+        "note": "1Q26 = 7.6%"
+      },
+      "expectation": {
+        "period": "3Q26",
+        "expected": "เพิ่มต่อ แต่ยังต่ำกว่าเส้น",
+        "low": 9.5,
+        "high": 11.5,
+        "basis": "ไตรมาสก่อนเพิ่ม 1.9 จุด (7.6 → 9.5) · กำลังผลิต 320k wafers/เดือน เป้า 420k ในปี 2027 (Z-0086)",
+        "evidence": [
+          "Z-0086"
+        ],
+        "date_key": "TF_DRAM_3Q26"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ช่วง 9.5–11.5% เป็นข้อเสนอของผม · ส่วน \"ส่งให้ OEM นอกจีน\" ตรวจด้วยตัวเลขนี้ไม่ได้ ต้องอ่านข่าวประกอบ"
+    },
+    {
+      "key": "MU-HY",
+      "thesis": "MU",
+      "metric": {
+        "thesis_id": "ea23a3a3-4a55-4de7-a543-73b6d7b65e53",
+        "title": "US HY OAS — ค่าต่ำสุดในรอบ 20 วันทำการ",
+        "role": "KILLER",
+        "unit": "%",
+        "cadence": "MONTHLY",
+        "definition": "ค่าต่ำสุดของ ICE BofA US High Yield OAS (FRED BAMLH0A0HYM2) ใน 20 วันทำการล่าสุด ณ วันทำการสุดท้ายของเดือน — ค่าต่ำสุดเกิน 4.0 แปลว่าอยู่เหนือ 4.0% ครบ 4 สัปดาห์",
+        "why": "สเปรดเครดิตคือตัวส่งผ่านดอกเบี้ยไปถึง AI capex ผ่าน neocloud ที่ต้องต่อหนี้ตลอด",
+        "kill_rule": "HY OAS > 4.0% นาน 4 สัปดาห์",
+        "kill_op": ">",
+        "kill_value": 4.0,
+        "source_name": "FRED — ICE BofA US High Yield Index Option-Adjusted Spread",
+        "source_url": "https://fred.stlouisfed.org/series/BAMLH0A0HYM2",
+        "source_locator": "ค่ารายวัน 20 จุดล่าสุด",
+        "source_tool": "backend GET /api/crisis → signals.hy_spread.series"
+      },
+      "baseline": {
+        "period": "2026-09",
+        "value": 2.65,
+        "as_of": "2026-09-30",
+        "source_url": "https://fred.stlouisfed.org/series/BAMLH0A0HYM2",
+        "quote": "hy_spread 20 วันทำการถึง 2026-09-30: ต่ำสุด 2.65 (2026-09-03) · ล่าสุด 3.12",
+        "note": "ค่าล่าสุด 3.12% (2026-09-30) — กางขึ้นจาก 2.66% ใน 7 วันทำการ"
+      },
+      "expectation": {
+        "period": "2026-10",
+        "expected": "ยังต่ำกว่า 3.25% (เกณฑ์แยก BULL / SIDEWAYS ที่ตั้งไว้)",
+        "low": null,
+        "high": 3.25,
+        "basis": "เงื่อนไข BULL ของฉากทัศน์ SNDK (18 ก.ย. 2026): HY OAS อยู่ต่ำกว่า 3.25% ต่อเนื่อง · ค่าล่าสุด 3.12% ใกล้เกณฑ์แล้ว (Z-0095)",
+        "evidence": [
+          "Z-0095"
+        ],
+        "due_date": "2026-10-30"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": "ใช้เกณฑ์ 3.25% ที่คุณตั้งไว้เองเป็นขอบบน — ข้ามแล้วจะเปิดคำถามก่อนถึงเส้น killer 4.0%"
+    },
+    {
+      "key": "SNDK-GM",
+      "thesis": "SNDK",
+      "metric": {
+        "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+        "title": "อัตรากำไรขั้นต้น GAAP (GM)",
+        "role": "WATCH",
+        "unit": "%",
+        "cadence": "QUARTERLY",
+        "definition": "Gross profit ÷ Revenue, net ของไตรมาส (GAAP)",
+        "why": "ราคาไหลลงขณะ COGS เท่าเดิม GM พลิกก่อนยอดขาย — เกณฑ์เตือนที่ตั้งไว้: GM ลดติดกัน 2 ไตรมาส",
+        "source_name": "Sandisk earnings press release (8-K EX-99.1)",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0002023554&type=8-K&dateb=&owner=include&count=10",
+        "source_tool": "get_filings(SNDK, forms=8-K) → EX-99.1 · backend GET /api/company/outlook/SNDK",
+        "source_locator": "Condensed Consolidated Statements of Operations → Gross profit ÷ Revenue, net"
+      },
+      "baseline": {
+        "period": "Q4 FY26",
+        "value": 84.6,
+        "as_of": "2026-07-03",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/2023554/000162828026053346/sndkq4-26ex991xpressrelease.htm",
+        "quote": "Revenue, net $ 8,965 … Cost of revenue 1,383 … Gross profit 7,582",
+        "note": "7,582 ÷ 8,965 = 84.57%"
+      },
+      "expectation": {
+        "period": "Q1 FY27",
+        "expected": "83.0–84.9% ตาม guidance",
+        "low": 83.0,
+        "high": 84.9,
+        "basis": "Guidance Q1 FY27: GAAP gross margin 83.0% – 84.9% (8-K EX-99.1, 5 ส.ค. 2026)",
+        "evidence": [
+          "Z-0015"
+        ],
+        "date_key": "SNDK_Q1"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": ""
+    },
+    {
+      "key": "SNDK-EPS",
+      "thesis": "SNDK",
+      "metric": {
+        "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+        "title": "กำไรต่อหุ้น non-GAAP เทียบ guidance",
+        "role": "WATCH",
+        "unit": "$",
+        "cadence": "QUARTERLY",
+        "definition": "Non-GAAP diluted net income per share ตาม press release",
+        "why": "ขนาดของการ beat หดลงทุกไตรมาส และคอนเซนซัส ($46.18) สูงกว่าปลายบนของ guidance — ออกตรง guidance = พลาดคาด",
+        "source_name": "Sandisk earnings press release (8-K EX-99.1)",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0002023554&type=8-K&dateb=&owner=include&count=10",
+        "source_tool": "get_filings(SNDK, forms=8-K) → EX-99.1 · backend GET /api/company/outlook/SNDK",
+        "source_locator": "หัวข้อ highlights → Non-GAAP diluted net income per share · ตาราง Business Outlook สำหรับ guide ไตรมาสถัดไป"
+      },
+      "baseline": {
+        "period": "Q4 FY26",
+        "value": 39.25,
+        "as_of": "2026-07-03",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/2023554/000162828026053346/sndkq4-26ex991xpressrelease.htm",
+        "quote": "Fourth quarter Non-GAAP diluted net income per share was $39.25."
+      },
+      "expectation": {
+        "period": "Q1 FY27",
+        "expected": "$44–46 ตาม guidance",
+        "low": 44.0,
+        "high": 46.0,
+        "basis": "Guidance Q1 FY27: non-GAAP EPS $44.00 – $46.00, รายได้ $10,300–10,800m (8-K EX-99.1, 5 ส.ค. 2026)",
+        "evidence": [
+          "Z-0015"
+        ],
+        "date_key": "SNDK_Q1"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": ""
+    },
+    {
+      "key": "SNDK-DIO",
+      "thesis": "SNDK",
+      "metric": {
+        "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+        "title": "จำนวนวันสินค้าคงคลัง (DIO)",
+        "role": "KILLER",
+        "unit": "วัน",
+        "cadence": "QUARTERLY",
+        "definition": "Inventories ÷ Cost of revenue ของไตรมาส × 91",
+        "why": "DIO ขึ้นจาก 135 เป็น 178 วันแล้ว ถ้าขึ้นต่อพร้อม finished goods = ผลิตแล้วขายไม่ออก",
+        "kill_rule": "Inventory days เพิ่มขึ้นอีกจาก 178 วัน พร้อมสัดส่วน finished goods สูงขึ้น",
+        "kill_op": ">",
+        "kill_value": 178,
+        "source_name": "Sandisk earnings press release (8-K EX-99.1)",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0002023554&type=8-K&dateb=&owner=include&count=10",
+        "source_tool": "get_stock_data(SNDK, kind=balance-sheet) · get_filings(SNDK, forms=8-K,10-Q)",
+        "source_locator": "Condensed Consolidated Balance Sheets → Inventories · Statements of Operations → Cost of revenue · finished goods อยู่ใน 10-Q note Inventories",
+        "question": "Q-0021"
+      },
+      "baseline": {
+        "period": "Q4 FY26",
+        "value": 177.5,
+        "as_of": "2026-07-03",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/2023554/000162828026053346/sndkq4-26ex991xpressrelease.htm",
+        "quote": "Inventories 2,698 2,079 … Cost of revenue 1,383",
+        "note": "2,698 ÷ 1,383 × 91 = 177.5 วัน"
+      },
+      "expectation": {
+        "period": "Q1 FY27",
+        "expected": "เริ่มลดจาก 178 วัน",
+        "low": null,
+        "high": 178,
+        "basis": "เงื่อนไข BULL ที่ตั้งไว้ 18 ก.ย. 2026: ราคา contract ขึ้นต่อ ขณะ DIO เริ่มลดจาก 178 วัน — บริษัทไม่ได้ให้ guidance เรื่องสินค้าคงคลัง",
+        "date_key": "SNDK_Q1"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "kill condition ที่คุณยืนยัน 1 ต.ค. คือ \"Inventory days เพิ่มขึ้น\" โดยยังไม่มีตัวเลข — ผมใส่ > 178 (เพิ่มจากปัจจุบัน) ไว้ก่อน"
+    },
+    {
+      "key": "SNDK-DSO",
+      "thesis": "SNDK",
+      "metric": {
+        "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+        "title": "ลูกหนี้การค้า (DSO)",
+        "role": "WATCH",
+        "unit": "วัน",
+        "cadence": "QUARTERLY",
+        "definition": "Accounts receivable, net ÷ Revenue, net ของไตรมาส × 91",
+        "why": "ลูกหนี้โต 4.2 เท่าขณะรายได้โต 2.75 เท่า — เกณฑ์เตือนที่ตั้งไว้: DSO > 65 วันขณะรายได้ยังโต = ปล่อยเครดิตดันยอด",
+        "source_name": "Sandisk earnings press release (8-K EX-99.1)",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0002023554&type=8-K&dateb=&owner=include&count=10",
+        "source_tool": "get_stock_data(SNDK, kind=balance-sheet) · get_filings(SNDK, forms=8-K)",
+        "source_locator": "Condensed Consolidated Balance Sheets → Accounts receivable, net · Statements of Operations → Revenue, net"
+      },
+      "baseline": {
+        "period": "Q4 FY26",
+        "value": 47.8,
+        "as_of": "2026-07-03",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/2023554/000162828026053346/sndkq4-26ex991xpressrelease.htm",
+        "quote": "Accounts receivable, net 4,708 1,068 … Revenue, net $ 8,965",
+        "note": "4,708 ÷ 8,965 × 91 = 47.8 วัน"
+      },
+      "expectation": {
+        "period": "Q1 FY27",
+        "expected": "ทรงตัว 45–55 วัน",
+        "low": 45,
+        "high": 55,
+        "basis": "Q4 FY26 = 48 วัน เทียบ 54 วันปีก่อน (Z-0019) — ไม่มี guidance",
+        "evidence": [
+          "Z-0019"
+        ],
+        "date_key": "SNDK_Q1"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ช่วง 45–55 เป็นข้อเสนอของผม"
+    },
+    {
+      "key": "SNDK-NBM",
+      "thesis": "SNDK",
+      "metric": {
+        "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+        "title": "เงินรับล่วงหน้า + เงินมัดจำ NBM สุทธิในไตรมาส",
+        "role": "WATCH",
+        "unit": "$m",
+        "cadence": "QUARTERLY",
+        "definition": "บรรทัด \"Impact of NBM prepayments and deposits\" ในตาราง Adjusted free cash flow (กลับเครื่องหมาย) = เงินที่ลูกค้าวางเพิ่มสุทธิในไตรมาส",
+        "why": "ลูกค้าเลิกวางเงินก่อนเลิกสั่งของ — เกณฑ์เตือนที่ตั้งไว้: ยอดเงินรับล่วงหน้า NBM ลดลง QoQ (ค่านี้ติดลบ)",
+        "source_name": "Sandisk earnings press release (8-K EX-99.1)",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0002023554&type=8-K&dateb=&owner=include&count=10",
+        "source_tool": "get_filings(SNDK, forms=8-K) → EX-99.1 · backend GET /api/company/outlook/SNDK",
+        "source_locator": "ตาราง reconciliation → Adjusted free cash flow → Impact of NBM prepayments and deposits",
+        "question": "Q-0023"
+      },
+      "baseline": {
+        "period": "Q4 FY26",
+        "value": 1938,
+        "as_of": "2026-07-03",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/2023554/000162828026053346/sndkq4-26ex991xpressrelease.htm",
+        "quote": "Impact of NBM prepayments and deposits (1,938) (538) — (2,476)",
+        "note": "Q3 FY26 = 538 · ทั้งปี FY26 = 2,476"
+      },
+      "expectation": {
+        "period": "Q1 FY27",
+        "expected": "ยังเป็นบวก (ลูกค้ายังวางเงินเพิ่ม)",
+        "low": 1,
+        "high": null,
+        "basis": "เซ็น NBM เพิ่ม 5 ฉบับหลัง เม.ย. 2026 รวม 3 รายใหม่ (press release Q4 FY26) — ไม่มี guidance เป็นตัวเลข",
+        "date_key": "SNDK_Q1"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ผมตั้งแค่ \"> 0\" — ถ้าคุณมีตัวเลขคาดการณ์ให้ใส่แทน"
+    },
+    {
+      "key": "SNDK-RPO",
+      "thesis": "SNDK",
+      "metric": {
+        "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+        "title": "RPO ของสัญญา NBM",
+        "role": "WATCH",
+        "unit": "$bn",
+        "cadence": "QUARTERLY",
+        "definition": "Remaining performance obligations ที่ราคาขั้นต่ำ · ตรวจด้วย bridge: ต้นงวด + สัญญาใหม่ − รายได้ที่รับรู้ − ยกเลิก = ปลายงวด",
+        "why": "เกณฑ์เตือนที่ตั้งไว้: RPO ลดโดยไม่ได้มาจากการส่งมอบ = ลูกค้าขอเลื่อนหรือแก้สัญญา",
+        "source_name": "Sandisk 10-Q",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0002023554&type=10-Q&dateb=&owner=include&count=10",
+        "source_locator": "Notes → Revenues → Remaining performance obligations",
+        "source_tool": "get_filings(SNDK, forms=10-Q)",
+        "question": "Q-0023"
+      },
+      "baseline": {
+        "period": "Q4 FY26",
+        "value": 91.1,
+        "as_of": "2026-08-03",
+        "zettel": "Z-0004",
+        "note": "สัญญาที่ลงนามถึง 3 ส.ค. 2026 (Investor Day)"
+      },
+      "expectation": {
+        "period": "Q1 FY27",
+        "expected": "ไม่ต่ำกว่า 91.1 หักรายได้ NBM ที่รับรู้ในไตรมาส",
+        "low": null,
+        "high": null,
+        "basis": "ไม่มี guidance — ตัดสินด้วย bridge ไม่ใช่ตัวเลขเดี่ยว จึงไม่ตั้งช่วง",
+        "evidence": [
+          "Z-0004"
+        ],
+        "date_key": "SNDK_10Q"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ไม่มีช่วงตัวเลข — ตอนบันทึกต้องบอกเองว่าตรงหรือไม่"
+    },
+    {
+      "key": "SNDK-NAND-PX",
+      "thesis": "SNDK",
+      "metric": {
+        "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+        "title": "ราคาสัญญา NAND Flash — QoQ ที่ TrendForce คาดสำหรับไตรมาสถัดไป",
+        "role": "KILLER",
+        "unit": "% QoQ",
+        "cadence": "QUARTERLY",
+        "definition": "ค่ากลางของช่วงที่ TrendForce คาดสำหรับ NAND Flash contract price รวม ของไตรมาสที่กำลังจะเริ่ม",
+        "why": "กำไร 2 ใน 3 ของ SNDK มาจากราคา — ราคาสัญญากลับทิศคือ kill condition ที่ยืนยันไว้ 1 ต.ค. 2026",
+        "kill_rule": "ราคาสัญญา NAND หยุดขึ้นหรือกลับทิศ (QoQ ≤ 0%)",
+        "kill_op": "<=",
+        "kill_value": 0,
+        "source_name": "TrendForce press center — คาดการณ์ราคาสัญญารายไตรมาส",
+        "source_url": "https://www.trendforce.com/presscenter/news",
+        "source_tool": "WebSearch site:trendforce.com \"<ไตรมาส> contract prices\" → เปิดข่าวแจก",
+        "source_locator": "ข่าวแจกคาดการณ์ราคาสัญญารายไตรมาส → ประโยค \"Overall NAND Flash contract prices are projected to …\"",
+        "series_id": "dx.contract.nand.nand_128gb_16gx8_speedns",
+        "question": "Q-0022"
+      },
+      "baseline": {
+        "period": "4Q26",
+        "value": 17.5,
+        "value_text": "+15–20% QoQ (ค่ากลาง 17.5)",
+        "as_of": "2026-09-30",
+        "source_url": "https://www.trendforce.com/presscenter/news/20260930-13258.html",
+        "quote": "Overall NAND Flash contract prices are projected to increase 15–20% QoQ"
+      },
+      "expectation": {
+        "period": "1Q27",
+        "expected": "ยังขึ้น",
+        "low": 1,
+        "high": 20,
+        "basis": "TrendForce 4Q26 +15–20% และ enterprise SSD เร่งขึ้น · แต่ TrendForce มองว่าราคา NAND เผชิญแรงกดดันครึ่งหลัง 2027",
+        "date_key": "TF_1Q27"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ช่วง 1–20% เป็นข้อเสนอของผม"
+    },
+    {
+      "key": "SNDK-CAPEX",
+      "thesis": "SNDK",
+      "metric": {
+        "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+        "title": "แนวทาง capex ของ hyperscaler (MSFT · GOOGL · AMZN · META)",
+        "role": "KILLER",
+        "unit": "",
+        "cadence": "QUARTERLY",
+        "definition": "อ่าน capex guidance ปีปัจจุบันและปีถัดไปของแต่ละราย เทียบกับที่ให้ไว้ไตรมาสก่อน · แยกผลของราคาหน่วยความจำและการจัดประเภท lease ก่อนสรุปว่าลด",
+        "why": "kill condition ที่ยืนยันไว้ 1 ต.ค. 2026 — แต่ capex เป็นดอลลาร์ลดเองได้เมื่อราคาหน่วยความจำลง โดยปริมาณไม่ลด",
+        "kill_rule": "Hyperscaler รายใดรายหนึ่งลด capex guidance (หลังแยกผลของราคาหน่วยความจำและการจัดประเภท lease แล้ว)",
+        "source_name": "Earnings release + call ของ Microsoft, Alphabet, Amazon, Meta",
+        "source_url": "https://abc.xyz/investor/",
+        "source_locator": "Alphabet: 8-K EX-99.1 + call (CFO) · Microsoft: earnings call (CFO, capex ไตรมาสถัดไป/ทั้งปี) · Amazon: 8-K EX-99.1 + call · Meta: 8-K EX-99.1 → บรรทัด \"capital expenditures … in the range of\"",
+        "source_tool": "get_filings(GOOGL|AMZN|META|MSFT, forms=8-K) · get_fiscal_data(<sym>, kind=transcript)",
+        "question": "Q-0019"
+      },
+      "baseline": null,
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "ไม่มีรายใดลด guidance และไม่มีรายใดใช้คำว่า digesting / pacing / optimizing",
+        "low": null,
+        "high": null,
+        "basis": "เงื่อนไข BULL ที่ตั้งไว้ 18 ก.ย. 2026 · ณ 14 ก.ย. 2026 ยังไม่มี hyperscaler รายใดลด capex จริง (บันทึก trigger ladder)",
+        "date_key": "HYPER_Q3"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": "เป็นตัวเลขเชิงคุณภาพ — ตอนบันทึกต้องบอกเองว่าตรงหรือไม่ และแตะเส้น killer หรือไม่"
+    },
+    {
+      "key": "SNDK-DC",
+      "thesis": "SNDK",
+      "metric": {
+        "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+        "title": "รายได้ Datacenter",
+        "role": "WATCH",
+        "unit": "$m",
+        "cadence": "QUARTERLY",
+        "definition": "รายได้ตลาดปลายทาง Datacenter ตามตารางใน press release",
+        "why": "ดีมานด์ AI ที่มีตัวเลขจริง — เงื่อนไขยกเลิกฉาก BEAR: Datacenter ยังโต QoQ เป็นบวก",
+        "source_name": "Sandisk earnings press release (8-K EX-99.1)",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0002023554&type=8-K&dateb=&owner=include&count=10",
+        "source_tool": "get_filings(SNDK, forms=8-K) → EX-99.1 · backend GET /api/company/outlook/SNDK",
+        "source_locator": "ตาราง End Market Summary → Datacenter"
+      },
+      "baseline": {
+        "period": "Q4 FY26",
+        "value": 2977,
+        "as_of": "2026-07-03",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/2023554/000162828026053346/sndkq4-26ex991xpressrelease.htm",
+        "quote": "Datacenter $2,977 $1,467 up 103% $213",
+        "note": "+103% QoQ"
+      },
+      "expectation": {
+        "period": "Q1 FY27",
+        "expected": "โต QoQ ต่อ",
+        "low": 2977,
+        "high": null,
+        "basis": "เงื่อนไขที่ตั้งไว้: Datacenter ยังโต QoQ เป็นบวก — บริษัทไม่ให้ guidance รายตลาด",
+        "date_key": "SNDK_Q1"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": ""
+    },
+    {
+      "key": "SNDK-CONS",
+      "thesis": "SNDK",
+      "metric": {
+        "thesis_id": "a710614e-277e-4cd8-ac9a-8f51e0729b7f",
+        "title": "รายได้ Consumer",
+        "role": "WATCH",
+        "unit": "$m",
+        "cadence": "QUARTERLY",
+        "definition": "รายได้ตลาดปลายทาง Consumer ตามตารางใน press release",
+        "why": "ตลาดปลายทางอ่อนก่อน enterprise 1–3 ไตรมาส · Consumer −32% QoQ เกิดไปแล้ว — เงื่อนไขที่ตั้งไว้: consumer/edge ติดลบสองไตรมาสติด",
+        "source_name": "Sandisk earnings press release (8-K EX-99.1)",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0002023554&type=8-K&dateb=&owner=include&count=10",
+        "source_tool": "get_filings(SNDK, forms=8-K) → EX-99.1 · backend GET /api/company/outlook/SNDK",
+        "source_locator": "ตาราง End Market Summary → Consumer (และ Edge)"
+      },
+      "baseline": {
+        "period": "Q4 FY26",
+        "value": 556,
+        "as_of": "2026-07-03",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/2023554/000162828026053346/sndkq4-26ex991xpressrelease.htm",
+        "quote": "Consumer $556 $820 down 32% $585 down 5%",
+        "note": "−32% QoQ"
+      },
+      "expectation": {
+        "period": "Q1 FY27",
+        "expected": "ไม่ลดต่อเป็นไตรมาสที่สอง",
+        "low": 556,
+        "high": null,
+        "basis": "ไม่มี guidance รายตลาด — ใช้เงื่อนไขที่ตั้งไว้ (ติดลบสองไตรมาสติด = สัญญาณ) เป็นขอบล่าง",
+        "date_key": "SNDK_Q1"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": ""
+    },
+    {
+      "key": "INTC-VOL",
+      "thesis": "INTC",
+      "metric": {
+        "thesis_id": "f758d37e-5eb5-4a4a-a494-2bbd0f6ca2a1",
+        "title": "ปริมาณ server (DCAI) YoY",
+        "role": "WATCH",
+        "unit": "% YoY",
+        "cadence": "QUARTERLY",
+        "definition": "\"Server volume increased/decreased X% compared to <ไตรมาสเดียวกันปีก่อน>\" ใน MD&A ส่วน DCAI",
+        "why": "DCAI โตจากราคา (+48%) มากกว่าปริมาณ (+9%) ขณะตลาด server CPU โต 20% — ปริมาณคือตัวบอกว่า Intel ส่งของได้เพิ่มจริงไหม",
+        "source_name": "Intel 10-Q",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000050863&type=10-Q&dateb=&owner=include&count=10",
+        "source_tool": "get_filings(INTC, forms=10-Q)",
+        "source_locator": "MD&A → Operating Segments → DCAI → ย่อหน้า revenue (Server volume …)",
+        "question": "Q-0006"
+      },
+      "baseline": {
+        "period": "Q2/26",
+        "value": 9,
+        "as_of": "2026-06-27",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/50863/000005086326000157/intc-20260627.htm",
+        "quote": "Server volume increased 9% compared to Q2 2025 and 2% compared to YTD 2025, primarily driven by higher hyperscaler demand."
+      },
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "โตเร็วกว่า +9% ของ Q2",
+        "low": 9,
+        "high": null,
+        "basis": "Intel: supply ที่เพิ่ม \"skewed towards the end of Q3 and into Q4, especially for servers\" (prepared remarks Q2/26, Z-0074) และ 10-Q: \"we expect these constraints to ease over the second half of 2026\"",
+        "evidence": [
+          "Z-0074"
+        ],
+        "date_key": "INTC_10Q"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ขอบล่าง +9% เป็นข้อเสนอของผม — supply เพิ่มปลายไตรมาส อาจยังไม่เห็นใน Q3"
+    },
+    {
+      "key": "INTC-ASP",
+      "thesis": "INTC",
+      "metric": {
+        "thesis_id": "f758d37e-5eb5-4a4a-a494-2bbd0f6ca2a1",
+        "title": "ASP ของ server YoY",
+        "role": "KILLER",
+        "unit": "% YoY",
+        "cadence": "QUARTERLY",
+        "definition": "\"ASP increases of X%\" ของ server ใน MD&A ส่วน DCAI",
+        "why": "ถ้าความตึงตัวเป็นเรื่องอุปทาน ราคาจะถอยเมื่อกำลังผลิตมา — กำไรวันนี้จึงมาจากของขาด",
+        "kill_rule": "ปริมาณ server ของ Intel เพิ่มแล้ว ASP ถอย = ความตึงตัวเป็นเรื่องอุปทาน ไม่ใช่ความต้องการเชิงโครงสร้าง",
+        "source_name": "Intel 10-Q",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000050863&type=10-Q&dateb=&owner=include&count=10",
+        "source_tool": "get_filings(INTC, forms=10-Q)",
+        "source_locator": "MD&A → Operating Segments → DCAI → ย่อหน้า revenue (… due to ASP increases of X%)",
+        "question": "Q-0005"
+      },
+      "baseline": {
+        "period": "Q2/26",
+        "value": 48,
+        "as_of": "2026-06-27",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/50863/000005086326000157/intc-20260627.htm",
+        "quote": "ASP increases of 48% and 38%, respectively. The majority of the increase in server ASPs was driven by a higher mix of premium products"
+      },
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "ยังเป็นบวกชัดเจน",
+        "low": 20,
+        "high": null,
+        "basis": "ไม่มี guidance — Intel ระบุว่า ASP ที่เพิ่มส่วนใหญ่มาจาก mix สินค้า premium ไม่ใช่การขึ้นราคา (10-Q Q2/26) จึงไม่ควรหายในไตรมาสเดียว",
+        "date_key": "INTC_10Q"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "เส้น killer เป็นเงื่อนไขประกอบ (ปริมาณเพิ่ม + ASP ถอย) จึงไม่ใส่ตัวเลข · ขอบล่าง +20% เป็นข้อเสนอของผม"
+    },
+    {
+      "key": "INTC-SUPPLY",
+      "thesis": "INTC",
+      "metric": {
+        "thesis_id": "f758d37e-5eb5-4a4a-a494-2bbd0f6ca2a1",
+        "title": "ข้อความเรื่องข้อจำกัดกำลังผลิตใน 10-Q",
+        "role": "KILLER",
+        "unit": "",
+        "cadence": "QUARTERLY",
+        "definition": "ประโยคใน MD&A ส่วน DCAI ว่าความต้องการเกินกำลังส่งมอบหรือไม่ และเพราะอะไร (internal / industry-wide)",
+        "why": "ถ้า 1:1 เกิดแต่ Intel ส่งของไม่ได้ ประโยชน์ไหลไป AMD / Arm",
+        "kill_rule": "ผลิตไม่ทัน: ความต้องการ server ยังเกินกำลังส่งมอบจาก internal supply constraints โดยไม่ผ่อนลง",
+        "source_name": "Intel 10-Q",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000050863&type=10-Q&dateb=&owner=include&count=10",
+        "source_tool": "get_filings(INTC, forms=10-Q)",
+        "source_locator": "MD&A → DCAI → ประโยค \"Market demand exceeded our available product supply …\"",
+        "question": "Q-0004"
+      },
+      "baseline": {
+        "period": "Q2/26",
+        "value_text": "ความต้องการเกินกำลังส่งมอบ เพราะ internal supply constraints",
+        "as_of": "2026-06-27",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/50863/000005086326000157/intc-20260627.htm",
+        "quote": "Market demand exceeded our available product supply in Q2 2026 and YTD 2026 due to internal supply constraints."
+      },
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "ข้อจำกัดภายในผ่อนลงตามที่บริษัทคาด ส่วนข้อจำกัดระดับอุตสาหกรรมยังอยู่",
+        "low": null,
+        "high": null,
+        "basis": "10-Q Q2/26: \"we expect these constraints to ease over the second half of 2026\" และ \"industry-wide supply constraints to persist into next year\"",
+        "evidence": [
+          "Z-0074"
+        ],
+        "date_key": "INTC_10Q"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": "เชิงคุณภาพ — ตอนบันทึกต้องบอกเองว่าตรงหรือไม่"
+    },
+    {
+      "key": "INTC-AMD",
+      "thesis": "INTC",
+      "metric": {
+        "thesis_id": "f758d37e-5eb5-4a4a-a494-2bbd0f6ca2a1",
+        "title": "ส่วนแบ่งหน่วย server x86 ของ AMD (Mercury Research)",
+        "role": "KILLER",
+        "unit": "%",
+        "cadence": "QUARTERLY",
+        "definition": "AMD x86 server unit share ตาม Mercury Research ที่สื่อรายงาน",
+        "why": "ตลาด server โต 20% YoY แต่ปริมาณ Intel โต 9% — Intel กำลังเสียส่วนแบ่ง",
+        "kill_rule": "เสียส่วนแบ่งต่อ: AMD ได้ส่วนแบ่งหน่วย server x86 เพิ่มต่อเนื่อง",
+        "source_name": "Mercury Research (ผ่านข่าว The Register / Tom's Hardware)",
+        "source_url": "https://www.theregister.com/systems/2026/08/21/amd-grabs-more-cpu-share-while-pricier-pcs-punish-desktop-demand/5291053",
+        "source_locator": "ประโยค \"AMD gained market share, accounting for … percent of server processors\"",
+        "source_tool": "WebSearch \"Mercury Research Q3 2026 server CPU share AMD\"",
+        "question": "Q-0008"
+      },
+      "baseline": {
+        "period": "Q2/26",
+        "value": 34.5,
+        "as_of": "2026-06-30",
+        "source_url": "https://www.theregister.com/systems/2026/08/21/amd-grabs-more-cpu-share-while-pricier-pcs-punish-desktop-demand/5291053",
+        "quote": "AMD gained market share, accounting for 34.5 percent of server processors compared with 27.3 percent a year ago.",
+        "note": "ปีก่อน 27.3%"
+      },
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "ยังไม่ได้ตั้ง",
+        "low": null,
+        "high": null,
+        "basis": "",
+        "date_key": "MERCURY_Q3"
+      },
+      "forecast_origin": "NEEDS_USER",
+      "review": "thesis เขียนว่า \"เสียส่วนแบ่งต่อ\" โดยไม่มีตัวเลข — ต้องการเส้น killer เท่าไร (เช่น > 38%) และคาด Q3 เท่าไร · ผมไม่เสนอตัวเลขเพราะไม่มีฐานให้อ้าง"
+    },
+    {
+      "key": "INTC-ARM",
+      "thesis": "INTC",
+      "metric": {
+        "thesis_id": "f758d37e-5eb5-4a4a-a494-2bbd0f6ca2a1",
+        "title": "ส่วนแบ่ง Arm ในตลาด server (Mercury Research)",
+        "role": "KILLER",
+        "unit": "%",
+        "cadence": "QUARTERLY",
+        "definition": "Arm share ของ server processors ตาม Mercury Research ที่สื่อรายงาน — Mercury ระบุเองว่าไม่แน่นอนสูง",
+        "why": "ถ้า CPU ที่เพิ่มจาก agentic AI เป็น Arm (Vera, ชิปของ Arm เอง, ชิป hyperscaler) x86 ไม่ได้ประโยชน์จาก 1:1",
+        "kill_rule": "CPU ที่เพิ่มไม่ใช่ x86: ส่วนแบ่ง Arm ในตลาด server เพิ่มเร็วขึ้น",
+        "source_name": "Mercury Research (ผ่านข่าว The Register / Tom's Hardware)",
+        "source_url": "https://www.theregister.com/systems/2026/08/21/amd-grabs-more-cpu-share-while-pricier-pcs-punish-desktop-demand/5291053",
+        "source_locator": "ประโยค \"Mercury estimates that Arm's share reached …\"",
+        "source_tool": "WebSearch \"Mercury Research Q3 2026 Arm server share\"",
+        "question": "Q-0008"
+      },
+      "baseline": {
+        "period": "Q2/26",
+        "value": 13.6,
+        "as_of": "2026-06-30",
+        "source_url": "https://www.theregister.com/systems/2026/08/21/amd-grabs-more-cpu-share-while-pricier-pcs-punish-desktop-demand/5291053",
+        "quote": "Mercury estimates that Arm's share reached a record 13.6 percent, up 0.5 percentage points.",
+        "note": "+0.5 จุดจากไตรมาสก่อน"
+      },
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "ยังไม่ได้ตั้ง",
+        "low": null,
+        "high": null,
+        "basis": "",
+        "date_key": "MERCURY_Q3"
+      },
+      "forecast_origin": "NEEDS_USER",
+      "review": "เหมือนข้อ AMD — ต้องการเส้น killer และค่าคาดการณ์ของคุณ"
+    },
+    {
+      "key": "INTC-GM",
+      "thesis": "INTC",
+      "metric": {
+        "thesis_id": "f758d37e-5eb5-4a4a-a494-2bbd0f6ca2a1",
+        "title": "อัตรากำไรขั้นต้น non-GAAP เทียบ guidance",
+        "role": "WATCH",
+        "unit": "%",
+        "cadence": "QUARTERLY",
+        "definition": "Non-GAAP gross margin ตามตารางสรุปใน earnings release",
+        "why": "wafer 18A ที่แพงกว่ายังฉุดกำไร — GM บอกว่าปริมาณที่เพิ่มดูดซับต้นทุนคงที่ของโรงงานได้แค่ไหน",
+        "source_name": "Intel earnings release (8-K EX-99.1) + prepared remarks",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000050863&type=8-K&dateb=&owner=include&count=10",
+        "source_tool": "get_filings(INTC, forms=8-K) → EX-99.1 · backend GET /api/company/outlook/INTC",
+        "source_locator": "ตารางสรุป GAAP / Non-GAAP → Gross margin (คอลัมน์ Non-GAAP) · ตาราง Business Outlook"
+      },
+      "baseline": {
+        "period": "Q2/26",
+        "value": 41.8,
+        "as_of": "2026-06-27",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/50863/000005086326000155/q226earningsrelease.htm",
+        "quote": "Gross margin 40.4% 27.5% up 12.9 ppts 41.8% 29.7% up 12.1 ppts"
+      },
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "ราว 42.0% ตาม guidance",
+        "low": 41.5,
+        "high": 42.5,
+        "basis": "Guidance Q3/26: non-GAAP gross margin 42.0% ที่ค่ากลางของช่วงรายได้ (8-K EX-99.1, 23 ก.ค. 2026) — guidance เป็นจุดเดียว ช่วง ±0.5 จุดเป็นของผม",
+        "date_key": "INTC_Q3"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": "ช่วง ±0.5 จุดรอบ 42.0% เป็นข้อเสนอของผม"
+    },
+    {
+      "key": "INTC-REV",
+      "thesis": "INTC",
+      "metric": {
+        "thesis_id": "f758d37e-5eb5-4a4a-a494-2bbd0f6ca2a1",
+        "title": "รายได้รวมเทียบ guidance",
+        "role": "WATCH",
+        "unit": "$bn",
+        "cadence": "QUARTERLY",
+        "definition": "Revenue ตาม earnings release",
+        "why": "รายได้ถูกจำกัดด้วยของที่ส่งได้ — เกินปลายบนของ guidance = supply มาเร็วกว่าคาด",
+        "source_name": "Intel earnings release (8-K EX-99.1) + prepared remarks",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000050863&type=8-K&dateb=&owner=include&count=10",
+        "source_tool": "get_filings(INTC, forms=8-K) → EX-99.1 · backend GET /api/company/outlook/INTC",
+        "source_locator": "ตารางสรุป → Revenue ($B) · ตาราง Business Outlook"
+      },
+      "baseline": {
+        "period": "Q2/26",
+        "value": 16.1,
+        "as_of": "2026-06-27",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/50863/000005086326000155/q226earningsrelease.htm",
+        "quote": "Revenue ($B) $16.1 $12.9 up 25%"
+      },
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "$15.8–16.8bn ตาม guidance",
+        "low": 15.8,
+        "high": 16.8,
+        "basis": "Guidance Q3/26: revenue $15.8-16.8 billion (8-K EX-99.1, 23 ก.ค. 2026)",
+        "date_key": "INTC_Q3"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": ""
+    },
+    {
+      "key": "INTC-CAPEX",
+      "thesis": "INTC",
+      "metric": {
+        "thesis_id": "f758d37e-5eb5-4a4a-a494-2bbd0f6ca2a1",
+        "title": "แนวทาง capex ปี 2027",
+        "role": "WATCH",
+        "unit": "$bn",
+        "cadence": "QUARTERLY",
+        "definition": "ตัวเลขหรือช่วง gross capex ปี 2027 ที่บริษัทให้ใน prepared remarks / call",
+        "why": "capex 2027 ที่สูงกว่าเงินที่ระดมได้ ($23bn ส.ค. 2026) = ความเสี่ยงเพิ่มทุนอีกรอบ",
+        "source_name": "Intel earnings release (8-K EX-99.1) + prepared remarks",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000050863&type=8-K&dateb=&owner=include&count=10",
+        "source_tool": "get_filings(INTC, forms=8-K) → EX-99.1 · backend GET /api/company/outlook/INTC",
+        "source_locator": "Prepared remarks (CFO) → ย่อหน้า capital expenditures / 2027",
+        "question": "Q-0009"
+      },
+      "baseline": {
+        "period": "Q2/26",
+        "value_text": "2026 สูงกว่า $20bn · 2027 สูงกว่า 2026 มาก (ยังไม่มีตัวเลข)",
+        "as_of": "2026-07-23",
+        "zettel": "Z-0074"
+      },
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "ยังไม่ได้ตั้ง",
+        "low": null,
+        "high": null,
+        "basis": "",
+        "date_key": "INTC_Q3"
+      },
+      "forecast_origin": "NEEDS_USER",
+      "review": "บริษัทยังไม่ให้ตัวเลข 2027 — คุณคาดว่าเท่าไร และเท่าไรถือว่าต้องเพิ่มทุนอีก"
+    },
+    {
+      "key": "INTC-SHARES",
+      "thesis": "INTC",
+      "metric": {
+        "thesis_id": "f758d37e-5eb5-4a4a-a494-2bbd0f6ca2a1",
+        "title": "จำนวนหุ้นถัวเฉลี่ย (diluted)",
+        "role": "WATCH",
+        "unit": "ล้านหุ้น",
+        "cadence": "QUARTERLY",
+        "definition": "Weighted average shares of common stock outstanding — Diluted ในงบกำไรขาดทุนของ 10-Q",
+        "why": "ประโยชน์ต่อหุ้นจาก 1:1 ถูกเจือจางด้วยการเพิ่มทุน: +17% ในหนึ่งปีก่อนรอบ ส.ค. 2026 แล้วเพิ่มอีก 242.1 ล้านหุ้น",
+        "source_name": "Intel 10-Q",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000050863&type=10-Q&dateb=&owner=include&count=10",
+        "source_tool": "get_filings(INTC, forms=10-Q) · get_stock_data(INTC, kind=balance-sheet)",
+        "source_locator": "Consolidated Condensed Statements of Operations → Weighted average shares of common stock outstanding → Diluted",
+        "question": "Q-0009"
+      },
+      "baseline": {
+        "period": "Q2/26",
+        "value": 5104,
+        "as_of": "2026-06-27",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/50863/000005086326000157/intc-20260627.htm",
+        "quote": "Weighted average shares of common stock outstanding: Basic 5,104 4,369 5,108 4,356 Diluted 5,104 4,369 5,108 4,356"
+      },
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "ราว 5,230 ล้านหุ้น (หุ้นเพิ่มทุนนับครึ่งไตรมาส)",
+        "low": 5200,
+        "high": 5260,
+        "basis": "5,104 + 242.1 ล้านหุ้นที่ออก 10–11 ส.ค. 2026 (Z-0075) × ราว 46/91 วันที่เหลือของไตรมาส ≈ 5,226 — คำนวณเอง ไม่รวมหุ้นจากค่าตอบแทนพนักงาน",
+        "evidence": [
+          "Z-0075"
+        ],
+        "date_key": "INTC_10Q"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ช่วง 5,200–5,260 มาจากการคำนวณของผม"
+    }
+  ]
+}

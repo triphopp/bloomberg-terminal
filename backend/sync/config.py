@@ -125,6 +125,30 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     ("zettel_edges",             ["id"]),
     ("zettel_sources",           ["id"]),
     ("zettel_refs",              ["zettel_id", "target_type", "target_id"]),  # composite PK
+    # Thesis questions (routers/questions.py). `questions` is the only head row
+    # (field-level LWW) and is kept small on purpose: every op carries the whole
+    # row. Edges, answers, signals, assumptions and checks are append-only by
+    # construction — accepting an answer or testing an assumption ADDS a
+    # question_checks row — so a merge unions them, and status is derived from
+    # them on read rather than synced.
+    ("questions",                ["id"]),
+    ("question_edges",           ["id"]),
+    ("question_answers",         ["id"]),
+    ("question_signals",         ["id"]),
+    ("question_assumptions",     ["id"]),
+    ("question_checks",          ["id"]),
+    # The question calendar: question_dates is a small head row (a date gets
+    # revised → LWW); links and the revision trail are insert-only.
+    ("question_dates",           ["id"]),
+    ("question_date_links",      ["id"]),
+    ("question_date_changes",    ["id"]),
+    # Thesis tracking (routers/tracking.py). Same split as the questions:
+    # track_metrics is the small head row (LWW); an expectation and a reading
+    # are never updated — a revised forecast or a corrected number is a new row —
+    # so a merge unions them and due / off / kill are derived on read.
+    ("track_metrics",            ["id"]),
+    ("track_expectations",       ["id"]),
+    ("track_readings",           ["id"]),
     # Rendered analysis pages. The ROW travels here; the HTML file beside it
     # travels through sync/files.py, because a page index without its pages is
     # four links that 404 on the other machine. Keyed on `slug` (UNIQUE, and the

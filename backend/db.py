@@ -1881,6 +1881,323 @@ def zettel_fts_available() -> bool:
     return row is not None
 
 
+def init_questions_schema() -> None:
+    """Open questions a thesis is carrying, and the evidence-gated answers to them
+    (routers/questions.py, plan memory/plans/thesis-questions.md).
+
+    Shaped by how the op-log syncs (sync/oplog.py): every op carries the WHOLE
+    row, and two devices editing one row concurrently is a conflict to review.
+    So only `questions` is a head row that gets edited, and it is kept small —
+    the long text lives in rows no endpoint ever updates. A question's status is
+    never stored: it is derived on read from the answers, reviews and assumption
+    checks, which makes it something two devices cannot disagree about. Accepting
+    an answer and checking an assumption are therefore NEW rows in
+    `question_checks`, not a flag on the answer.
+
+    `ref` (Q-0007) is a label, not a key — same reasoning as zettel.ref.
+    """
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS questions (
+                id          TEXT PRIMARY KEY,
+                ref         TEXT,
+                thesis_id   TEXT,
+                symbol      TEXT,
+                title       TEXT NOT NULL DEFAULT '',
+                thought     TEXT NOT NULL DEFAULT '',
+                is_root     INTEGER NOT NULL DEFAULT 0,
+                priority    INTEGER,
+                next_check  TEXT,
+                claimed_by  TEXT,
+                claimed_at  TEXT,
+                dropped_at  TEXT,
+                drop_reason TEXT NOT NULL DEFAULT '',
+                actor       TEXT NOT NULL DEFAULT 'user',
+                deleted_at  TEXT,
+                device_id   TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_question_thesis ON questions(thesis_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_question_ref    ON questions(ref)")
+
+        # child → parent: "answering the child moves the parent". if_a / if_b are
+        # what make a question worth carrying — if both outcomes leave the parent
+        # where it was, the question reduces no uncertainty.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS question_edges (
+                id         TEXT PRIMARY KEY,
+                child_id   TEXT NOT NULL,
+                parent_id  TEXT NOT NULL,
+                if_a       TEXT NOT NULL DEFAULT '',
+                if_b       TEXT NOT NULL DEFAULT '',
+                actor      TEXT NOT NULL DEFAULT 'user',
+                device_id  TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_qedge_child  ON question_edges(child_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_qedge_parent ON question_edges(parent_id)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS question_answers (
+                id           TEXT PRIMARY KEY,
+                question_id  TEXT NOT NULL,
+                level        TEXT NOT NULL,
+                basis        TEXT,
+                answer       TEXT NOT NULL DEFAULT '',
+                value        TEXT,
+                unit         TEXT,
+                as_of        TEXT,
+                alternatives TEXT,
+                searched     TEXT NOT NULL DEFAULT '',
+                next_check   TEXT,
+                evidence     TEXT,
+                actor        TEXT NOT NULL DEFAULT 'user',
+                device_id    TEXT,
+                created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_qans_question ON question_answers(question_id)")
+
+        # "If this were true, what else would we see?" — one row per expected
+        # trace, found or not. NOT_FOUND is kept on purpose: an absence someone
+        # looked for is evidence, an absence nobody looked for is nothing.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS question_signals (
+                id             TEXT PRIMARY KEY,
+                question_id    TEXT NOT NULL,
+                answer_id      TEXT NOT NULL,
+                expectation    TEXT NOT NULL DEFAULT '',
+                result         TEXT NOT NULL DEFAULT 'NOT_SEARCHED',
+                finding        TEXT NOT NULL DEFAULT '',
+                supports       TEXT NOT NULL DEFAULT '',
+                diagnostic     INTEGER NOT NULL DEFAULT 0,
+                origin         TEXT NOT NULL DEFAULT '',
+                zettel_id      TEXT,
+                searched_where TEXT NOT NULL DEFAULT '',
+                device_id      TEXT,
+                created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_qsig_answer ON question_signals(answer_id)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS question_assumptions (
+                id          TEXT PRIMARY KEY,
+                question_id TEXT NOT NULL,
+                answer_id   TEXT NOT NULL,
+                statement   TEXT NOT NULL DEFAULT '',
+                metric      TEXT NOT NULL DEFAULT '',
+                source_hint TEXT NOT NULL DEFAULT '',
+                check_by    TEXT,
+                falsifier   TEXT NOT NULL DEFAULT '',
+                device_id   TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_qasm_answer ON question_assumptions(answer_id)")
+
+        # kind REVIEW  → target_id = answer id,     result ACCEPTED | REJECTED
+        # kind ASSUMPTION → target_id = assumption id, result HELD | BROKEN
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS question_checks (
+                id          TEXT PRIMARY KEY,
+                question_id TEXT NOT NULL,
+                kind        TEXT NOT NULL,
+                target_id   TEXT NOT NULL,
+                result      TEXT NOT NULL,
+                note        TEXT NOT NULL DEFAULT '',
+                zettel_id   TEXT,
+                actor       TEXT NOT NULL DEFAULT 'user',
+                device_id   TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_qchk_target   ON question_checks(target_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_qchk_question ON question_checks(question_id)")
+
+        # The calendar: dated things that could answer a question — an earnings
+        # release, a filing, a data publication. One row serves every question
+        # that waits on it, and it says where the DATE itself came from and
+        # whether it is confirmed or only estimated, because "check on the 22nd"
+        # is a claim like any other. A head row (the date gets revised); each
+        # revision is also kept in question_date_changes.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS question_dates (
+                id         TEXT PRIMARY KEY,
+                ref        TEXT,
+                title      TEXT NOT NULL DEFAULT '',
+                date       TEXT NOT NULL,
+                status     TEXT NOT NULL DEFAULT 'ESTIMATED',
+                source     TEXT NOT NULL DEFAULT '',
+                source_url TEXT NOT NULL DEFAULT '',
+                symbol     TEXT,
+                kind       TEXT NOT NULL DEFAULT 'OTHER',
+                note       TEXT NOT NULL DEFAULT '',
+                actor      TEXT NOT NULL DEFAULT 'user',
+                deleted_at TEXT,
+                device_id  TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_qdate_date ON question_dates(date)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS question_date_links (
+                id          TEXT PRIMARY KEY,
+                date_id     TEXT NOT NULL,
+                question_id TEXT NOT NULL,
+                reads       TEXT NOT NULL DEFAULT '',
+                actor       TEXT NOT NULL DEFAULT 'user',
+                device_id   TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_qdlink_date     ON question_date_links(date_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_qdlink_question ON question_date_links(question_id)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS question_date_changes (
+                id         TEXT PRIMARY KEY,
+                date_id    TEXT NOT NULL,
+                old_date   TEXT,
+                new_date   TEXT,
+                old_status TEXT,
+                new_status TEXT,
+                reason     TEXT NOT NULL DEFAULT '',
+                actor      TEXT NOT NULL DEFAULT 'user',
+                device_id  TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_qdchg_date ON question_date_changes(date_id)")
+
+
+def init_tracking_schema() -> None:
+    """Thesis tracking — the numbers a thesis stands or falls on, each one
+    compared against what was expected when it is published.
+
+    A question (above) is something not known. A tracked metric is something
+    that WILL be known on a date: a margin, an inventory figure, a contract
+    price. Three things are kept for it, and they are separate rows because they
+    are written at different times by different hands:
+
+      track_metrics       what the number is, why it matters, the kill line, and
+                          WHERE TO READ IT — the document, the link, the place
+                          inside it, the tool that fetches it. The one head row
+                          (edited in place, field-level LWW), kept small.
+      track_expectations  what we expected for one period and why, and the date
+                          it is published (a row of question_dates, so a moved
+                          earnings date moves here too). Never updated: revising
+                          a forecast adds a row for the same period.
+      track_readings      what it came out as, with its evidence, the verdict
+                          against the expectation and whether it crossed the
+                          kill line. Never updated: a correction adds a row.
+
+    Nothing here is a status. Due / off / kill are derived on read
+    (routers/tracking._derive) from rows that are only ever added, so two
+    devices cannot disagree — same reasoning as the questions schema. A reading
+    that is not in line opens a row in `questions`; the explanation is tracked
+    there, not here.
+    """
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS track_metrics (
+                id             TEXT PRIMARY KEY,
+                ref            TEXT,
+                thesis_id      TEXT,
+                symbol         TEXT,
+                title          TEXT NOT NULL DEFAULT '',
+                role           TEXT NOT NULL DEFAULT 'WATCH',
+                unit           TEXT NOT NULL DEFAULT '',
+                definition     TEXT NOT NULL DEFAULT '',
+                why            TEXT NOT NULL DEFAULT '',
+                kill_rule      TEXT NOT NULL DEFAULT '',
+                kill_op        TEXT,
+                kill_value     REAL,
+                cadence        TEXT NOT NULL DEFAULT 'QUARTERLY',
+                source_name    TEXT NOT NULL DEFAULT '',
+                source_url     TEXT NOT NULL DEFAULT '',
+                source_locator TEXT NOT NULL DEFAULT '',
+                source_tool    TEXT NOT NULL DEFAULT '',
+                series_id      TEXT,
+                question_id    TEXT,
+                retired_at     TEXT,
+                retire_reason  TEXT NOT NULL DEFAULT '',
+                actor          TEXT NOT NULL DEFAULT 'user',
+                deleted_at     TEXT,
+                device_id      TEXT,
+                created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trackm_thesis ON track_metrics(thesis_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trackm_ref    ON track_metrics(ref)")
+
+        # low / high: the band that counts as "in line". Either side may be
+        # open (≥ low, ≤ high); both NULL = the expectation is words only and
+        # whoever records the reading has to say whether it matched.
+        # due_date is always filled; date_id, when set, points at the calendar
+        # row whose date wins while that row is alive.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS track_expectations (
+                id           TEXT PRIMARY KEY,
+                metric_id    TEXT NOT NULL,
+                period       TEXT NOT NULL DEFAULT '',
+                expected     TEXT NOT NULL DEFAULT '',
+                low          REAL,
+                high         REAL,
+                basis        TEXT NOT NULL DEFAULT '',
+                evidence     TEXT,
+                date_id      TEXT,
+                due_date     TEXT,
+                release_time TEXT NOT NULL DEFAULT '',
+                actor        TEXT NOT NULL DEFAULT 'user',
+                device_id    TEXT,
+                created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tracke_metric ON track_expectations(metric_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tracke_date   ON track_expectations(date_id)")
+
+        # verdict IN_LINE | ABOVE | BELOW | OFF | UNSCORED (no expectation existed).
+        # kill = the kill line was crossed AS IT STOOD when this was read — kept
+        # on the row so moving the line later does not rewrite what happened.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS track_readings (
+                id             TEXT PRIMARY KEY,
+                metric_id      TEXT NOT NULL,
+                expectation_id TEXT,
+                period         TEXT NOT NULL DEFAULT '',
+                as_of          TEXT,
+                value          REAL,
+                value_text     TEXT NOT NULL DEFAULT '',
+                verdict        TEXT NOT NULL DEFAULT 'UNSCORED',
+                kill           INTEGER NOT NULL DEFAULT 0,
+                note           TEXT NOT NULL DEFAULT '',
+                zettel_id      TEXT,
+                source_url     TEXT NOT NULL DEFAULT '',
+                quote          TEXT NOT NULL DEFAULT '',
+                question_id    TEXT,
+                actor          TEXT NOT NULL DEFAULT 'user',
+                device_id      TEXT,
+                created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trackr_metric ON track_readings(metric_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trackr_exp    ON track_readings(expectation_id)")
+
+
 # Tables whose every INSERT / UPDATE / DELETE lands in audit_events.
 # option_trade_matches is left out on purpose: it is rebuilt from option_trades
 # on every edit, so logging it would bury the real change under recomputation.
@@ -2258,6 +2575,16 @@ def init_guard_schema() -> None:
             CREATE TABLE IF NOT EXISTS guard_state (
                 key        TEXT PRIMARY KEY,
                 flags      TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL
+            )
+        """)
+        # Take-profit rebalance rules (rebalance.Rules as JSON, one row id=1).
+        # Machine-local like guard_state — NOT in sync SYNC_TABLES, so a peer
+        # on older code never sees ops for a table it does not know.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS rebalance_rules (
+                id         INTEGER PRIMARY KEY CHECK (id = 1),
+                rules_json TEXT NOT NULL DEFAULT '{}',
                 updated_at TEXT NOT NULL
             )
         """)

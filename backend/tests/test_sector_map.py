@@ -123,3 +123,35 @@ def test_leveraged_and_inverse_etfs_get_their_own_us_sector():
 def test_to_gics(label, gics):
     from sector_map import to_gics
     assert to_gics(label) == gics
+
+
+# ── fit_sector: a stored sector stays in its account's list ──────────────────
+
+from sector_map import SET_SECTORS, US_SECTORS, fit_sector, sector_vocab  # noqa: E402
+
+
+def test_sector_vocab_per_account():
+    assert sector_vocab("dime", "USD") is US_SECTORS
+    assert sector_vocab("finansia", "THB") is SET_SECTORS
+    assert sector_vocab("someusd", "USD") is US_SECTORS
+    assert sector_vocab("other", "THB") is SET_SECTORS
+
+
+def test_fit_sector_keeps_a_label_that_fits():
+    assert fit_sector("Information Technology", US_SECTORS) == "Information Technology"
+    assert fit_sector("ETRON", SET_SECTORS) == "ETRON"
+    assert fit_sector("", US_SECTORS) == ""
+
+
+def test_fit_sector_uses_the_classification_in_the_accounts_list():
+    # SNDK filed as the SET code on Dime: the classification decides
+    cls = {"set_sector": "ETRON", "us_sector": "Information Technology"}
+    assert fit_sector("ETRON", US_SECTORS, cls) == "Information Technology"
+    # a GICS label on a Thai account goes back to the SET code
+    assert fit_sector("Industrials", SET_SECTORS, {"set_sector": "TRANS", "us_sector": "Industrials"}) == "TRANS"
+
+
+def test_fit_sector_falls_back_to_gics_then_blank():
+    assert fit_sector("TECH", US_SECTORS) == "Information Technology"
+    assert fit_sector("BOND", US_SECTORS) == "Fixed Income"
+    assert fit_sector("INDU", SET_SECTORS) == ""   # no SET code is a guess

@@ -42,6 +42,27 @@ def _check(out: list, cid: str, level: str, message: str) -> None:
     out.append({"id": cid, "level": level, "message": message})
 
 
+def _fill_price(qty: Decimal, shown: Decimal, gross: Decimal) -> Decimal:
+    """Fewest-decimals price (2 → 4 dp) with qty × price = gross to the cent,
+    nearest gross / qty; the shown price wins a tie. Falls back to gross / qty
+    at 4 dp when no 2–4 dp price reproduces the value."""
+    target = gross.quantize(CENT, ROUND_HALF_UP)
+    avg = gross / qty
+    if (qty * shown).quantize(CENT, ROUND_HALF_UP) == target:
+        return shown
+    for dp in (2, 3, 4):
+        step = Decimal(1).scaleb(-dp)
+        mid = avg.quantize(step, ROUND_HALF_UP)
+        hits = []
+        for k in range(-50, 51):
+            p = mid + step * k
+            if p > 0 and (qty * p).quantize(CENT, ROUND_HALF_UP) == target:
+                hits.append(p)
+        if hits:
+            return min(hits, key=lambda p: (abs(p - avg), abs(p - shown)))
+    return avg.quantize(Decimal("0.0001"), ROUND_HALF_UP)
+
+
 def validate(slip: dict, fee_schedule: FeeSchedule | None = None) -> list[dict]:
     checks: list[dict] = []
     f = slip["fields"]
@@ -63,9 +84,14 @@ def validate(slip: dict, fee_schedule: FeeSchedule | None = None) -> list[dict]:
         diff = abs(qty * px - gross)
         tol = qty * CENT + CENT
         if diff <= tol:
-            exact = gross / qty
-            derived["exact_price"] = str(exact.quantize(Decimal("0.0001"), ROUND_HALF_UP))
-            note = "" if diff <= CENT else f" (shown price is rounded; exact {derived['exact_price']})"
+            # The fill price is the one with the fewest decimals whose qty ×
+            # it lands on the value to the cent, nearest the true average
+            # (value / qty): SNDK keeps the shown 1,735.97; COST (914.11 ×
+            # 2.0751791 = 1,896.94 ≠ 1,896.96) becomes 914.12, which does
+            # reproduce it — not 914.1187.
+            derived["exact_price"] = str(_fill_price(qty, px, gross))
+            note = ("" if derived["exact_price"] == str(px)
+                    else f" (shown price is rounded; fill {derived['exact_price']})")
             _check(checks, "value", "ok", f"{qty} × {px} ≈ {gross}{note}")
         else:
             _check(checks, "value", "error",

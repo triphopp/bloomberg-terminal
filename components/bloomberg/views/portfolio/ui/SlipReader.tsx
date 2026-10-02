@@ -81,9 +81,15 @@ const LEVEL = {
 export function SlipReader({
   colors,
   onFill,
+  onPages,
+  resetSeq = 0,
 }: {
   colors: Colors;
   onFill: (r: SlipResult) => void;
+  /** The screenshots being read, so ENTRY can show them beside the form. */
+  onPages?: (files: File[]) => void;
+  /** Bumped by ENTRY after SAVE / CLEAR: the next image starts a new order. */
+  resetSeq?: number;
 }) {
   const [busy, setBusy] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -123,6 +129,18 @@ export function SlipReader({
   pagesRef.current = pages;
   const resultRef = useRef(result);
   resultRef.current = result;
+  const onPagesRef = useRef(onPages);
+  onPagesRef.current = onPages;
+  useEffect(() => {
+    onPagesRef.current?.(pages);
+  }, [pages]);
+  // The form was saved or cleared — whatever was read belongs to that order.
+  useEffect(() => {
+    if (!resetSeq) return;
+    setPages([]);
+    setResult(null);
+    setError("");
+  }, [resetSeq]);
 
   const read = async (incoming: File[], mode: "auto" | "append" | "new" = "auto") => {
     const files = incoming.filter((f) => f.type.startsWith("image/"));
@@ -130,9 +148,14 @@ export function SlipReader({
       setError("Not an image — drop a PNG / JPG / WEBP screenshot");
       return;
     }
+    // Only an unfinished OPTION slip (or one that could not be read at all)
+    // takes the next image as its other half. A stock slip is one screenshot —
+    // appending to a "review" stock read glued the next order onto the last one.
+    const prev = resultRef.current;
+    const unfinished =
+      prev?.status === "fail" || (prev?.status === "review" && isOptionSlip(prev.form));
     const append =
-      mode === "append" ||
-      (mode === "auto" && pagesRef.current.length > 0 && resultRef.current?.status !== "ok");
+      mode === "append" || (mode === "auto" && pagesRef.current.length > 0 && unfinished);
     const all = (append ? [...pagesRef.current, ...files] : files).slice(0, 4);
     setPages(all);
     setBusy(true);
@@ -192,11 +215,12 @@ export function SlipReader({
     };
   }, []);
 
-  // Ctrl+V a screenshot anywhere on the tab — unless the caret is in a field.
+  // Ctrl+V a screenshot anywhere on the tab — also while the caret is in a
+  // field: an image has nowhere to go in a text box, and requiring a click
+  // outside first read as "paste does nothing until I reload".
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
-      const el = document.activeElement;
-      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return;
+      if (busyRef.current) return;
       const item = Array.from(e.clipboardData?.items ?? []).find((i) =>
         i.type.startsWith("image/")
       );
@@ -217,7 +241,7 @@ export function SlipReader({
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <span className="text-[9px]" style={{ color: colors.textSecondary }}>
-          กรอกข้อมูล trade ทีละรายการ — P&amp;L คำนวณอัตโนมัติเมื่อกรอก Entry/Exit/Volume
+          วางสลิป (Ctrl+V / ลากมาวาง) เพื่อเติมฟอร์มอัตโนมัติ — หรือกรอกเองด้านล่าง
         </span>
         <button
           type="button"
@@ -250,7 +274,9 @@ export function SlipReader({
         <div className="flex items-center gap-3 text-[9px]" style={{ color: colors.textSecondary }}>
           <span>
             {pages.length} ภาพของคำสั่งนี้
-            {result?.status !== "ok" && " — ภาพถัดไปจะรวมเป็นคำสั่งเดียวกัน"}
+            {(result?.status === "fail" ||
+              (result?.status === "review" && isOptionSlip(result.form))) &&
+              " — ภาพถัดไปจะรวมเป็นคำสั่งเดียวกัน"}
           </span>
           <button
             type="button"

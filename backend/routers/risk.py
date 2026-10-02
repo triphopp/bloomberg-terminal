@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 from datetime import date, datetime, timedelta
-from typing import Optional
+from typing import Literal, Optional
 
 import numpy as np
 import pandas as pd
@@ -230,6 +230,8 @@ def _aligned_returns(
     base_currency: Optional[str] = None,
     calendar: Optional["pd.DatetimeIndex"] = None,
     min_history: int = MIN_HISTORY_DAYS,
+    common_only: bool = True,
+    close: Optional["pd.DataFrame"] = None,
 ) -> tuple["pd.DataFrame", list[dict]]:
     """Date-aligned log-return matrix, optionally translated to `base_currency`.
 
@@ -242,8 +244,14 @@ def _aligned_returns(
     market instead of shifting its whole history by one row. The calendar is
     the union of the non-24/7 symbols' own trading days — crypto's weekend bars
     would otherwise invent ~100 zero-return days a year for every equity.
+
+    `common_only=False` keeps the days before a symbol was listed as NaN
+    instead of cutting every symbol down to the youngest one's history (the
+    Monte Carlo fills those days itself — `port_mc.backfill`). `close` = a
+    close frame the caller already fetched (and repaired), used as is.
     """
-    close = _fetch_close_frame(symbols, days)
+    if close is None:
+        close = _fetch_close_frame(symbols, days)
     if close.empty:
         return pd.DataFrame(), [{"symbol": s, "reason": "no data", "bars": 0} for s in symbols]
 
@@ -291,7 +299,7 @@ def _aligned_returns(
             fx_ret = np.log(fx.reindex(calendar).ffill()).diff()
             rets[sym] = rets[sym] + fx_ret
 
-    rets = rets.dropna()
+    rets = rets.dropna() if common_only else rets.dropna(how="all")
     if len(rets) > days:
         rets = rets.iloc[-days:]
     return rets, excluded
@@ -2202,6 +2210,21 @@ def get_risk_parity_allocation(
     if not positions:
         return {"current_weights": [], "optimal_weights": [], "rebalance_actions": []}
 
+    # Current prices: weights are MARKET value. Cost (price_entry) weights froze
+    # each holding at its entry size, so a winner that doubled looked unchanged
+    # and the ERC trades were sized off the wrong book (fixed 2026-10-02).
+    try:
+        from routers.portfolio_v2 import _batch_fetch_prices
+        price_map = _batch_fetch_prices(
+            sorted({y for y in (_position_yf_symbol(p) for p in positions) if y}))
+    except Exception:
+        price_map = {}
+
+    def _px(yf_sym: str) -> Optional[float]:
+        snap = price_map.get(yf_sym)
+        v = snap.get("price") if isinstance(snap, dict) else snap
+        return float(v) if v else None
+
     # Aggregate values by yf_symbol — fixes bug where duplicate positions were ignored
     sym_value_map: dict[str, float] = {}
     sym_name_map: dict[str, str] = {}
@@ -2209,7 +2232,7 @@ def get_risk_parity_allocation(
     for pos in positions:
         yf_sym = _position_yf_symbol(pos)
         if yf_sym:
-            native_val = float(pos["price_entry"]) * float(pos["volume"])
+            native_val = (_px(yf_sym) or float(pos["price_entry"])) * float(pos["volume"])
             val = convert_amount(native_val, trade_currency(pos), "THB")
             if val > 0:
                 sym_value_map[yf_sym] = sym_value_map.get(yf_sym, 0.0) + val
@@ -2244,13 +2267,6 @@ def get_risk_parity_allocation(
     current_valid = np.array([current_w[i] for i in valid_idx])
     current_valid = current_valid / current_valid.sum()
 
-    # Fetch current prices for shares calculation
-    try:
-        from routers.portfolio_v2 import _batch_fetch_prices
-        price_map = _batch_fetch_prices(valid_syms)
-    except Exception:
-        price_map = {}
-
     # Rebalance actions
     actions = []
     for i, idx in enumerate(valid_idx):
@@ -2259,8 +2275,7 @@ def get_risk_parity_allocation(
             action = "BUY" if drift > 0 else "TRIM"
             trade_val = drift * total
             yf_sym = valid_syms[i]
-            snap = price_map.get(yf_sym)
-            cur_price = snap.get("price") if isinstance(snap, dict) else snap
+            cur_price = _px(yf_sym)
             price_base = convert_amount(
                 float(cur_price or 0), sym_currency_map.get(yf_sym, "THB"), "THB"
             )
@@ -2625,12 +2640,21 @@ def get_guard_size(
     account_id: Optional[str] = Query(None),
     base_currency: str = Query("THB"),
     stop: Optional[float] = Query(None, description="Manual stop, if the user has one"),
+    risk: Optional[float] = Query(None, description="Money the user accepts to lose, in base_currency"),
+    notional: Optional[float] = Query(None, description="Money the user wants to put in, in base_currency"),
+    risk_stop: Optional[float] = Query(None, description="Stop the form holds (auto or typed) — sizes the risk plan's STOP row"),
 ):
     """S / M / L volumes for a planned entry — pre-trade layer of the guard.
 
     NAV = invested market value + cash of `account_id` (all accounts if none),
     scaled by the guard's size multiplier (half after −5% NAV drawdown or a
     losing streak, zero after −10%).
+
+    With `risk` the response also carries `risk_plan` (trade_guard.risk_size):
+    the volume per stop distance that loses exactly `risk`, buy + sell fees
+    included when the account has a fee schedule, and — with `notional` — the
+    stop that amount implies. The guard multiplier is NOT applied to it: the
+    user named the money; the multiplier is reported beside it instead.
     """
     import trade_guard
     from portfolio_currency import infer_instrument_currency
@@ -2658,6 +2682,24 @@ def get_guard_size(
         multiplier=snap.get("size_multiplier", 1.0), manual_stop=stop,
         lot=100.0 if sym.endswith(".BK") else 0.0,   # SET board lot
     )
+    if risk and risk > 0:
+        import broker_fees
+        fee_fn = None
+        profile = None
+        if account_id and account_id != "all":
+            with get_db() as conn:
+                profile = broker_fees.profile_for(conn, account_id, ccy)
+        if profile:
+            def fee_fn(side: str, qty: float, price_: float, _p: str = profile) -> float:
+                return broker_fees.estimate(_p, side, qty, price_)["total"]
+        out["risk_plan"] = {
+            **trade_guard.risk_size(
+                float(risk), float(px), fx, atr.get(sym), nav_base=nav or None,
+                fee_fn=fee_fn, lot=100.0 if sym.endswith(".BK") else 0.0,
+                manual_stop=risk_stop or stop, notional_base=notional,
+            ),
+            "fee_profile": profile,
+        }
     return {
         "ok": True, "symbol": sym, "price": float(px), "currency": ccy, "fx": fx,
         "base_currency": base, "nav_value": nav,
@@ -2885,13 +2927,15 @@ def _sim_inputs(account_id: Optional[str], fresh: bool = False) -> dict:
 
 
 def _sim_run(inp: dict, horizon: int, n_paths: int,
-             scale: Optional[list[float]] = None, follow_stops: bool = True) -> dict:
+             scale: Optional[list[float]] = None, follow_stops: bool = True,
+             market: str = "sd") -> dict:
     import stop_sim
 
     cov, factors = inp["cov"], inp["factors"]
     out = stop_sim.simulate(
         inp["holdings"], cov, factors, cash=inp["cash"],
         horizon=horizon, n_paths=n_paths, scale=scale, follow_stops=follow_stops,
+        market=market,
     )
     fvol = np.sqrt(np.diag(cov))
     out["factors"] = [
@@ -2935,6 +2979,8 @@ class WhatIfSimIn(BaseModel):
     # key (account|yf_symbol) → shares after the trade. Missing = unchanged.
     target_volume: dict[str, float] = Field(default_factory=dict)
     follow_stops: bool = True
+    # "sd" = market pinned at +1/0/−1/−2 SD; "random" = market not pinned.
+    market: Literal["sd", "random"] = "sd"
     fresh: bool = False
 
 
@@ -2980,7 +3026,8 @@ def post_what_if_sim(body: WhatIfSimIn):
         vol = float(rows_by_key[h.key]["volume"])
         tgt = body.target_volume.get(h.key)
         scale.append(1.0 if tgt is None or vol <= 0 else max(float(tgt), 0.0) / vol)
-    out = _sim_run(inp, body.horizon, body.n_paths, scale=scale, follow_stops=body.follow_stops)
+    out = _sim_run(inp, body.horizon, body.n_paths, scale=scale,
+                   follow_stops=body.follow_stops, market=body.market)
     out["positions"] = [
         {"key": _sim_key(r), "account_id": r.get("account_id"), "symbol": r["symbol"],
          "yf_symbol": r["yf_symbol"], "currency": r.get("currency"), "sector": r.get("sector"),
@@ -2993,6 +3040,360 @@ def post_what_if_sim(body: WhatIfSimIn):
     ]
     out["suggestions"] = _what_if_suggestions(inp["rows"])
     return out
+
+
+# ── Monte Carlo (filtered historical simulation) ─────────────────────────────
+
+MC_WINDOW_DAYS = 750          # ~3y of whole days to draw from
+_mc_cache: TTLCache = TTLCache(ttl=600, maxsize=64)
+
+
+def _mc_book_stamp(account_id: Optional[str]) -> str:
+    """What is held, as a short hash: open stock lots (account, symbol, shares)
+    and open option lots. Part of the cache key, so a buy or a sell is in the
+    next run instead of waiting out the 10 minutes."""
+    import hashlib
+
+    where, params = "", []
+    if account_id:
+        where, params = " AND account_id = ?", [account_id]
+    with get_db() as conn:
+        rows = [tuple(r) for r in conn.execute(
+            "SELECT account_id, symbol, ROUND(SUM(volume), 7) FROM trades "
+            f"WHERE win_loss = 'P'{where} GROUP BY account_id, symbol ORDER BY 1, 2", params)]
+        try:
+            rows += [tuple(r) for r in conn.execute(
+                "SELECT account_id, occ_symbol, ROUND(SUM(quantity), 7) FROM v_option_open_lots "
+                f"WHERE 1 = 1{where} GROUP BY account_id, occ_symbol ORDER BY 1, 2", params)]
+        except Exception:
+            pass                                   # no option tables: stocks alone decide
+    return hashlib.md5(repr(rows).encode()).hexdigest()[:12]
+
+
+def _mc_inputs(account_id: Optional[str], base: str, fresh: bool = False) -> dict:
+    """The slow half of a Monte Carlo run: the book as held (positions, cash,
+    option deltas) and ~3y of base-currency daily returns filtered into
+    residual days. Cached 10 min per book — a trade changes the book stamp and
+    so builds new inputs at once; prices and cash refresh with the 10 minutes.
+    The simulation itself takes ~0.1 s and re-runs for every horizon / path
+    count / volatility choice."""
+    import port_mc
+
+    key = f"in:{account_id or 'all'}:{base}:{_mc_book_stamp(account_id)}"
+    hit = None if fresh else _mc_cache.get(key)
+    if hit is not None:
+        return hit
+
+    positions = _open_positions_priced(account_id)
+    try:
+        from routers.portfolio_v2 import get_summary
+        summ = get_summary(base_currency=base)
+    except Exception:
+        summ = None
+    cash, opt = _risk_extras(account_id, base, summ)
+
+    # Same book as /risk/metrics: one row per market symbol, base-currency value.
+    value: dict[str, float] = {}
+    label: dict[str, str] = {}
+    ccy: dict[str, str] = {}
+    by_account: dict[str, dict[str, float]] = {}
+    for pos in positions:
+        sym = _position_yf_symbol(pos)
+        if not sym:
+            continue
+        price = pos.get("current_price") or pos.get("price_entry", 0)
+        v = convert_amount(float(price or 0) * float(pos.get("volume", 0)), trade_currency(pos), base)
+        if not v:
+            continue
+        value[sym] = value.get(sym, 0.0) + v
+        label[sym] = pos["symbol"]
+        ccy.setdefault(sym, trade_currency(pos))
+        acct = by_account.setdefault(str(pos["account_id"]), {})
+        acct[sym] = acct.get(sym, 0.0) + v
+    nav = sum(value.values()) + cash
+    option_value = 0.0
+    for sym, (v, c, lab) in opt.items():
+        if not v:
+            continue
+        value[sym] = value.get(sym, 0.0) + v       # exposure only — not part of NAV
+        label.setdefault(sym, lab)
+        ccy.setdefault(sym, c)
+        option_value += v
+        acct = by_account.setdefault("options Δ", {})
+        acct[sym] = acct.get(sym, 0.0) + v
+    if nav <= 0:
+        nav = sum(abs(v) for v in value.values())   # degenerate book: fall back to gross
+    if not value or nav <= 0:
+        return {"symbols": [], "note": "no open positions"}
+
+    symbols = list(value)
+    factor_of = {s: _sim_factor_for(s) for s in symbols}
+    extra = sorted(set(factor_of.values()) - set(symbols))
+    # A joint download can come back without one of its symbols (yfinance's
+    # shared result dict, see `_fetch_close_frame`) and the frame is then cached
+    # for 5 min. Here that would silently drop a holding from the simulation,
+    # so whatever is missing is asked for once more on its own.
+    close = _fetch_close_frame(symbols + extra, MC_WINDOW_DAYS)
+    lost = [s for s in symbols + extra if s not in close.columns or not close[s].notna().any()]
+    if lost and not close.empty:
+        again = _fetch_close_frame(lost, MC_WINDOW_DAYS)
+        found = [s for s in lost if s in again.columns and again[s].notna().any()]
+        if found:
+            close = close.drop(columns=[s for s in found if s in close.columns]).join(
+                again[found], how="outer").sort_index()
+    rets, excluded = _aligned_returns(symbols + extra, MC_WINDOW_DAYS, ccy_map=ccy,
+                                      base_currency=base, common_only=False, close=close)
+    keep = [s for s in symbols if s in rets.columns]
+    excluded = [e for e in excluded if e["symbol"] in value]
+    for e in excluded:
+        e["weight_pct"] = round(100 * value[e["symbol"]] / nav, 2)
+        e["symbol"] = label.get(e["symbol"], e["symbol"])
+    if not keep:
+        return {"symbols": [], "note": "no price history", "excluded": excluded}
+
+    cols = keep + [f for f in extra if f in rets.columns]
+    col_of = {c: i for i, c in enumerate(cols)}
+    R = np.expm1(rets[cols].values)             # simple returns — port_mc's unit
+    Z_all, s2_all, lr_all = port_mc.garch_filter(R)
+    n = len(keep)
+    factor_Z = np.column_stack([
+        Z_all[:, col_of[factor_of[s]]] if factor_of[s] in col_of else np.full(len(R), np.nan)
+        for s in keep
+    ])
+    Z, filled = port_mc.backfill(Z_all[:, :n], factor_Z)
+
+    # No history = no simulation: those names lend their exposure to the rest,
+    # as /risk/metrics does, so the invested share of the book stays what it is.
+    exposure = np.array([value[s] for s in keep])
+    scale = sum(value.values()) / exposure.sum() if excluded and abs(exposure.sum()) > 1e-9 else 1.0
+    groups = {
+        acct: np.array([vals.get(s, 0.0) for s in keep]) * scale
+        for acct, vals in by_account.items()
+    } if len(by_account) > 1 else {}
+
+    out = {
+        "symbols": keep, "labels": [label[s] for s in keep],
+        "factors": [_SIM_FACTOR_LABEL.get(factor_of[s], factor_of[s]) for s in keep],
+        "exposure": exposure * scale, "nav": float(nav), "cash": float(cash),
+        "option_delta_value": float(option_value),
+        "Z": Z, "s2": s2_all[:n], "lr": lr_all[:n], "groups": groups,
+        "history_days": (~np.isnan(R[:, :n])).sum(axis=0).tolist(), "filled": filled.tolist(),
+        "window_days": int(len(R)), "window_from": rets.index[0].strftime("%Y-%m-%d"),
+        "as_of": rets.index[-1].strftime("%Y-%m-%d"),
+        "excluded": excluded, "stamp": time.time(),
+    }
+    _mc_cache.set(key, out)
+    return out
+
+
+@router.get("/monte-carlo")
+def get_monte_carlo(
+    account_id: Optional[str] = Query(None),
+    horizon: int = Query(63, ge=5, le=252, description="Trading days"),
+    n_paths: int = Query(20_000, ge=1_000, le=50_000),
+    vol: Literal["current", "longrun"] = Query(
+        "current", description="Day-1 volatility: today's regime, or each holding's 3y average"),
+    drift_annual_pct: float = Query(0.0, ge=-50, le=100, description="Expected return per year, every holding"),
+    base_currency: str = Query("THB"),
+    fresh: bool = Query(False, description="Skip the 10-min cache"),
+):
+    """The book as held today, simulated `n_paths` ways over `horizon` trading
+    days — nothing traded. ALL = every account in one book (holdings in two
+    accounts move as one); an account id = that account's holdings and cash
+    only. Fan bands, loss lines (VaR / CVaR at the horizon) with their sampling
+    error, loss and drawdown probabilities, and who carries the worst 5%.
+
+    Model + why + speed: backend/port_mc.py (filtered historical simulation).
+    """
+    import port_mc
+
+    base = report_currency(base_currency)
+    scope = account_id if account_id and account_id != "all" else None
+    inp = _mc_inputs(scope, base, fresh)
+    if not inp.get("symbols"):
+        return {"holdings": [], "note": inp.get("note", "no open positions"),
+                "excluded": inp.get("excluded", [])}
+
+    key = f"out:{scope or 'all'}:{base}:{inp['stamp']}:{horizon}:{n_paths}:{vol}:{drift_annual_pct}"
+    hit = _mc_cache.get(key)
+    if hit is not None:
+        return hit
+
+    t0 = time.perf_counter()
+    out = port_mc.simulate(
+        inp["exposure"], inp["nav"], inp["Z"],
+        inp["s2"] if vol == "current" else inp["lr"], inp["lr"],
+        horizon=horizon, n_paths=n_paths,
+        drift_daily=math.log1p(drift_annual_pct / 100) / 252,
+        groups=inp["groups"],
+    )
+    elapsed = (time.perf_counter() - t0) * 1000
+
+    nav = inp["nav"]
+    assets = out.pop("assets")
+    out["holdings"] = sorted((
+        {"symbol": inp["labels"][j], "yf_symbol": s,
+         "exposure": round(float(inp["exposure"][j]), 2),
+         "weight_pct": round(float(inp["exposure"][j]) / nav * 100, 2),
+         "vol_now_pct": round(float(np.sqrt(inp["s2"][j] * 252)) * 100, 1),
+         "vol_longrun_pct": round(float(np.sqrt(inp["lr"][j] * 252)) * 100, 1),
+         "history_days": inp["history_days"][j], "filled_days": inp["filled"][j],
+         "factor": inp["factors"][j], **assets[j]}
+        for j, s in enumerate(inp["symbols"])
+    ), key=lambda h: -h["tail_share_pct"])
+    out.update({
+        "model": "FHS", "vol": vol, "drift_annual_pct": drift_annual_pct,
+        "account_id": scope or "all", "base_currency": base,
+        "nav": round(nav, 2), "cash": round(inp["cash"], 2),
+        "option_delta_value": round(inp["option_delta_value"], 2),
+        "window_days": inp["window_days"], "window_from": inp["window_from"], "as_of": inp["as_of"],
+        "excluded": inp["excluded"], "elapsed_ms": round(elapsed, 1),
+    })
+    _mc_cache.set(key, out)
+    return out
+
+
+# ── Take-profit rebalance ────────────────────────────────────────────────────
+
+_rebal_cache: TTLCache = TTLCache(ttl=300, maxsize=16)
+
+
+def _rebalance_rules():
+    import rebalance
+
+    with get_db() as conn:
+        row = conn.execute("SELECT rules_json FROM rebalance_rules WHERE id = 1").fetchone()
+    try:
+        return rebalance.Rules.from_dict(json.loads(row["rules_json"]) if row else None)
+    except (ValueError, TypeError):
+        logger.warning("rebalance_rules row is invalid — using defaults")
+        return rebalance.Rules()
+
+
+def _rebalance_dates(account_id: Optional[str]) -> tuple[dict, dict]:
+    """symbol → first open-lot entry date, symbol → last sell date (closed lots)."""
+    acct, params = "", []
+    if account_id and account_id != "all":
+        acct, params = " AND account_id = ?", [account_id]
+    with get_db() as conn:
+        first = {r["s"]: r["d"] for r in conn.execute(
+            "SELECT UPPER(symbol) s, MIN(date_entry) d FROM trades "
+            f"WHERE win_loss = 'P'{acct} GROUP BY UPPER(symbol)", params).fetchall()}
+        last = {r["s"]: r["d"] for r in conn.execute(
+            "SELECT UPPER(symbol) s, MAX(date_exit) d FROM trades "
+            f"WHERE win_loss != 'P' AND price_exit > 0 AND date_exit IS NOT NULL{acct} "
+            "GROUP BY UPPER(symbol)", params).fetchall()}
+    return first, last
+
+
+def _rebalance_earnings(yf_by_symbol: dict[str, str], timeout: float = 12) -> dict[str, Optional[list]]:
+    """symbol → report dates. Missing key = not asked; [] / None = unknown.
+    Only called for holdings that would trim, so a handful of cached lookups."""
+    from concurrent.futures import ThreadPoolExecutor, wait
+
+    from routers.stock import stock_earnings_calendar
+
+    def one(yf_sym: str) -> list:
+        return [d["date"][:10] for d in stock_earnings_calendar(yf_sym).get("earningsDates", [])]
+
+    out: dict[str, Optional[list]] = {s: None for s in yf_by_symbol}
+    if not yf_by_symbol:
+        return out
+    pool = ThreadPoolExecutor(max_workers=4)
+    futs = {pool.submit(one, y): s for s, y in yf_by_symbol.items()}
+    done, _ = wait(futs, timeout=timeout)
+    pool.shutdown(wait=False, cancel_futures=True)
+    for f in done:
+        try:
+            out[futs[f]] = f.result()
+        except Exception as e:  # noqa: BLE001 — unknown, not fatal
+            logger.info("rebalance: earnings dates for %s unavailable: %s", futs[f], e)
+    return out
+
+
+def _rebalance_plan(account_id: Optional[str], fresh: bool = False) -> dict:
+    """Allocation-detail weights + the take-profit rules (rebalance.py)."""
+    import rebalance
+    from routers.portfolio_v2 import get_allocation_detail
+
+    rules = _rebalance_rules()
+    key = f"{account_id or 'all'}:{json.dumps(rules.as_dict(), sort_keys=True)}"
+    hit = None if fresh else _rebal_cache.get(key)
+    if hit is not None:
+        return hit
+    alloc = get_allocation_detail(account_id=account_id, base_currency="THB")
+    symbols = alloc.get("symbols", [])
+    for s in symbols:
+        if s.get("instrument") != "option":
+            s["yf_symbol"] = _position_yf_symbol(s) or s["symbol"]
+    total = float(alloc.get("totals", {}).get("market_value") or 0)
+    first, last = _rebalance_dates(account_id)
+    today = date.today()
+    out = rebalance.plan(symbols, total, rules, today, first, last)
+    # Earnings blackout only matters for the ones that would trade.
+    cand = {r["symbol"]: r["yf_symbol"] for r in out["rows"]
+            if r["status"] in ("TRIM", "WAIT", "SMALL") and r.get("yf_symbol")}
+    if cand:
+        earn = _rebalance_earnings(cand)
+        out = rebalance.plan(symbols, total, rules, today, first, last,
+                             earnings={s: v or [] for s, v in earn.items()})
+    out["base_currency"] = "THB"
+    _rebal_cache.set(key, out)
+    return out
+
+
+@router.get("/rebalance")
+def get_rebalance(account_id: Optional[str] = Query(None), fresh: bool = Query(False)):
+    """Take-profit rebalance: which winners grew past their target slice and
+    how much to sell. Target = explicit allocation_targets row, else the cost
+    weight. Rules (gain, 5/25 band, min hold, min gap, earnings blackout,
+    rebal_to) live in `rebalance_rules`; model: backend/rebalance.py."""
+    return _rebalance_plan(account_id, fresh)
+
+
+class RebalanceRulesIn(BaseModel):
+    min_gain_pct: Optional[float] = None
+    band_abs_pp: Optional[float] = None
+    band_rel_pct: Optional[float] = None
+    rebal_to: Optional[str] = None
+    min_hold_days: Optional[int] = None
+    min_gap_days: Optional[int] = None
+    earn_before_days: Optional[int] = None
+    earn_after_days: Optional[int] = None
+
+
+@router.put("/rebalance/rules")
+def put_rebalance_rules(body: RebalanceRulesIn):
+    """Merge into the saved rules. Fields left out keep their value."""
+    import rebalance
+    from fastapi import HTTPException
+
+    cur = _rebalance_rules().as_dict()
+    cur.update({k: v for k, v in body.model_dump().items() if v is not None})
+    try:
+        rules = rebalance.Rules.from_dict(cur)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO rebalance_rules (id, rules_json, updated_at) VALUES (1, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET rules_json = excluded.rules_json, updated_at = excluded.updated_at",
+            (json.dumps(rules.as_dict()), datetime.now().isoformat(timespec="seconds")),
+        )
+        conn.commit()
+    _rebal_cache.clear()
+    return {"rules": rules.as_dict()}
+
+
+@router.delete("/rebalance/rules")
+def reset_rebalance_rules():
+    import rebalance
+
+    with get_db() as conn:
+        conn.execute("DELETE FROM rebalance_rules")
+        conn.commit()
+    _rebal_cache.clear()
+    return {"rules": rebalance.Rules().as_dict()}
 
 
 # ── VaR forecast log (live out-of-sample test) ───────────────────────────────

@@ -36,7 +36,8 @@ with a short volume becomes a DATA action (YELLOW), and an unknown NAV drawdown
 halves the size.
 
 Also here: S/M/L pre-trade sizing (`size_buckets`, 3/6/10% of NAV × the size
-multiplier), the R-multiple after-trade report (`trade_report`) and the flag
+multiplier), risk-budget sizing (`risk_size`: "I can lose ฿X" → volume per stop
+distance, fees included, and the stop a chosen amount implies), the R-multiple after-trade report (`trade_report`) and the flag
 transitions the notifier turns into alert events (`transitions`).
 
 Weights are of the INVESTED market value (cash excluded) — the same base the
@@ -47,8 +48,9 @@ Pure functions; `routers/risk.py` (/risk/guard*) and `guard_scheduler.py` do the
 """
 from __future__ import annotations
 
+import math
 from datetime import date
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 import pandas as pd
 
@@ -573,6 +575,173 @@ def size_buckets(
 
 # ── After-trade report (R-multiples, rule adherence) ─────────────────────────
 
+# ── Risk-budget sizing ("I can lose ฿20,000 — how much, and where's the stop?") ──
+
+# Stop distances offered, in multiples of daily ATR(14). Unclamped on purpose:
+# the guard's 5–12% clamp suits fast trades, but a volatile name held on a
+# thesis needs a stop outside its normal swing, and the ladder shows the price
+# of that (a smaller position) instead of hiding it.
+RISK_LADDER_ATR = (1.0, 1.5, 2.0, 3.0, 4.0)
+# Fallback distances when there is no price history to measure ATR from.
+RISK_LADDER_PCT = (0.05, 0.08, 0.12, 0.20)
+QTY_DP = 7   # fractional shares (Dime) — floor here so the risk is never exceeded
+
+FeeFn = Callable[[str, float, float], Optional[float]]
+
+
+def _floor_qty(vol: float, lot: float) -> float:
+    if vol <= 0:
+        return 0.0
+    if lot > 0:
+        return (vol // lot) * lot
+    return math.floor(vol * 10**QTY_DP) / 10**QTY_DP
+
+
+def loss_at_stop(vol: float, price: float, stop: float, fx: float,
+                 fee_fn: Optional[FeeFn] = None) -> tuple[float, float]:
+    """(total loss, fees) in base currency if `vol` bought at `price` is sold at
+    `stop` — price move plus the buy and the sell commission."""
+    fees = 0.0
+    if fee_fn is not None and vol > 0:
+        fees = (fee_fn("BUY", vol, price) or 0.0) + (fee_fn("SELL", vol, stop) or 0.0)
+    return (vol * (price - stop) + fees) * fx, fees * fx
+
+
+def volume_for_risk(risk_base: float, price: float, stop: float, fx: float,
+                    fee_fn: Optional[FeeFn] = None, lot: float = 0.0) -> float:
+    """Largest volume whose loss at `stop`, fees included, is ≤ `risk_base`.
+
+    Fees are not linear in every schedule (minimums, caps), so with a fee
+    function the volume is found by bisection on the exact loss.
+    """
+    per = (price - stop) * fx
+    if risk_base <= 0 or per <= 0 or fx <= 0:
+        return 0.0
+    hi = risk_base / per
+    if fee_fn is None:
+        return _floor_qty(hi, lot)
+    lo = 0.0
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if loss_at_stop(mid, price, stop, fx, fee_fn)[0] <= risk_base:
+            lo = mid
+        else:
+            hi = mid
+    return _floor_qty(lo, lot)
+
+
+def stop_for_risk(risk_base: float, vol: float, price: float, fx: float,
+                  fee_fn: Optional[FeeFn] = None) -> Optional[float]:
+    """Lowest stop that keeps the loss of `vol` within `risk_base`; None when
+    the fees alone already exceed the budget."""
+    if risk_base <= 0 or vol <= 0 or price <= 0 or fx <= 0:
+        return None
+    if loss_at_stop(vol, price, price, fx, fee_fn)[0] > risk_base:
+        return None
+    if fee_fn is None:
+        return max(price - risk_base / (vol * fx), 0.0)
+    # Loss falls as the stop rises. The floor sits a hair above zero: a fee
+    # schedule cannot price a sale at 0.
+    lo, hi = price * 1e-6, price
+    if loss_at_stop(vol, price, lo, fx, fee_fn)[0] <= risk_base:
+        return lo
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if loss_at_stop(vol, price, mid, fx, fee_fn)[0] <= risk_base:
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
+def _noise_tag(atr_mult: Optional[float]) -> Optional[str]:
+    """How a stop distance compares with the normal daily swing."""
+    if atr_mult is None:
+        return None
+    atr_mult = round(atr_mult, 2)   # 2×ATR computed back from a price is 1.9999…
+    if atr_mult < 1:
+        return "NOISE"    # inside one ordinary day's range
+    if atr_mult < 2:
+        return "TIGHT"
+    return "OK"
+
+
+def risk_size(
+    risk_base: float, price: float, fx: float, atr_frac: Optional[float],
+    nav_base: Optional[float] = None, fee_fn: Optional[FeeFn] = None, lot: float = 0.0,
+    manual_stop: Optional[float] = None, notional_base: Optional[float] = None,
+) -> dict[str, Any]:
+    """Volume and stop for a fixed money risk.
+
+    `rows`: one candidate per stop distance (ATR ladder, or a % ladder without
+    history, plus the manual stop) — the volume that loses exactly
+    `risk_base` there, fees included. `notional_plan`: given the money the user
+    wants to put in, the stop that loss implies — and how that stop sits
+    against the normal swing.
+    """
+    def row(stop: float, label: str) -> dict[str, Any]:
+        dist = (price - stop) / price
+        vol = volume_for_risk(risk_base, price, stop, fx, fee_fn, lot)
+        notional = vol * price * fx
+        loss, fees = loss_at_stop(vol, price, stop, fx, fee_fn)
+        mult = dist / atr_frac if atr_frac else None
+        return {
+            "label": label,
+            "stop": round(stop, 6),
+            "stop_distance_pct": round(dist * 100, 2),
+            "atr_mult": round(mult, 2) if mult is not None else None,
+            "noise": _noise_tag(mult),
+            "volume": vol,
+            "notional_base": round(notional, 2),
+            "pct_nav": round(notional / nav_base * 100, 2) if nav_base else None,
+            "over_weight_cap": bool(nav_base) and notional / nav_base > MAX_WEIGHT,
+            "loss_base": round(loss, 2),
+            "fees_base": round(fees, 2),
+        }
+
+    rows: list[dict[str, Any]] = []
+    if price > 0 and risk_base > 0:
+        if atr_frac and atr_frac > 0:
+            for m in RISK_LADDER_ATR:
+                if m * atr_frac < 0.95:
+                    rows.append(row(price * (1 - m * atr_frac), f"{m:g}×ATR"))
+        else:
+            for p in RISK_LADDER_PCT:
+                rows.append(row(price * (1 - p), f"{p * 100:g}%"))
+        if manual_stop and 0 < manual_stop < price:
+            rows.append(row(manual_stop, "STOP"))   # the stop the form holds
+            rows.sort(key=lambda r: r["stop"], reverse=True)
+
+    plan = None
+    if notional_base and notional_base > 0 and price > 0 and fx > 0 and risk_base > 0:
+        vol = _floor_qty(notional_base / (price * fx), lot)
+        stop = stop_for_risk(risk_base, vol, price, fx, fee_fn) if vol > 0 else None
+        if stop is None:
+            plan = {"volume": vol, "stop": None,
+                    "error": "ค่าธรรมเนียมเกินงบความเสี่ยง" if vol > 0 else "เงินไม่พอซื้อ 1 ล็อต"}
+        else:
+            dist = (price - stop) / price
+            mult = dist / atr_frac if atr_frac else None
+            plan = {
+                "volume": vol,
+                "notional_base": round(vol * price * fx, 2),
+                "pct_nav": round(vol * price * fx / nav_base * 100, 2) if nav_base else None,
+                "stop": round(stop, 6),
+                "stop_distance_pct": round(dist * 100, 2),
+                "atr_mult": round(mult, 2) if mult is not None else None,
+                "noise": _noise_tag(mult),
+                "fees_base": round(loss_at_stop(vol, price, stop, fx, fee_fn)[1], 2),
+            }
+
+    return {
+        "risk_base": risk_base,
+        "fees_included": fee_fn is not None,
+        "atr_pct": round(atr_frac * 100, 2) if atr_frac else None,
+        "rows": rows,
+        "notional_plan": plan,
+    }
+
+
 def _r_stats(trades: list[dict]) -> dict[str, Any]:
     n = len(trades)
     if not n:
@@ -737,6 +906,7 @@ GUARD_EVENT_LABELS = {
     "DD_STOP": "NAV drawdown ≥10% — หยุดเปิดไม้",
     "DD_HALF": "NAV drawdown ≥5% — ครึ่งไซซ์",
     "STREAK": "เสียติดกัน — ครึ่งไซซ์",
+    "REBALANCE": "กำไรโตเกินสัดส่วน — ถึงรอบ rebalance",
 }
 
 

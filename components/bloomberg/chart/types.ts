@@ -98,6 +98,18 @@ export interface WhitespaceDataPoint {
   value?: never;
 }
 
+/** A text label at one (bar time, price) point — see `IndicatorSeriesOutput.labels`. */
+export interface PointLabel {
+  time: string | number;
+  price: number;
+  text: string;
+  /** "above" for highs, "below" for lows. */
+  position: "above" | "below";
+  color: string;
+  /** Drawn translucent — a value that can still change (a repainting pivot). */
+  faded?: boolean;
+}
+
 export interface HistogramDataPoint {
   time: string | number;
   value: number;
@@ -202,6 +214,11 @@ export interface IndicatorSeriesOutput {
   lineWidth?: number;
   /** Line series only. Reference levels read as guides when they are not solid. */
   lineStyle?: "solid" | "dashed" | "dotted";
+  /**
+   * Line series on the price pane only — text pinned to points (e.g. the price
+   * at each pivot), drawn by chart/point-labels-primitive.ts. Oldest first.
+   */
+  labels?: PointLabel[];
   /** Line series only — show the latest value as a label on the price axis. */
   lastValueVisible?: boolean;
   priceScaleId?: string; // separate scale for pane indicators

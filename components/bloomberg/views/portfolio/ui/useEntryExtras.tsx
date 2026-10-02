@@ -1,6 +1,5 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import type { Colors } from "../helpers";
 
 /** Fields the ENTRY form hides until asked for.
  *
@@ -64,37 +63,4 @@ export function useEntryExtras() {
   }, []);
 
   return { extras, toggleExtra, showExtra };
-}
-
-export function ExtraFieldToggles({
-  extras,
-  onToggle,
-  colors,
-}: {
-  extras: ExtraState;
-  onToggle: (id: ExtraField) => void;
-  colors: Colors;
-}) {
-  return (
-    <div className="flex items-center gap-3 flex-wrap">
-      <span className="text-[8px] tracking-wider" style={{ color: colors.textSecondary }}>
-        ADD FIELD
-      </span>
-      {EXTRA_FIELDS.map((f) => {
-        const on = extras[f.id];
-        return (
-          <button
-            type="button"
-            key={f.id}
-            onClick={() => onToggle(f.id)}
-            title={f.hint || undefined}
-            className="text-[9px] font-bold tracking-wider hover:opacity-80"
-            style={{ color: on ? colors.accent : colors.textSecondary }}
-          >
-            {on ? "−" : "+"} {f.label}
-          </button>
-        );
-      })}
-    </div>
-  );
 }

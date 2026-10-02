@@ -95,6 +95,55 @@ interface RfResponse {
 const RF_KEY = "bloomberg_capm_rf";
 // v2: GROWTH became the default view (2026-09-25); the old key held VALUE/INDEX.
 const NAV_MODE_KEY = "bloomberg_nav_chart_mode_v2";
+const CURVE_BENCH_KEY = "bloomberg_nav_curve_benchmark";
+
+/** What the INDEX equity curve can be laid against. Only the chosen one is
+ *  fetched. `sector` is the GICS name a position carries, so the menu can mark
+ *  the sector indices the open book actually holds. Kept apart from the CAPM
+ *  benchmark: switching the curve must not refetch CAPM. */
+const CURVE_BENCHMARKS: readonly {
+  sym: string;
+  tag: string;
+  label: string;
+  group: string;
+  sector?: string;
+}[] = [
+  { sym: "SPY", tag: "SPY", label: "S&P 500", group: "BROAD" },
+  { sym: "QQQ", tag: "QQQ", label: "Nasdaq 100", group: "BROAD" },
+  { sym: "IWM", tag: "IWM", label: "Russell 2000", group: "BROAD" },
+  { sym: "ACWI", tag: "ACWI", label: "MSCI ACWI", group: "BROAD" },
+  { sym: "^SET.BK", tag: "SET", label: "SET Index", group: "BROAD" },
+  { sym: "SOXX", tag: "SOXX", label: "Semiconductors", group: "THEME" },
+  {
+    sym: "XLK",
+    tag: "XLK",
+    label: "Technology",
+    group: "SECTOR",
+    sector: "Information Technology",
+  },
+  {
+    sym: "XLC",
+    tag: "XLC",
+    label: "Communication",
+    group: "SECTOR",
+    sector: "Communication Services",
+  },
+  {
+    sym: "XLY",
+    tag: "XLY",
+    label: "Cons. Discretionary",
+    group: "SECTOR",
+    sector: "Consumer Discretionary",
+  },
+  { sym: "XLP", tag: "XLP", label: "Cons. Staples", group: "SECTOR", sector: "Consumer Staples" },
+  { sym: "XLE", tag: "XLE", label: "Energy", group: "SECTOR", sector: "Energy" },
+  { sym: "XLF", tag: "XLF", label: "Financials", group: "SECTOR", sector: "Financials" },
+  { sym: "XLV", tag: "XLV", label: "Health Care", group: "SECTOR", sector: "Health Care" },
+  { sym: "XLI", tag: "XLI", label: "Industrials", group: "SECTOR", sector: "Industrials" },
+  { sym: "XLB", tag: "XLB", label: "Materials", group: "SECTOR", sector: "Materials" },
+  { sym: "XLRE", tag: "XLRE", label: "Real Estate", group: "SECTOR", sector: "Real Estate" },
+  { sym: "XLU", tag: "XLU", label: "Utilities", group: "SECTOR", sector: "Utilities" },
+];
 
 /** One day of the time-weighted equity curve (see /api/v2/portfolio/nav-index). */
 interface NavIndexPoint {
@@ -949,17 +998,46 @@ export function AnalyticsTab({
   const [rotMode, setRotMode] = useState<RotationMode>("COST");
   const [navIndex, setNavIndex] = useState<NavIndexResponse | null>(null);
   const [navIndexLoading, setNavIndexLoading] = useState(false);
+  const [curveBench, setCurveBench] = useState<string>(() => {
+    if (typeof window === "undefined") return "SPY";
+    try {
+      const s = localStorage.getItem(CURVE_BENCH_KEY);
+      if (s && CURVE_BENCHMARKS.some((b) => b.sym === s)) return s;
+    } catch {
+      /* ignore */
+    }
+    return "SPY";
+  });
+  const curveBenchTag = CURVE_BENCHMARKS.find((b) => b.sym === curveBench)?.tag ?? curveBench;
+  // % of the open book per GICS sector — marks the sector indices in the
+  // curve's menu that the book actually holds. No request: openPos is loaded.
+  const sectorShare = useMemo(() => {
+    const by: Record<string, number> = {};
+    let total = 0;
+    for (const p of openPos) {
+      const mv = p.market_value_base ?? 0;
+      if (mv <= 0) continue;
+      total += mv;
+      if (p.sector) by[p.sector] = (by[p.sector] ?? 0) + mv;
+    }
+    if (total <= 0) return {};
+    for (const k of Object.keys(by)) by[k] = (by[k] / total) * 100;
+    return by;
+  }, [openPos]);
 
   useEffect(() => {
     try {
       localStorage.setItem(NAV_MODE_KEY, navMode);
+      localStorage.setItem(CURVE_BENCH_KEY, curveBench);
     } catch {
       /* ignore */
     }
-  }, [navMode]);
+  }, [navMode, curveBench]);
 
-  // Only fetched when the curve is on screen — it pulls the benchmark's price
-  // history, which the value chart has no use for.
+  // Only fetched when the curve is on screen, and the index leg only in INDEX
+  // mode — GROWTH draws no index line, so it sends no benchmark and switching
+  // the curve's benchmark does not refetch it.
+  const navBench = navMode === "INDEX" ? curveBench : "";
   useEffect(() => {
     if (navMode === "VALUE") return;
     const ac = new AbortController();
@@ -968,7 +1046,7 @@ export function AnalyticsTab({
     // at whatever row it cut. ~100 years of daily rows is "no cap".
     const qs = new URLSearchParams({
       base_currency: currency,
-      benchmark,
+      benchmark: navBench,
       days: navMode === "GROWTH" ? "36500" : "365",
     });
     if (accountId !== "all") qs.set("account_id", accountId);
@@ -979,7 +1057,7 @@ export function AnalyticsTab({
       .catch(() => {})
       .finally(() => setNavIndexLoading(false));
     return () => ac.abort();
-  }, [navMode, accountId, currency, benchmark]);
+  }, [navMode, accountId, currency, navBench]);
 
   useEffect(() => {
     try {
@@ -1498,7 +1576,7 @@ export function AnalyticsTab({
                 ? "PORTFOLIO GROWTH"
                 : navMode === "VALUE"
                   ? "PORTFOLIO VALUE (NAV)"
-                  : `EQUITY CURVE vs ${benchmark}`
+                  : `EQUITY CURVE vs ${curveBenchTag}`
             }
             sub={
               navAll.length < 2
@@ -1519,6 +1597,33 @@ export function AnalyticsTab({
                       value={navRange}
                       onChange={setNavRange}
                     />
+                    <span style={{ color: "#333" }}>│</span>
+                  </>
+                )}
+                {navMode === "INDEX" && (
+                  <>
+                    <select
+                      value={curveBench}
+                      onChange={(e) => setCurveBench(e.target.value)}
+                      aria-label="Equity curve benchmark"
+                      title="ดัชนีที่ใช้เทียบ — โหลดเฉพาะตัวที่เลือก. ● = sector ที่พอร์ตถือ (% ของมูลค่า)"
+                      className="text-[8px] font-bold font-mono px-1 bg-black border outline-none"
+                      style={{ borderColor: colors.border, color: colors.accent }}
+                    >
+                      {["BROAD", "THEME", "SECTOR"].map((g) => (
+                        <optgroup key={g} label={g}>
+                          {CURVE_BENCHMARKS.filter((b) => b.group === g).map((b) => {
+                            const held = b.sector ? sectorShare[b.sector] : undefined;
+                            return (
+                              <option key={b.sym} value={b.sym}>
+                                {b.tag} · {b.label}
+                                {held ? ` ● ${held.toFixed(0)}%` : ""}
+                              </option>
+                            );
+                          })}
+                        </optgroup>
+                      ))}
+                    </select>
                     <span style={{ color: "#333" }}>│</span>
                   </>
                 )}
@@ -1570,7 +1675,7 @@ export function AnalyticsTab({
                 data={navIndex}
                 loading={navIndexLoading}
                 colors={colors}
-                benchmark={benchmark}
+                benchmark={curveBenchTag}
                 tooltipContentStyle={tooltipContentStyle}
                 tooltipLabelStyle={tooltipLabelStyle}
                 tooltipItemStyle={tooltipItemStyle}

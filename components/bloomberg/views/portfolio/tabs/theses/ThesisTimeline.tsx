@@ -21,6 +21,10 @@ const KIND_COLOR: Record<string, string> = {
   REVIEW: "#f472b6",
   EVIDENCE: "#14b8a6",
   CHECKPOINT: "#888",
+  // Written by routers/tracking.py (TOOLS → TRACK)
+  METRIC_READ: "#60a5fa",
+  KILLER_HIT: "#f87171",
+  METRIC_RULE_CHANGED: "#fbbf24",
 };
 
 // The theses router stamps `actor` on the payload when a write carries

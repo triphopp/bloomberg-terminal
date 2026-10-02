@@ -24,6 +24,12 @@ cash at 0% and the money bought comes out of it (cash may go negative — the
 caller shows it). The HOLD side is always the book as it is ("don't"). With
 no scale and follow_stops=True this is exactly the stop simulator above.
 
+RANDOM MARKET (`market="random"`): one extra way to run it with the factors
+NOT pinned — zero drift, historical covariance. The SD scenarios answer "if
+the market does X"; with them the p10–p90 band is stock-specific noise only,
+so it says nothing about the chance of a loss. The random run puts market
+uncertainty back in the band, so P(loss) is a (model) probability.
+
 Same random draws for both, so the difference between the two lines is the
 stop rule and nothing else. Everything is in base-currency value with today's
 FX held constant (currency moves are not simulated).
@@ -62,16 +68,19 @@ def _t_noise(rng: np.random.Generator, shape: tuple, scale: np.ndarray) -> np.nd
 
 
 def _factor_paths(
-    rng: np.random.Generator, n: int, horizon: int, cov: np.ndarray, k: float,
+    rng: np.random.Generator, n: int, horizon: int, cov: np.ndarray, k: Optional[float],
 ) -> np.ndarray:
     """(n, horizon, F) daily factor log-returns whose horizon sum is exactly
-    k·σ_f·√H for every factor (Brownian bridge on correlated increments)."""
+    k·σ_f·√H for every factor (Brownian bridge on correlated increments).
+    k=None = no bridge: the market wanders freely (zero drift, historical cov)."""
     F = cov.shape[0]
     try:
         L = np.linalg.cholesky(cov + np.eye(F) * 1e-12)
     except np.linalg.LinAlgError:
         L = np.diag(np.sqrt(np.maximum(np.diag(cov), 1e-12)))
     inc = rng.standard_normal((n, horizon, F)) @ L.T          # (n, H, F)
+    if k is None:
+        return inc
     total = inc.sum(axis=1, keepdims=True)                      # (n, 1, F)
     target = k * np.sqrt(np.diag(cov) * horizon)                # (F,)
     # Spread the correction evenly: bridge increments = inc − (W_H − target)/H
@@ -95,8 +104,13 @@ def simulate(
     seed: int = 7,
     scale: Optional[list[float]] = None,
     follow_stops: bool = True,
+    market: str = "sd",
 ) -> dict[str, Any]:
-    """Run every scenario for both rules. See the module docstring."""
+    """Run every scenario for both rules. See the module docstring.
+    market="random": one scenario (k=None) where the market is NOT pinned —
+    the band then holds market uncertainty too, so P(loss) reads as a chance."""
+    if market == "random":
+        scenarios = (None,)
     if not holdings:
         return {"scenarios": [], "holdings": [], "start_value": cash}
     keys = [h.key or h.symbol for h in holdings]
@@ -153,9 +167,18 @@ def simulate(
         disc_nav = np.concatenate(
             [np.full((n_paths, 1), start), disc_val.sum(axis=2) + do_cash], axis=1)
 
-        res = {"k": k, "market_move_pct": {
-            key: round(float(np.expm1(k * fvol[i] * np.sqrt(horizon))) * 100, 2)
-            for key, i in fidx.items()}}
+        if k is None:
+            fmove = np.expm1(f.sum(axis=1)) * 100                   # (n, F)
+            res = {"k": None, "random": True,
+                   "market_move_pct": {key: round(float(np.median(fmove[:, i])), 2)
+                                       for key, i in fidx.items()},
+                   "market_move_range": {key: [round(float(np.percentile(fmove[:, i], q)), 2)
+                                               for q in (10, 50, 90)]
+                                         for key, i in fidx.items()}}
+        else:
+            res = {"k": k, "market_move_pct": {
+                key: round(float(np.expm1(k * fvol[i] * np.sqrt(horizon))) * 100, 2)
+                for key, i in fidx.items()}}
         for name, nav in (("disciplined", disc_nav), ("hold", hold_nav)):
             idx = nav / start * 100
             dd = _max_drawdown(nav) * 100
@@ -175,8 +198,16 @@ def simulate(
                 "final_p90": round(float(np.percentile(final, 90)), 2),
                 "maxdd_p50": round(float(np.percentile(dd, 50)), 2),
                 "maxdd_p90": round(float(np.percentile(dd, 10)), 2),   # worse tail
+                "p_loss": round(float((final < 0).mean()) * 100, 1),
+                "p_loss_gt_5": round(float((final <= -5).mean()) * 100, 1),
                 "p_loss_gt_10": round(float((final <= -10).mean()) * 100, 1),
             }
+        # Paired: same draws on both sides, so the per-path gap IS the decision.
+        # (Differencing the two rounded medians quantised it to 0.01% of NAV.)
+        gap = disc_nav[:, -1] - hold_nav[:, -1]
+        res["diff_value"] = {f"p{q}": round(float(np.percentile(gap, q)), 2) + 0.0 for q in (10, 50, 90)}
+        # Half a satang/cent: float noise on identical books is not "better".
+        res["p_do_better"] = round(float((gap > 0.005).mean()) * 100, 1)
         res["stop_prob"] = {keys[j]: round(float(stopped[:, j].mean()) * 100, 1)
                             for j in range(m)}
         res["avg_stops"] = round(float(stopped.sum(axis=1).mean()), 2)
@@ -189,6 +220,7 @@ def simulate(
         "horizon": horizon,
         "n_paths": n_paths,
         "follow_stops": follow_stops,
+        "market": "random" if market == "random" else "sd",
         "do_cash": round(do_cash, 2),
         "do_turnover": round(float(np.abs(value0 - do_value0).sum()), 2),
         "holdings": [

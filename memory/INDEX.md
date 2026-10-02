@@ -25,7 +25,8 @@ memory/
 │   ├── gotchas.md             error dictionary, anti-patterns, "Where is X?", env var map
 │   ├── terminal-commands.md   command mode (heatmap(US), ALERT, VIEW …)
 │   ├── data-catalog.md        data categories available for analysis
-│   └── data-sources.md        where to look for data — in-house first, then free APIs
+│   ├── data-sources.md        where to look for data — in-house first, then free APIs
+│   └── thesis-tracking.md     tracked numbers: source, forecast vs actual, kill lines (PORT → TOOLS → TRACK)
 ├── plans/                ← ⚠️ gitignored — machine-local (completed/ inside)
 ├── sessions/             ← ⚠️ gitignored — machine-local (INDEX.md + reports/)
 └── reports/              ← ⚠️ gitignored — machine-local risk reports
@@ -47,6 +48,10 @@ memory/
 
 | Plan | สถานะ |
 |------|--------|
+| [Investment Policy System](plans/investment-policy-system.md) | 📝 design 2026-10-01 — sleeves + plan ticket + stress/theme cap + rebalance bands; waiting on user parameters (§8) |
+| [RISK rebalance + UI](plans/risk-rebalance.md) | 🔄 code done 2026-10-02 — RISK 5 tabs, take-profit rebalance 5/25 + timing, WHAT-IF random market + plan hand-off, guard:REBALANCE alert; waiting on user check |
+| [Thesis Tracking](plans/thesis-tracking.md) | 🔄 code done 2026-10-02 — ตัวเลขที่จับตา / killer: แหล่งอ่าน, ค่าคาดการณ์ + วันประกาศ, ค่าจริง, ผลเทียบ, ไม่ตรงเปิดคำถาม; เหลือ pull + restart ทุกเครื่องแล้วเพิ่มตัวเลขชุดแรก |
+| [Thesis Questions](plans/thesis-questions.md) | 🔄 code done 2026-10-01 — เหลือ pull + restart เครื่อง Windows แล้วนำเข้าสายคำถามผ่าน `question_import` (ข้อมูล INTC: `sessions/2026-10-01-intc-question-tree.json`) |
 | [PINS redesign](plans/completed/pins-redesign.md) | ✅ done 2026-09-30 — one symbol = one pin, PUT /api/pins/by-symbol, "+ New group…" picker |
 | [DB latency report](reports/db-latency-risk-report.md) | 📋 report 2026-09-30 — schema re-parse per connection + thread queue; get_db pool + local lane; scalability |
 | [PORT Margin Maintenance](plans/completed/port-margin-maintenance.md) | ✅ done 2026-09-29 — IBKR Reg T, PORT + PAPER, alerts, PAPER order checks |
@@ -146,6 +151,8 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 
 | ต้องการ | ไฟล์ |
 |---------|------|
+| **PORT Monte Carlo** — โมเดล (FHS), จำนวน path, ความเร็ว, ผล backtest ที่วัดจริง (2026-10-02) | `backend/port_mc.py` (docstring) · `sessions/2026-10-02-port-monte-carlo.md` |
+| **Risk close frame loses one symbol** — joint Yahoo download ทำ holding หายจาก /risk/metrics เงียบๆ | `reports/risk-close-frame-lost-symbol-risk-report.md` |
 | **SNDK financial review + NAND cycle** — MCP/SEC reconciliation, thesis questions and watch conditions (2026-09-18) | `sessions/reports/sndk-financial-cycle-2026-09-18-report.md` |
 | **SNDK financial field mapping risks** — AP/accruals, fiscal dates, margin periods and FCF definitions | `reports/sndk-financial-field-mapping-risk-report.md` |
 | **MCP — ให้ agent อ่าน/แก้ THESES + ดึง portfolio/ราคา/ข่าว** (setup Claude Code + Desktop, tools, guard rails) | `../docs/mcp-server.md` |

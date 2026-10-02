@@ -136,6 +136,35 @@ MCP tools → backend endpoints that already exist → the verified free APIs li
 goes back into that file. The MCP serves the same file (`get_data_sources` tool ·
 `spec://data-sources`) — edit the file, not the MCP.
 
+## Open questions — PORT → TOOLS → QUESTIONS (2026-10-01)
+
+What a thesis does not know yet is a row in `questions`, not a paragraph in the thesis body. To answer one,
+follow **[`memory/reference/question-research.md`](memory/reference/question-research.md)**: competing
+explanations first, then the signals each would leave, then the search. The server (`routers/questions.py`)
+takes a question with only its text (what is missing to place it comes back as `gaps`) but
+refuses an answer without evidence and lists what is missing; inference needs a testable assumption; only the
+user accepts an answer or drops a question. Status and the badge numbers are derived on read — never add a
+status column. The same file is served over MCP (`get_question_spec` · `spec://question-research` ·
+`investigate_questions` prompt). A whole tree goes in through `POST /api/v2/questions/import` (MCP
+`question_import`) — never a per-thesis seed script. **New `question*` rows must not be written until every machine runs this
+code** — a peer on old code drops ops for tables it does not know (`gotchas.md`).
+
+## Tracked numbers — PORT → TOOLS → TRACK (2026-10-02)
+
+A number a thesis stands or falls on — a kill condition, a margin, an inventory figure, a contract price — is a row
+in `track_metrics`, not a line under `## Condition Killers`. Follow
+**[`memory/reference/thesis-tracking.md`](memory/reference/thesis-tracking.md)**: the row says where the number is
+read (source name, link, place in the document, the tool that fetches it), each period gets a forecast with its
+reason and release date, and when the date comes the number is recorded with evidence. The server
+(`routers/tracking.py`) decides the verdict when the forecast is a band, refuses a forecast written after the
+result, and opens a `questions` row when a number misses or crosses its kill line — that question is answered by the
+question protocol above. Only the user moves a kill line that is set, changes a role, or retires a metric; crossing a
+kill line never changes the thesis by itself. Status is derived on read — never add a status column, and never
+UPDATE a forecast or a reading (a revision or correction is a new row). The release date is a row of the question
+calendar (`question_dates`) — do not build a second calendar. Served over MCP: `get_tracking_spec` ·
+`spec://thesis-tracking` · tools `track_*`. **New `track_*` rows must not be written until every machine runs this
+code** (same reason as `question*`).
+
 ## Fundamental analysis — "วิเคราะห์พื้นฐาน [ticker]" (2026-09-27)
 
 When the user asks for a fundamental analysis (วิเคราะห์พื้นฐาน) of a stock, follow
@@ -249,7 +278,7 @@ async def get_x():
 | `h` / `heatmap(MKT)` | HMAP (no nav button) | `views/heatmap-view.tsx` | One equity market as a sector-grouped treemap sized by market cap (~275 names, 25/sector). Command `heatmap(TH)`, `heatmap(US, 52w)`, bare `HMAP` = last market; `h` reopens it. Metrics 1D · 52W · 50D · 200D · HIGH · RVOL switch with no request; sector strip = zoom; hover line = all metrics; click → equity, shift-click → chart window. `/api/market-heatmap` (`routers/market_heatmap.py`, Yahoo screener, 11 parallel sector calls, 90s cache + last-good) |
 | `5` / `t` | TAIL  | tail-risk-view | MARKET EVENTS (named: Rates Volatility Shock, Treasury Selloff — Bear Flattening … from z of 1d/5d changes; SEVERE raises composite; ribbon shows top 2) + 6 risk dimensions (composite) + MACRO CONTEXT (not in composite): event strip FOMC/SEP/CPI/NFP/PCE/GDP + EVENT WINDOW tag on VIX signals, Fed rate/stance, 10Y−2Y/10Y−3M, regime, latest prints, event markers on 90D chart · MACRO READ (inflation/growth/rates-vol) · SECTOR ROTATION (turnover tilt, ไม่ใช่ fund flow) · **POSITIONING** (CFTC COT crowding flags + table; `cot_crowding` signal shown with CTX tag, `counted: False`, backtest WEAK) |
 | `3` / `b` | BOND  | `views/bonds/` | 2 tabs (Alt+1/2). **MARKET** — price vs supply: KPI strip · **10Y YIELD DECOMPOSITION** (expected real + breakeven + term premium via NY Fed ACM; 20D driver REAL/TP/BE; Δ attribution 1/5/20/60D; tripwires TP>10y high · BE≥2.5→20y high · 10Y 5.5%; `/api/bonds/decomposition`, `backend/bond_decomposition.py`) · TREASURY LEG (2/10/30Y, real, term premium) · CREDIT LEG (IG/HY OAS, Baa−Aaa, BBB yield) · CORPORATE ISSUANCE/WEEK = SEC EFTS 424B2/424B5 deals ex-bank (SIC-classified, 365d backfill into SQLite) + EVENT STUDY (heavy days vs rest, Δ10Y/ΔIG OAS t..t+3) + RECENT DEALS · TREASURY AUCTIONS (fiscaldata) · DEBT STOCK (Z.1, C&I, SLOOS). Counts deals, not $ — no free daily $ source. **CONDITIONS** (ex-CRDT, `/api/crisis`) — crisis level L0–3 (also in status bar) · STL FSI/NFCI · 5Y/10Y breakeven · 30Y mortgage · CC/mortgage delinquency. IG/HY trigger lines (2%/5%) on CREDIT LEG. **CFTC** (`/api/cot/basis`): TREASURY FUTURES POSITIONING · BASIS TRADE (MARKET, DV01 10Y-eq) + DEALER BALANCE SHEET (CONDITIONS) |
-| `4` / `p` | PORT  | portfolio-view | 5 top-level: PORTFOLIO (sub: POSITIONS·OPTIONS·TRADES·CASH·ENTRY) · ANALYTICS (sub: P&L·BACKTEST) · RISK · TOOLS (sub: THESES·IMPORT) · PAPER (sub: DASHBOARD·TRADE·POSITIONS·OPTIONS·HISTORY) |
+| `4` / `p` | PORT  | portfolio-view | 5 top-level: PORTFOLIO (sub: POSITIONS·OPTIONS·TRADES·CASH·ENTRY) · ANALYTICS (sub: P&L·BACKTEST) · RISK · TOOLS (sub: THESES·QUESTIONS·TRACK·IMPORT·AUDIT) · PAPER (sub: DASHBOARD·TRADE·POSITIONS·OPTIONS·HISTORY) |
 
 **TICK DATA board** (MKT right panel): 7 collapsible sections — AMERICAS · EMEA · ASIA PACIFIC (`/api/market-data`, 6 incl. KOSPI) · RATES·US (11 UST tenors, FRED daily) · RATES·JP (15 JGB tenors, MOF CSV) · VOLATILITY (19 VIX-family, `/api/volatility`, sub-grouped S&P TERM / VOL OF VOL / EQUITY / GLOBAL / COMMOD·RATES) · FX (`/api/fx`). Collapse state in `localStorage["bloomberg_tickdata_sections"]`. ▲/▼ tally counts indices + FX only — a green VIX is a bad day, and a rising yield is a falling bond, so neither belongs in it. แถบบนสุดของ board = `UsMarketClock` (นาฬิกา ET + phase PRE/OPEN/AFTER/CLOSED + timeline + นับถอยหลัง). **ตลาดสหรัฐไม่มีพักกลางวัน** — เทรดต่อเนื่อง 09:30–16:00 ET (ที่พักเที่ยงคือ SET 12:30–14:30, TSE 11:30–12:30, HKEX 12:00–13:00). Logic อยู่ใน `components/bloomberg/lib/us-market-session.ts` (pure, test ได้) — วันหยุด NYSE + half-day 13:00 ET hardcode ถึงปี 2027 เท่านั้น เกินนั้น widget ขึ้นเตือนตัวเอง. Yield rows show bp, not %chg, and only 4 tenors (`^IRX ^FVX ^TNX ^TYX`) can drive the chart.
 
@@ -290,7 +319,9 @@ memory/
 │   ├── frontend-structure.md   ← full component tree + key exports + keyboard shortcuts
 │   ├── data-shapes.md          ← API response shapes (avoid reading router files)
 │   ├── data-catalog.md         ← 17 data categories available for analysis
-│   └── data-sources.md         ← where to look for data (read before searching)
+│   ├── data-sources.md         ← where to look for data (read before searching)
+│   ├── question-research.md    ← how to answer an open question (signals, answer levels, assumptions)
+│   └── thesis-tracking.md      ← tracked numbers: source, forecast vs actual, kill lines
 ├── plans/                 ← feature plans (active + completed/)
 └── sessions/              ← audit trail + reports
 ```

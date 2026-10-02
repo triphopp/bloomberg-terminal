@@ -33,6 +33,8 @@ SYNCED_WRITE_PREFIXES: tuple[str, ...] = SYNC_GATED_PREFIXES + (
     # synced FILE). They read fine pre-merge, so they are push-worthy without
     # being gate-worthy — same reasoning as alert_rules above.
     "/api/v2/zettel",
+    "/api/v2/questions",
+    "/api/v2/tracking",
     "/api/v2/graphs",
     "/api/v2/series",
     "/api/v2/chart-drawings",

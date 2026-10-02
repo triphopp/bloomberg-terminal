@@ -18,6 +18,16 @@ interface IndicatorPickerProps {
     config?: Record<string, number | boolean | string>
   ) => void;
   onRemove: (indicatorId: string) => void;
+  /**
+   * Re-edit an active instance in place — what the ⚙ editor calls on apply.
+   * Omit and the editor falls back to `onAdd` (which stacks a second copy of an
+   * overlay whose id carries its params).
+   */
+  onReplace?: (
+    indicatorId: string,
+    entry: IndicatorRegistryEntry,
+    config?: Record<string, number | boolean | string>
+  ) => void;
   /** Unit lookback windows are entered in. Omit to hide the unit switch. */
   windowUnit?: "bars" | "days";
   onToggleWindowUnit?: () => void;
@@ -40,9 +50,19 @@ function bollingerEntryId(ind: ChartIndicator): string | null {
   if (/^bb-\d/.test(ind.id)) return "bollinger";
   return null;
 }
+/** BB / ATR: own validation, own APPLY button, and number fields may sit empty while typing. */
 const hasSettings = (id: string) => isBollingerEntry(id) || id === "atr-regime";
-const settingsEntryId = (ind: ChartIndicator) =>
-  ind.id === "atr-regime" ? ind.id : bollingerEntryId(ind);
+/** Registry entry an active instance came from — stamped by useChartIndicators. */
+const entryIdOf = (ind: ChartIndicator): string | null =>
+  (ind.config.entryId as string | undefined) ??
+  (ind.id === "atr-regime" ? ind.id : bollingerEntryId(ind));
+const ENTRY_BY_ID = new Map(INDICATOR_REGISTRY.map((e) => [e.id, e]));
+/** The entry behind an instance, when it has anything to edit. */
+function editableEntry(ind: ChartIndicator): IndicatorRegistryEntry | null {
+  const id = entryIdOf(ind);
+  const entry = id ? ENTRY_BY_ID.get(id) : undefined;
+  return entry && entry.defaultParams.length > 0 ? entry : null;
+}
 const ATR_STATE_LABEL = { accumulate: "ACCUMULATE", avoid: "AVOID", unknown: "NO SIGNAL" };
 
 const ATR_KEY: ColorKeyItem[] = [
@@ -96,6 +116,7 @@ export function IndicatorPicker({
   activeIndicators,
   onAdd,
   onRemove,
+  onReplace,
   windowUnit = "bars",
   onToggleWindowUnit,
   data = EMPTY_BARS,
@@ -105,6 +126,8 @@ export function IndicatorPicker({
   const chipsElsewhere = chipsTarget !== undefined;
   const [isOpen, setIsOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  /** Set while the ⚙ editor is open on an active instance; apply replaces it. */
+  const [editing, setEditing] = useState<{ entryId: string; instanceId: string } | null>(null);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [paramValues, setParamValues] = useState<Record<string, Record<string, number | string>>>(
@@ -126,6 +149,7 @@ export function IndicatorPicker({
       ) {
         setIsOpen(false);
         setExpandedId(null);
+        setEditing(null);
       }
     };
     ownerDocument.addEventListener("mousedown", handler);
@@ -184,9 +208,12 @@ export function IndicatorPicker({
       const v = p.default;
       defaults[p.key] = typeof v === "boolean" ? (v ? 1 : 0) : v;
     }
-    const active = hasSettings(entry.id)
-      ? activeIndicators.find((ind) => settingsEntryId(ind) === entry.id)
-      : undefined;
+    // The instance under edit, else the first active one of this entry, so
+    // the form opens on what's on the chart rather than on the defaults.
+    const active =
+      editing?.entryId === entry.id
+        ? activeIndicators.find((ind) => ind.id === editing.instanceId)
+        : activeIndicators.find((ind) => entryIdOf(ind) === entry.id);
     return { ...defaults, ...(active?.config.inputParams ?? {}), ...saved };
   }
 
@@ -198,8 +225,11 @@ export function IndicatorPicker({
     if (expandedId === entry.id) {
       if (isBollingerEntry(entry.id) && !validBollingerParams(getParams(entry))) return;
       if (entry.id === "atr-regime" && !validAtrInputs(getParams(entry))) return;
-      onAdd(entry, getParams(entry) as Record<string, number | boolean | string>);
+      const params = getParams(entry) as Record<string, number | boolean | string>;
+      if (editing?.entryId === entry.id && onReplace) onReplace(editing.instanceId, entry, params);
+      else onAdd(entry, params);
       setExpandedId(null);
+      setEditing(null);
     } else {
       setExpandedId(entry.id);
     }
@@ -224,19 +254,14 @@ export function IndicatorPicker({
   }
 
   function openIndicatorSettings(ind: ChartIndicator) {
-    const entryId = settingsEntryId(ind);
-    if (!entryId) return;
-    setParamValues((prev) => ({ ...prev, [entryId]: ind.config.inputParams ?? ind.config }));
+    const entry = editableEntry(ind);
+    if (!entry) return;
+    setParamValues((prev) => ({ ...prev, [entry.id]: ind.config.inputParams ?? {} }));
+    setEditing({ entryId: entry.id, instanceId: ind.id });
     setIsOpen(true);
-    setQuery(
-      entryId === "atr-regime"
-        ? "ATR Accumulation"
-        : entryId === "bollinger-b"
-          ? "Bollinger %B"
-          : "Bollinger Bands"
-    );
-    setCategoryFilter("volatility");
-    setExpandedId(entryId);
+    setQuery(entry.name);
+    setCategoryFilter(entry.category);
+    setExpandedId(entry.id);
   }
 
   function setParam(entryId: string, key: string, value: number | string) {
@@ -283,7 +308,7 @@ export function IndicatorPicker({
             {label}
             <X className="h-2.5 w-2.5" />
           </button>
-          {(isBB || isATR) && (
+          {editableEntry(ind) && (
             <button
               type="button"
               onClick={() => openIndicatorSettings(ind)}
@@ -291,7 +316,11 @@ export function IndicatorPicker({
               style={{ borderColor: colors.border, color: colors.textSecondary }}
               aria-label={`Settings for ${ind.name}`}
               title={
-                isATR ? "ATR settings · color definition" : "Bollinger settings · Manual / Fit"
+                isATR
+                  ? "ATR settings · color definition"
+                  : isBB
+                    ? "Bollinger settings · Manual / Fit"
+                    : `${ind.name} settings`
               }
             >
               ⚙
@@ -335,6 +364,7 @@ export function IndicatorPicker({
             setQuery("");
             setCategoryFilter(null);
             setExpandedId(null);
+            setEditing(null);
           }}
           className="flex items-center gap-0.5 px-1.5 py-0.5 text-[8px] font-mono border transition-colors hover:opacity-70"
           style={{
@@ -475,12 +505,9 @@ export function IndicatorPicker({
                     {label}
                   </div>
                   {items.map((entry) => {
-                    const isActive = activeIndicators.some((a) =>
-                      isBollingerEntry(entry.id)
-                        ? bollingerEntryId(a) === entry.id
-                        : a.id.startsWith(entry.id)
-                    );
+                    const isActive = activeIndicators.some((a) => entryIdOf(a) === entry.id);
                     const isExpanded = expandedId === entry.id;
+                    const isEditing = isExpanded && editing?.entryId === entry.id;
                     const hasParams = entry.defaultParams.length > 0;
                     const params = getParams(entry);
 
@@ -518,6 +545,7 @@ export function IndicatorPicker({
                           {isActive && !isExpanded && (
                             <span className="text-[8px] opacity-50">ACTIVE</span>
                           )}
+                          {isEditing && <span className="text-[8px] opacity-60">EDIT</span>}
                           {isExpanded && <Check className="h-3 w-3 opacity-70" />}
                         </button>
 
@@ -688,8 +716,23 @@ export function IndicatorPicker({
                                 </button>
                               </div>
                             )}
+                            {!hasSettings(entry.id) && (
+                              <button
+                                type="button"
+                                onClick={() => handleAdd(entry)}
+                                className="text-[9px] font-mono border px-2 py-1"
+                                style={{
+                                  color: colors.accent ?? colors.positive,
+                                  borderColor: colors.border,
+                                }}
+                              >
+                                {isEditing ? "APPLY" : "ADD"}
+                              </button>
+                            )}
                             <p className="text-[8px] opacity-40 font-mono mt-0.5">
-                              click name again to confirm
+                              {isEditing
+                                ? "applies to the indicator on the chart"
+                                : "click name again to confirm"}
                             </p>
                           </div>
                         )}

@@ -354,3 +354,51 @@ def to_gics(label: str | None) -> str:
         return _TO_GICS[s]
     up = {k.upper(): v for k, v in _TO_GICS.items()}
     return up.get(s.upper(), next((g for g in GICS_SECTORS if g.upper() == s.upper()), s))
+
+
+# ── Per-account vocabulary: keep a stored sector in the account's own list ──
+# The ENTRY form offers the SET list on a THB account and the US list on a USD
+# one. A label from the OTHER list (SNDK filed as the SET code ETRON on Dime —
+# the form looked the sector up before the account switch landed) is invisible
+# in the form's picker and splits one exposure into two in every breakdown.
+# Mirrors components/bloomberg/views/portfolio/constants.ts — keep them equal.
+
+SET_SECTORS = (
+    "AGRI", "FOOD", "FASHION", "HOME", "PERSON", "MEDIA", "COMM", "HELTH", "TOURISM",
+    "BANK", "FIN", "INSUR", "AUTO", "ENERG", "PETRO", "MINE", "PACK", "PAPER", "STEEL",
+    "HARDW", "CONS", "CONMAT", "PFUND", "PROP", "ICT", "ETRON", "TRANS", "PROF",
+    "ETF", "DW", "WARRANT", "BOND", "CRYPTO", "Other",
+)
+US_SECTORS = (*GICS_SECTORS, "ETF", ETF_LEVERAGED, ETF_INVERSE, "Fixed Income", "Crypto", "Other")
+CRYPTO_ACCOUNT_SECTORS = ("CRYPTO", "ETF", "Other")
+_VOCAB_BY_ACCOUNT = {"finansia": SET_SECTORS, "dime": US_SECTORS,
+                     "innovestx": CRYPTO_ACCOUNT_SECTORS}
+
+
+def sector_vocab(account_id: str | None, account_currency: str | None) -> tuple[str, ...]:
+    """The list the ENTRY form offers for this account (same rule as the form)."""
+    if account_id in _VOCAB_BY_ACCOUNT:
+        return _VOCAB_BY_ACCOUNT[str(account_id)]
+    return US_SECTORS if (account_currency or "").upper() == "USD" else SET_SECTORS
+
+
+def fit_sector(label: str | None, vocab: tuple[str, ...],
+               classified: dict | None = None) -> str:
+    """`label` if the account's list has it; else the provider classification
+    in that list (`classify()` output); else, on the US list, the GICS name of
+    the label (TECH → Information Technology); else "" — blank is honest, a
+    label from the other list is not."""
+    s = str(label or "").strip()
+    if not s or s in vocab:
+        return s
+    for key in ("set_sector", "us_sector"):
+        cand = (classified or {}).get(key)
+        if cand and cand in vocab and cand != "Other":
+            return cand
+    if vocab is US_SECTORS:
+        g = to_gics(s)
+        if g in vocab:
+            return g
+        if s.upper() in ("BOND", "FIXED INCOME"):
+            return "Fixed Income"
+    return ""

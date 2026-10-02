@@ -14,6 +14,10 @@ First run on an empty `guard_state` seeds silently: the card already shows
 what is flagged today, and a dozen toasts on first boot teach people to ignore
 toasts. `TRADE_GUARD_SCAN_INTERVAL=0` disables the thread (default 900 s).
 
+The same tick checks take-profit rebalance (routers.risk._rebalance_plan,
+rules in `rebalance_rules`) and writes "guard:REBALANCE" once per holding per
+ISO week while it stays a TRIM.
+
 The same tick writes the day's VaR forecast once (`var_forecasts`), which
 GET /api/v2/portfolio/risk/var-backtest scores against the next trading day.
 """
@@ -115,7 +119,49 @@ def run_once() -> dict:
                         forecast["var_hist_pct"] or 0)
     except Exception as e:  # noqa: BLE001
         logger.warning("var forecast not logged: %s", e)
-    return {"light": snapshot.get("light"), "events": len(written), "var_forecast": bool(forecast)}
+    rebal = 0
+    try:
+        rebal = _rebalance_alerts()
+    except Exception as e:  # noqa: BLE001 — never fails the guard tick
+        logger.warning("rebalance check failed: %s", e)
+    return {"light": snapshot.get("light"), "events": len(written), "var_forecast": bool(forecast),
+            "rebalance_events": rebal}
+
+
+def rebalance_events(plan: dict, now: datetime) -> list[dict]:
+    """TRIM rows → alert rows. bar_time = ISO week, so UNIQUE(rule_id, symbol,
+    bar_time) lets a holding that stays over its band toast once a week, not
+    every 15 minutes or every day."""
+    y, w, _ = now.date().isocalendar()
+    week = f"{y}-W{w:02d}"
+    return [
+        {"rule_id": "guard:REBALANCE", "symbol": r["symbol"], "bar_time": week,
+         "snapshot": {"weight_pct": r["weight_pct"], "target_pct": r["target_pct"],
+                      "growth_pct": r["growth_pct"], "sell_shares": r["sell_shares"],
+                      "sell_value": r["sell_value"], "est_realized": r["est_realized"]}}
+        for r in plan.get("rows", []) if r["status"] == "TRIM"
+    ]
+
+
+def _rebalance_alerts(now: datetime | None = None) -> int:
+    from db import get_db
+    from routers.risk import _rebalance_plan
+
+    now = now or _now()
+    events = rebalance_events(_rebalance_plan(None), now)
+    n = 0
+    with get_db() as conn:
+        for e in events:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO alert_events (rule_id, symbol, fired_at, bar_time, snapshot_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (e["rule_id"], e["symbol"], now.isoformat(), e["bar_time"], json.dumps(e["snapshot"])),
+            )
+            n += cur.rowcount
+        conn.commit()
+    if n:
+        logger.info("rebalance: %d take-profit alert(s)", n)
+    return n
 
 
 def _now() -> datetime:

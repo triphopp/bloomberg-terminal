@@ -133,6 +133,7 @@ export function ChartPanel({
     drawingOverlay,
     eventMarkers,
     addIndicator,
+    replaceIndicator,
     removeIndicator,
     windowUnit,
     toggleWindowUnit,
@@ -310,6 +311,7 @@ export function ChartPanel({
               colors={colors}
               activeIndicators={indicators}
               onAdd={addIndicator}
+              onReplace={replaceIndicator}
               onRemove={removeIndicator}
               windowUnit={windowUnit}
               onToggleWindowUnit={toggleWindowUnit}
