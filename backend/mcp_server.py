@@ -178,11 +178,19 @@ def list_theses(
     status: Optional[Literal["draft", "active", "watch", "invalidated", "closed"]] = None,
     symbol: Optional[str] = None,
     category: Optional[str] = None,
+    kind: Optional[str] = None,
+    sector: Optional[str] = None,
+    tag: Optional[str] = None,
+    q: Optional[str] = None,
 ) -> str:
     """List investment theses (without the markdown body). Includes event_count
-    and open_note_count per thesis. Use get_thesis for full detail."""
+    and open_note_count per thesis. Use get_thesis for full detail.
+    kind = what the thesis is about (equity, credit, fund, macro, theme, process,
+    or one the user made up); sector = GICS name; tag = one tag; q = text search
+    over symbol, title, tags, strategy and body."""
     rows = _call("GET", THESES, params={"status": status, "symbol": symbol,
-                                        "category": category})["theses"]
+                                        "category": category, "kind": kind,
+                                        "sector": sector, "tag": tag, "q": q})["theses"]
     for r in rows:
         body = r.pop("body", "") or ""
         r["body_chars"] = len(body)
@@ -217,11 +225,21 @@ def create_thesis(
     target_price: Optional[float] = None,
     stop_price: Optional[float] = None,
     currency: Optional[str] = None,
+    kind: Optional[str] = None,
+    sector: Optional[str] = None,
+    tags: Optional[str] = None,
 ) -> str:
     """Create a new thesis. Always starts as status=draft with no conviction —
     promoting it is the user's call. `body` is markdown (## Claim, ## Condition
-    Killers, ## Catalysts, ## Valuation, ## Key Risks are recognised headers)."""
+    Killers, ## Catalysts, ## Valuation, ## Key Risks are recognised headers).
+    Say what it is about with `kind`: equity (default), credit, fund (a fund, an
+    ETF, a manager's product), macro (an economy, rates, inflation), theme (an
+    industry or supply chain), process. A thesis that is not about one ticker
+    still needs `symbol` — use a short handle such as TH-RATES or NAND.
+    `sector` is a GICS name; `tags` is comma-separated. `category` is the
+    portfolio bucket (CORE, GROWTH, …), not the kind."""
     payload = _clean({
+        "kind": kind, "sector": sector, "tags": tags,
         "symbol": symbol, "title": title, "body": body, "category": category,
         "strategy": strategy, "time_horizon": time_horizon, "target_price": target_price,
         "stop_price": stop_price, "currency": currency, "status": "draft",
@@ -242,6 +260,9 @@ def update_thesis(
     time_horizon: Optional[str] = None,
     category: Optional[str] = None,
     strategy: Optional[str] = None,
+    kind: Optional[str] = None,
+    sector: Optional[str] = None,
+    tags: Optional[str] = None,
 ) -> str:
     """Edit thesis fields. Only changed fields are written; the diff plus `reason`
     lands in the history. `body` REPLACES the whole markdown — fetch it with
@@ -252,6 +273,7 @@ def update_thesis(
         "title": title, "body": body, "status": status, "conviction": conviction,
         "target_price": target_price, "stop_price": stop_price,
         "time_horizon": time_horizon, "category": category, "strategy": strategy,
+        "kind": kind, "sector": sector, "tags": tags,
     })
     if conviction is not None and not 1 <= conviction <= 5:
         raise ToolError("conviction must be 1–5")
@@ -1117,7 +1139,7 @@ def tracking_spec_resource() -> str:
 # A zettel holds one claim in prose. Some findings are only legible as a picture:
 # a money-flow map, a cycle ladder, a side-by-side of five companies' cash flow.
 # Those go here — one self-contained HTML page per analysis, stored in
-# research/graphs/<slug>/ and listed in PORT → TOOLS → THESES → GRAPHS.
+# research/graphs/<slug>/ and listed in PORT → TOOLS → THESES → RESEARCH.
 #
 # Write the page the way you would write any standalone document: inline <style>,
 # inline SVG for the diagram, no external scripts or fonts (the render CSP blocks

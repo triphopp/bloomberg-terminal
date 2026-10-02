@@ -7,6 +7,12 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### MCP `get_thesis` ส่ง JSON ไม่สมบูรณ์เมื่อ thesis มี events/notes มาก (2026-10-02)
+
+| Symptom | Root cause | Fix / workaround |
+|---|---|---|
+| Client `json.loads(get_thesis(...))` ล้ม `Unterminated string` ใกล้ตัวอักษร 40,000 | `backend/mcp_server.py:_out()` ตัด serialized JSON ที่ `MAX_CHARS=40_000` โดยไม่รักษาโครงสร้าง; AXTI เกิดจริงหลัง event เพิ่ม | ระหว่างนี้เรียก `get_thesis(event_limit=0)` หรือจำกัด events; ควรแก้ให้ paginate/คืน JSON ที่ valid. [risk report](../reports/mcp-thesis-output-truncation-risk-report.md) |
+
 ### `UNIQUE constraint failed: sync_pending.table_name, sync_pending.row_key` on a save (2026-09-29)
 
 | Symptom | Root cause | Fix |
@@ -2349,3 +2355,20 @@ Diagnose: `curl -s localhost:9317/api/health/latency` or `logs/latency.jsonl` (q
 - Cause: the existing whole-frame guard only retries a frame with NO columns; a frame missing one column is kept and cached under the joined-symbols key. `_compute_portfolio_risk` then drops that holding and re-spreads its weight — visible only in `excluded_symbols`.
 - Monte Carlo handles it itself (`_mc_inputs` asks for the lost symbols once more on their own and merges). `/risk/metrics`, CAPM and risk-parity do not — see `memory/reports/risk-close-frame-lost-symbol-risk-report.md`.
 
+## New thesis columns / `read_marks` and a peer on old code (2026-10-02)
+
+`theses.kind` / `sector` / `tags` and the `read_marks` table arrived together. `sync/oplog.py:_upsert_row` keeps only the
+columns the receiving DB has, and an old peer skips a table it does not know — both silently, and a consumed op is not
+re-sent. So a kind, a tag or a read mark written while another machine still runs old code never reaches that machine.
+Pull + restart every machine first (same rule as `question*` / `track_*`). Until then the UI still groups correctly:
+`kind_eff` / `sector_eff` are derived on read and nothing has to be written. Opening an old thesis in EDIT and saving does
+write `kind` (and clears a `category` of equity / credit / PROCESS) — that is the one write that happens on its own.
+
+## Drive folder `graphs/` keeps coming back after the rename to `research/` (2026-10-02)
+
+`sync/files.py` now publishes research pages to `<sync>/research/` and renames an old `<sync>/graphs/` on the first round.
+Any process that loaded the old module keeps writing `graphs/` and recreates it within seconds: a Windows box not yet
+pulled, **and every `backend/mcp_server.py` process started before the change** (one per open Claude session — they run
+their own sync). Nothing is lost: `adopt_legacy` copies a newer page from `graphs/` into `research/` each round and never
+deletes. The old folder stops changing once every machine has pulled and every MCP session was restarted; delete it by
+hand then. The local `research/graphs/`, the `graphs` table and `/api/v2/graphs` keep their names.

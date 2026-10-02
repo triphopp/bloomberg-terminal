@@ -30,6 +30,7 @@ from actor import capture_actor, current_actor
 from config import THESES_DIR
 from db import get_db
 from sync.config import device_id
+from routers.reads import mark_if_user
 
 router = APIRouter(prefix="/api/v2/theses", dependencies=[Depends(capture_actor)])
 
@@ -38,10 +39,66 @@ router = APIRouter(prefix="/api/v2/theses", dependencies=[Depends(capture_actor)
 EDITABLE = (
     "symbol", "resolved_symbol", "market", "account_id", "sub_portfolio",
     "title", "category", "strategy", "status", "conviction", "time_horizon",
-    "target_price", "stop_price", "currency", "body",
+    "target_price", "stop_price", "currency", "body", "kind", "sector", "tags",
 )
 
 VALID_STATUS = {"draft", "active", "watch", "invalidated", "closed"}
+
+# Offered first in the editor; `kind` itself is open — the user types a new one
+# and it shows up in the facets from then on.
+DEFAULT_KINDS = ("equity", "credit", "fund", "macro", "theme", "process", "other")
+# Kinds that are a tradable instrument, so a sector lookup by symbol makes sense.
+_INSTRUMENT_KINDS = {"equity", "credit"}
+
+
+def _clean_kind(v) -> str:
+    return " ".join(str(v or "").lower().split())[:32]
+
+
+def _clean_tags(v) -> str:
+    """'AI, Optical ,ai' → 'ai, optical' — lowercase, trimmed, no repeats."""
+    parts = [" ".join(p.lower().split()) for p in str(v or "").replace("#", "").split(",")]
+    return ", ".join(dict.fromkeys(p for p in parts if p))
+
+
+def _kind_of(row: dict) -> str:
+    """`kind`, or what the row said before the column existed: `category` used to
+    carry 'equity' / 'credit' / 'PROCESS' alongside the portfolio buckets."""
+    k = _clean_kind(row.get("kind"))
+    if k:
+        return k
+    c = _clean_kind(row.get("category"))
+    return c if c in DEFAULT_KINDS else "equity"
+
+
+def _sector_lookup(conn) -> dict[str, str]:
+    """SYMBOL → GICS sector from what this DB already knows (the sector table,
+    then the trade log). No provider call: a thesis list must not wait on Yahoo."""
+    from sector_map import GICS_SECTORS, to_gics
+    out: dict[str, str] = {}
+    for sql in (
+        "SELECT symbol, sector AS s FROM trades WHERE COALESCE(sector, '') != '' ORDER BY date_entry",
+        "SELECT symbol, COALESCE(NULLIF(sector_gics, ''), sector_display) AS s "
+        "FROM sector_classifications",
+    ):
+        try:
+            for r in conn.execute(sql).fetchall():
+                g = to_gics(r["s"])
+                if g in GICS_SECTORS and r["symbol"]:
+                    out[str(r["symbol"]).upper()] = g
+        except sqlite3.OperationalError:
+            continue
+    return out
+
+
+def _decorate(row: dict, sectors: dict[str, str]) -> dict:
+    """kind_eff / sector_eff: what the navigator groups and filters by. Derived,
+    so a thesis written before the columns existed is placed without a rewrite."""
+    row["kind_eff"] = _kind_of(row)
+    row["sector_eff"] = (row.get("sector") or "").strip() or (
+        sectors.get(str(row.get("symbol") or "").upper(), "")
+        if row["kind_eff"] in _INSTRUMENT_KINDS else "")
+    return row
 
 
 def _now() -> str:
@@ -123,6 +180,9 @@ class ThesisIn(BaseModel):
     stop_price: Optional[float] = None
     currency: Optional[str] = None
     body: str = ""
+    kind: Optional[str] = None
+    sector: Optional[str] = None
+    tags: Optional[str] = None
 
 
 class ThesisPatch(BaseModel):
@@ -141,6 +201,9 @@ class ThesisPatch(BaseModel):
     stop_price: Optional[float] = None
     currency: Optional[str] = None
     body: Optional[str] = None
+    kind: Optional[str] = None
+    sector: Optional[str] = None
+    tags: Optional[str] = None
     note: Optional[str] = None          # free-text reason, stored on the event
     occurred_at: Optional[str] = None   # allow back-dating the history entry
 
@@ -214,9 +277,19 @@ def list_theses(
     status: Optional[str] = Query(None),
     account_id: Optional[str] = Query(None),
     include_deleted: bool = Query(False),
+    q: Optional[str] = Query(None, description="text in symbol, title, tags, strategy, sector or body"),
+    kind: Optional[str] = Query(None),
+    sector: Optional[str] = Query(None),
+    tag: Optional[str] = Query(None),
 ):
     where: list[str] = []
     params: list[Any] = []
+    if q and q.strip():
+        like = f"%{q.strip().lower()}%"
+        where.append("(" + " OR ".join(
+            f"LOWER(COALESCE({c}, '')) LIKE ?"
+            for c in ("symbol", "title", "tags", "strategy", "sector", "kind", "body")) + ")")
+        params.extend([like] * 7)
     if not include_deleted:
         where.append("deleted_at IS NULL")
     if symbol:
@@ -258,13 +331,37 @@ def list_theses(
         zettel_counts = _count_map(conn, _ZETTEL_COUNT_SQL)
         conflict_counts = _count_map(conn, _CONFLICT_COUNT_SQL)
         graph_counts = _count_map(conn, _GRAPH_COUNT_SQL)
+        sectors = _sector_lookup(conn)
     for r in rows:
+        _decorate(r, sectors)
         r["event_count"] = counts.get(r["id"], 0)
         r["open_note_count"] = note_counts.get(r["id"], 0)
         r["zettel_count"] = zettel_counts.get(r["id"], 0)
         r["conflict_count"] = conflict_counts.get(r["id"], 0)
         r["graph_count"] = graph_counts.get(r["id"], 0)
-    return {"theses": rows}
+    # kind / sector / tag filter the DERIVED values, so they run after the query.
+    if kind:
+        rows = [r for r in rows if r["kind_eff"] == _clean_kind(kind)]
+    if sector:
+        rows = [r for r in rows if r["sector_eff"].lower() == sector.strip().lower()]
+    if tag:
+        want = _clean_tags(tag)
+        rows = [r for r in rows if want in (r.get("tags") or "").split(", ")]
+
+    def tally(values) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for v in values:
+            if v:
+                out[v] = out.get(v, 0) + 1
+        return dict(sorted(out.items()))
+
+    facets = {
+        "kind": tally(r["kind_eff"] for r in rows),
+        "sector": tally(r["sector_eff"] for r in rows),
+        "tags": tally(t for r in rows for t in (r.get("tags") or "").split(", ")),
+        "default_kinds": list(DEFAULT_KINDS),
+    }
+    return {"theses": rows, "facets": facets}
 
 
 @router.get("/by-symbol/{symbol}")
@@ -310,7 +407,7 @@ def theses_summary():
 @router.get("/{thesis_id}")
 def get_thesis(thesis_id: str, event_limit: int = Query(50)):
     with get_db() as conn:
-        thesis = _get_thesis(conn, thesis_id)
+        thesis = _decorate(_get_thesis(conn, thesis_id), _sector_lookup(conn))
         events = [
             dict(r)
             for r in conn.execute(
@@ -360,6 +457,9 @@ def create_thesis(body: ThesisIn):
     data = body.dict()
     data["symbol"] = data["symbol"].strip().upper()
     data["title"] = data["title"] or data["symbol"]
+    data["kind"] = _clean_kind(data.get("kind"))
+    data["tags"] = _clean_tags(data.get("tags"))
+    data["sector"] = (data.get("sector") or "").strip()
 
     cols = ["id", *EDITABLE, "created_at", "updated_at"]
     values = [thesis_id, *[data.get(c) for c in EDITABLE], now, now]
@@ -369,7 +469,8 @@ def create_thesis(body: ThesisIn):
             values,
         )
         _log_event(conn, thesis_id, "CREATED", {"symbol": data["symbol"], "title": data["title"]})
-        thesis = _get_thesis(conn, thesis_id)
+        mark_if_user(conn, "thesis", thesis_id)
+        thesis = _decorate(_get_thesis(conn, thesis_id), _sector_lookup(conn))
     return {"thesis": thesis}
 
 
@@ -385,6 +486,12 @@ def patch_thesis(thesis_id: str, body: ThesisPatch):
         raise HTTPException(status_code=400, detail=f"status must be one of {sorted(VALID_STATUS)}")
     if "symbol" in updates and updates["symbol"]:
         updates["symbol"] = str(updates["symbol"]).strip().upper()
+    if "kind" in updates:
+        updates["kind"] = _clean_kind(updates["kind"])
+    if "tags" in updates:
+        updates["tags"] = _clean_tags(updates["tags"])
+    if "sector" in updates:
+        updates["sector"] = (updates["sector"] or "").strip()
 
     with get_db() as conn:
         before = _get_thesis(conn, thesis_id)
@@ -412,7 +519,9 @@ def patch_thesis(thesis_id: str, body: ThesisPatch):
             else:
                 kind = "NOTE"
             _log_event(conn, thesis_id, kind, diff or None, note, occurred_at)
-        thesis = _get_thesis(conn, thesis_id)
+        if diff:
+            mark_if_user(conn, "thesis", thesis_id)
+        thesis = _decorate(_get_thesis(conn, thesis_id), _sector_lookup(conn))
     return {"thesis": thesis, "changed": sorted(diff)}
 
 
@@ -635,6 +744,7 @@ def add_note(thesis_id: str, body: NoteIn):
             {"kind": body.kind.upper(), "note_id": note_id},
             body.title.strip() or body.body[:120],
         )
+        mark_if_user(conn, "note", note_id)
         row = dict(conn.execute("SELECT * FROM thesis_notes WHERE id = ?", (note_id,)).fetchone())
     return {"note": row}
 
@@ -687,6 +797,7 @@ def patch_note(thesis_id: str, note_id: str, body: NotePatch):
                 {"status": {"from": before["status"], "to": new_status}, "note_id": note_id},
                 before["title"] or (before["body"] or "")[:120],
             )
+        mark_if_user(conn, "note", note_id)
         after = dict(conn.execute("SELECT * FROM thesis_notes WHERE id = ?", (note_id,)).fetchone())
     return {"note": after}
 
@@ -810,6 +921,10 @@ def import_markdown(dry_run: bool = Query(False)):
                 "symbol": symbol,
                 "title": str(fm.get("title") or path.stem),
                 "category": str(fm.get("category") or ""),
+                "kind": _clean_kind(fm.get("kind")),
+                "sector": str(fm.get("sector") or "").strip(),
+                "tags": _clean_tags(", ".join(fm["tags"]) if isinstance(fm.get("tags"), list)
+                                    else fm.get("tags")),
                 "strategy": str(fm.get("strategy") or ""),
                 "status": status,
                 "conviction": _coerce_conviction(fm.get("confidence") or fm.get("conviction")),
@@ -825,11 +940,12 @@ def import_markdown(dry_run: bool = Query(False)):
             now = _now()
             conn.execute(
                 """INSERT INTO theses
-                   (id, symbol, title, category, strategy, status, conviction, time_horizon,
-                    target_price, stop_price, body, source_file, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   (id, symbol, title, category, kind, sector, tags, strategy, status, conviction,
+                    time_horizon, target_price, stop_price, body, source_file, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     record["id"], record["symbol"], record["title"], record["category"],
+                    record["kind"], record["sector"], record["tags"],
                     record["strategy"], record["status"], record["conviction"],
                     record["time_horizon"], record["target_price"], record["stop_price"],
                     record["body"], record["source_file"], now, now,
@@ -883,6 +999,9 @@ def export_markdown(thesis_id: str):
         "title": thesis.get("title") or thesis["symbol"],
         "status": thesis.get("status"),
         "category": thesis.get("category") or "",
+        "kind": thesis.get("kind") or "",
+        "sector": thesis.get("sector") or "",
+        "tags": thesis.get("tags") or "",
         "strategy": thesis.get("strategy") or "",
         "conviction": thesis.get("conviction"),
         "time_horizon": thesis.get("time_horizon") or "",

@@ -1,10 +1,13 @@
 "use client";
+import { toolsThesisIdAtom } from "@/components/bloomberg/atoms";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAtom } from "jotai";
 import { useEffect, useState } from "react";
 import type { Colors } from "../../helpers";
 import { Chip, Errors, Label } from "../questions";
 import { STATUS_COLOR, actorTag } from "../questions/types";
-import type { Thesis } from "../theses/types";
+import { NavRail, ThesisNavigator, useThesisList } from "../theses/ThesisNavigator";
+import { ReadDot, UNREAD_COLOR, UnreadBar, useReads } from "../theses/useReads";
 import { API, ExpectForm, MetricForm, ReadForm, call } from "./forms";
 import {
   type TCountsPayload,
@@ -23,8 +26,6 @@ import {
   fmtVal,
   whenText,
 } from "./types";
-
-const THESIS_KEY = "bloomberg_tracking_thesis";
 
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const r = await fetch(url, { signal });
@@ -92,37 +93,21 @@ export function TrackingTab({
     ]);
 
   // "" = every thesis: what is due does not care which thesis it belongs to.
-  const [thesisId, setThesisId] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    try {
-      return localStorage.getItem(THESIS_KEY) ?? "";
-    } catch {
-      return "";
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem(THESIS_KEY, thesisId);
-    } catch {
-      /* ignore */
-    }
-  }, [thesisId]);
+  // Shared with THESES and QUESTIONS.
+  const [thesisId, setThesisId] = useAtom(toolsThesisIdAtom);
+  const reads = useReads();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>({ kind: "view" });
   const [opened, setOpened] = useState<TQuestion | null>(null);
 
-  const { data: thesesData } = useQuery({
-    queryKey: ["theses", "list"],
-    queryFn: ({ signal }) => getJson<{ theses: Thesis[] }>("/api/v2/theses", signal),
-    staleTime: 60_000,
-  });
+  const { data: thesesData } = useThesisList();
   const theses = thesesData?.theses ?? [];
   const { data: counts } = useTrackCounts();
 
   // A remembered thesis that no longer exists would leave the tab empty.
   useEffect(() => {
     if (thesisId && theses.length && !theses.some((t) => t.id === thesisId)) setThesisId("");
-  }, [theses, thesisId]);
+  }, [theses, thesisId, setThesisId]);
 
   const { data: list, isLoading } = useQuery({
     queryKey: ["tracking", "list", thesisId],
@@ -166,133 +151,129 @@ export function TrackingTab({
     });
   };
 
+  const unreadReadings = thesisId
+    ? (reads.byThesis[thesisId]?.reading ?? 0)
+    : Object.values(reads.byThesis).reduce((n, x) => n + x.reading, 0);
+
   return (
-    <div className="flex flex-col h-full overflow-hidden text-[10px]">
-      <div
-        className="shrink-0 flex items-center gap-1 px-2 py-1 border-b overflow-x-auto"
-        style={border}
-      >
-        <button
-          type="button"
-          onClick={() => pick("")}
-          className="px-1.5 py-0.5 font-bold whitespace-nowrap hover:opacity-80"
-          style={{ color: thesisId === "" ? colors.accent : colors.textSecondary }}
-        >
-          ทั้งหมด
-          <TrackBadges alert={counts?.alert ?? 0} setup={counts?.setup ?? 0} />
-        </button>
-        {theses.map((t) => {
-          const n = counts?.by_thesis[t.id];
-          return (
-            <button
-              type="button"
-              key={t.id}
-              onClick={() => pick(t.id)}
-              className="px-1.5 py-0.5 font-bold whitespace-nowrap hover:opacity-80"
-              style={{ color: t.id === thesisId ? colors.accent : colors.textSecondary }}
-              title={t.title}
-            >
-              {t.symbol}
-              <TrackBadges alert={n?.alert ?? 0} setup={n?.setup ?? 0} />
-            </button>
-          );
-        })}
-      </div>
+    <div className="reading flex h-full overflow-hidden">
+      <NavRail colors={colors}>
+        <ThesisNavigator
+          colors={colors}
+          selectedId={thesisId}
+          onSelect={pick}
+          allLabel="ทุก thesis"
+        />
+      </NavRail>
 
-      <div className="shrink-0 flex items-center gap-3 px-2 py-1 border-b flex-wrap" style={border}>
-        {(["KILL", "DUE", "OFF", "SETUP", "WAITING"] as const).map((s) => {
-          const n = c?.[s.toLowerCase() as "kill" | "due" | "off" | "setup" | "waiting"] ?? 0;
-          return (
-            <span key={s} style={{ color: n ? T_STATUS[s].color : colors.textSecondary }}>
-              {n} {T_STATUS[s].text}
-            </span>
-          );
-        })}
-        <button
-          type="button"
-          className="ml-auto px-1.5 border font-bold hover:opacity-80"
-          style={{ ...border, color: colors.accent }}
-          onClick={() => setMode(mode.kind === "add" ? { kind: "view" } : { kind: "add" })}
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden text-[10px]">
+        <div
+          className="shrink-0 flex items-center gap-3 px-2 py-1 border-b flex-wrap"
+          style={border}
         >
-          {mode.kind === "add" ? "ปิด" : "+ ตัวเลข"}
-        </button>
-      </div>
-
-      <div className="flex-1 flex min-h-0">
-        <div className="w-[40%] min-w-[240px] border-r overflow-y-auto" style={border}>
-          {rows.map((m) => (
-            <MetricRow
-              key={m.id}
-              m={m}
+          {(["KILL", "DUE", "OFF", "SETUP", "WAITING"] as const).map((s) => {
+            const n = c?.[s.toLowerCase() as "kill" | "due" | "off" | "setup" | "waiting"] ?? 0;
+            return (
+              <span key={s} style={{ color: n ? T_STATUS[s].color : colors.textSecondary }}>
+                {n} {T_STATUS[s].text}
+              </span>
+            );
+          })}
+          {!!thesisId && (
+            <UnreadBar
+              count={unreadReadings}
+              onMarkAll={() => void reads.markThesis(thesisId, ["reading"])}
               colors={colors}
-              showSymbol={!thesisId}
-              selected={selectedId === m.id}
-              onClick={() => {
-                setSelectedId(m.id);
-                setMode({ kind: "view" });
-                setOpened(null);
-              }}
             />
-          ))}
-          {!isLoading && rows.length === 0 && (
-            <div className="p-3 leading-relaxed" style={dim}>
-              ยังไม่มีตัวเลขที่จับตา เริ่มจาก killer condition ของ thesis: ตัวเลขอะไร อ่านจากที่ไหน คาดว่าเท่าไร
-              และออกวันไหน
-            </div>
           )}
+          <button
+            type="button"
+            className="ml-auto px-1.5 border font-bold hover:opacity-80"
+            style={{ ...border, color: colors.accent }}
+            onClick={() => setMode(mode.kind === "add" ? { kind: "view" } : { kind: "add" })}
+          >
+            {mode.kind === "add" ? "ปิด" : "+ ตัวเลข"}
+          </button>
         </div>
 
-        <div className="flex-1 min-w-0 overflow-y-auto p-3">
-          {mode.kind === "add" ? (
-            <MetricForm
-              colors={colors}
-              theses={theses}
-              thesisId={thesisId}
-              onDone={done}
-              onCancel={() => setMode({ kind: "view" })}
-            />
-          ) : !detail ? (
-            <div style={dim}>{rows.length ? "เลือกตัวเลขทางซ้าย" : ""}</div>
-          ) : mode.kind === "edit" ? (
-            <MetricForm
-              key={detail.metric.id}
-              colors={colors}
-              theses={theses}
-              thesisId={thesisId}
-              detail={detail}
-              onDone={done}
-              onCancel={() => setMode({ kind: "view" })}
-            />
-          ) : mode.kind === "expect" ? (
-            <ExpectForm
-              key={detail.metric.id}
-              colors={colors}
-              detail={detail}
-              onDone={() => done()}
-              onCancel={() => setMode({ kind: "view" })}
-            />
-          ) : mode.kind === "read" ? (
-            <ReadForm
-              key={`${detail.metric.id}-${mode.period ?? ""}`}
-              colors={colors}
-              detail={detail}
-              period={mode.period}
-              onDone={(q) => {
-                setOpened(q);
-                done();
-              }}
-              onCancel={() => setMode({ kind: "view" })}
-            />
-          ) : (
-            <Detail
-              d={detail}
-              colors={colors}
-              opened={opened}
-              onMode={setMode}
-              onChange={() => void refresh()}
-              onOpenQuestion={(q) => onOpenQuestion(detail.metric.thesis_id, q.id)}
-            />
-          )}
+        <div className="flex-1 flex min-h-0">
+          <div className="w-[40%] min-w-[240px] border-r overflow-y-auto" style={border}>
+            {rows.map((m) => (
+              <MetricRow
+                key={m.id}
+                m={m}
+                colors={colors}
+                unread={reads.unreadUnder("reading", m.id).length}
+                showSymbol={!thesisId}
+                selected={selectedId === m.id}
+                onClick={() => {
+                  setSelectedId(m.id);
+                  setMode({ kind: "view" });
+                  setOpened(null);
+                }}
+              />
+            ))}
+            {!isLoading && rows.length === 0 && (
+              <div className="p-3 leading-relaxed" style={dim}>
+                ยังไม่มีตัวเลขที่จับตา เริ่มจาก killer condition ของ thesis: ตัวเลขอะไร อ่านจากที่ไหน คาดว่าเท่าไร
+                และออกวันไหน
+              </div>
+            )}
+          </div>
+
+          <div className="flex-1 min-w-0 overflow-y-auto p-3">
+            {mode.kind === "add" ? (
+              <MetricForm
+                colors={colors}
+                theses={theses}
+                thesisId={thesisId}
+                onDone={done}
+                onCancel={() => setMode({ kind: "view" })}
+              />
+            ) : !detail ? (
+              <div style={dim}>{rows.length ? "เลือกตัวเลขทางซ้าย" : ""}</div>
+            ) : mode.kind === "edit" ? (
+              <MetricForm
+                key={detail.metric.id}
+                colors={colors}
+                theses={theses}
+                thesisId={thesisId}
+                detail={detail}
+                onDone={done}
+                onCancel={() => setMode({ kind: "view" })}
+              />
+            ) : mode.kind === "expect" ? (
+              <ExpectForm
+                key={detail.metric.id}
+                colors={colors}
+                detail={detail}
+                onDone={() => done()}
+                onCancel={() => setMode({ kind: "view" })}
+              />
+            ) : mode.kind === "read" ? (
+              <ReadForm
+                key={`${detail.metric.id}-${mode.period ?? ""}`}
+                colors={colors}
+                detail={detail}
+                period={mode.period}
+                onDone={(q) => {
+                  setOpened(q);
+                  done();
+                }}
+                onCancel={() => setMode({ kind: "view" })}
+              />
+            ) : (
+              <Detail
+                d={detail}
+                colors={colors}
+                opened={opened}
+                reads={reads}
+                onMode={setMode}
+                onChange={() => void Promise.all([refresh(), reads.refresh()])}
+                onOpenQuestion={(q) => onOpenQuestion(detail.metric.thesis_id, q.id)}
+              />
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -302,12 +283,15 @@ export function TrackingTab({
 function MetricRow({
   m,
   colors,
+  unread,
   showSymbol,
   selected,
   onClick,
 }: {
   m: TMetric;
   colors: Colors;
+  /** Readings of this metric the user has not looked at yet. */
+  unread: number;
   showSymbol: boolean;
   selected: boolean;
   onClick: () => void;
@@ -336,6 +320,11 @@ function MetricRow({
         <span className="flex-1 min-w-0 truncate" style={{ color: colors.text }}>
           {m.title}
         </span>
+        {unread > 0 && (
+          <span className="shrink-0" style={{ color: UNREAD_COLOR }} title="มีค่าจริงที่ยังไม่อ่าน">
+            ●
+          </span>
+        )}
         {m.role === "KILLER" && <Chip text="KILLER" color="#f87171" />}
         <Chip text={T_STATUS[s.status].text} color={T_STATUS[s.status].color} />
       </div>
@@ -443,12 +432,14 @@ function PeriodRow({
   p,
   unit,
   colors,
+  reads,
   onCorrect,
   onOpenQuestion,
 }: {
   p: TPeriod;
   unit: string;
   colors: Colors;
+  reads: ReturnType<typeof useReads>;
   onCorrect: (period: string) => void;
   onOpenQuestion: (q: TQuestion) => void;
 }) {
@@ -483,7 +474,7 @@ function PeriodRow({
         {r ? (
           <>
             <div className="font-mono font-bold" style={{ color: colors.text }}>
-              {r.value_text}
+              <ReadDot type="reading" id={r.id} colors={colors} reads={reads} /> {r.value_text}
             </div>
             <div style={dim}>
               ณ {r.as_of} · <Evidence r={r} colors={colors} />
@@ -521,6 +512,7 @@ function PeriodRow({
 function Detail({
   d,
   colors,
+  reads,
   opened,
   onMode,
   onChange,
@@ -528,6 +520,7 @@ function Detail({
 }: {
   d: TDetail;
   colors: Colors;
+  reads: ReturnType<typeof useReads>;
   /** The question the reading just recorded opened, if it missed. */
   opened: TQuestion | null;
   onMode: (m: Mode) => void;
@@ -761,6 +754,7 @@ function Detail({
                 p={p}
                 unit={m.unit}
                 colors={colors}
+                reads={reads}
                 onCorrect={(period) => onMode({ kind: "read", period })}
                 onOpenQuestion={onOpenQuestion}
               />

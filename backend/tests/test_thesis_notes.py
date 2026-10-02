@@ -53,7 +53,7 @@ def _events(mod, thesis_id):
 
 
 def _theses(mod):
-    return mod.list_theses(None, None, None, None, False)["theses"]
+    return mod.list_theses(None, None, None, None, False, None, None, None, None)["theses"]
 
 
 # ── Create ───────────────────────────────────────────────────────────────────

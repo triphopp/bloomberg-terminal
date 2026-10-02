@@ -258,7 +258,7 @@ Proxy: `app/api/v2/ledger/[[...path]]/route.ts` (GET/POST/PUT). Errors: `{code, 
 
 ## Theses (`routers/theses.py`) — prefix `/api/v2/theses`
 DB-backed investment theses. `theses` = materialised head (field-level LWW merge); `thesis_events` = append-only history (never UPDATEd → no merge conflicts). Cloud-synced via `SYNC_TABLES`.
-- `GET /api/v2/theses?symbol&category&status&account_id&include_deleted` — list + `event_count` + `open_note_count` (open|watching only — a badge counting dismissed scenarios never goes down) + `zettel_count` / `conflict_count` / `graph_count` (attachments, so a tab label is right before its panel has ever been opened)
+- `GET /api/v2/theses?symbol&category&status&account_id&include_deleted&q&kind&sector&tag` — `{theses, facets}`. `q` = LIKE over symbol / title / tags / strategy / sector / kind / body; `kind` / `sector` / `tag` filter the derived `kind_eff` / `sector_eff` and the tag list; `facets` = `{kind, sector, tags: {value: n}, default_kinds}` (2026-10-02). list + `event_count` + `open_note_count` (open|watching only — a badge counting dismissed scenarios never goes down) + `zettel_count` / `conflict_count` / `graph_count` (attachments, so a tab label is right before its panel has ever been opened)
 - `GET /api/v2/theses/{id}` — `{thesis, events, links, notes, counts}` (links join `trades`; `counts` = `{zettel, conflicts, graphs}`)
 - `GET /api/v2/theses/by-symbol/{symbol}` — theses for one ticker
 - `GET /api/v2/theses/summary/by-symbol` — `{by_symbol: {SYM: {count, status, conviction, id}}}`, one query for the whole book (positions-table badge)
@@ -297,6 +297,8 @@ their own rows. Schema in `db.init_zettel_schema()`. All four tables are cloud-s
 - `POST /api/v2/zettel/resolve-ref-collisions` — post-merge: two offline devices can mint the same `Z-00NN`; the older row keeps it (`ref` is indexed, NOT unique — a UNIQUE index would abort the sync import)
 
 ## Questions (`routers/questions.py`) — prefix `/api/v2/questions` (2026-10-01)
+
+`GET /api/v2/questions` also takes `q` (LIKE over title / thought / ref / symbol, every thesis) — the QUESTIONS search box (2026-10-02).
 Open questions a thesis is carrying. Schema in `db.init_questions_schema()`; six tables, all synced. Status is
 derived on read, never stored. Agent writes carry `X-Thesis-Actor: agent:<name>`; an agent cannot review, drop,
 reopen or delete (403). Next.js proxy: `app/api/v2/questions/[[...path]]/route.ts`.
@@ -350,8 +352,17 @@ Trend lines + REG channels the user draws on a chart. SQLite `chart_drawings`, i
 - `POST /api/v2/chart-drawings/import` — `{drawings:[{id,...}]}` insert-if-absent → `{imported, received}` (localStorage migration)
 Proxy: `app/api/v2/chart-drawings/[[...path]]/route.ts`. Frontend: `chart/useChartDrawings.ts`.
 
-## Graphs (`routers/graphs.py`) — prefix `/api/v2/graphs`
-Rendered analysis pages. The HTML is a file (`GRAPHS_DIR/<slug>/index.html`, older versions `v<N>.html`, `meta.json` beside it); SQLite only indexes it. Schema in `db.init_graphs_schema()`. Cloud-synced since 2026-09-19: the row via `SYNC_TABLES` (key `slug`), the FILE via `sync/files.py` (`<sync>/graphs/<slug>/index.html` + `manifest.json`, sha256 compare, a locally-changed page is never clobbered). `v<N>.html` stays local.
+## Reads (`routers/reads.py`) — prefix `/api/v2/reads` (2026-10-02)
+
+Read marks for PORT → TOOLS. Types: `thesis` · `note` · `zettel` · `answer` · `graph` · `reading`. Proxy `app/api/v2/reads/[[...path]]/route.ts`. No cache.
+
+- `GET /api/v2/reads/unread?thesis_id=` — `{items: [{type, id, thesis_id, parent_id}], by_thesis: {id: {total, thesis, note, zettel, answer, graph, reading}}, total}`. `parent_id` = question of an answer / metric of a reading. `by_thesis[""]` = items attached to no thesis.
+- `POST /api/v2/reads` `{items: [{type, id}]}` and/or `{thesis_id, types?}` (everything unread under that thesis) → `{marked}`. Agent actor → 403; unknown type → 422.
+- `POST /api/v2/reads/unmark` `{items}` — back to unread (row kept with `seen_at = ''`, so it syncs as an update).
+- Unread = no mark and `actor != 'user'`, or the item's stamp (`updated_at`; `created_at` for answers / readings) is later than `seen_at`. Thesis and note writes by the user mark themselves (`mark_if_user`); accepting or rejecting an answer marks that answer.
+
+## Graphs (`routers/graphs.py`) — prefix `/api/v2/graphs` (UI label: RESEARCH since 2026-10-02)
+Rendered analysis pages. The HTML is a file (`GRAPHS_DIR/<slug>/index.html`, older versions `v<N>.html`, `meta.json` beside it); SQLite only indexes it. Schema in `db.init_graphs_schema()`. Cloud-synced since 2026-09-19: the row via `SYNC_TABLES` (key `slug`), the FILE via `sync/files.py` (`<sync>/research/<slug>/index.html` + `manifest.json` — the cloud folder was `graphs/` until 2026-10-02; `adopt_legacy` renames it, or copies newer pages across when an old-code peer recreates it, sha256 compare, a locally-changed page is never clobbered). `v<N>.html` stays local.
 - `GET /api/v2/graphs?symbol&thesis_id&q&limit` — index, newest first, never includes the HTML
 - `GET /api/v2/graphs/{slug}?include_html` — metadata (+ `render_url`, `file`); `include_html=true` adds the source
 - `GET /api/v2/graphs/{slug}/render?v=&shell=` — the page itself as `text/html` under a strict CSP (`default-src 'none'`, inline style/script only, `img-src data:`, `font-src data:`) + `nosniff`. `backend/graph_shell.py` wraps the stored content at render time: masthead, academic typography, Laksaman (`@font-face` from `research/graphs/_assets/*.woff2` as a data: URI — the CSP blocks Google Fonts) and a contents rail down the LEFT built from the page's `<h2>`/`<h3>` (2026-09-20 — it used to be a sticky tab strip across the top; under 1040px wide it collapses back into a `☰ Contents` dropdown). `shell=0` returns the raw file. The Next proxy passes the response through untouched instead of parsing it as JSON

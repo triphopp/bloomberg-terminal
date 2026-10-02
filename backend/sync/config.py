@@ -155,6 +155,9 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     # name of the folder the file lives in) rather than the uuid `id`, so the
     # same page written on two devices merges into one row instead of two.
     ("graphs",                   ["slug"]),                       # UNIQUE(slug)
+    # Read marks (routers/reads.py): one head row per thing the user has looked
+    # at; marking again moves seen_at, so LWW keeps the later look.
+    ("read_marks",               ["target_type", "target_id"]),   # composite PK
     # Indicator series (backend/series_sources). `series_meta` is a head row
     # like `theses` — a label or sort order is edited in place, so field-level
     # LWW. `series_points` is one published number on one day, keyed naturally,

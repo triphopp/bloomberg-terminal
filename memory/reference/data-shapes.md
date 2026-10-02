@@ -527,6 +527,11 @@ Two bases at once — the ALLOCATION (OPEN) card used to weight sectors by cost 
 
 ## Thesis (`GET /api/v2/theses/{id}`)
 
+2026-10-02: every thesis row also carries `kind` (open vocabulary, lowercase), `sector` (GICS or `""`), `tags` (`"a, b"`),
+and the derived `kind_eff` / `sector_eff` (fallbacks applied — group and filter by these). The list is
+`{theses: [...], facets: {kind: {equity: 11}, sector: {...}, tags: {...}, default_kinds: [...]}}`.
+TS: `Thesis` in `tabs/theses/types.ts`; `NavState` / `NavCounts` in `tabs/theses/nav-filter.ts`; `ReadType` / `ReadItem` in `tabs/theses/useReads.tsx`.
+
 ```json
 { "thesis": {"id": "uuid", "symbol": "PLTR", "title": "...", "category": "CORE",
              "sub_portfolio": "0153717", "strategy": "growth", "status": "active",

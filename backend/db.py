@@ -1627,6 +1627,29 @@ def init_thesis_schema() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_theses_symbol  ON theses(symbol)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_theses_status  ON theses(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_theses_account ON theses(account_id)")
+        # What the thesis is ABOUT, apart from `category` (the portfolio bucket):
+        # kind = equity | credit | fund | macro | theme | process | anything the
+        # user types; sector = GICS label or ''; tags = comma-separated, lowercase.
+        # A peer on older code drops these columns from an incoming op.
+        _ensure_column(conn, "theses", "kind", "kind TEXT DEFAULT ''")
+        _ensure_column(conn, "theses", "sector", "sector TEXT DEFAULT ''")
+        _ensure_column(conn, "theses", "tags", "tags TEXT DEFAULT ''")
+
+        # "The user has looked at this." One row per thing, and only the moment it
+        # was seen — unread is derived on read by comparing seen_at with the
+        # thing's own updated_at, so an item edited after it was read comes back
+        # as unread without anyone having to reset a flag (routers/reads.py).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS read_marks (
+                target_type TEXT NOT NULL,
+                target_id   TEXT NOT NULL,
+                seen_at     TEXT NOT NULL,
+                device_id   TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (target_type, target_id)
+            )
+        """)
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS thesis_events (

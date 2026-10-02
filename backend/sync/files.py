@@ -26,6 +26,13 @@ Design, and why:
   2026-09-27 an edit made on one machine was refused on the other as "local
   page also changed" and never arrived. Entries without `seen` (written before
   that) fall back to the old rule until a round records this device.
+* **The cloud folder is `research/`** (2026-10-02; it was `graphs/`, named
+  after the first pages). `adopt_legacy` runs before every push and pull: an
+  old `graphs/` folder is renamed when `research/` does not exist yet, and when
+  both exist — a peer still on older code keeps publishing into `graphs/` —
+  its newer pages are copied across. Nothing is deleted from the old folder;
+  once every machine runs this code it stops changing and can be removed by
+  hand. The local folder (GRAPHS_DIR), the table and the API keep their names.
 * **A slug is a path segment.** It is validated the same way the router does,
   because a snapshot arrives from another machine and a '..' in it would let a
   peer write anywhere on disk.
@@ -42,7 +49,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SUBDIR = "graphs"
+SUBDIR = "research"
+LEGACY_SUBDIR = "graphs"
 MANIFEST = "manifest.json"
 PAGE = "index.html"
 
@@ -85,6 +93,70 @@ def _safe_slug(slug: str) -> bool:
     return bool(_SLUG_OK.match(slug or ""))
 
 
+def _load(path: Path) -> dict:
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def adopt_legacy(root: Path) -> dict:
+    """Bring pages published under the old `graphs/` cloud folder into `research/`.
+
+    Returns {"renamed": bool, "adopted": [slugs]}. Never raises: a cloud folder
+    that cannot be renamed right now (Drive still syncing it) is tried again on
+    the next round, and the sync itself goes on.
+    """
+    old, new = root / LEGACY_SUBDIR, root / SUBDIR
+    out: dict = {"renamed": False, "adopted": []}
+    try:
+        if not old.is_dir():
+            return out
+        if not new.exists():
+            old.rename(new)
+            logger.info("sync: cloud folder %s/ renamed to %s/", LEGACY_SUBDIR, SUBDIR)
+            return {**out, "renamed": True}
+
+        # Both exist: a peer on older code published into graphs/ after the
+        # rename. Take a page only when its manifest entry is NEWER than ours
+        # and the content differs — the old folder also holds stale copies of
+        # everything this device has since republished under research/.
+        theirs = _load(old / MANIFEST).get("pages")
+        theirs = theirs if isinstance(theirs, dict) else {}
+        manifest = _read_manifest(root)
+        mine = manifest.get("pages") if isinstance(manifest.get("pages"), dict) else {}
+        for slug, entry in theirs.items():
+            page = old / slug / PAGE
+            if not _safe_slug(slug) or not isinstance(entry, dict) or not page.exists():
+                continue
+            have = mine.get(slug) or {}
+            if entry.get("sha") == have.get("sha"):
+                continue
+            if have and str(entry.get("updated_at") or "") <= str(have.get("updated_at") or ""):
+                continue
+            # Only a file the old manifest vouches for (Drive may be mid-upload).
+            if _sha(page) != entry.get("sha"):
+                continue
+            target = new / slug / PAGE
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(page, target)
+            # `seen` of the new folder is kept: it is what tells each device
+            # whether ITS copy moved, and the old folder's is a different history.
+            mine[slug] = {**entry, "seen": have.get("seen") or {}}
+            out["adopted"].append(slug)
+        if out["adopted"]:
+            manifest["pages"] = mine
+            manifest["updated_at"] = _now()
+            _write_manifest(root, manifest)
+            logger.info("sync: adopted %d page(s) from the old %s/ folder",
+                        len(out["adopted"]), LEGACY_SUBDIR)
+    except OSError as exc:
+        logger.warning("sync: could not adopt the old %s/ folder: %s", LEGACY_SUBDIR, exc)
+    return out
+
+
 def push_files(root: Path, slugs: list[str], device: str) -> dict:
     """Copy local pages into the cloud folder for the given slugs.
 
@@ -92,6 +164,7 @@ def push_files(root: Path, slugs: list[str], device: str) -> dict:
     row was removed stops being published without its file being deleted from
     either side.
     """
+    adopt_legacy(root)
     manifest = _read_manifest(root)
     entries: dict = manifest.get("pages") if isinstance(manifest.get("pages"), dict) else {}
     sent, skipped = [], []
@@ -154,6 +227,7 @@ def pull_files(root: Path, slugs: list[str], device: str | None = None) -> dict:
     rather than restored. With `device`, what this device saw is recorded in the
     manifest (`seen`) so its next edit check is per device (module note).
     """
+    adopt_legacy(root)
     manifest = _read_manifest(root)
     entries = manifest.get("pages") if isinstance(manifest.get("pages"), dict) else {}
     taken, skipped = [], []

@@ -77,7 +77,7 @@ from analytics.regime_v2 import ensure_v2_fresh
 from contextlib import asynccontextmanager
 
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, bonds, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, questions, tracking, graphs, series, ir_stress, market_state, dcf, discover, market_heatmap, cot, stream, google_trends, fiscal_ai
+from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, bonds, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, questions, tracking, graphs, reads, series, ir_stress, market_state, dcf, discover, market_heatmap, cot, stream, google_trends, fiscal_ai
 from routers import health as upstream_health_router
 from routers import chart_drawings
 from routers import changes as changes_router
@@ -228,6 +228,7 @@ app.include_router(zettel.router, tags=["Zettel"])
 app.include_router(questions.router, tags=["Questions"])
 app.include_router(tracking.router, tags=["Tracking"])
 app.include_router(graphs.router, tags=["Graphs"])
+app.include_router(reads.router, tags=["Reads"])
 app.include_router(series.router, tags=["Series"])
 app.include_router(chart_drawings.router)
 app.include_router(changes_router.router, tags=["Changes"])

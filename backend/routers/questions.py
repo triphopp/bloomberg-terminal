@@ -40,6 +40,7 @@ from pydantic import BaseModel
 
 from actor import capture_actor, current_actor, is_agent
 from db import get_db
+from routers.reads import mark as mark_read
 from routers.theses import _log_event
 from sync.config import device_id
 
@@ -526,8 +527,14 @@ def list_questions(
     thesis_id: Optional[str] = Query(None),
     symbol: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, description="text in the question, its thought or its ref"),
 ):
     where, params = "", []
+    if q and q.strip():
+        like = f"%{q.strip().lower()}%"
+        where += (" AND (LOWER(title) LIKE ? OR LOWER(thought) LIKE ? "
+                  "OR LOWER(COALESCE(ref, '')) LIKE ? OR LOWER(COALESCE(symbol, '')) LIKE ?)")
+        params += [like] * 4
     if thesis_id:
         where += " AND thesis_id = ?"
         params.append(thesis_id)
@@ -1366,6 +1373,8 @@ def review_answer(answer_id: str, body: ReviewIn):
             (_uid(), q["id"], "REVIEW", answer_id, decision, body.note.strip(), current_actor(),
              device_id(), now, now),
         )
+        # A verdict on an answer is a reading of it.
+        mark_read(conn, "answer", answer_id)
         if q["thesis_id"]:
             _log_event(conn, q["thesis_id"], "QUESTION_REVIEWED",
                        {"question_id": q["id"], "ref": q["ref"], "decision": decision},

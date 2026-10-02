@@ -15,6 +15,7 @@ import {
   type ZettelKind,
   type ZettelRel,
 } from "../types";
+import { ReadDot, UNREAD_COLOR, useReads } from "../useReads";
 import { ConflictPanel } from "./ConflictPanel";
 import { ZettelGraph } from "./ZettelGraph";
 
@@ -51,6 +52,7 @@ export function ZettelPanel({
   colors: Colors;
   onCountsChange?: (counts: { notes: number; conflicts: number }) => void;
 }) {
+  const reads = useReads();
   const [pane, setPane] = useState<Pane>("notes");
   const [rows, setRows] = useState<Zettel[]>([]);
   const [conflicts, setConflicts] = useState<ZettelConflict[]>([]);
@@ -390,6 +392,11 @@ export function ZettelPanel({
                 }}
               >
                 <div className="flex items-center gap-1">
+                  {reads.isUnread("zettel", z.id) && (
+                    <span className="text-[7px]" style={{ color: UNREAD_COLOR }} title="ยังไม่อ่าน">
+                      ●
+                    </span>
+                  )}
                   <span className="text-[7px] font-mono font-bold" style={{ color: colors.accent }}>
                     {z.ref}
                   </span>
@@ -479,8 +486,16 @@ export function ZettelPanel({
                 <div className="text-[11px] font-bold mt-1" style={{ color: colors.text }}>
                   {selected.zettel.title}
                 </div>
+                <div className="mt-1 flex items-center gap-1 text-[8px]">
+                  <ReadDot type="zettel" id={selected.zettel.id} colors={colors} reads={reads} />
+                  <span style={{ color: colors.textSecondary }}>
+                    {reads.isUnread("zettel", selected.zettel.id) ? "ยังไม่อ่าน" : "อ่านแล้ว"}
+                  </span>
+                </div>
                 {selected.zettel.body && (
-                  <div className="mt-2">{renderMarkdown(selected.zettel.body, colors)}</div>
+                  <div className="mt-2 prose-measure">
+                    {renderMarkdown(selected.zettel.body, colors, "read")}
+                  </div>
                 )}
 
                 {selected.refs.length > 1 && (

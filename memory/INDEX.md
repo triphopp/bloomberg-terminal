@@ -49,7 +49,9 @@ memory/
 | Plan | สถานะ |
 |------|--------|
 | [Investment Policy System](plans/investment-policy-system.md) | 📝 design 2026-10-01 — sleeves + plan ticket + stress/theme cap + rebalance bands; waiting on user parameters (§8) |
+| [MCP thesis JSON truncation](reports/mcp-thesis-output-truncation-risk-report.md) | 📋 report 2026-10-02 — `get_thesis` with many events can return invalid truncated JSON; `event_limit=0` workaround |
 | [RISK rebalance + UI](plans/risk-rebalance.md) | 🔄 code done 2026-10-02 — RISK 5 tabs, take-profit rebalance 5/25 + timing, WHAT-IF random market + plan hand-off, guard:REBALANCE alert; waiting on user check |
+| [Thesis Navigator Redesign](plans/thesis-navigator-redesign.md) | 🔄 code done 2026-10-02 — navigator ค้นหา/กรอง ใช้ร่วม THESES · QUESTIONS · TRACK, `kind` / `sector` / `tags`, อ่านแล้ว (`read_marks`), ตัวอักษร `.reading`, GRAPHS → RESEARCH; เหลือ pull + restart ทุกเครื่อง + ผู้ใช้ตรวจ |
 | [Thesis Tracking](plans/thesis-tracking.md) | 🔄 code done 2026-10-02 — ตัวเลขที่จับตา / killer: แหล่งอ่าน, ค่าคาดการณ์ + วันประกาศ, ค่าจริง, ผลเทียบ, ไม่ตรงเปิดคำถาม; เหลือ pull + restart ทุกเครื่องแล้วเพิ่มตัวเลขชุดแรก |
 | [Thesis Questions](plans/thesis-questions.md) | 🔄 code done 2026-10-01 — เหลือ pull + restart เครื่อง Windows แล้วนำเข้าสายคำถามผ่าน `question_import` (ข้อมูล INTC: `sessions/2026-10-01-intc-question-tree.json`) |
 | [PINS redesign](plans/completed/pins-redesign.md) | ✅ done 2026-09-30 — one symbol = one pin, PUT /api/pins/by-symbol, "+ New group…" picker |
@@ -86,6 +88,7 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 
 ## งานล่าสุด (2026-09-23 → 27)
 
+- [AXTI และหุ้นเทียบห่วงโซ่ InP](sessions/2026-10-02-axti-peer-theses.md) — อัปเดต AXTI และสร้าง peer THESIS 4 ตัวผ่าน MCP; อธิบาย substrate กับ AI optical และแยกส่วนแบ่งรายได้ที่ยังไม่ชัด.
 - [ANALYTICS INDEX drawdown pane](sessions/2026-09-27-analytics-index-drawdown-pane.md) — underwater chart for portfolio and SPY beneath the equity curve; verified in browser.
 - [ANALYTICS INDEX risk metrics](sessions/2026-09-27-analytics-index-risk-metrics.md) — portfolio/SPY max drawdown and annualized standard deviation alongside EXCESS; chart style retained.
 - [ENTRY slip control](sessions/2026-09-27-entry-slip-control.md) — compact image upload cue and drag overlay in place of the full-width strip.

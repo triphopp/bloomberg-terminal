@@ -1,9 +1,13 @@
 "use client";
+import { toolsThesisIdAtom } from "@/components/bloomberg/atoms";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { GitMerge } from "lucide-react";
+import { useAtom } from "jotai";
+import { ChevronDown, ChevronRight, GitMerge } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Colors } from "../../helpers";
-import type { Thesis } from "../theses/types";
+import { QuickTopic } from "../theses/QuickTopic";
+import { NavRail, ThesisNavigator, useThesisList } from "../theses/ThesisNavigator";
+import { ReadDot, UNREAD_COLOR, UnreadBar, useReads } from "../theses/useReads";
 import { CalendarView } from "./CalendarView";
 import {
   BASIS_LABEL,
@@ -21,7 +25,22 @@ import {
 } from "./types";
 
 const API = "/api/v2/questions";
-const THESIS_KEY = "bloomberg_questions_thesis";
+const COLLAPSE_KEY = "bloomberg_questions_collapsed";
+const HIDE_CLEAR_KEY = "bloomberg_questions_hide_clear";
+
+/** Which rows of the list to keep. "review" = an answer is waiting for the user. */
+type Flt = "" | "pending" | "watch" | "due" | "review" | "unread";
+
+function loadJson<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const s = localStorage.getItem(key);
+    if (s) return JSON.parse(s) as T;
+  } catch {
+    /* ignore */
+  }
+  return fallback;
+}
 
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const r = await fetch(url, { signal });
@@ -43,12 +62,12 @@ async function send(url: string, method: string, body?: unknown): Promise<string
   return [typeof detail === "string" ? detail : `HTTP ${r.status}`];
 }
 
-type Row = { node: QNode; depth: number; stubUnder?: string; merge: boolean };
+type Row = { node: QNode; depth: number; stubUnder?: string; merge: boolean; kids: number };
 
 /** Depth-first from the root. A question with two parents is drawn once, under
  *  the first; under the other it is a one-line pointer — the convergence point
  *  is one question, not two copies of it. */
-function buildRows(tree: QTree | undefined): Row[] {
+function buildRows(tree: QTree | undefined, collapsed: Set<string> = new Set()): Row[] {
   if (!tree) return [];
   const byId = new Map(tree.nodes.map((n) => [n.id, n]));
   const kids = new Map<string, string[]>();
@@ -71,12 +90,21 @@ function buildRows(tree: QTree | undefined): Row[] {
     const merge = (parentCount.get(id) ?? 0) > 1;
     const first = drawnUnder.get(id);
     if (first !== undefined) {
-      rows.push({ node, depth, stubUnder: first, merge });
+      rows.push({ node, depth, stubUnder: first, merge, kids: 0 });
       return;
     }
     drawnUnder.set(id, parentRef);
-    rows.push({ node, depth, merge });
-    for (const c of kids.get(id) ?? []) walk(c, depth + 1, node.ref);
+    const below = kids.get(id) ?? [];
+    rows.push({ node, depth, merge, kids: below.length });
+    // A folded branch is still "drawn" for the passes below: its children are
+    // hidden, not orphans to be listed again at the root.
+    const mark = (cid: string) => {
+      if (drawnUnder.has(cid)) return;
+      drawnUnder.set(cid, node.ref);
+      for (const g of kids.get(cid) ?? []) mark(g);
+    };
+    if (collapsed.has(id)) for (const c of below) mark(c);
+    else for (const c of below) walk(c, depth + 1, node.ref);
   };
   const hasParentHere = new Set(
     tree.edges.filter((e) => byId.has(e.parent_id)).map((e) => e.child_id)
@@ -148,22 +176,34 @@ export function QuestionsTab({
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries({ queryKey: ["questions"] });
 
-  const [thesisId, setThesisId] = useState<string>(() => {
-    if (initialQuestion?.thesisId) return initialQuestion.thesisId;
-    if (typeof window === "undefined") return "";
-    try {
-      return localStorage.getItem(THESIS_KEY) ?? "";
-    } catch {
-      return "";
-    }
-  });
+  // "" = every thesis. Shared with THESES and TRACK.
+  const [thesisId, setThesisId] = useAtom(toolsThesisIdAtom);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a hand-over is taken once, on mount
+  useEffect(() => {
+    if (initialQuestion?.thesisId) setThesisId(initialQuestion.thesisId);
+  }, []);
+  const reads = useReads();
+  const [search, setSearch] = useState("");
+  const [flt, setFlt] = useState<Flt>("");
+  const [hideClear, setHideClear] = useState<boolean>(() => loadJson(HIDE_CLEAR_KEY, false));
+  // Folded branches, per thesis: { thesisId: [question ids] }.
+  const [folded, setFolded] = useState<Record<string, string[]>>(() => loadJson(COLLAPSE_KEY, {}));
   useEffect(() => {
     try {
-      localStorage.setItem(THESIS_KEY, thesisId);
+      localStorage.setItem(HIDE_CLEAR_KEY, JSON.stringify(hideClear));
+      localStorage.setItem(COLLAPSE_KEY, JSON.stringify(folded));
     } catch {
       /* ignore */
     }
-  }, [thesisId]);
+  }, [hideClear, folded]);
+  const collapsed = useMemo(() => new Set(folded[thesisId] ?? []), [folded, thesisId]);
+  const toggleFold = (id: string) =>
+    setFolded((p) => {
+      const cur = new Set(p[thesisId] ?? []);
+      if (cur.has(id)) cur.delete(id);
+      else cur.add(id);
+      return { ...p, [thesisId]: [...cur] };
+    });
   const [selectedId, setSelectedId] = useState<string | null>(initialQuestion?.questionId ?? null);
   // The question to land on. Held until the tree knows it: the tree on screen at
   // mount can predate a question that was opened a moment ago.
@@ -176,23 +216,24 @@ export function QuestionsTab({
   // "tree" = one thesis's questions; "calendar" = every dated thing the whole book waits on.
   const [view, setView] = useState<"tree" | "calendar">("tree");
 
-  const { data: thesesData } = useQuery({
-    queryKey: ["theses", "list"],
-    queryFn: ({ signal }) => getJson<{ theses: Thesis[] }>("/api/v2/theses", signal),
-    staleTime: 60_000,
-  });
+  const { data: thesesData } = useThesisList();
   const theses = thesesData?.theses ?? [];
-  const { data: counts } = useQuestionCounts();
 
-  // Land on the thesis that has something waiting, not on an empty one.
+  // A remembered thesis that no longer exists would leave the tab empty.
   useEffect(() => {
-    if (!theses.length || theses.some((t) => t.id === thesisId)) return;
-    const busy = theses.find((t) => {
-      const c = counts?.by_thesis[t.id];
-      return c && c.pending + c.watch > 0;
-    });
-    setThesisId((busy ?? theses[0]).id);
-  }, [theses, thesisId, counts]);
+    if (thesisId && theses.length && !theses.some((t) => t.id === thesisId)) setThesisId("");
+  }, [theses, thesisId, setThesisId]);
+
+  // A search always runs over every thesis; so does the view with none picked.
+  const q = search.trim();
+  const flat = !thesisId || !!q;
+  const { data: flatData, isFetching: flatFetching } = useQuery({
+    queryKey: ["questions", "search", q],
+    queryFn: ({ signal }) =>
+      getJson<{ questions: QNode[] }>(`${API}${q ? `?q=${encodeURIComponent(q)}` : ""}`, signal),
+    enabled: flat,
+    staleTime: 30_000,
+  });
 
   const {
     data: tree,
@@ -205,10 +246,29 @@ export function QuestionsTab({
     enabled: !!thesisId,
     staleTime: 30_000,
   });
-  const rows = useMemo(() => buildRows(tree), [tree]);
+  const keep = (n: QNode) => {
+    const st = n.state;
+    if (hideClear && !flt && (st.status === "CLEAR" || st.status === "DROPPED")) return false;
+    if (flt === "pending") return st.status === "OPEN";
+    if (flt === "watch") return st.status === "WATCH";
+    if (flt === "due") return st.due;
+    if (flt === "review") return !!st.proposed_answer_id;
+    if (flt === "unread") return reads.unreadUnder("answer", n.id).length > 0;
+    return true;
+  };
+  // A status filter breaks the tree apart (a matching child under a hidden
+  // parent), so filtered rows are listed flat and nothing is folded away.
+  const allRows = useMemo(
+    () => buildRows(tree, flt ? new Set() : collapsed),
+    [tree, collapsed, flt]
+  );
+  const rows = flat ? [] : allRows.filter((r) => keep(r.node));
+  const flatRows = flat
+    ? (flatData?.questions ?? []).filter((n) => n.state.status !== "DROPPED" || !!q).filter(keep)
+    : [];
 
   useEffect(() => {
-    if (!tree) return;
+    if (flat || !tree) return;
     if (wanted.current) {
       const id = wanted.current;
       if (tree.nodes.some((n) => n.id === id)) {
@@ -220,8 +280,25 @@ export function QuestionsTab({
       wanted.current = null;
     }
     if (selectedId && tree.nodes.some((n) => n.id === selectedId)) return;
-    setSelectedId(rows[0]?.node.id ?? null);
-  }, [tree, rows, selectedId, isFetching]);
+    setSelectedId(allRows[0]?.node.id ?? null);
+  }, [tree, allRows, selectedId, isFetching, flat]);
+
+  // `m` marks the answers of the open question as read.
+  const unreadHere = selectedId ? reads.unreadUnder("answer", selectedId) : [];
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `reads.mark` is stable enough; keyed on the unread set
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "m" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)) return;
+      if (!unreadHere.length) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void reads.mark(unreadHere);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [unreadHere.map((u) => u.id).join(",")]);
 
   const { data: detail } = useQuery({
     queryKey: ["questions", "detail", selectedId],
@@ -233,153 +310,270 @@ export function QuestionsTab({
   const thesis = theses.find((t) => t.id === thesisId);
   const border = { borderColor: colors.border };
   const dim = { color: colors.textSecondary };
+  const symbolOf = (id: string | null) => theses.find((t) => t.id === id)?.symbol ?? "";
+  const unreadAnswers = reads.byThesis[thesisId]?.answer ?? 0;
+  const chip = (on: boolean) => ({
+    borderColor: on ? colors.accent : colors.border,
+    color: on ? colors.accent : colors.textSecondary,
+    background: on ? `${colors.accent}18` : "transparent",
+  });
+  const pickThesis = (id: string) => {
+    setThesisId(id);
+    setSelectedId(null);
+    setAdding(false);
+    setSearch("");
+    setView("tree");
+  };
+  const fields: [Flt, string][] = [
+    ["", "ทั้งหมด"],
+    ["pending", `ค้าง${tree && !flat ? ` ${tree.counts.pending}` : ""}`],
+    ["watch", `เฝ้าดู${tree && !flat ? ` ${tree.counts.watch}` : ""}`],
+    ["due", `ถึงวัน${tree && !flat ? ` ${tree.counts.due}` : ""}`],
+    ["review", "รอรับรอง"],
+    ["unread", "ยังไม่อ่าน"],
+  ];
 
-  return (
-    <div className="flex flex-col h-full overflow-hidden text-[10px]">
+  const rowButton = (n: QNode, opts: { depth: number; kids: number; merge: boolean }) => {
+    const fresh = reads.unreadUnder("answer", n.id).length;
+    return (
       <div
-        className="shrink-0 flex items-center gap-1 px-2 py-1 border-b overflow-x-auto"
-        style={border}
+        key={n.id}
+        className="flex items-center border-b"
+        style={{
+          ...border,
+          paddingLeft: 4 + opts.depth * 14,
+          background: selectedId === n.id ? colors.bgSelected : "transparent",
+        }}
       >
-        {theses.map((t) => {
-          const c = counts?.by_thesis[t.id];
-          return (
-            <button
-              type="button"
-              key={t.id}
-              onClick={() => {
-                setThesisId(t.id);
-                setSelectedId(null);
-                setAdding(false);
-                setView("tree");
-              }}
-              className="px-1.5 py-0.5 font-bold whitespace-nowrap hover:opacity-80"
-              style={{
-                color: view === "tree" && t.id === thesisId ? colors.accent : colors.textSecondary,
-              }}
-              title={t.title}
-            >
-              {t.symbol}
-              <QuestionBadges pending={c?.pending ?? 0} watch={c?.watch ?? 0} />
-            </button>
-          );
-        })}
-        {!theses.length && <span style={dim}>ยังไม่มี thesis — สร้างที่ THESES ก่อน</span>}
-        <button
-          type="button"
-          onClick={() => setView((v) => (v === "calendar" ? "tree" : "calendar"))}
-          className="ml-auto px-1.5 py-0.5 font-bold whitespace-nowrap hover:opacity-80"
-          style={{ color: view === "calendar" ? colors.accent : colors.textSecondary }}
-        >
-          ปฏิทิน
-        </button>
-      </div>
-
-      {view === "calendar" && (
-        <CalendarView
-          colors={colors}
-          onOpenQuestion={(tid, qid) => {
-            if (tid) setThesisId(tid);
-            setSelectedId(qid);
-            setAdding(false);
-            setView("tree");
-          }}
-        />
-      )}
-
-      {view === "tree" && tree && (
-        <div
-          className="shrink-0 flex items-center gap-3 px-2 py-1 border-b flex-wrap"
-          style={border}
-        >
-          <span style={{ color: colors.text }}>{thesis?.symbol}</span>
-          <span style={dim}>
-            ปลายสายตอบชัดแล้ว {tree.leaves.clear} จาก {tree.leaves.total}
-          </span>
-          <span style={{ color: STATUS_COLOR.OPEN }}>{tree.counts.pending} ค้าง</span>
-          <span style={{ color: STATUS_COLOR.WATCH }}>{tree.counts.watch} เฝ้าดู</span>
-          {tree.counts.due > 0 && <span style={dim}>{tree.counts.due} ถึงวันตรวจ</span>}
+        {opts.kids > 0 && !flt ? (
           <button
             type="button"
-            className="ml-auto px-1.5 border font-bold hover:opacity-80"
+            onClick={() => toggleFold(n.id)}
+            title={collapsed.has(n.id) ? "กางคำถามย่อย" : "พับคำถามย่อย"}
+            className="shrink-0 w-4 h-5 flex items-center justify-center"
+            style={dim}
+          >
+            {collapsed.has(n.id) ? (
+              <ChevronRight className="h-3 w-3" />
+            ) : (
+              <ChevronDown className="h-3 w-3" />
+            )}
+          </button>
+        ) : (
+          <span className="shrink-0 w-4" />
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedId(n.id);
+            setAdding(false);
+          }}
+          title={n.title}
+          className="flex-1 min-w-0 flex items-center gap-1.5 text-left py-1 pr-2 hover:opacity-90"
+        >
+          <span className="font-mono shrink-0" style={dim}>
+            {n.ref}
+          </span>
+          {flat && (
+            <span className="font-mono font-bold shrink-0" style={{ color: colors.accent }}>
+              {n.symbol || symbolOf(n.thesis_id)}
+            </span>
+          )}
+          <span className="flex-1 min-w-0 truncate" style={{ color: colors.text }}>
+            {n.title}
+          </span>
+          {collapsed.has(n.id) && opts.kids > 0 && !flt && (
+            <span className="font-mono shrink-0" style={dim}>
+              +{opts.kids}
+            </span>
+          )}
+          {fresh > 0 && (
+            <span className="shrink-0" style={{ color: UNREAD_COLOR }} title="มีคำตอบที่ยังไม่อ่าน">
+              ●
+            </span>
+          )}
+          {opts.merge && <GitMerge className="h-2.5 w-2.5 shrink-0" style={{ color: "#60a5fa" }} />}
+          {n.gaps.includes("parent") && <Chip text="ยังไม่ผูกสาย" color="#888" />}
+          {n.state.due && <Chip text="ถึงวัน" color="#60a5fa" />}
+          <Chip text={stateLabel(n.state)} color={STATUS_COLOR[n.state.status]} />
+        </button>
+      </div>
+    );
+  };
+
+  return (
+    <div className="reading flex h-full overflow-hidden">
+      <NavRail colors={colors}>
+        <ThesisNavigator
+          colors={colors}
+          selectedId={thesisId}
+          onSelect={pickThesis}
+          allLabel="ทุก thesis"
+        />
+      </NavRail>
+
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden text-[10px]">
+        <div
+          className="shrink-0 flex items-center gap-1.5 px-2 py-1 border-b flex-wrap"
+          style={border}
+        >
+          <span className="font-bold font-mono" style={{ color: colors.accent }}>
+            {thesis?.symbol ?? "ทุก thesis"}
+          </span>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setSearch("")}
+            placeholder="ค้นคำถาม — ทุก thesis"
+            aria-label="ค้นคำถาม"
+            className="w-48 px-1.5 py-0.5 border outline-none"
+            style={{ background: colors.surface, borderColor: colors.border, color: colors.text }}
+          />
+          {fields.map(([k, label]) => (
+            <button
+              type="button"
+              key={k || "all"}
+              className="px-1.5 border whitespace-nowrap"
+              style={chip(flt === k)}
+              onClick={() => setFlt(k)}
+            >
+              {label}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="px-1.5 border whitespace-nowrap"
+            style={chip(hideClear)}
+            onClick={() => setHideClear((v) => !v)}
+            title="ซ่อนคำถามที่ตอบชัดแล้วหรือเลิกติดตาม"
+          >
+            ซ่อนที่ชัดแล้ว
+          </button>
+          {!flat && tree && (
+            <span style={dim}>
+              ปลายสายชัด {tree.leaves.clear}/{tree.leaves.total}
+            </span>
+          )}
+          {!!thesisId && (
+            <UnreadBar
+              count={unreadAnswers}
+              onMarkAll={() => void reads.markThesis(thesisId, ["answer"])}
+              colors={colors}
+            />
+          )}
+          <span className="flex-1" />
+          <button
+            type="button"
+            onClick={() => setView((v) => (v === "calendar" ? "tree" : "calendar"))}
+            className="px-1.5 border font-bold whitespace-nowrap"
+            style={chip(view === "calendar")}
+          >
+            ปฏิทิน
+          </button>
+          <button
+            type="button"
+            className="px-1.5 border font-bold hover:opacity-80 whitespace-nowrap"
             style={{ ...border, color: colors.accent }}
-            onClick={() => setAdding((v) => !v)}
+            onClick={() => {
+              setView("tree");
+              setAdding((v) => !v);
+            }}
           >
             {adding ? "ปิด" : "+ คำถาม"}
           </button>
         </div>
-      )}
 
-      <div
-        className="flex-1 flex min-h-0"
-        style={{ display: view === "tree" ? undefined : "none" }}
-      >
-        <div className="w-[42%] min-w-[220px] border-r overflow-y-auto" style={border}>
-          {rows.map((r, i) =>
-            r.stubUnder !== undefined ? (
-              <button
-                type="button"
-                key={`stub-${r.node.id}-${i}`}
-                onClick={() => setSelectedId(r.node.id)}
-                className="w-full text-left py-1 pr-2 border-b"
-                style={{ ...border, ...dim, paddingLeft: 8 + r.depth * 14 }}
-              >
-                {r.node.ref} (บรรจบ ดูใต้ {r.stubUnder})
-              </button>
-            ) : (
-              <button
-                type="button"
-                key={r.node.id}
-                onClick={() => setSelectedId(r.node.id)}
-                className="w-full flex items-center gap-1.5 text-left py-1 pr-2 border-b hover:opacity-90"
-                style={{
-                  ...border,
-                  paddingLeft: 8 + r.depth * 14,
-                  background: selectedId === r.node.id ? "#0a1628" : "transparent",
+        {view === "calendar" && (
+          <CalendarView
+            colors={colors}
+            onOpenQuestion={(tid, qid) => {
+              if (tid) setThesisId(tid);
+              setSearch("");
+              setSelectedId(qid);
+              setAdding(false);
+              setView("tree");
+            }}
+          />
+        )}
+
+        <div
+          className="flex-1 flex min-h-0"
+          style={{ display: view === "tree" ? undefined : "none" }}
+        >
+          <div className="w-[44%] min-w-[240px] border-r overflow-y-auto" style={border}>
+            {flat && flatRows.map((n) => rowButton(n, { depth: 0, kids: 0, merge: false }))}
+            {!flat &&
+              rows.map((r, i) =>
+                r.stubUnder !== undefined ? (
+                  <button
+                    type="button"
+                    key={`stub-${r.node.id}-${i}`}
+                    onClick={() => setSelectedId(r.node.id)}
+                    className="w-full text-left py-1 pr-2 border-b"
+                    style={{ ...border, ...dim, paddingLeft: 20 + r.depth * 14 }}
+                  >
+                    {r.node.ref} (บรรจบ ดูใต้ {r.stubUnder})
+                  </button>
+                ) : (
+                  rowButton(r.node, { depth: flt ? 0 : r.depth, kids: r.kids, merge: r.merge })
+                )
+              )}
+            {flat && !flatFetching && flatRows.length === 0 && (
+              <div className="p-3" style={dim}>
+                {q ? `ไม่พบคำถามที่มี "${q}"` : "ไม่มีคำถามที่ตรงกับตัวกรอง"}
+              </div>
+            )}
+            {!flat && !isLoading && rows.length === 0 && (
+              <div className="p-3 leading-relaxed" style={dim}>
+                {allRows.length
+                  ? "ไม่มีคำถามที่ตรงกับตัวกรอง"
+                  : "thesis นี้ยังไม่มีคำถาม เริ่มจากคำถามราก: คำถามตัดสินใจของ thesis แล้วแตกข้อย่อยที่ตอบแล้วทำให้รากขยับ"}
+              </div>
+            )}
+          </div>
+
+          <div className="flex-1 min-w-0 overflow-y-auto p-3">
+            {adding && !thesisId ? (
+              <div className="leading-relaxed" style={dim}>
+                <div className="font-bold mb-1" style={{ color: colors.accent }}>
+                  คำถามใหม่ — อยู่ใต้ thesis ไหน
+                </div>
+                เลือก thesis จากรายการทางซ้าย หรือเปิดหัวข้อใหม่สำหรับเรื่องที่ยังไม่มี thesis (เช่นเศรษฐกิจ กองทุน
+                อุตสาหกรรม):
+                <div className="mt-2">
+                  <QuickTopic colors={colors} onCreated={(id) => setThesisId(id)} />
+                </div>
+              </div>
+            ) : adding && thesisId ? (
+              <AddForm
+                colors={colors}
+                thesisId={thesisId}
+                parent={detail?.question ?? null}
+                hasRoot={!!tree?.nodes.some((n) => n.is_root && n.state.status !== "DROPPED")}
+                onDone={(id) => {
+                  setAdding(false);
+                  // Select only once the tree knows the new row, or the
+                  // "selection no longer exists" fallback snaps back to the root.
+                  void refresh().then(() => {
+                    if (id) setSelectedId(id);
+                  });
                 }}
-              >
-                <span className="font-mono shrink-0" style={dim}>
-                  {r.node.ref}
-                </span>
-                <span className="flex-1 min-w-0 truncate" style={{ color: colors.text }}>
-                  {r.node.title}
-                </span>
-                {r.merge && (
-                  <GitMerge className="h-2.5 w-2.5 shrink-0" style={{ color: "#60a5fa" }} />
-                )}
-                {r.node.gaps.includes("parent") && <Chip text="ยังไม่ผูกสาย" color="#888" />}
-                {r.node.state.due && <Chip text="ถึงวัน" color="#60a5fa" />}
-                <Chip text={stateLabel(r.node.state)} color={STATUS_COLOR[r.node.state.status]} />
-              </button>
-            )
-          )}
-          {!!thesisId && !isLoading && rows.length === 0 && (
-            <div className="p-3 leading-relaxed" style={dim}>
-              thesis นี้ยังไม่มีคำถาม เริ่มจากคำถามราก: คำถามตัดสินใจของ thesis แล้วแตกข้อย่อยที่ตอบแล้วทำให้รากขยับ
-            </div>
-          )}
-        </div>
-
-        <div className="flex-1 min-w-0 overflow-y-auto p-3">
-          {adding && thesisId ? (
-            <AddForm
-              colors={colors}
-              thesisId={thesisId}
-              parent={detail?.question ?? null}
-              hasRoot={!!tree?.nodes.some((n) => n.is_root && n.state.status !== "DROPPED")}
-              onDone={(id) => {
-                setAdding(false);
-                // Select only once the tree knows the new row, or the
-                // "selection no longer exists" fallback snaps back to the root.
-                void refresh().then(() => {
-                  if (id) setSelectedId(id);
-                });
-              }}
-            />
-          ) : detail ? (
-            <Detail d={detail} colors={colors} onSelect={setSelectedId} onChange={refresh} />
-          ) : (
-            <div style={dim}>{thesisId ? "เลือกคำถามทางซ้าย" : ""}</div>
-          )}
+              />
+            ) : detail ? (
+              <Detail
+                d={detail}
+                colors={colors}
+                reads={reads}
+                onSelect={setSelectedId}
+                onChange={() => {
+                  void refresh();
+                  void reads.refresh();
+                }}
+              />
+            ) : (
+              <div style={dim}>เลือกคำถามทางซ้าย</div>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -438,11 +632,13 @@ function ZRefs({ items, colors }: { items: QAnswer["evidence"]; colors: Colors }
 function Detail({
   d,
   colors,
+  reads,
   onSelect,
   onChange,
 }: {
   d: QDetail;
   colors: Colors;
+  reads: ReturnType<typeof useReads>;
   onSelect: (id: string) => void;
   onChange: () => void;
 }) {
@@ -476,7 +672,7 @@ function Detail({
   const btn = "px-2 py-0.5 border font-bold hover:opacity-80 disabled:opacity-40";
 
   return (
-    <div className="leading-relaxed">
+    <div className="leading-relaxed max-w-[78ch]">
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="font-mono" style={dim}>
           {q.ref}
@@ -510,6 +706,10 @@ function Detail({
             />
             {actorTag(shown.actor) && <Chip text={actorTag(shown.actor)} color="#f472b6" />}
             <span style={dim}>{shown.created_at.slice(0, 10)}</span>
+            <ReadDot type="answer" id={shown.id} colors={colors} reads={reads} />
+            {reads.isUnread("answer", shown.id) && (
+              <span style={{ color: UNREAD_COLOR }}>ยังไม่อ่าน (กด m)</span>
+            )}
           </div>
           <div className="mt-1" style={text}>
             {shown.answer}
@@ -569,7 +769,7 @@ function Detail({
 
       {!!shown?.signals.length && (
         <>
-          <Label colors={colors}>สัญญาณ</Label>
+          <Label colors={colors}>สัญญาณ ({shown.signals.length})</Label>
           {shown.signals.map((g) => (
             <div
               key={g.id}
@@ -752,6 +952,7 @@ function Detail({
           <Label colors={colors}>คำตอบก่อนหน้า ({older.length})</Label>
           {older.map((a) => (
             <div key={a.id} className="mb-1" style={dim}>
+              <ReadDot type="answer" id={a.id} colors={colors} reads={reads} />{" "}
               {a.created_at.slice(0, 10)} · {LEVEL_LABEL[a.level]}
               {actorTag(a.actor) ? ` · ${actorTag(a.actor)}` : ""}
               {a.review ? ` · ${a.review.result === "ACCEPTED" ? "รับรอง" : "ไม่รับ"}` : ""}

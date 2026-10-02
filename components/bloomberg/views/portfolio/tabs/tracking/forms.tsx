@@ -5,6 +5,7 @@ import type { Colors } from "../../helpers";
 import { NumInput } from "../../ui/NumInput";
 import { Chip, Errors, Label } from "../questions";
 import type { QCalendar } from "../questions/types";
+import { QuickTopic } from "../theses/QuickTopic";
 import type { Thesis } from "../theses/types";
 import {
   type TDetail,
@@ -169,6 +170,13 @@ export function MetricForm({
               </option>
             ))}
           </select>
+          {/* A number about something with no thesis yet: open the subject first. */}
+          <div className="mt-1">
+            <QuickTopic
+              colors={colors}
+              onCreated={(id) => setF((p) => ({ ...p, thesis_id: id }))}
+            />
+          </div>
         </>
       )}
 

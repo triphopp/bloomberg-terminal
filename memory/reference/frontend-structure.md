@@ -93,10 +93,9 @@ components/bloomberg/
 │           ├── TradeLogTab.tsx       ← trade history with filter + WLBadge; dated `amount_base`/`pnl_base` display
 │           ├── CashTab.tsx           ← cash flow CRUD + currency-aware dividends CRUD + Finansia subs
 │           ├── AnalyticsTab.tsx      ← report-currency P&L/allocation/dividend charts (M/Q/Y); broker-style P&L plus ECON FX attribution tooltips
-│           ├── BacktestTab.tsx       ← backtest v2 (4 sub-tabs: equity/holdings/distribution/attribution)
 │           ├── RiskTab.tsx           ← 6 sub-tabs (2026-10-02): สรุป (RiskSummaryCard → MarginCard → TradeGuardCard) · REBALANCE (RebalancePanel; badge = TRIM count) · WHAT-IF (WhatIfSimPanel, mounted on first visit then kept hidden so ticks survive) · MONTE CARLO (MonteCarloPanel — the book as held over N paths, follows the account selector) · เชิงลึก (header stats → VaR table + VarValidationCard | risk-contrib/ERC + correlation → EWS · accounts · COT) · OPTIONS. Backtest/Kupiec only in VarValidationCard; ERC trades only as WHAT-IF suggestions
 │           ├── ThesesTab.tsx         ← barrel → tabs/theses/
-│           │   ├── theses/graphs/     ← GRAPHS sub-tab: GraphsPanel — lists rendered analysis
+│           │   ├── theses/graphs/     ← RESEARCH sub-tab (ex-GRAPHS; code still `graphs`): GraphsPanel — lists rendered analysis
 │           │   │                        pages for the thesis, previews one in a sandboxed
 │           │   │                        iframe (no allow-same-origin: the HTML is agent-written)
 │           │   └── theses/zettel/     ← KB sub-tab: ZettelPanel (list+detail+create),
@@ -111,7 +110,13 @@ components/bloomberg/
 │           │                             actual table, retire) + forms.tsx (metric, forecast, reading) + types.ts
 │           ├── theses/                ← DB-backed thesis system (CRUD + notes + history)
 │           │   ├── index.tsx          ← rail + detail + sub-tabs THESIS|NOTES|HISTORY|LINKED TRADES|AI
-│           │   ├── ThesisRail.tsx     ← grouped category → sub-portfolio → symbol (+ open-note badge "3N")
+│           │   ├── ThesisNavigator.tsx ← the ONE thesis list of TOOLS (THESES · QUESTIONS · TRACK): search ("/"), kind chips,
+│           │   │                         sector / status selects, owed-work + unread toggles, group + sort, one line per thesis
+│           │   │                         with question / track / unread badges; `NavRail` = foldable column. Filter state
+│           │   │                         `localStorage["bloomberg_thesis_nav"]`; selection = `toolsThesisIdAtom` (shared)
+│           │   ├── nav-filter.ts      ← pure filter / group / sort / kindOf / sectorOf (test: __tests__/thesis-nav-filter.test.ts)
+│           │   ├── useReads.tsx       ← read marks: `useReads()`, `ReadDot`, `UnreadBar` (/api/v2/reads)
+│           │   ├── QuickTopic.tsx     ← "+ หัวข้อใหม่": an empty draft thesis (short name + kind) from QUESTIONS / TRACK
 │           │   ├── ThesisEditor.tsx   ← form + markdown editor/preview
 │           │   ├── ThesisNotes.tsx    ← standing scenarios/risks/catalysts: kind filter, L×S score, watch date, resolve
 │           │   ├── ThesisTimeline.tsx ← thesis_events feed + manual notes
@@ -284,7 +289,7 @@ components/bloomberg/
 | `core/tick-flash.tsx` | `TickFlash` |
 | `layout/mobile-nav.tsx` | `MobileNav` |
 | `portfolio/index.tsx` | `PortfolioView` (default) |
-| `portfolio/types.ts` | `Trade`, `Account`, `CashEntry`, `CashAdjustment`, `Dividend`, `Summary`, `BacktestMetrics`, `ThesisData`, `OptionPosition` |
+| `portfolio/types.ts` | `Trade`, `Account`, `CashEntry`, `CashAdjustment`, `Dividend`, `Summary`, `ThesisData`, `OptionPosition` |
 | `portfolio/helpers.ts` | `fmt`, `fmtAmt` (exact money, 2dp — no K/M), `fmtPx` (trade price 2–4dp), `fmtQty` (volume/qty ≤7dp), `fmtAxis` (K/M, chart axis ticks only), `fmtPct`, `pnlColor`, `wlColor`, `groupKey`, `FLAG`, `Colors` |
 | `portfolio/constants.ts` | `ALL_COLS`, `DEFAULT_COLS`, `DENSE_COLS`, `TH_SECTORS` (34), `US_SECTORS` (11), `GROUP_COLORS`, `FINANSIA_SUBS`, `ALLOC_COLORS`, `SECTOR_COLORS`, `BLANK_CASH`, `BLANK_DIV`, `BLANK_FORM`, `STRATEGIES` |
 | `portfolio/ui/AccBadge.tsx` | `AccBadge`, `WLBadge` |
@@ -320,7 +325,7 @@ components/bloomberg/
 | ~~`views/portfolio/ui/StopSimPanel.tsx`~~ (deleted 2026-09-29) | was `StopSimPanel` — RISK sub-tab **STOP SIM**: 4 small multiples (+1/0/−1/−2 SD) of equity p50 + p10–p90 band and median drawdown, FOLLOW STOP (blue) vs HOLD (amber) — palette validated with dataviz `validate_palette` (dark #3b8fd9/#c77700, light #2a7bc4/#b86e00), shared y-domain, hover tooltip; headline at −2 SD in ฿; summary table; stop odds per holding; model inputs (β, resid vol, factor SD). Horizon 5/20/60D (2026-09-29) |
 | `views/portfolio/ui/VarValidationCard.tsx` | `VarValidationCard` — RISK OVERVIEW: NAV basis line (cash, net/gross, shorts, options Δ), rolling OOS backtest from `/risk/metrics`, live forecast log from `/risk/var-backtest` (2026-09-29) |
 | `layout/guard-ribbon.tsx` | `GuardRibbon` — `GUARD ● RED · 5 STOP · 4 NEAR` in the bottom status row next to TAIL (desktop); click → PORT → RISK via `portfolioTabRequestAtom` (atoms/index.ts, consumed by `PortfolioView`) (2026-09-29) |
-| `layout/margin-ribbon.tsx` | `MarginRibbon` — `MGN ● WARNING PAPER Option · cushion 6.8% · call −7.3%` next to GUARD; hidden while no account has margin on; worst account; click → PORT RISK / PAPER (2026-09-29) |
+| `layout/margin-ribbon.tsx` | `MarginRibbon` — `MGN ● WARNING Dime · cushion 6.8% · call −7.3%` next to GUARD; hidden while no account has margin on; worst PORT account (paper accounts skipped since 2026-10-02); click → PORT RISK |
 | `views/tail/sector-rotation.tsx` | `SectorRotationPanel` (TILT + 11 diverging bars + RRG tally + AUM record line), `useSectorRotation(window)` (2026-09-23) |
 | `views/tail/macro-context.tsx` | `EventStrip`, `MacroPanel`, `MacroReadPanel` (2026-09-20 — 3 axes + CPI/core CPI/PCE/core PCE cross-check row), `useMacroContext`, `MacroContextData`, `MacroRead`, `MacroAxis`, `KIND_COLOR` |
 | `portfolio/tabs/AnalyticsTab.tsx` | `AnalyticsTab` — NAV card has GROWTH / VALUE / INDEX modes (`localStorage["bloomberg_nav_chart_mode_v2"]`): VALUE draws `NavValueChart` (4 labelled series: NAV area + HOLDINGS/CASH lines + dashed COST, legend chips double as show/hide so CASH can own the axis), INDEX draws `NavIndexChart` — the time-weighted curve vs its OWN benchmark picker (2026-10-01: `CURVE_BENCHMARKS` select — BROAD SPY/QQQ/IWM/ACWI/SET · THEME SOXX · SECTOR XL*; sectors the open book holds are marked `● N%` from `openPos` GICS `sector`; `localStorage["bloomberg_nav_curve_benchmark"]`; separate from the CAPM benchmark so switching it does not refetch CAPM; only the chosen index is fetched, GROWTH sends none) from `/api/v2/portfolio/nav-index`, with portfolio/benchmark max drawdown and annualized sample STD beside EXCESS, plus an aligned underwater pane beneath the unchanged equity curve: portfolio drawdown fills blue from zero downward and benchmark drawdown stays a yellow line. Both internal to the file. CAPM card: β HEDGE / HEDGE notional / β REAL / vs IDX / α CAPM / t / R² / N; rf chip เปิดแผงตั้งค่า (override ต่อสกุลใน `localStorage["bloomberg_capm_rf"]`) |
@@ -343,7 +348,10 @@ components/bloomberg/
 - `views/portfolio/ui/OptionAttributionCard.tsx` — ANALYTICS section `DERIVATIVES · PNL ATTRIBUTION` (2026-09-09): portfolio split across Δ/Γ/Θ/ν/residual, stacked bar per day, per-contract table with spot/IV endpoints and `explained_pct`. Exports `OptionAttributionCard`, `OptionAttribution`
 | `portfolio/tabs/theses/index.tsx` | `ThesesTab` (props: `colors`, `accountId`, `initialSymbol`, `onConsumeInitialSymbol`) |
 | `portfolio/tabs/theses/types.ts` | `Thesis`, `ThesisStatus`, `ThesisEvent`, `ThesisLink`, `ThesisNote`, `NoteKind`, `NoteStatus`, `NoteImpact`, `STATUSES`, `STATUS_COLOR`, `CATEGORIES`, `HORIZONS`, `STRATEGIES`, `NOTE_KINDS`, `NOTE_STATUSES`, `NOTE_KIND_COLOR`, `NOTE_STATUS_COLOR`, `NOTE_IMPACT_COLOR` |
-| `portfolio/tabs/theses/ThesisRail.tsx` | `ThesisRail` |
+| `portfolio/tabs/theses/ThesisNavigator.tsx` | `ThesisNavigator` (props: `colors`, `selectedId`, `onSelect`, `allLabel?`, `onNew?`, `footer?`), `NavRail`, `useThesisList` (React Query `["theses","list"]`) |
+| `portfolio/tabs/theses/nav-filter.ts` | `NavState`, `NAV_DEFAULT`, `NavCounts`, `filterTheses`, `groupTheses`, `facet`, `kindOf`, `sectorOf`, `tagsOf`, `matchesQuery`, `DEFAULT_KINDS`, `INSTRUMENT_KINDS` |
+| `portfolio/tabs/theses/useReads.tsx` | `useReads`, `ReadDot`, `UnreadBar`, `ReadType`, `ReadItem`, `UNREAD_COLOR` |
+| `portfolio/tabs/theses/QuickTopic.tsx` | `QuickTopic` (props: `colors`, `onCreated`) |
 | `portfolio/tabs/theses/ThesisEditor.tsx` | `ThesisEditor`, `ThesisDraft`, `emptyDraft`, `draftFrom` |
 | `portfolio/tabs/theses/ThesisNotes.tsx` | `ThesisNotes`, `NoteDraft`, `emptyNoteDraft` |
 | `portfolio/tabs/theses/ThesisTimeline.tsx` | `ThesisTimeline` |
@@ -594,3 +602,11 @@ The browser transport permits three batch requests concurrently. Quote jobs have
 - `hooks/useAlertNotifications.ts` routes: RED guard/margin → modal queue; other guard/margin → toast titled `SYMBOL · HEADLINE` with a labelled description and a severity rule (`--bb-toast-rule`); user alert rules → toast as before.
 - **`components/ui/sonner.tsx`** is now `unstyled` + `.bb-toast*` classes in `styles/globals.css` (black surface, 1px border, square, mono, 2px left rule by severity / sonner `data-type`). The old shadcn default followed next-themes with no provider mounted → rendered white rounded cards. Every `toast()` in the app gets the new look.
 - **TradeGuardCard layout (2026-09-30)** — light → KPI strip (TODAY · NAV DD · STREAK · HEAT · SIZE · ALERTS, modal-style cells) → one CSS grid `ROW_GRID` (● · CODE · SYMBOL · 3 labelled readings · next step · buttons) grouped ACT NOW / WATCH / HELD. `readingsOf()` picks the three numbers per code (STOP: LAST/STOP/UNDER · OVERWEIGHT: WEIGHT/CAP/TRIM ฿ · …); the long Thai sentence is the row tooltip. HOLD form = reason + REVIEW select + FLOOR `NumInput` (prefilled `hold_floor_default`). Rules footer is a label/value grid. `guard-ribbon.tsx` shows `ALERTS STALE|OFF|ERROR` from `scan`.
+
+## Reading surface — `.reading` (2026-10-02)
+
+PORT → TOOLS (THESES · QUESTIONS · TRACK) sits under `.reading` (`styles/globals.css`): IBM Plex Sans Thai + IBM Plex Mono
+(`next/font` in `app/layout.tsx` → `--font-read`, `--font-read-mono`), 13px / 1.6, nothing under 11px. The class remaps the
+terminal's small arbitrary sizes (`text-[7px]`…`text-[13px]`) for its descendants, so a panel moved under it is readable
+without restating sizes; `.prose-measure` (≤ 74ch, 14.5px / 1.75) is for long-form text. `.font-mono` keeps numbers, refs
+and symbols monospace. The rest of the app is still Courier at terminal sizes — do not put `.reading` on a quote board.

@@ -7,6 +7,16 @@ export interface Thesis {
   sub_portfolio?: string | null;
   title: string;
   category?: string | null;
+  /** What the thesis is about — equity, credit, fund, macro, theme, process, or
+   *  one the user typed. `category` stays the portfolio bucket. */
+  kind?: string | null;
+  /** GICS sector, or "". */
+  sector?: string | null;
+  /** Comma-separated, lowercase. */
+  tags?: string | null;
+  /** Derived by the backend: `kind` / `sector` with their fallbacks applied. */
+  kind_eff?: string;
+  sector_eff?: string;
   strategy?: string | null;
   status: ThesisStatus;
   conviction?: number | null;
@@ -291,3 +301,17 @@ export const STANCE_COLOR: Record<ZettelStance, string> = {
   bear: "#f87171",
   neutral: "#888",
 };
+
+export const GICS_SECTORS = [
+  "Communication Services",
+  "Consumer Discretionary",
+  "Consumer Staples",
+  "Energy",
+  "Financials",
+  "Health Care",
+  "Industrials",
+  "Information Technology",
+  "Materials",
+  "Real Estate",
+  "Utilities",
+];
