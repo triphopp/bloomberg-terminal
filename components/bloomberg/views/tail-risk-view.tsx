@@ -37,6 +37,7 @@ import {
   type MacroEvent,
   MacroPanel,
   MacroReadPanel,
+  OilPanel,
   useMacroContext,
 } from "./tail/macro-context";
 import {
@@ -555,7 +556,13 @@ function HealthStrip({ health, signals }: { health: DataHealth; signals: Signal[
   const bySignal = unknown.map((s) => `${s.label}: ${s.reason ?? "unavailable"}`);
   const downSources = Object.entries(health.sources ?? {})
     .filter(([, ok]) => !ok)
-    .map(([name]) => name);
+    // "cboe_vol_indices" is the whole vol feed; say WHICH index is missing —
+    // MOVE comes from Yahoo, and one absent index is not CBOE being offline.
+    .map(([name]) =>
+      name === "cboe_vol_indices" && health.degraded.length > 0
+        ? `vol index ${health.degraded.join(", ")}`
+        : name
+    );
 
   return (
     <div
@@ -567,8 +574,8 @@ function HealthStrip({ health, signals }: { health: DataHealth; signals: Signal[
       <span style={{ color: "#B06000", fontSize: 9.5, fontWeight: "bold" }}>DEGRADED</span>
       <span style={{ color: "#7a5a2a", fontSize: 9.5 }}>
         {unknown.length} signal{unknown.length > 1 ? "s" : ""} could not be evaluated
-        {downSources.length > 0 ? ` — offline: ${downSources.join(", ")}` : ""}. They are reported
-        as NO DATA, not as safe.
+        {downSources.length > 0 ? ` — no data from: ${downSources.join(", ")}` : ""}. They are
+        reported as NO DATA, not as safe.
       </span>
     </div>
   );
@@ -818,6 +825,7 @@ export function TailRiskView() {
               style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}
             >
               <MacroReadPanel ctx={macro} />
+              <OilPanel ctx={macro} />
               <SectorRotationPanel />
               <MacroPanel ctx={macro} />
             </div>

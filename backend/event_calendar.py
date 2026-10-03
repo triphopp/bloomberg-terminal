@@ -1,8 +1,9 @@
 """
-Scheduled US macro events — FOMC decisions and the data releases the market
-trades around (CPI, NFP, PCE, GDP).
+Scheduled US macro events — FOMC decisions, the data releases the market
+trades around, and the dates that follow from a published rule (option expiry,
+VIX settlement, FOMC minutes, ISM, the EIA weekly oil report).
 
-Two sources, on purpose:
+Three sources, on purpose:
 
 - **FOMC meetings are hardcoded** from federalreserve.gov/monetarypolicy/
   fomccalendars.htm. FRED cannot supply them: release 101 "FOMC Press Release"
@@ -13,6 +14,14 @@ Two sources, on purpose:
 - **Data releases come from FRED** `release/dates`, which does publish future
   dates. Cached for 12h and fail-soft: a FRED outage degrades to FOMC-only with
   `releases_ok = false`, never to an exception.
+- **Rule dates are computed** (`rule_events`): no network, so they survive a
+  FRED outage. Each carries `source: "rule"` and the rule in its label — the
+  publisher can still move a date (EIA around Christmas, minutes around
+  Thanksgiving), so these are the scheduled day, not a confirmation.
+
+Only the kinds in WINDOW_KINDS open the EVENT WINDOW. A weekly report inside
+it would leave the window open every week and the tag would stop meaning
+anything.
 
 The decision date is the SECOND day of a two-day meeting — statement and SEP
 are released then. The previous hardcoded list in macro.py used the day after,
@@ -81,10 +90,27 @@ FRED_RELEASES: dict[int, tuple[str, str]] = {
     50: ("NFP", "Employment Situation"),
     54: ("PCE", "PCE / Personal Income"),
     53: ("GDP", "GDP"),
+    46: ("PPI", "Producer Price Index"),
+    9: ("RETAIL", "Advance Retail Sales"),
+    192: ("JOLTS", "Job Openings (JOLTS)"),
+    180: ("CLAIMS", "Weekly Jobless Claims"),
 }
 
 # How much each kind tends to move vol, for ordering and emphasis only.
-IMPACT: dict[str, str] = {"FOMC": "high", "CPI": "high", "NFP": "high", "PCE": "medium", "GDP": "medium"}
+IMPACT: dict[str, str] = {
+    "FOMC": "high", "CPI": "high", "NFP": "high", "PCE": "medium", "GDP": "medium",
+    "PPI": "medium", "RETAIL": "medium", "JOLTS": "medium", "ISM": "medium",
+    "MINUTES": "medium", "OPEX": "medium", "VIXEXP": "medium",
+    "CLAIMS": "low", "EIA": "low",
+}
+
+# Kinds that open the EVENT WINDOW (and so tag the vol signals).
+WINDOW_KINDS = frozenset({"FOMC", "CPI", "NFP", "PCE", "GDP"})
+
+_ORDER = {k: i for i, k in enumerate((
+    "FOMC", "CPI", "NFP", "PCE", "GDP", "PPI", "RETAIL", "JOLTS", "ISM",
+    "MINUTES", "OPEX", "VIXEXP", "CLAIMS", "EIA",
+))}
 
 FRED_RELEASE_DATES_URL = "https://api.stlouisfed.org/fred/release/dates"
 
@@ -172,9 +198,114 @@ def release_events(start: date, end: date) -> tuple[list[dict], bool]:
     return events, ok
 
 
+# ── Rule dates ────────────────────────────────────────────────────────────────
+
+def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    """n-th `weekday` (Mon=0) of the month; n = -1 is the last one."""
+    if n > 0:
+        first = date(year, month, 1)
+        return first + timedelta(days=(weekday - first.weekday()) % 7 + 7 * (n - 1))
+    nxt = date(year + (month == 12), month % 12 + 1, 1)
+    last = nxt - timedelta(days=1)
+    return last - timedelta(days=(last.weekday() - weekday) % 7)
+
+
+def good_friday(year: int) -> date:
+    # Anonymous Gregorian computus → Easter Sunday, minus two days.
+    a, b, c = year % 19, year // 100, year % 100
+    d, e = b // 4, b % 4
+    g = (8 * b + 13) // 25
+    h = (19 * a + b - d - g + 15) % 30
+    j, k = c // 4, c % 4
+    m = (a + 11 * h) // 319
+    r = (2 * e + 2 * j - k - h + m + 32) % 7
+    month = (h - m + r + 90) // 25
+    day = (h - m + r + month + 19) % 32
+    return date(year, month, day) - timedelta(days=2)
+
+
+def federal_holidays(year: int) -> set[date]:
+    """US federal holidays as observed (Saturday → Friday, Sunday → Monday)."""
+    fixed = [date(year, 1, 1), date(year, 6, 19), date(year, 7, 4),
+             date(year, 11, 11), date(year, 12, 25), date(year + 1, 1, 1)]
+    out = set()
+    for d in fixed:
+        wd = d.weekday()
+        out.add(d - timedelta(days=1) if wd == 5 else d + timedelta(days=1) if wd == 6 else d)
+    out |= {
+        _nth_weekday(year, 1, 0, 3), _nth_weekday(year, 2, 0, 3), _nth_weekday(year, 5, 0, -1),
+        _nth_weekday(year, 9, 0, 1), _nth_weekday(year, 10, 0, 2), _nth_weekday(year, 11, 3, 4),
+    }
+    return {d for d in out if d.year == year}
+
+
+def _nth_business_day(year: int, month: int, n: int) -> date:
+    hol = federal_holidays(year)
+    d, seen = date(year, month, 1), 0
+    while True:
+        if d.weekday() < 5 and d not in hol:
+            seen += 1
+            if seen == n:
+                return d
+        d += timedelta(days=1)
+
+
+def monthly_opex(year: int, month: int) -> date:
+    """Standard monthly option expiry: third Friday, Thursday when that is Good Friday."""
+    d = _nth_weekday(year, month, 4, 3)
+    return d - timedelta(days=1) if d == good_friday(year) else d
+
+
+def vix_settlement(year: int, month: int) -> date:
+    """VIX futures/options final settlement for the `month` contract: 30 days
+    before the third Friday of the FOLLOWING month (Cboe rule) — a Wednesday,
+    or a Tuesday when that Friday is an exchange holiday."""
+    ny, nm = year + (month == 12), month % 12 + 1
+    return monthly_opex(ny, nm) - timedelta(days=30)
+
+
+def eia_weekly(wednesday: date) -> date:
+    """EIA Weekly Petroleum Status Report for the week of `wednesday`: Wednesday
+    10:30 ET, Thursday when a federal holiday falls Monday–Wednesday of that
+    week (eia.gov release schedule; Christmas weeks are set by hand there)."""
+    hol = federal_holidays(wednesday.year) | federal_holidays(wednesday.year - 1)
+    week = {wednesday - timedelta(days=i) for i in range(3)}
+    return wednesday + timedelta(days=1) if week & hol else wednesday
+
+
+def rule_events(start: date, end: date) -> list[dict]:
+    """Events whose date follows from a rule — no network call."""
+    out: list[tuple[date, str, str]] = []
+
+    y, m = start.year, start.month
+    while date(y, m, 1) <= end:
+        opex = monthly_opex(y, m)
+        out.append((opex, "OPEX",
+                    "Triple witching (index futures + options expiry)" if m % 3 == 0
+                    else "Monthly options expiry"))
+        out.append((vix_settlement(y, m), "VIXEXP", "VIX futures / options settlement"))
+        out.append((_nth_business_day(y, m, 1), "ISM", "ISM Manufacturing PMI (1st business day)"))
+        out.append((_nth_business_day(y, m, 3), "ISM", "ISM Services PMI (3rd business day)"))
+        y, m = y + (m == 12), m % 12 + 1
+
+    for d, _sep in FOMC_DECISIONS:
+        out.append((_d(d) + timedelta(days=21), "MINUTES", f"FOMC minutes (meeting {d}, +3 weeks)"))
+
+    wed = start + timedelta(days=(2 - start.weekday()) % 7)
+    while wed <= end + timedelta(days=1):
+        out.append((eia_weekly(wed), "EIA", "EIA Weekly Petroleum Status (crude / product stocks)"))
+        wed += timedelta(days=7)
+
+    return [
+        {"date": d.isoformat(), "kind": kind, "label": label, "sep": False,
+         "impact": IMPACT[kind], "source": "rule"}
+        for d, kind, label in out
+        if start <= d <= end
+    ]
+
+
 def _sorted(events: Iterable[dict]) -> list[dict]:
-    order = {"FOMC": 0, "CPI": 1, "NFP": 2, "PCE": 3, "GDP": 4}
-    return sorted(events, key=lambda e: (e["date"], order.get(e["kind"], 9)))
+    return sorted(events, key=lambda e: (e["date"], _ORDER.get(e["kind"], 99)))
 
 
 def next_fomc(today: date) -> Optional[dict]:
@@ -195,7 +326,7 @@ def calendar_payload(today: date, ahead_days: int = 45, back_days: int = 135,
     """
     start, end = today - timedelta(days=back_days), today + timedelta(days=ahead_days)
     releases, releases_ok = release_events(start, end)
-    all_events = _sorted(fomc_events(start, end) + releases)
+    all_events = _sorted(fomc_events(start, end) + releases + rule_events(start, end))
 
     upcoming, past, window = [], [], []
     for e in all_events:
@@ -206,7 +337,7 @@ def calendar_payload(today: date, ahead_days: int = 45, back_days: int = 135,
             upcoming.append(item)
         else:
             past.append(item)
-        if abs(bd) <= window_bdays:
+        if abs(bd) <= window_bdays and e["kind"] in WINDOW_KINDS:
             window.append(item)
 
     last = _d(FOMC_CALENDAR_THROUGH)

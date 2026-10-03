@@ -75,6 +75,7 @@ SOURCES: dict[str, str] = {
     "worldbank.org": "World Bank",
     "trends.google.com": "Google Trends",
     "fiscal.ai": "Fiscal.ai",
+    "eia.gov": "EIA",
 }
 
 #: Hosts that are not vendors — local services must never raise a data alert.

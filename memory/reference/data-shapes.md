@@ -892,7 +892,11 @@ Flags: `TREND_UP`/`TREND_DOWN`, `GOLDEN_CROSS`/`DEATH_CROSS`, `RSI_OVERBOUGHT`/`
   "macro_ok": true
 }
 ```
-`kind` ∈ FOMC|CPI|NFP|PCE|GDP. Spreads are percentage points (UI ×100 → bp). `calendar`/`regime`/`fed`/`yield_curve`/`indicators` may be `null` on failure — render NO DATA, never calm.
+`indicators.<key>` (2026-10-02) also carries `released` (ET day of the latest scheduled release, `null` for series with no calendar entry), `new` (released < 3 days ago and already shown) and `pending` (release time passed, number not fetched yet) — same three on `/api/macro` indicators; `oil` has `released` / `new` (2 days) / `pending` too. UI: green NEW badge + `prev → value` in MACRO CONTEXT, and a NEW block on the event strip.
+
+`oil` (2026-10-02, may be `null`): `{week_ending, rows[{key, label, unit mb|kb/d|%, value, date, chg_w, yoy_pct, vs_5y_pct, low_5y, high_5y}], prices[{key gasoline_retail|diesel_retail|wti, label, unit, value, date, yoy_pct, chg_13w_pct}], cushion_vs_5y_pct, next_release, stale_age_s, demo_key, source, counted_in_composite: false}` — row keys crude, gasoline, distillate, cushing, spr (no 5y fields), production, refinery_util, gasoline_demand, distillate_demand. `macro_read.axes[].id` ∈ inflation|energy|growth|rates_vol; the energy axis adds `cpi_pp_est`, `cushion_vs_5y_pct`, `gasoline_13w_pct`, `inflation_state`.
+
+`kind` ∈ FOMC|CPI|NFP|PCE|GDP|PPI|RETAIL|JOLTS|ISM|MINUTES|OPEX|VIXEXP|CLAIMS|EIA (2026-10-02); `impact` ∈ high|medium|low; `source` ∈ federalreserve.gov|FRED|rule. `event_window` only counts FOMC/CPI/NFP/PCE/GDP (`WINDOW_KINDS`). Spreads are percentage points (UI ×100 → bp). `calendar`/`regime`/`fed`/`yield_curve`/`indicators` may be `null` on failure — render NO DATA, never calm.
 
 ## Stream status (`GET /api/stream/status`) — 2026-09-26
 
