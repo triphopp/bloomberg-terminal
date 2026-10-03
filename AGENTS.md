@@ -138,7 +138,7 @@ async def get_x():
 | `4` | CLIP  | clippings-view | Obsidian markdown notes · Ollama AI |
 | `T` | TAIL  | tail-risk-view | 6 risk dimensions (composite) + MACRO CONTEXT (not in composite): event strip FOMC/SEP/CPI/NFP/PCE/GDP + EVENT WINDOW tag on VIX signals, Fed rate/stance, 10Y−2Y/10Y−3M, regime, latest prints, event markers on 90D chart |
 | `6` | CRDT  | credit-view    | 4 tabs: overview, spreads, stress, consumer |
-| `P` | PORT  | portfolio-view | 5 top-level: PORTFOLIO (sub: POSITIONS·OPTIONS·TRADES·CASH) · ANALYTICS (sub: P&L·BACKTEST) · RISK · TOOLS (sub: THESES·IMPORT) · PAPER (sub: DASHBOARD·TRADE·POSITIONS·OPTIONS·HISTORY) |
+| `P` | PORT  | portfolio-view | 4 top-level: PORTFOLIO (sub: POSITIONS·OPTIONS·TRADES·CASH) · ANALYTICS (P&L) · RISK · TOOLS (sub: THESES·IMPORT) |
 | `C` | CRYP  | crypto-view    | 20 crypto coins · Chart |
 | `E` | FX    | fx-view        | 20 FX pairs · Chart |
 

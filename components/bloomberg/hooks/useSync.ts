@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import { HEARTBEAT_KEY, type Heartbeat, useHeartbeat } from "./useHeartbeat";
 
 /** Server-state keys whose rows come from SYNC_TABLES — refreshed after a pull. */
-const SYNCED_KEYS = ["openPositions", "trades", "accounts", "pins", "paper"];
+const SYNCED_KEYS = ["openPositions", "trades", "accounts", "pins"];
 
 export interface SyncStatus {
   enabled: boolean;
