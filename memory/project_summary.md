@@ -72,6 +72,7 @@ This Windows box denies the system temp dir to pytest — pass `--basetemp` to a
 FRED_API_KEY          — required: macro, rates, crisis, TAIL, BOND
 ALPHA_VANTAGE_API_KEY — macro fallback
 FISCAL_AI_API_KEY / FISCAL_AI_DAILY_LIMIT — Fiscal.ai fundamentals (free trial: 100 fixed companies, 250 calls/day; base `https://api.fiscal.ai/v3`, key in `apiKey` query param — never log URLs). Used by `routers/fiscal_ai.py` + MCP `get_fiscal_data` (2026-09-28)
+EIA_API_KEY           — optional: TAIL oil balance (EIA weekly); unset = public DEMO_KEY, 10 calls/h (2026-10-02)
 ANTHROPIC_API_KEY     — portfolio AI; CLAUDE_MODEL / CLAUDE_MAX_TOKENS optional
 BINANCE_API_KEY       — crypto order footprint
 THESES_DIR / SOURCES_DIR / OBSIDIAN_WIKI_DIR / GRAPHS_DIR — thesis md, sources, Zettelkasten export, analysis pages
@@ -129,9 +130,9 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `bonds.py` | `/api/bonds/{overview,decomposition,supply,issuance}` (BOND view) | FRED + NY Fed ACM + Treasury fiscaldata + SEC EFTS |
 | `rates.py` | `/api/rates/curve` (UST 11 + JGB 15 tenors, tick-row shape) | FRED daily + MOF CSV |
 | `crisis.py` | `/api/crisis`, `/api/crisis/composite` (BOND → CONDITIONS, TAIL) | FRED |
-| `macro.py` | `/api/macro`, `/api/macro/calendar` (event rail: FOMC/CPI/NFP/PCE/GDP, back 3y) | FRED + AV; `event_calendar.py` |
+| `macro.py` | `/api/macro`, `/api/macro/calendar` (FOMC/CPI/NFP/PCE/GDP + PPI/RETAIL/JOLTS/CLAIMS from FRED + rule dates OPEX/VIXEXP/ISM/MINUTES/EIA, back 3y; chart rail uses FOMC/CPI/NFP) | FRED + AV; `event_calendar.py` |
 | `global_yields.py` | `/api/macro/global-yields` (no UI consumer) | FRED |
-| `tail_risk.py` | `/api/tail-risk/*` — events, 6 dimensions, macro context, rotation, `cot_crowding` (context only) | CBOE CSV + yfinance + in-process crisis/fear_greed/ticker/cot |
+| `tail_risk.py` | `/api/tail-risk/*` — events, 6 dimensions, macro context (incl. `oil` + ENERGY → CPI axis, `/oil`), rotation, `cot_crowding` (context only) | CBOE CSV + yfinance + in-process crisis/fear_greed/ticker/cot + EIA weekly (`oil_inventory.py`) |
 | `options.py` | `/api/options/*` — chains, positions + Greeks, `POST smile-fit`, `POST payoff`, IV snapshots / SD bands | yfinance + greeks.py + SciPy SVI |
 | `pins.py` | `/api/pins/*` (watchlist groups, assets, tags) | SQLite |
 | `watchlist_signals.py` | `/api/watchlist/{quotes,signals,sparklines}` | shared `market_snapshots.py` / `market_requests.py` |

@@ -1,6 +1,6 @@
 # Data Sources — หาข้อมูลที่นี่ก่อนออกไปข้างนอก
 
-**อัปเดตล่าสุด:** 2026-09-29 (ทุกแหล่งในไฟล์นี้ยิงทดสอบจริงวันนี้)
+**อัปเดตล่าสุด:** 2026-10-02 (เพิ่ม §3.2 หน่วยความจำ / AI hardware)
 **ใช้เมื่อ:** ต้องหาข้อมูลอะไรก็ตาม — ตัวเลขมหภาค ประเทศ ดอกเบี้ย บริษัท ข่าว — ก่อนค้นเว็บ
 **ใช้กับ:** ทุก agent (Claude, Codex, DeepSeek, …) ทั้งใน repo และผ่าน MCP
 **ส่งผ่าน MCP:** ไฟล์นี้คือแหล่งเดียว — MCP `bloomberg-terminal` อ่านไฟล์นี้ตอนเรียก ให้บริการเป็น tool `get_data_sources` และ resource `spec://data-sources` (แก้ไฟล์แล้วมีผลทันที)
@@ -46,7 +46,7 @@
 | Endpoint | ได้อะไร | แหล่งต้นทาง | เวลาตอบ |
 |---|---|---|---|
 | `/api/macro` | Fed rate/stance, curve 10Y−2Y/10Y−3M, regime, CPI/NFP/PCE/GDP prints, ISM proxy | FRED | ~11s (cold) |
-| `/api/macro/calendar` | ปฏิทิน FOMC/SEP/CPI/NFP/PCE/GDP | FRED / Fed | ~2s |
+| `/api/macro/calendar` | ปฏิทิน FOMC/SEP/CPI/NFP/PCE/GDP/PPI/Retail/JOLTS/Claims + วันตามกฎ (option expiry, VIX settlement, ISM, FOMC minutes, EIA รายสัปดาห์) | FRED / Fed / คำนวณ | ~2s |
 | `/api/rates/curve` | UST 11 tenor + JGB 15 tenor | FRED + MOF Japan | เร็ว |
 | `/api/bonds/decomposition` | 10Y = expected real + breakeven + term premium (ACM) | NY Fed ACM | เร็ว |
 | `/api/bonds/overview` · `/supply` · `/issuance` | credit leg, auctions, corporate issuance | FRED, fiscaldata, SEC EFTS | |
@@ -123,6 +123,16 @@ board/forum ทุกแหล่ง **ต้องตรวจ ToS ก่อน
 
 ---
 
+### 3.2 หน่วยความจำ / AI hardware (ทดสอบ 2026-10-02)
+
+| แหล่ง | URL / ตัวอย่าง | ได้อะไร | หมายเหตุ |
+|---|---|---|---|
+| **SEC XBRL companyfacts** (inventory/COGS) | `data.sec.gov/api/xbrl/companyfacts/CIK0002023554.json` (SNDK) · `CIK0000723125` (MU) · `CIK0001652044` (GOOGL) | `InventoryNet` + `CostOfGoodsAndServicesSold` รายไตรมาส → คำนวณ DIO ได้ทันที | ✅ ต้องส่ง User-Agent พร้อมอีเมล · ไตรมาส 4 ต้องลบยอดสะสม 9 เดือนออกจากปีเต็ม |
+| **SK hynix บน EDGAR** | CIK `0002120882` (SKHY) · F-1 `000119312526280172/d32785df1.htm` | งบ IFRS (inventory, cost of sales รายปี + Q1/26) · 6-K รายเหตุการณ์ | ⚠️ XBRL มีแค่ namespace `ffd` ไม่มี `us-gaap` — ต้อง grep HTML · 6-K ส่วนใหญ่เป็นประกาศย่อย ไม่ใช่งบ |
+| **NVIDIA หน้าสเปกผลิตภัณฑ์** | `nvidia.com/en-us/data-center/vera-rubin-nvl72/` · `/gb300-nvl72/` | HBM/LPDDR ต่อ GPU/ชั้นวาง · โรงงาน 100 MW = 40K GPU = fast memory 42 PB | ✅ WebFetch อ่านได้ · ตัวเลขเป็น "up to" (เพดาน) |
+| **Micron prepared remarks (PDF)** | `s25.q4cdn.com/621799436/files/doc_financials/2026/q4/Q4-FY26-Prepared-Remarks.pdf` | ไทม์ไลน์โรงงาน, bit growth อุตสาหกรรม | WebFetch คืน binary → บันทึกไฟล์แล้วใช้ `pypdf` แยกข้อความ |
+| **Yahoo estimates = S&P Global MI** | `help.yahoo.com/kb/finance-for-web/SLN2310.html` | ยืนยันว่าคอนเซนซัสใน `get_stock_data(estimates/analyst)` มาจาก S&P Global Market Intelligence | ใช้ตอบว่า "คอนเซนซัสมาจากใคร" |
+
 ## 4. ฟรีแต่ต้องมี key
 
 | แหล่ง | สถานะในระบบ | ข้อมูล |
@@ -132,7 +142,7 @@ board/forum ทุกแหล่ง **ต้องตรวจ ToS ก่อน
 | **ก.ล.ต. (SEC TH)** | ✅ `SEC_*` keys | กองทุน, หุ้นกู้, One Report — ผ่าน §2 |
 | **Fiscal.ai** | ✅ `FISCAL_AI_API_KEY` (โควตารายวัน) | fundamentals, transcripts — ผ่าน MCP |
 | **Alpha Vantage** | ✅ `ALPHA_VANTAGE_API_KEY` | ราคา / fundamentals สำรอง |
-| EIA | ❌ ยังไม่มี (ทดสอบด้วย `DEMO_KEY` ได้) | น้ำมัน สต๊อก พลังงานสหรัฐ |
+| EIA | ⚠️ `EIA_API_KEY` ยังไม่ตั้ง — ใช้ `DEMO_KEY` (10 ครั้ง/ชม.) | น้ำมัน สต๊อก พลังงานสหรัฐ — มีแล้วที่ `/api/tail-risk/oil` (สต๊อก crude/gasoline/distillate/Cushing/SPR, กำลังผลิต, refinery util, demand รายสัปดาห์ เทียบ 5 ปี) |
 | BEA / Census | ❌ ยังไม่มี | GDP สหรัฐละเอียด, ค้าปลีก |
 | FAO | ❌ ยังไม่มี (401) | อาหาร / เกษตรโลก |
 
@@ -163,6 +173,8 @@ board/forum ทุกแหล่ง **ต้องตรวจ ToS ก่อน
 - **FRED series ที่ถูกลบ** ถูก retry ซ้ำไม่รู้จบถ้าไม่ negative-cache (เคสจริง `BAMLHE00EHY0D`, ดู `CLAUDE.md`)
 - **ข้อมูลรายปีของ World Bank ช้ากว่า 1 ปี** — ตัวเลขปีล่าสุดอาจยังว่าง; ระบุปีของข้อมูลทุกครั้ง
 - **WEO ออกปีละ 2 รอบ** (เม.ย. + ต.ค.) — ระบุ vintage (`PUBLICATION_DATE`) ทุกครั้งที่อ้างประมาณการ
+- **openai.com/index/* และ datacenterdynamics.com → 403** กับ WebFetch (ตรวจ 2026-10-02) — ใช้ข่าวแจกของคู่สัญญาแทน (nvidianews.nvidia.com, AMD 8-K บน EDGAR)
+- **หนังสือชี้ชวน Anthropic ยังเป็นแบบลับ** — ไม่อยู่บน EDGAR (ตรวจ 2026-10-02); ตัวเลขที่เห็นมาจาก Reuters/Fortune ที่ได้อ่านฉบับรั่ว → แหล่งรอง
 - ข้อมูลมีปัญหา/ช้า/หาย → อ่าน `logs/upstream.jsonl` ก่อน (`python backend/scripts/upstream_report.py`)
 
 ---

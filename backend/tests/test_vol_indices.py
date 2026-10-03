@@ -207,3 +207,33 @@ def test_flow_frame_reports_short_history_instead_of_false():
     assert "layer_a_bearish" in missing
     assert "need 252" in missing["layer_a_bearish"]
     assert "volume_surge" not in frame.columns
+
+
+def test_failed_pull_serves_last_good_and_retries_soon(monkeypatch, tmp_path):
+    """One Yahoo miss used to be cached as a hit: MOVE read NO DATA for 30 min."""
+    import last_good
+
+    monkeypatch.setattr(last_good, "DIR", tmp_path)
+    monkeypatch.setattr(last_good, "_store", {})
+    monkeypatch.setattr(vol_indices, "_cache", vol_indices.TTLCache(ttl=1800))
+    monkeypatch.setattr(vol_indices, "_fail_cache", vol_indices.TTLCache(ttl=120))
+    good = pd.Series([100.0, 106.2], index=pd.to_datetime(["2026-10-01", "2026-10-02"]), name="MOVE")
+    calls = []
+
+    def fetch(name):
+        calls.append(name)
+        return good if len(calls) == 1 else pd.Series(dtype=float, name=name)
+
+    monkeypatch.setattr(vol_indices, "_fetch_yf", fetch)
+    assert vol_indices._load_one("MOVE")[1] == "yfinance"
+
+    vol_indices._cache.clear()        # the 30-minute entry expires
+    vol_indices._fail_cache.clear()
+    s, source = vol_indices._load_one("MOVE")
+    assert source == "last_good" and float(s.iloc[-1]) == 106.2
+    # The miss is held briefly (no refetch per request), not for half an hour.
+    vol_indices._load_one("MOVE")
+    assert len(calls) == 2
+    vol_indices._fail_cache.clear()
+    vol_indices._load_one("MOVE")
+    assert len(calls) == 3

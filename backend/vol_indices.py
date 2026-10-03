@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 import requests
 
+import last_good
 from cache import TTLCache
 
 _CBOE_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{name}_History.csv"
@@ -58,6 +59,9 @@ MAX_STALE_DAYS = 4
 _HISTORY_YEARS = 5
 
 _cache = TTLCache(ttl=1800)  # 30 min — these series print once a day
+#: A miss (or the last-good stand-in for one) is kept only this long.
+_FAIL_TTL = 120
+_fail_cache = TTLCache(ttl=_FAIL_TTL)
 
 
 def _parse_cboe_csv(text: str, name: str) -> pd.Series:
@@ -122,7 +126,28 @@ def _load_one(name: str) -> tuple[pd.Series, str]:
             print(f"[vol_indices] yfinance {name} failed: {exc}")
         return pd.Series(dtype=float, name=name), "none"
 
-    return _cache.get_or_set(f"idx:{name}", compute)
+    key = f"idx:{name}"
+    hit = _cache.get(key)
+    if hit is not None:
+        return hit
+
+    def guarded() -> tuple[pd.Series, str]:
+        s, source = compute()
+        if not s.empty:
+            _cache.set(key, (s, source))
+            last_good.remember(f"vol_{name}", s.to_frame())
+            return s, source
+        # One failed pull must not blank the index for half an hour (MOVE on
+        # 2026-10-02: a single Yahoo miss was cached as a hit). Serve the last
+        # good series — the staleness check against VIX still applies to it —
+        # and try the source again after _FAIL_TTL.
+        prev, _age = last_good.recall(
+            f"vol_{name}", f"vol index {name}", "Yahoo" if name in _YF_ONLY else "CBOE")
+        if prev is not None and not prev.empty:
+            return prev.iloc[:, 0].rename(name), "last_good"
+        return s, source
+
+    return _fail_cache.get_or_set(key, guarded)
 
 
 @dataclass
@@ -267,6 +292,7 @@ def load_vol_indices(names: tuple[str, ...] = INDEX_NAMES) -> VolFrame:
 def clear_cache() -> None:
     """Test hook — drops every cached series."""
     _cache.clear()
+    _fail_cache.clear()
 
 
 if __name__ == "__main__":  # manual smoke check

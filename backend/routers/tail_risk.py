@@ -1537,15 +1537,20 @@ def _read_rates_vol(vf: VolFrame) -> dict:
     }
 
 
-def _macro_read(indicators: dict | None, parts: dict | None) -> dict:
-    """The three axes plus a one-line summary. Never counted in the composite."""
+def _macro_read(indicators: dict | None, parts: dict | None, oil: dict | None = None) -> dict:
+    """The four axes plus a one-line summary. Never counted in the composite."""
     ind = indicators or {}
     try:
         vf = load_vol_indices(("VIX", "MOVE"))
     except Exception as exc:
         print(f"[tail_risk] MOVE load failed: {exc}")
         vf = VolFrame()
-    axes = [_read_inflation(ind), _read_growth(ind, parts), _read_rates_vol(vf)]
+    from oil_inventory import read_energy
+
+    inflation = _read_inflation(ind)
+    # Energy sits next to inflation: it is read against the state of that axis.
+    axes = [inflation, read_energy(oil, inflation.get("state")),
+            _read_growth(ind, parts), _read_rates_vol(vf)]
     known = [a for a in axes if a["state"]]
     return {
         "counted_in_composite": False,
@@ -1573,10 +1578,20 @@ def _macro_context() -> dict:
         out["calendar"] = None
 
     try:
+        from oil_inventory import oil_payload
+
+        out["oil"] = oil_payload()
+    except Exception as exc:
+        print(f"[tail_risk] oil balance failed: {type(exc).__name__}")
+        out["oil"] = None
+
+    try:
         macro = get_macro()
         ind = macro.get("indicators") or {}
         out["indicators"] = {
-            k: ({"value": i.get("value"), "prev": i.get("prev"), "date": i.get("date")} if i else None)
+            k: ({"value": i.get("value"), "prev": i.get("prev"), "date": i.get("date"),
+                 "released": i.get("released"), "new": bool(i.get("new")),
+                 "pending": bool(i.get("pending"))} if i else None)
             for k, i in ind.items()
         }
         yc = macro.get("yield_curve") or {}
@@ -1592,7 +1607,7 @@ def _macro_context() -> dict:
         out["ism_proxy_components"] = macro.get("ism_proxy_components")
         # Built from the FULL macro indicators, not the trimmed copy above: the
         # trend legs need each series' last few prints, which the payload drops.
-        out["macro_read"] = _macro_read(ind, out["ism_proxy_components"])
+        out["macro_read"] = _macro_read(ind, out["ism_proxy_components"], out["oil"])
         out["macro_ok"] = True
     except Exception as exc:
         print(f"[tail_risk] macro context failed: {exc}")
@@ -1600,7 +1615,7 @@ def _macro_context() -> dict:
         # still be read, so the rates-vol axis survives a FRED outage.
         out.update(indicators=None, yield_curve=None, fed=None, regime=None,
                    ism_proxy_components=None, macro_ok=False)
-        out["macro_read"] = _macro_read(None, None)
+        out["macro_read"] = _macro_read(None, None, out["oil"])
     return out
 
 
@@ -1622,6 +1637,20 @@ def get_macro_context():  # sync: FRED + macro disk cache
 def _context_complete(ctx: dict) -> bool:
     cal = ctx.get("calendar") or {}
     return bool(ctx.get("macro_ok")) and bool(cal.get("releases_ok"))
+
+
+@router.get("/oil")
+def get_oil():  # sync: one EIA call per 6h, FRED prices per hour — otherwise memory
+    """US petroleum balance (EIA weekly) + the energy read. Context only."""
+    from oil_inventory import oil_payload, read_energy
+
+    oil = oil_payload()
+    if oil is None:
+        return {"oil": None, "energy": read_energy(None)}
+    ctx = _cache.get("macro-context", ttl=600) or {}
+    axes = (ctx.get("macro_read") or {}).get("axes") or []
+    energy = next((a for a in axes if a.get("id") == "energy"), None) or read_energy(oil)
+    return {"oil": oil, "energy": energy}
 
 
 @router.get("/vix-term")

@@ -6,7 +6,7 @@ import io
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -417,6 +417,82 @@ def _is_fresh(entry: dict | None) -> bool:
     return bool(entry and time.time() - entry.get("ts", 0) < entry.get("ttl", 0))
 
 
+# ── Release-aware freshness ───────────────────────────────────────────────────
+# The TTLs above are a week for a monthly print, counted from the last FETCH —
+# so a series pulled three days before its release kept showing last month's
+# number for four days after it (NFP of 2026-10-02 was the one that got noticed).
+# A scheduled release overrides the TTL: anything fetched before it is stale.
+
+#: indicator key → event_calendar kind of the release that carries it
+_SERIES_RELEASE: dict[str, str] = {
+    "cpi": "CPI", "cpi_core": "CPI", "pce": "PCE", "pce_core": "PCE", "gdp": "GDP",
+    "unemployment": "NFP", "nfp": "NFP", "retail_sales": "RETAIL",
+}
+#: BLS / BEA / Census all publish at 08:30 Eastern.
+_RELEASE_HOUR_ET = (8, 30)
+#: FRED picks a print up some time after the agency posts it (about an hour on
+#: 2026-10-02). Inside this window a fetch that predates it is retried.
+_RELEASE_GRACE_S = 3 * 3600
+_RELEASE_RETRY_S = 15 * 60
+
+
+def _last_release_moments(now: float) -> dict[str, float]:
+    """kind → epoch of its latest scheduled release at or before `now`. Empty
+    when the calendar is unavailable — the plain TTL then stands."""
+    from zoneinfo import ZoneInfo
+
+    from event_calendar import release_events
+
+    et = ZoneInfo("America/New_York")
+    today = datetime.fromtimestamp(now, et).date()
+    try:
+        events, _ok = release_events(today - timedelta(days=45), today)
+    except Exception as exc:
+        print(f"[Macro] release calendar unavailable: {type(exc).__name__}")
+        return {}
+    out: dict[str, float] = {}
+    for e in events:
+        d = datetime.strptime(e["date"], "%Y-%m-%d")
+        t = datetime(d.year, d.month, d.day, *_RELEASE_HOUR_ET, tzinfo=et).timestamp()
+        if t <= now and t > out.get(e["kind"], 0):
+            out[e["kind"]] = t
+    return out
+
+
+#: A print stays marked NEW this long after its release — a Friday number is
+#: still the news on Monday.
+_NEW_PRINT_S = 3 * 86400
+
+
+def _release_mark(key: str, entry: dict, moments: dict[str, float], now: float) -> dict:
+    """What the UI needs to say "this just changed": the day of the latest
+    scheduled release, whether the number shown already reflects it (`new`), or
+    the release has landed but the fetch has not caught up (`pending`)."""
+    from zoneinfo import ZoneInfo
+
+    t = moments.get(_SERIES_RELEASE.get(key, ""))
+    if not t:
+        return {"released": None, "new": False, "pending": False}
+    seen = entry.get("ts", 0) >= t
+    recent = now - t < _NEW_PRINT_S
+    return {
+        "released": datetime.fromtimestamp(t, ZoneInfo("America/New_York")).strftime("%Y-%m-%d"),
+        "new": seen and recent,
+        "pending": not seen,
+    }
+
+
+def _superseded(key: str, entry: dict | None, moments: dict[str, float], now: float) -> bool:
+    """True when a scheduled release has landed since this entry was fetched."""
+    t = moments.get(_SERIES_RELEASE.get(key, ""))
+    if not entry or not t:
+        return False
+    ts = entry.get("ts", 0)
+    if ts < t:
+        return True
+    return ts < t + _RELEASE_GRACE_S and now - ts > _RELEASE_RETRY_S
+
+
 # ── Incremental refresh ───────────────────────────────────────────────────────
 
 def _refresh_series(cache: dict) -> bool:
@@ -424,9 +500,12 @@ def _refresh_series(cache: dict) -> bool:
     changed = False
 
     # Phase 1: try FRED concurrently for all expired indicators (fast, no quota)
+    now = time.time()
+    moments = _last_release_moments(now)
     expired = [
         k for k in _INDICATOR_CFG
         if not _is_fresh(cache.get(k)) or cache[k].get("xv") != _XFORM_VERSION
+        or _superseded(k, cache.get(k), moments, now)
     ]
     if expired:
         fred_results: dict[str, list] = {}
@@ -506,6 +585,9 @@ def _assemble_macro(cache: dict) -> dict:
     """Build the full MacroData response dict from the per-series cache."""
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
+    now = time.time()
+    moments = _last_release_moments(now)
+
     def ind(key: str) -> dict | None:
         e = cache.get(key)
         if not e or e.get("v") is None:
@@ -515,6 +597,7 @@ def _assemble_macro(cache: dict) -> dict:
             "prev":   e["p"],
             "date":   e["d"] + "-01",
             "series": _unpack(e.get("s", [])),
+            **_release_mark(key, e, moments, now),
         }
 
     # Real-time yields (yfinance) + 2y/5y history (FRED/AV)

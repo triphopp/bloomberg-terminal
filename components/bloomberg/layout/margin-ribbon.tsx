@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * MARGIN level in the shared status row, next to GUARD. Hidden while no
- * account (PORT or PAPER) has margin enabled. Shows the WORST account; click →
- * PORT → RISK (PORT account) or PAPER → DASHBOARD (paper account), where the
- * MARGIN · REG T card breaks it down.
+ * MARGIN level in the shared status row, next to GUARD. Hidden while no PORT
+ * account has margin enabled. Shows the WORST account; click → PORT → RISK,
+ * where the MARGIN · REG T card breaks it down. Paper accounts the backend
+ * still returns are skipped — the PAPER tab was removed 2026-10-02.
  * Backend: GET /api/v2/portfolio/margin/overview (backend/routers/margin.py).
  */
 
@@ -19,12 +19,12 @@ export function MarginRibbon() {
   const requestTab = useSetAtom(portfolioTabRequestAtom);
   const { data, isError } = useMarginOverview();
 
-  const accounts = data?.accounts ?? [];
+  const accounts = (data?.accounts ?? []).filter((a) => a.scope !== "paper");
   if (!accounts.length) return null;
   const worst = accounts.find((a) => a.level) ?? accounts[0];
   const level = worst.level;
   const color = level ? LEVEL_COLOR[level] : "#555";
-  const label = `${worst.scope === "paper" ? "PAPER " : ""}${worst.name ?? worst.account_id}`;
+  const label = worst.name ?? worst.account_id;
 
   return (
     <button
@@ -33,13 +33,13 @@ export function MarginRibbon() {
       title={accounts
         .map(
           (a) =>
-            `${a.scope === "paper" ? "PAPER " : ""}${a.name ?? a.account_id}: ${a.level ?? "ERROR"} · cushion ${pct1(a.cushion)} · EL ${a.excess_liquidity?.toFixed(2) ?? "—"}${a.drop_to_call != null ? ` · call at −${pct1(a.drop_to_call)}` : ""}`
+            `${a.name ?? a.account_id}: ${a.level ?? "ERROR"} · cushion ${pct1(a.cushion)} · EL ${a.excess_liquidity?.toFixed(2) ?? "—"}${a.drop_to_call != null ? ` · call at −${pct1(a.drop_to_call)}` : ""}`
         )
         .join("\n")}
       aria-label={`MARGIN ${level ?? "unknown"} — open margin detail`}
       onClick={() => {
         startTransition(() => {
-          requestTab(worst.scope === "paper" ? "paper" : "risk");
+          requestTab("risk");
           setView("portfolio");
         });
       }}

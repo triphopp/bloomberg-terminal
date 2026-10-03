@@ -12,16 +12,10 @@ import { FLAG } from "./helpers";
 import { portfolioQueries } from "./queries";
 import { AnalyticsTab } from "./tabs/AnalyticsTab";
 import { AuditTab } from "./tabs/AuditTab";
-import { BacktestTab } from "./tabs/BacktestTab";
 import { CashTab } from "./tabs/CashTab";
 import { ImportTab } from "./tabs/ImportTab";
 import { OpenPositionsTab } from "./tabs/OpenPositionsTab";
 import { OptionsTab } from "./tabs/OptionsTab";
-import { PaperDashboardTab } from "./tabs/PaperDashboardTab";
-import { PaperHistoryTab } from "./tabs/PaperHistoryTab";
-import { PaperOptionsTab } from "./tabs/PaperOptionsTab";
-import { PaperPositionsTab } from "./tabs/PaperPositionsTab";
-import { PaperTradeTab } from "./tabs/PaperTradeTab";
 import { RiskTab } from "./tabs/RiskTab";
 import { ThesesTab } from "./tabs/ThesesTab";
 import { TradeLogTab } from "./tabs/TradeLogTab";
@@ -31,11 +25,9 @@ import type { Account, Summary } from "./types";
 import type { OptionEntryPrefill } from "./ui/OptionEntryForm";
 import { SummaryBar } from "./ui/SummaryBar";
 
-type TopTab = "portfolio" | "analytics" | "risk" | "tools" | "paper";
+type TopTab = "portfolio" | "analytics" | "risk" | "tools";
 type PortfolioSub = "positions" | "options" | "trades" | "cash" | "entry";
-type AnalyticsSub = "analytics" | "backtest";
 type ToolsSub = "theses" | "questions" | "track" | "import" | "audit";
-type PaperSub = "dashboard" | "trade" | "positions" | "options" | "history";
 
 type Tab<T extends string> = { id: T; label: string };
 
@@ -44,7 +36,6 @@ const TOP_TABS: Tab<TopTab>[] = [
   { id: "analytics", label: "ANALYTICS" },
   { id: "risk", label: "RISK" },
   { id: "tools", label: "TOOLS" },
-  { id: "paper", label: "PAPER" },
 ];
 
 const PORTFOLIO_SUBS: Tab<PortfolioSub>[] = [
@@ -55,25 +46,12 @@ const PORTFOLIO_SUBS: Tab<PortfolioSub>[] = [
   { id: "entry", label: "ENTRY" },
 ];
 
-const ANALYTICS_SUBS: Tab<AnalyticsSub>[] = [
-  { id: "analytics", label: "P&L" },
-  { id: "backtest", label: "BACKTEST" },
-];
-
 const TOOLS_SUBS: Tab<ToolsSub>[] = [
   { id: "theses", label: "THESES" },
   { id: "questions", label: "QUESTIONS" },
   { id: "track", label: "TRACK" },
   { id: "import", label: "IMPORT" },
   { id: "audit", label: "AUDIT" },
-];
-
-const PAPER_SUBS: Tab<PaperSub>[] = [
-  { id: "dashboard", label: "DASHBOARD" },
-  { id: "trade", label: "TRADE" },
-  { id: "positions", label: "POSITIONS" },
-  { id: "options", label: "OPTIONS" },
-  { id: "history", label: "HISTORY" },
 ];
 
 // Module-level tab strip: defining it inside PortfolioView creates a new
@@ -146,7 +124,6 @@ export function PortfolioView() {
     setOptionPrefill({ ...p, seq: Date.now() });
     setPortfolioSub("entry");
   };
-  const [analyticsSub, setAnalyticsSub] = useState<AnalyticsSub>("analytics");
   const [toolsSub, setToolsSub] = useState<ToolsSub>("theses");
   // Open questions across every thesis — the badge on TOOLS and on QUESTIONS.
   const { data: qCounts } = useQuestionCounts();
@@ -157,7 +134,6 @@ export function PortfolioView() {
     thesisId: string | null;
     questionId: string;
   } | null>(null);
-  const [paperSub, setPaperSub] = useState<PaperSub>("dashboard");
   // Symbol handed over when the positions table jumps to TOOLS → THESES, so the
   // rail can preselect (or pre-fill a new thesis for) that holding.
   const [thesisSymbol, setThesisSymbol] = useState<string | null>(null);
@@ -328,14 +304,6 @@ export function PortfolioView() {
         colors={colors}
         sub
       />
-    ) : topTab === "analytics" ? (
-      <TabStrip
-        tabs={ANALYTICS_SUBS}
-        active={analyticsSub}
-        setActive={setAnalyticsSub}
-        colors={colors}
-        sub
-      />
     ) : topTab === "tools" ? (
       <TabStrip
         tabs={TOOLS_SUBS}
@@ -348,8 +316,6 @@ export function PortfolioView() {
           track: <TrackBadges alert={tCounts?.alert ?? 0} setup={tCounts?.setup ?? 0} />,
         }}
       />
-    ) : topTab === "paper" ? (
-      <TabStrip tabs={PAPER_SUBS} active={paperSub} setActive={setPaperSub} colors={colors} sub />
     ) : null;
 
   return (
@@ -594,16 +560,13 @@ export function PortfolioView() {
               <ImportTab colors={colors} variant="manual" optionPrefill={optionPrefill} />
             )}
 
-            {topTab === "analytics" && analyticsSub === "analytics" && (
+            {topTab === "analytics" && (
               <AnalyticsTab
                 accountId={activeAccount}
                 currency={currency}
                 summary={summary}
                 colors={colors}
               />
-            )}
-            {topTab === "analytics" && analyticsSub === "backtest" && (
-              <BacktestTab colors={colors} accountId={activeAccount} currency={currency} />
             )}
 
             {topTab === "risk" && (
@@ -640,16 +603,6 @@ export function PortfolioView() {
             {topTab === "tools" && toolsSub === "audit" && (
               <AuditTab accountId={activeAccount} colors={colors} />
             )}
-
-            {topTab === "paper" && paperSub === "dashboard" && (
-              <PaperDashboardTab colors={colors} />
-            )}
-            {topTab === "paper" && paperSub === "trade" && <PaperTradeTab colors={colors} />}
-            {topTab === "paper" && paperSub === "positions" && (
-              <PaperPositionsTab colors={colors} />
-            )}
-            {topTab === "paper" && paperSub === "options" && <PaperOptionsTab colors={colors} />}
-            {topTab === "paper" && paperSub === "history" && <PaperHistoryTab colors={colors} />}
           </>
         )}
       </div>

@@ -17,7 +17,7 @@ accounting checks — all in one dark UI backed by a Python data service.
 | `1` | **MKT** | Watchlist (WATCH / FREQ / ACTIVE feeds), main chart with indicators, REGIME panel (CORR · GEOM · ROT · IV · COT), TICK DATA board (indices, US/JP rates, volatility, FX) |
 | `2` | **NEWS** | Per-ticker news from 7 sources grouped by sector, topic feed, social, indicator DATA board, Polymarket column |
 | `3` / `b` | **BOND** | MARKET: Treasury and credit legs, corporate issuance (SEC 424B filings) with an event study, Treasury auctions, debt stock, CFTC Treasury-futures positioning · CONDITIONS: crisis level, financial-stress indices, breakevens, mortgage and delinquency data |
-| `4` / `p` | **PORT** | PORTFOLIO (positions, options, trades, cash, entry) · ANALYTICS (P&L, TWR growth, XIRR, backtest) · RISK · TOOLS (theses + Zettelkasten, import, audit) · PAPER trading |
+| `4` / `p` | **PORT** | PORTFOLIO (positions, options, trades, cash, entry) · ANALYTICS (P&L, TWR growth, XIRR) · RISK · TOOLS (theses + Zettelkasten, import, audit) |
 | `5` / `t` | **TAIL** | Named market events, 6 risk dimensions → composite, macro context (FOMC/CPI/NFP/PCE/GDP calendar, Fed, curve), sector rotation, CFTC positioning |
 | `h` | **HMAP** | One equity market as a sector treemap sized by market cap (`heatmap(US)`, `heatmap(TH, 52w)` …) |
 

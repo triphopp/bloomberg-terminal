@@ -1,6 +1,6 @@
 {
   "as_of": "2026-10-02",
-  "status": "DRAFT — ยังไม่ได้นำเข้า portfolio.db ห้ามนำเข้าจนกว่าทุกเครื่องจะ pull + restart (plans/thesis-tracking.md Step 8)",
+  "status": "MU · SNDK · INTC (26 ตัวเลข) อยู่ใน portfolio.db แล้ว เป็น K-0001 ถึง K-0026 และ D-0006 ถึง D-0011 — นำเข้า 2 ต.ค. 2026 13:10 · GOOGL · AXTI · ORCL (15 ตัวเลข + 5 วันที่) ยังเป็น DRAFT ยังไม่ได้นำเข้า (dry-run บนสำเนา DB ผ่าน 15/15) — นำเข้าเมื่อทุกเครื่อง pull + restart แล้ว (plans/thesis-tracking.md Step 8)",
   "how_to_apply": "1) สร้างวันที่ใน `dates` ที่ยังไม่มี ref ด้วย question_date_add  2) ต่อหนึ่งตัวเลข: track_add(metric) → track_record(baseline พร้อม period) → track_expect(expectation โดยแทน date_key ด้วย D-ref) — ข้ามค่าคาดการณ์ของแถว forecast_origin = NEEDS_USER",
   "forecast_origin": {
     "GUIDANCE": "ช่วงมาจาก guidance ของบริษัท หรือเกณฑ์ที่ผู้ใช้เขียนไว้เองแล้ว",
@@ -11,7 +11,13 @@
     "ประโยคอ้างอิงของ TrendForce (30 ก.ย. 2026) และ The Register (21 ส.ค. 2026) อ่านผ่านเครื่องมือ fetch ที่สรุปหน้าเว็บ — เปิดหน้าตรวจคำต่อคำก่อนนำเข้า",
     "series ราคาสัญญาใน series_points (dx.contract.*) มีจุดเดียวคือ 2026-07-31 (SSD 2026-08-05) — ค่าที่แสดงข้างตัวเลขจะเก่าจนกว่า collector จะเก็บจุดใหม่",
     "บันทึกของ thesis SNDK ใช้ watch_date 2026-11-06 สำหรับงบ Q1 FY27 แต่บริษัทประกาศแล้วว่าเป็น 2026-10-29",
-    "คำถาม Q-0010 ถึง Q-0024 อยู่ใต้ thesis SNDK ทั้งหมด — ตัวเลขของ MU ที่ผูก Q-0015 / Q-0022 จึงชี้ข้าม thesis"
+    "คำถาม Q-0010 ถึง Q-0024 อยู่ใต้ thesis SNDK ทั้งหมด — ตัวเลขของ MU ที่ผูก Q-0015 / Q-0022 จึงชี้ข้าม thesis",
+    "GOOGL (5) และ AXTI (6) เพิ่มเมื่อ 2 ต.ค. 2026 รอบสอง · ประโยคอ้างอิงจาก SEC (8-K, 10-Q) อ่านจากเอกสารโดยตรง ช่องว่างในตารางเป็นของต้นฉบับ · ประโยคจาก Motley Fool (call ของ AXT), Reuters ผ่าน Yahoo และ StockTitan อ่านผ่านเครื่องมือ fetch ที่สรุปหน้าเว็บ — เปิดหน้าตรวจคำต่อคำก่อนนำเข้า",
+    "AXTI-REV และ AXTI-GUIDE ไม่มี baseline: เส้น killer (66 และ 77.5) เป็นของไตรมาสเดียว ค่าของไตรมาสก่อน ($47.6M และ guidance $66M) ต่ำกว่าเส้น ถ้าบันทึกจะขึ้น KILL และเปิดคำถามทันที",
+    "AXTI: การระงับคำสั่งห้ามส่งออก Ga/Ge/Sb ไปสหรัฐของจีนหมดอายุ 27 พ.ย. 2026 (MOFCOM Announcement 72/2025 ตามรายงานของ Fastmarkets และ Mining Technology — ยังไม่ได้เปิดประกาศต้นทาง) ยังไม่ใส่ใน dates เพราะไม่มีค่าคาดการณ์ผูกอยู่ · หลังบันทึกงบ Q3 ให้ตั้งค่าคาดการณ์รอบถัดไปของ AXTI-PERMIT ด้วย new_date นี้ สถานะ ESTIMATED",
+    "GOOGL-BACKSTOP: เงื่อนไข \"backstop โตเร็วกว่าหนี้ในงบ\" เป็นจริงแล้วระหว่าง ธ.ค. 2025 – มิ.ย. 2026 (34.5% → 43.3%) จึงไม่ใส่ kill_op จนกว่าจะมีเกณฑ์ตัวเลข",
+    "GOOGL และ AXTI ยังไม่มีคำถามใน QUESTIONS — ตัวเลขชุดนี้จึงไม่ผูก Q-ref ถ้าพลาดคาด คำถาม \"ทำไม\" จะถูกเปิดเป็นคำถามแรกของ thesis",
+    "ORCL (4 ตัวเลขจับตา + 1 วันที่) เพิ่มเมื่อ 2 ต.ค. 2026 รอบสาม อยู่ใต้ thesis GOOGL เพราะยังไม่มี thesis ORCL · ทั้งหมดเป็น WATCH ไม่ใช่ KILLER — thesis GOOGL ไม่มีเงื่อนไข killer ที่อ้าง Oracle · CDS และอันดับเครดิตมาจากข่าวแหล่งรองที่อ่านผ่านเครื่องมือ fetch ตรวจคำต่อคำก่อนนำเข้า"
   ],
   "dates": [
     {
@@ -31,6 +37,7 @@
     },
     {
       "key": "SNDK_Q1",
+      "ref": "D-0006",
       "title": "Sandisk ประกาศงบ Q1 FY27",
       "date": "2026-10-29",
       "status": "CONFIRMED",
@@ -41,6 +48,7 @@
     },
     {
       "key": "SNDK_10Q",
+      "ref": "D-0007",
       "title": "Sandisk ยื่น 10-Q ของ Q1 FY27",
       "date": "2026-10-30",
       "status": "ESTIMATED",
@@ -51,6 +59,7 @@
     },
     {
       "key": "MU_FQ1",
+      "ref": "D-0008",
       "title": "Micron ประกาศงบ FQ1 FY27",
       "date": "2026-12-23",
       "status": "ESTIMATED",
@@ -61,6 +70,7 @@
     },
     {
       "key": "HYPER_Q3",
+      "ref": "D-0009",
       "title": "Hyperscaler ประกาศงบ Q3/26 (MSFT · GOOGL · META · AMZN)",
       "date": "2026-10-29",
       "status": "ESTIMATED",
@@ -71,6 +81,7 @@
     },
     {
       "key": "TF_1Q27",
+      "ref": "D-0010",
       "title": "TrendForce คาดการณ์ราคาสัญญาหน่วยความจำ 1Q27",
       "date": "2027-01-05",
       "status": "ESTIMATED",
@@ -81,6 +92,7 @@
     },
     {
       "key": "TF_DRAM_3Q26",
+      "ref": "D-0011",
       "title": "TrendForce อันดับรายได้ DRAM 3Q26",
       "date": "2026-12-07",
       "status": "ESTIMATED",
@@ -88,6 +100,56 @@
       "symbol": null,
       "source": "ประมาณเอง: อันดับ 2Q26 ออก 7 ก.ย. 2026 = 69 วันหลังสิ้นไตรมาส ไม่มีกำหนดการที่ประกาศไว้",
       "source_url": "https://www.trendforce.com/presscenter/news/20260907-13219.html"
+    },
+    {
+      "key": "GOOGL_Q3",
+      "title": "Alphabet ประกาศงบ Q3/26",
+      "date": "2026-10-28",
+      "status": "ESTIMATED",
+      "kind": "EARNINGS",
+      "symbol": "GOOGL",
+      "source": "ปฏิทิน Yahoo ผ่าน MCP get_stock_data (earnings-calendar): 28 ต.ค. 2026 16:00 · MarketBeat ระบุว่าเป็นวันประมาณจากรอบก่อน Alphabet ยังไม่ประกาศ · หน้า IR ของ Alphabet ยังไม่แสดงวัน (ตรวจ 2 ต.ค. 2026)",
+      "source_url": "https://www.marketbeat.com/stocks/NASDAQ/GOOGL/earnings/"
+    },
+    {
+      "key": "GOOGL_10Q",
+      "title": "Alphabet ยื่น 10-Q ของ Q3/26",
+      "date": "2026-10-29",
+      "status": "ESTIMATED",
+      "kind": "FILING",
+      "symbol": "GOOGL",
+      "source": "ประมาณเอง: รอบ Q2/26 ประกาศงบ 22 ก.ค. แล้วยื่น 10-Q วันที่ 23 ก.ค. 2026 · รอบ Q1/26 ยื่น 10-Q วันที่ 30 เม.ย. 2026 (SEC EDGAR) จึงบวกหนึ่งวันจากวันงบที่ประมาณไว้",
+      "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001652044&type=10-Q&dateb=&owner=include&count=10"
+    },
+    {
+      "key": "AXTI_Q3",
+      "title": "AXT ประกาศงบ Q3/26",
+      "date": "2026-10-29",
+      "status": "CONFIRMED",
+      "kind": "EARNINGS",
+      "symbol": "AXTI",
+      "source": "ประกาศของบริษัท 1 ต.ค. 2026 (Business Wire): ผลประกอบการหลังตลาดปิด 29 ต.ค. 2026 · conference call 13:30 PT — หน้า Business Wire ตอบ 403 จึงอ่านข้อความจากสำเนาของ StockTitan",
+      "source_url": "https://www.businesswire.com/news/home/20261001072530/en/AXT-Inc.-Schedules-Third-Quarter-2026-Earnings-Release-for-October-29-2026"
+    },
+    {
+      "key": "AXTI_10Q",
+      "title": "AXT ยื่น 10-Q ของ Q3/26",
+      "date": "2026-11-12",
+      "status": "ESTIMATED",
+      "kind": "FILING",
+      "symbol": "AXTI",
+      "source": "ประมาณเอง: รอบ Q2/26 ประกาศงบ 30 ก.ค. แล้วยื่น 10-Q วันที่ 13 ส.ค. 2026 = 14 วันหลังวันงบ (SEC EDGAR)",
+      "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001051627&type=10-Q&dateb=&owner=include&count=10"
+    },
+    {
+      "key": "ORCL_10Q",
+      "title": "Oracle ประกาศงบและยื่น 10-Q ของ FQ2 FY27",
+      "date": "2026-12-11",
+      "status": "ESTIMATED",
+      "kind": "FILING",
+      "symbol": "ORCL",
+      "source": "ปฏิทิน Yahoo ผ่าน MCP get_stock_data (earnings-calendar): งบ 10 ธ.ค. 2026 · รอบก่อนประกาศงบ 10 ก.ย. แล้วยื่น 10-Q วันที่ 11 ก.ย. 2026 (SEC EDGAR) จึงบวกหนึ่งวัน — Oracle ยังไม่ประกาศวัน",
+      "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001341439&type=10-Q&dateb=&owner=include&count=10"
     }
   ],
   "metrics": [
@@ -1059,6 +1121,556 @@
       },
       "forecast_origin": "SUGGESTED",
       "review": "ช่วง 5,200–5,260 มาจากการคำนวณของผม"
+    },
+    {
+      "key": "GOOGL-CLOUD",
+      "thesis": "GOOGL",
+      "metric": {
+        "thesis_id": "4e0b489e-3c64-486a-99a7-76e704048c46",
+        "title": "รายได้ Google Cloud โต YoY",
+        "role": "KILLER",
+        "unit": "% YoY",
+        "cadence": "QUARTERLY",
+        "definition": "(รายได้ Google Cloud ของไตรมาส ÷ ไตรมาสเดียวกันปีก่อน − 1) × 100 จากตาราง Segment Results ใน press release — สองคอลัมน์อยู่ในตารางเดียวกัน",
+        "why": "backlog ของ Cloud ต้องถูกรับรู้เป็นรายได้ตามกำหนด ถ้าการเติบโตชะลอขณะที่ backlog หยุดเพิ่ม แปลว่าลูกค้าแล็บ AI เริ่มจ่ายไม่ไหว และ capex ที่ระดมทุนมาจ่ายจะไม่คืนทุน",
+        "kill_rule": "Google Cloud revenue growth < 40% YoY ขณะที่ RPO หยุดโต",
+        "kill_op": "<",
+        "kill_value": 40,
+        "source_name": "Alphabet earnings release (8-K EX-99.1)",
+        "source_url": "https://abc.xyz/investor/",
+        "source_locator": "Segment Results → Revenues → Google Cloud (ไตรมาสนี้ และไตรมาสเดียวกันปีก่อน)",
+        "source_tool": "get_filings(GOOGL, forms=8-K) → EX-99.1"
+      },
+      "baseline": {
+        "period": "Q2/26",
+        "value": 81.8,
+        "as_of": "2026-06-30",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/1652044/000165204426000066/googexhibit991q22026.htm",
+        "quote": "Revenues: Google Services $ 82,543 $ 94,540 Google Cloud 13,624 24,768",
+        "note": "24,768 ÷ 13,624 − 1 = 81.8% · บริษัทเขียนว่า \"Google Cloud revenues accelerating to 82% growth\""
+      },
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "ยังโตเกิน 40% YoY",
+        "low": 40,
+        "high": null,
+        "basis": "เกณฑ์ที่เขียนไว้ใน thesis และหน้า hyperscaler-capex-funding-googl (รายได้ Cloud โต > ~40% YoY) · Alphabet ไม่ให้ guidance รายได้ · Q2/26 โต 81.8% และ backlog $519.5bn ที่บริษัทคาดว่าจะรับรู้เกินครึ่งใน 24 เดือน",
+        "date_key": "GOOGL_Q3"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": "ขอบล่างของค่าคาดการณ์เท่ากับเส้น killer (40%) — พลาดคาดกับแตะเส้นจะเกิดพร้อมกัน ถ้าต้องการสัญญาณเตือนก่อนถึงเส้น ให้ตั้งขอบล่างสูงกว่านี้ (Q2/26 = 81.8%) · ส่วน \"RPO หยุดโต\" ตรวจด้วย GOOGL-RPO ซึ่งออกช้ากว่าหนึ่งวัน"
+    },
+    {
+      "key": "GOOGL-RPO",
+      "thesis": "GOOGL",
+      "metric": {
+        "thesis_id": "4e0b489e-3c64-486a-99a7-76e704048c46",
+        "title": "Revenue backlog (RPO) รวม",
+        "role": "WATCH",
+        "unit": "$bn",
+        "cadence": "QUARTERLY",
+        "definition": "Remaining performance obligations (\"revenue backlog\") ณ สิ้นไตรมาส ตาม 10-Q — บันทึกยอดรวม และจดส่วนของ Google Cloud ไว้ในหมายเหตุ",
+        "why": "ขาที่สองของเส้น killer ของ GOOGL-CLOUD: รายได้โตช้าลงจะนับเป็น killer ก็ต่อเมื่อ backlog หยุดเพิ่มด้วย",
+        "source_name": "Alphabet 10-Q",
+        "source_url": "https://abc.xyz/investor/",
+        "source_locator": "Notes → Revenues → Revenue Backlog (\"we had $… billion of remaining performance obligations\")",
+        "source_tool": "get_filings(GOOGL, forms=10-Q) · XBRL RevenueRemainingPerformanceObligation (SEC companyfacts)"
+      },
+      "baseline": {
+        "period": "Q2/26",
+        "value": 519.5,
+        "as_of": "2026-06-30",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/1652044/000165204426000071/goog-20260630.htm",
+        "quote": "As of June 30, 2026, we had $519.5 billion of remaining performance obligations (“revenue backlog”), of which $513.9 billion related to Google Cloud.",
+        "note": "31 มี.ค. 2026 = $467.6bn (XBRL) → +11.1% QoQ · 30 มิ.ย. 2025 = $108.2bn"
+      },
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "ยังเพิ่มจากไตรมาสก่อน",
+        "low": 519.5,
+        "high": null,
+        "basis": "เงื่อนไขใน thesis คือ RPO ต้องไม่หยุดโต — บริษัทไม่ให้ guidance เรื่อง backlog · ไตรมาสก่อนเพิ่ม $51.9bn",
+        "date_key": "GOOGL_10Q"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ขอบล่าง = ยอด Q2/26 (ไม่ลดลง) เป็นข้อเสนอของผม"
+    },
+    {
+      "key": "GOOGL-IG",
+      "thesis": "GOOGL",
+      "metric": {
+        "thesis_id": "4e0b489e-3c64-486a-99a7-76e704048c46",
+        "title": "US IG OAS — ค่าสูงสุดของเดือน",
+        "role": "KILLER",
+        "unit": "%",
+        "cadence": "MONTHLY",
+        "definition": "ค่ารายวันสูงสุดของ ICE BofA US Corporate Index OAS (FRED BAMLC0A0CM) ในเดือนนั้น อ่าน ณ วันทำการสุดท้ายของเดือน — เกิน 1.33 วันใดวันหนึ่งถือว่าแตะเส้น",
+        "why": "Alphabet จ่าย capex ส่วนที่เกินกระแสเงินสดด้วยหุ้นกู้ ถ้า spread ของหุ้นกู้ระดับลงทุนถ่างถึงจุดสูงสุดในรอบ 3 ปี ต้นทุนเงินและความสามารถในการออกหนี้ของทั้งกลุ่มจะเปลี่ยน",
+        "kill_rule": "IG OAS > 1.33% หรือหุ้นกู้ hyperscaler ต้องให้ส่วนลดตอนออก (new-issue concession) > 20bp",
+        "kill_op": ">",
+        "kill_value": 1.33,
+        "source_name": "FRED — ICE BofA US Corporate Index Option-Adjusted Spread",
+        "source_url": "https://fred.stlouisfed.org/series/BAMLC0A0CM",
+        "source_locator": "ค่ารายวันของเดือน",
+        "source_tool": "backend GET /api/bonds/overview → history[].IG_OAS"
+      },
+      "baseline": {
+        "period": "2026-09",
+        "value": 0.84,
+        "as_of": "2026-09-30",
+        "source_url": "https://fred.stlouisfed.org/series/BAMLC0A0CM",
+        "quote": "IG_OAS รายวัน 1–30 ก.ย. 2026: สูงสุด 0.84 (29–30 ก.ย.) · ต่ำสุด 0.77 (18–23 ก.ย.)",
+        "note": "ถ่างจาก 0.77% (23 ก.ย.) เป็น 0.84% (30 ก.ย.) พร้อมกับ HY OAS"
+      },
+      "expectation": {
+        "period": "2026-10",
+        "expected": "ยังต่ำกว่า 1.06% (ขั้นเฝ้าดู)",
+        "low": null,
+        "high": 1.06,
+        "basis": "ขั้น \"เฝ้าดู\" ของหน้า hyperscaler-capex-funding-googl = percentile ที่ 90 ของช่วง 3 ปี · ค่าล่าสุด 0.84% (30 ก.ย. 2026)",
+        "due_date": "2026-10-30"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ขอบบน 1.06% มาจากเกณฑ์ที่หน้า graph ตั้งขึ้นเอง ไม่ใช่เกณฑ์ที่คุณเขียนไว้ — ข้ามแล้วจะเปิดคำถามก่อนถึงเส้น killer 1.33% · ส่วน concession แยกเป็น GOOGL-CONC"
+    },
+    {
+      "key": "GOOGL-CONC",
+      "thesis": "GOOGL",
+      "metric": {
+        "thesis_id": "4e0b489e-3c64-486a-99a7-76e704048c46",
+        "title": "New-issue concession ของหุ้นกู้ hyperscaler",
+        "role": "KILLER",
+        "unit": "bp",
+        "cadence": "EVENT",
+        "definition": "ส่วนลดที่ผู้ออกต้องให้ตอนออกหุ้นกู้ใหม่ เทียบหุ้นกู้เดิมของผู้ออกรายเดียวกัน — ค่ามัธยฐานรายดีลของกลุ่ม hyperscaler ตามที่สื่อรายงาน หรือของดีลล่าสุดของ Alphabet",
+        "why": "ตลาดที่เริ่มอิ่มจะแสดงที่ concession และ cover ratio ของดีลก่อน IG OAS ทั้งตลาด เพราะดัชนี IG ยังเจือจางด้วยธนาคารและภาคอื่น",
+        "kill_rule": "IG OAS > 1.33% หรือหุ้นกู้ hyperscaler ต้องให้ส่วนลดตอนออก (new-issue concession) > 20bp",
+        "kill_op": ">",
+        "kill_value": 20,
+        "source_name": "Reuters — ข่าวตลาดหุ้นกู้ hyperscaler",
+        "source_url": "https://finance.yahoo.com/markets/stocks/articles/hyperscaler-debt-binge-pushes-yields-134825104.html",
+        "source_locator": "ประโยค \"The median deal-level concession rose to … basis points\" · ข่าวการตั้งราคาหุ้นกู้ของ Alphabet แต่ละครั้ง",
+        "source_tool": "WebSearch \"hyperscaler bond new issue concession\" · get_filings(GOOGL, forms=8-K) สำหรับดีลใหม่ของ Alphabet"
+      },
+      "baseline": {
+        "period": "2026 ถึง ก.ค.",
+        "value": 12,
+        "as_of": "2026-07-29",
+        "source_url": "https://finance.yahoo.com/markets/stocks/articles/hyperscaler-debt-binge-pushes-yields-134825104.html",
+        "quote": "The median deal-level concession rose to 12 basis points in 2026 from 2.25 basis points in 2025",
+        "note": "cover ratio ลดจากเกือบ 5 เท่า (ก.พ.) เหลือต่ำกว่า 2 เท่า (ก.ค.) ตามบทความเดียวกัน"
+      },
+      "expectation": {
+        "period": "2026 ทั้งปี",
+        "expected": "ยังต่ำกว่า 20bp",
+        "low": null,
+        "high": 20,
+        "basis": "เกณฑ์ที่เขียนไว้ใน thesis (concession < 20bp) · ค่าล่าสุด 12bp จาก 2.25bp ในปี 2025 (Reuters 29 ก.ค. 2026)",
+        "due_date": "2026-12-31"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": "ไม่มีแหล่งฟรีที่ออกตามกำหนด — ตัวเลขนี้มาจากข่าว Reuters ครั้งเดียว ต้องค้นข่าวใหม่ทุกครั้งที่มีดีล · วันที่ 31 ธ.ค. เป็นวันที่ผมเลือกให้กลับมาดู ไม่ใช่วันประกาศ · ขอบบนเท่ากับเส้น killer"
+    },
+    {
+      "key": "GOOGL-BACKSTOP",
+      "thesis": "GOOGL",
+      "metric": {
+        "thesis_id": "4e0b489e-3c64-486a-99a7-76e704048c46",
+        "title": "Credit backstop นอกงบ ต่อหนี้ในงบ",
+        "role": "KILLER",
+        "unit": "%",
+        "cadence": "QUARTERLY",
+        "definition": "notional ของ Credit derivatives (ตาราง notional amounts ของ derivatives) ÷ Total face value of long-term debt (ตารางหนี้ระยะยาว) × 100 ณ สิ้นไตรมาส — อัตราส่วนเพิ่ม = backstop โตเร็วกว่าหนี้ในงบ",
+        "why": "การค้ำประกันดาต้าเซ็นเตอร์คือสินเชื่อที่ไม่ขึ้นงบ ถ้าโตเร็วกว่าหนี้ในงบ ความเสี่ยงเครดิตของ neocloud กำลังไหลกลับเข้า Alphabet โดยที่ตัวเลขหนี้ไม่แสดง",
+        "kill_rule": "credit backstop นอกงบ ($43.8bn) โตต่อเร็วกว่าหนี้ในงบ",
+        "source_name": "Alphabet 10-Q",
+        "source_url": "https://abc.xyz/investor/",
+        "source_locator": "Note เรื่อง Financial Instruments → ตาราง notional amounts → Credit derivatives · Note เรื่อง Debt → Total face value of long-term debt · MD&A → Financing (backstop ที่ตกลงแล้วแต่ยังไม่เซ็น)",
+        "source_tool": "get_filings(GOOGL, forms=10-Q)"
+      },
+      "baseline": {
+        "period": "Q2/26",
+        "value": 43.3,
+        "as_of": "2026-06-30",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/1652044/000165204426000071/goog-20260630.htm",
+        "quote": "Credit derivatives $ 16,940 $ 43,785 · Total face value of long-term debt 49,085 101,085",
+        "note": "43,785 ÷ 101,085 = 43.3% · 31 ธ.ค. 2025: 16,940 ÷ 49,085 = 34.5% · มีข้อตกลงจะให้ backstop เพิ่มอีกประมาณ $24.1bn ที่ยังไม่เซ็น"
+      },
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "อัตราส่วนลดลงจาก 43.3% เพราะหนี้ในงบเพิ่ม $25bn",
+        "low": null,
+        "high": 43.3,
+        "basis": "หุ้นกู้ $25bn ที่ออก 10 ส.ค. 2026 (8-K) ดันหนี้ในงบเป็นราว $126bn ถ้า backstop คงที่ อัตราส่วนจะเหลือราว 34.7% · ถ้า backstop $24.1bn ที่ตกลงไว้ถูกเซ็นทั้งหมดในไตรมาส อัตราส่วนจะเป็นราว 53.8% — คำนวณเอง ไม่รวมผลอัตราแลกเปลี่ยนและดีลอื่น",
+        "date_key": "GOOGL_10Q"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "thesis ไม่มีตัวเลขของเส้นนี้ จึงยังไม่ใส่ kill_op — ตอนบันทึกต้องบอกเองว่าแตะเส้นหรือไม่ · เงื่อนไขนี้เป็นจริงไปแล้วในครึ่งแรกปี 2026 (34.5% → 43.3%) ต้องการให้นับจากระดับไหน · ขอบบน 43.3% เป็นข้อเสนอของผม"
+    },
+    {
+      "key": "AXTI-PX",
+      "thesis": "AXTI",
+      "metric": {
+        "thesis_id": "ccd0e31b-1e69-4cd0-9beb-bd6f071d4119",
+        "title": "ราคาปิดต่ำสุดของเดือน",
+        "role": "KILLER",
+        "unit": "$",
+        "cadence": "MONTHLY",
+        "definition": "ราคาปิดรายวันต่ำสุดของ AXTI ในเดือนนั้น อ่าน ณ วันทำการสุดท้ายของเดือน — ปิดต่ำกว่า 52.93 วันใดวันหนึ่งถือว่าแตะเส้น",
+        "why": "52.93 คือจุด stop ของแผน ใกล้ low ของ ST (52.76 วันที่ 3 ก.ย.) — ปิดต่ำกว่านี้แปลว่ากรอบ 53–98 เป็น redistribution ไม่ใช่ re-accumulation",
+        "kill_rule": "ปิดต่ำกว่า 52.93 → accumulation ผิด อาจเป็น redistribution (lower high 143→98)",
+        "kill_op": "<",
+        "kill_value": 52.93,
+        "source_name": "Yahoo Finance — ราคาปิดรายวัน AXTI",
+        "source_url": "https://finance.yahoo.com/quote/AXTI/history/",
+        "source_locator": "คอลัมน์ Close ของทุกวันทำการในเดือน",
+        "source_tool": "get_price_history(AXTI, period=1m, interval=1d)"
+      },
+      "baseline": {
+        "period": "2026-09",
+        "value": 56.11,
+        "as_of": "2026-09-30",
+        "source_url": "https://finance.yahoo.com/quote/AXTI/history/",
+        "quote": "ราคาปิดรายวัน 1–30 ก.ย. 2026: ต่ำสุด 56.11 (1 ก.ย.) · สูงสุด 79.93 (21 ก.ย.) · ปิดสิ้นเดือน 77.41",
+        "note": "ปิด 1 ต.ค. 2026 ที่ 81.81"
+      },
+      "expectation": {
+        "period": "2026-10",
+        "expected": "ไม่ปิดต่ำกว่า LPS 69.6",
+        "low": 69.6,
+        "high": null,
+        "basis": "ฉากทัศน์ Bear ของ thesis (27 ก.ย. 2026): LPS ~69.6–71 แตก = Phase D ล้ม (Z-0060) · เดือนนี้รวมวันทำการแรกหลังงบ Q3 (30 ต.ค.)",
+        "evidence": [
+          "Z-0060"
+        ],
+        "due_date": "2026-10-30"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": "ใช้ระดับ LPS 69.6 ที่เขียนไว้ในฉากทัศน์ของ thesis เป็นขอบล่าง — หลุดแล้วจะเปิดคำถามก่อนถึง stop 52.93 · ตัวเลขนี้เป็นรายเดือน ไม่ได้เตือนระหว่างวัน การเตือนราคาจริงควรตั้งที่ ALERT ของ terminal · thesis เขียนว่า 52.93 อยู่ \"ใต้ ST\" แต่ low ของ ST คือ 52.76 ซึ่งต่ำกว่า 52.93"
+    },
+    {
+      "key": "AXTI-REV",
+      "thesis": "AXTI",
+      "metric": {
+        "thesis_id": "ccd0e31b-1e69-4cd0-9beb-bd6f071d4119",
+        "title": "รายได้ไตรมาสเทียบ guidance",
+        "role": "KILLER",
+        "unit": "$M",
+        "cadence": "QUARTERLY",
+        "definition": "Revenue ของไตรมาสตาม press release",
+        "why": "ราคาหุ้นใส่การเติบโตไปมากแล้ว (P/S 41 เท่า) รายได้ที่ต่ำกว่าตัวเลขที่ผู้บริหารบอกว่ามองเห็นแล้ว คือสัญญาณว่าใบอนุญาตหรือกำลังผลิตสะดุด",
+        "kill_rule": "Q3 รายได้ < $66M หรือ Q4 guide ต่ำกว่า consensus ~$77.5M",
+        "kill_op": "<",
+        "kill_value": 66,
+        "source_name": "AXT earnings press release (8-K EX-99.1)",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001051627&type=8-K&dateb=&owner=include&count=10",
+        "source_locator": "บรรทัดแรกของ Financial Results → \"Revenue for the … quarter of 2026 was $… million\"",
+        "source_tool": "get_filings(AXTI, forms=8-K) → EX-99.1"
+      },
+      "baseline": null,
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "ไม่ต่ำกว่า $66M ตามที่ผู้บริหารบอกว่ามองเห็นแล้ว",
+        "low": 66,
+        "high": null,
+        "basis": "CFO ใน call Q2/26 (30 ก.ค. 2026): รายได้ราว $66M ที่รับรู้ได้ใน Q3 จากใบอนุญาตที่มีอยู่และสินค้าที่ไม่ถูกควบคุม (Z-0056) · consensus $66.0M ช่วง $65.7–66.2M จาก 5 ราย (Yahoo ผ่าน MCP, 2 ต.ค. 2026)",
+        "evidence": [
+          "Z-0056"
+        ],
+        "date_key": "AXTI_Q3"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": "ไม่บันทึกค่าฐาน Q2/26 ($47.6M) เพราะเส้น killer 66 เป็นของ Q3 โดยเฉพาะ ค่าฐานจะแตะเส้นทันที · หลังงบ Q3 ต้องตั้งเส้นใหม่เอง (agent แก้เส้นที่ตั้งแล้วไม่ได้) · ขอบล่างเท่ากับเส้น killer"
+    },
+    {
+      "key": "AXTI-GUIDE",
+      "thesis": "AXTI",
+      "metric": {
+        "thesis_id": "ccd0e31b-1e69-4cd0-9beb-bd6f071d4119",
+        "title": "Guidance รายได้ไตรมาสถัดไป",
+        "role": "KILLER",
+        "unit": "$M",
+        "cadence": "QUARTERLY",
+        "definition": "ตัวเลขรายได้ไตรมาสถัดไปที่ผู้บริหารให้ใน earnings call — งวดที่บันทึกคือไตรมาสที่ประกาศงบ (งวด Q3/26 = guidance ของ Q4/26) · บริษัทไม่ใส่ guidance ใน press release",
+        "why": "ขาที่สองของเส้น killer เรื่องรายได้: guidance ที่ต่ำกว่าที่ตลาดคาดในหุ้นที่ราคาใส่การเติบโตไว้แล้ว",
+        "kill_rule": "Q3 รายได้ < $66M หรือ Q4 guide ต่ำกว่า consensus ~$77.5M",
+        "kill_op": "<",
+        "kill_value": 77.5,
+        "source_name": "AXT earnings call (CFO) — transcript",
+        "source_url": "https://www.fool.com/earnings/call-transcripts/2026/08/03/axt-axti-q2-2026-earnings-call-transcript/",
+        "source_locator": "ช่วง outlook ของ CFO → ประโยค \"we have approximately $… million in revenue that can be realized in Q…\"",
+        "source_tool": "WebSearch \"AXT Q3 2026 earnings call transcript\""
+      },
+      "baseline": null,
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "guidance Q4/26 ไม่ต่ำกว่า consensus ราว $77.5M",
+        "low": 77.5,
+        "high": null,
+        "basis": "consensus รายได้ Q4/26 $77.45M ช่วง $74.9–80.0M จาก 5 ราย (Yahoo ผ่าน MCP get_stock_data estimates, 2 ต.ค. 2026) · รอบก่อนผู้บริหารให้ราว $66M สำหรับ Q3 (Z-0056) และไม่ได้ให้ตัวเลข Q4",
+        "evidence": [
+          "Z-0056"
+        ],
+        "date_key": "AXTI_Q3"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": "ไม่บันทึกค่าฐาน (guidance Q3 = $66M) เพราะต่ำกว่าเส้น 77.5 ซึ่งเป็นของ Q4 โดยเฉพาะ · consensus ขยับได้ก่อนวันงบ — เส้น 77.5 คือค่า ณ วันที่เขียน thesis · ผู้บริหารพูดเป็น \"รายได้ที่มองเห็นแล้ว\" ไม่ใช่ช่วง guidance ปกติ"
+    },
+    {
+      "key": "AXTI-GM",
+      "thesis": "AXTI",
+      "metric": {
+        "thesis_id": "ccd0e31b-1e69-4cd0-9beb-bd6f071d4119",
+        "title": "อัตรากำไรขั้นต้น GAAP (GM)",
+        "role": "KILLER",
+        "unit": "%",
+        "cadence": "QUARTERLY",
+        "definition": "GAAP gross margin เป็นร้อยละของรายได้ ตาม press release",
+        "why": "การพลิกของธุรกิจใน Q2/26 คือ GM จาก 8.0% เป็น 44.9% — ถ้ากลับลงต่ำกว่า ~35% แปลว่า mix ของ InP หรือ yield ถอย",
+        "kill_rule": "GM กลับต่ำกว่า ~35%",
+        "kill_op": "<",
+        "kill_value": 35,
+        "source_name": "AXT earnings press release (8-K EX-99.1)",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001051627&type=8-K&dateb=&owner=include&count=10",
+        "source_locator": "Financial Results → \"GAAP gross margin was … percent of revenue\"",
+        "source_tool": "get_filings(AXTI, forms=8-K) → EX-99.1"
+      },
+      "baseline": {
+        "period": "Q2/26",
+        "value": 44.9,
+        "as_of": "2026-06-30",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/1051627/000143774926025061/ex_974537.htm",
+        "quote": "GAAP gross margin was 44.9 percent of revenue for the second quarter of 2026, compared with 29.6 percent of revenue for the first quarter of 2026 and 8.0 percent for the second quarter of 2025.",
+        "note": "non-GAAP 45.0%"
+      },
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "ไม่ลดจาก Q2/26",
+        "low": 44.9,
+        "high": null,
+        "basis": "ผู้บริหารไม่ให้ตัวเลข GM ของ Q3 (บอกเพียงว่าขึ้นกับปริมาณ mix และประสิทธิภาพการผลิต) · บันทึก catalyst ของ thesis ตั้งไว้ว่า GM ยืน ≥ 45% · รายได้ที่ guide เพิ่มจาก $47.6M เป็นราว $66M ช่วยดูดซับต้นทุนคงที่",
+        "date_key": "AXTI_Q3"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ขอบล่าง 44.9% (GAAP ของ Q2) เป็นข้อเสนอของผม — บันทึกของ thesis เขียน ≥ 45% โดยไม่ระบุว่า GAAP หรือ non-GAAP"
+    },
+    {
+      "key": "AXTI-PERMIT",
+      "thesis": "AXTI",
+      "metric": {
+        "thesis_id": "ccd0e31b-1e69-4cd0-9beb-bd6f071d4119",
+        "title": "ข้อความเรื่องใบอนุญาตส่งออก InP จากจีน",
+        "role": "KILLER",
+        "unit": "",
+        "cadence": "QUARTERLY",
+        "definition": "ประโยคใน 10-Q และ earnings call ว่าบริษัทยังได้รับใบอนุญาตส่งออก InP ต่อเนื่องหรือไม่ และมีคำสั่งซื้อที่ค้างรอใบอนุญาตมากขึ้นหรือน้อยลง",
+        "why": "InP ที่ส่งออกนอกจีนต้องมีใบอนุญาตรายครั้ง — Q4/25 รายได้ InP ลดจาก $13.1M เหลือ $8.0M เพราะได้ใบอนุญาตน้อย (Z-0058)",
+        "kill_rule": "จีนหยุดหรือชะลอออกใบอนุญาตส่งออก InP อีก (แบบ Q4/25)",
+        "source_name": "AXT 10-Q + earnings call",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001051627&type=10-Q&dateb=&owner=include&count=10",
+        "source_locator": "10-Q → Risk Factors / MD&A → ย่อหน้า export permit (\"While we continue to receive permits, …\") · call → คำพูดของ CFO เรื่อง permits",
+        "source_tool": "get_filings(AXTI, forms=10-Q) · WebSearch \"AXT Q3 2026 earnings call transcript\""
+      },
+      "baseline": {
+        "period": "Q2/26",
+        "value_text": "ยังได้รับใบอนุญาตต่อเนื่อง แต่มีคำสั่งซื้อค้างรอใบอนุญาต และบริษัทคาดเวลาไม่ได้",
+        "as_of": "2026-08-13",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/1051627/000143774926027677/axti20260630_10q.htm",
+        "quote": "While we continue to receive permits, we have a backlog of orders for which we have not yet received permits and as of the date of this report we still cannot predict when a permit application will be reviewed and approved.",
+        "note": "10-Q ยื่น 13 ส.ค. 2026 · 10-Q ระบุว่ายังประเมินไม่ได้ว่าจะได้ใบอนุญาตส่ง InP ไปสหรัฐเมื่อไร"
+      },
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "ยังได้รับใบอนุญาตต่อเนื่อง ไม่มีรายงานว่าใบอนุญาตชะลอหรือทำให้รายได้ต่ำกว่าที่บอกไว้",
+        "low": null,
+        "high": null,
+        "basis": "รายได้ราว $66M ของ Q3 ที่ผู้บริหารบอกไว้ อิงใบอนุญาตที่มีอยู่แล้วและสินค้าที่ไม่ถูกควบคุม (Z-0056) · CFO ย้ำว่าคาดเวลาของใบอนุญาตในอนาคตไม่ได้ (Z-0058)",
+        "evidence": [
+          "Z-0056",
+          "Z-0058"
+        ],
+        "date_key": "AXTI_10Q"
+      },
+      "forecast_origin": "GUIDANCE",
+      "review": "เชิงคุณภาพ — ตอนบันทึกต้องบอกเองว่าตรงหรือไม่ และแตะเส้น killer หรือไม่ · call วันที่ 29 ต.ค. จะบอกก่อน 10-Q สองสัปดาห์ · เหตุการณ์ที่เกี่ยวข้อง 27 พ.ย. 2026 อยู่ในหมายเหตุท้ายไฟล์"
+    },
+    {
+      "key": "AXTI-INP",
+      "thesis": "AXTI",
+      "metric": {
+        "thesis_id": "ccd0e31b-1e69-4cd0-9beb-bd6f071d4119",
+        "title": "รายได้ InP",
+        "role": "WATCH",
+        "unit": "$M",
+        "cadence": "QUARTERLY",
+        "definition": "รายได้จาก indium phosphide substrate ของไตรมาส ตามที่ CFO บอกใน earnings call — press release ไม่แยกรายได้ตามสินค้า",
+        "why": "ตัวเลขที่ใบอนุญาตส่งออกกระทบโดยตรง ใช้ยืนยันข้อความของ AXTI-PERMIT ด้วยตัวเลข",
+        "source_name": "AXT earnings call (CFO) — transcript",
+        "source_url": "https://www.fool.com/earnings/call-transcripts/2026/08/03/axt-axti-q2-2026-earnings-call-transcript/",
+        "source_locator": "ช่วงรายได้ตามสินค้าของ CFO → ประโยค \"Indium phosphide was $… million\"",
+        "source_tool": "WebSearch \"AXT Q3 2026 earnings call transcript\""
+      },
+      "baseline": {
+        "period": "Q2/26",
+        "value": 30.7,
+        "as_of": "2026-06-30",
+        "source_url": "https://www.fool.com/earnings/call-transcripts/2026/08/03/axt-axti-q2-2026-earnings-call-transcript/",
+        "quote": "Indium phosphide was $30.7 million also the highest in our company's history.",
+        "note": "GaAs $6.6M · raw material JV $10.0M (call เดียวกัน)"
+      },
+      "expectation": {
+        "period": "Q3/26",
+        "expected": "เพิ่มจาก Q2/26",
+        "low": 30.7,
+        "high": null,
+        "basis": "รายได้รวมที่ผู้บริหารบอกไว้เพิ่มจาก $47.6M เป็นราว $66M (Z-0056) และกำลังผลิต InP เป้าราว $60M ต่อไตรมาสปลายปี 2026 — บริษัทไม่ให้ตัวเลข InP แยก",
+        "evidence": [
+          "Z-0056"
+        ],
+        "date_key": "AXTI_Q3"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ขอบล่าง = ค่า Q2/26 (ไม่ลดลง) เป็นข้อเสนอของผม"
+    },
+    {
+      "key": "ORCL-CDS",
+      "thesis": "GOOGL",
+      "metric": {
+        "thesis_id": "4e0b489e-3c64-486a-99a7-76e704048c46",
+        "role": "WATCH",
+        "title": "ORCL — CDS 5 ปี",
+        "unit": "bp",
+        "cadence": "MONTHLY",
+        "definition": "ระดับ CDS อายุ 5 ปีของ Oracle ตามที่สื่อรายงานล่าสุดในเดือนนั้น — จดวันที่ของตัวเลขทุกครั้ง เพราะไม่มีแหล่งฟรีที่ออกตามกำหนด",
+        "why": "Oracle คือผู้ออกหุ้นกู้ที่อ่อนที่สุดของกลุ่ม hyperscaler — CDS ที่ถ่างต่อคือสัญญาณแรกว่าตลาดกำลังตั้งราคาหนี้ AI ใหม่ ก่อนที่จะเห็นใน IG OAS ทั้งตลาด",
+        "source_name": "ข่าวตลาดเครดิต (BondbloX, Reuters, Bloomberg ผ่านสื่อที่รายงานต่อ)",
+        "source_url": "https://gokhshtein.com/news/2026-09-28-oracle-cds-surge-to-227-bps-shows-fallen-angel-risk",
+        "source_locator": "ประโยค \"… basis points on its five-year CDS spread\"",
+        "source_tool": "WebSearch \"Oracle 5-year CDS basis points\""
+      },
+      "baseline": {
+        "period": "2026-09",
+        "value": 227,
+        "as_of": "2026-09-25",
+        "source_url": "https://gokhshtein.com/news/2026-09-28-oracle-cds-surge-to-227-bps-shows-fallen-angel-risk",
+        "quote": "The cost to insure Oracle's debt surged 15 basis points to 227.15 basis points on its five-year CDS spread, the highest level on record.",
+        "note": "แหล่งรอง ยังไม่ได้ตรวจกับผู้ให้ข้อมูลราคา · สื่ออื่นรายงาน 144bp ตอนต้นปี 2026"
+      },
+      "expectation": {
+        "period": "2026-10",
+        "expected": "ไม่สูงกว่าระดับสิ้น ก.ย.",
+        "low": null,
+        "high": 227,
+        "basis": "ไม่มีฐานคาดการณ์จากบริษัท — ใช้ระดับสูงสุดเป็นประวัติการณ์ ณ 25 ก.ย. 2026 เป็นขอบบน ถ้าขึ้นต่อแปลว่าแรงกดดันยังไม่หยุด",
+        "due_date": "2026-10-30"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ขอบบน 227bp เป็นข้อเสนอของผม · ตัวเลขมาจากเว็บข่าวที่ไม่ใช่แหล่งหลัก — ถ้าคุณมีแหล่ง CDS ที่เชื่อได้ให้เปลี่ยน source · อยู่ใต้ thesis GOOGL เพราะยังไม่มี thesis ORCL"
+    },
+    {
+      "key": "ORCL-RATING",
+      "thesis": "GOOGL",
+      "metric": {
+        "thesis_id": "4e0b489e-3c64-486a-99a7-76e704048c46",
+        "role": "WATCH",
+        "title": "ORCL — อันดับเครดิต (S&P / Moody's / Fitch)",
+        "unit": "",
+        "cadence": "EVENT",
+        "definition": "อันดับและ outlook ล่าสุดของ Oracle จากทั้งสามสถาบัน — บันทึกเมื่อมีการเปลี่ยนอันดับหรือ outlook",
+        "why": "ถ้ามีสถาบันที่สองลดลงต่ำกว่า investment grade หุ้นกู้ Oracle ราว $120bn จะหลุดจากดัชนี IG ไปแย่งผู้ซื้อในตลาด HY ที่ neocloud ใช้ และ spread ของ hyperscaler รายอื่นจะถูกตั้งราคาใหม่",
+        "source_name": "ประกาศของ S&P Global Ratings / Moody's / Fitch (ผ่านข่าว)",
+        "source_url": "https://finance.yahoo.com/markets/stocks/articles/why-oracles-recent-credit-downgrade-173224824.html",
+        "source_locator": "ประโยค \"… downgraded Oracle's credit rating … to …\" และ outlook",
+        "source_tool": "WebSearch \"Oracle credit rating downgrade outlook\" · get_news(ORCL)"
+      },
+      "baseline": {
+        "period": "2026-Q3",
+        "value_text": "S&P BBB− (ลดจาก BBB เมื่อ ก.ค. 2026) · Moody's Baa2 ตามสื่อ · Fitch ยังไม่ได้ตรวจ",
+        "as_of": "2026-07-18",
+        "source_url": "https://finance.yahoo.com/markets/stocks/articles/why-oracles-recent-credit-downgrade-173224824.html",
+        "quote": "S&P Global downgraded Oracle's credit rating this month to BBB-, just one step above junk status.",
+        "note": "Business Insider ผ่าน Yahoo 18 ก.ค. 2026 · สื่ออื่นระบุวันที่ 9 ก.ค. และ outlook stable · อันดับ Moody's Baa2 มาจากเว็บข่าวแหล่งเดียว ยังไม่ได้ตรวจกับ Moody's"
+      },
+      "expectation": {
+        "period": "2026-Q4",
+        "expected": "ไม่มีสถาบันใดลดอันดับหรือเปลี่ยน outlook เป็นลบ",
+        "low": null,
+        "high": null,
+        "basis": "S&P ให้ outlook stable หลังลดอันดับ (ตามสื่อ) และ Oracle เพิ่มทุนผ่าน ATM $19.9bn ในไตรมาส FQ1 FY27 ซึ่งช่วยงบดุล (10-Q)",
+        "due_date": "2026-12-31"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "เชิงคุณภาพ — ตอนบันทึกต้องบอกเองว่าตรงหรือไม่ · วันที่ 31 ธ.ค. เป็นวันที่ผมเลือกให้กลับมาดู ถ้ามีประกาศก่อนให้บันทึกทันที · ควรตรวจอันดับของ Moody's และ Fitch กับต้นทางก่อนนำเข้า"
+    },
+    {
+      "key": "ORCL-FCF",
+      "thesis": "GOOGL",
+      "metric": {
+        "thesis_id": "4e0b489e-3c64-486a-99a7-76e704048c46",
+        "role": "WATCH",
+        "title": "ORCL — Free cash flow รายไตรมาส",
+        "unit": "$bn",
+        "cadence": "QUARTERLY",
+        "definition": "Net cash provided by operating activities − Capital expenditures ของไตรมาส จากงบกระแสเงินสดใน 10-Q (ไตรมาส FQ2 ขึ้นไปต้องหักยอดสะสมของไตรมาสก่อน) · จดยอดขายหุ้นผ่าน at-the-market program ของไตรมาสไว้ในหมายเหตุ",
+        "why": "FCF ติดลบห้าไตรมาสติดคือเหตุที่ Oracle ต้องพึ่งตลาดหนี้และการขายหุ้น ถ้าติดลบลึกขึ้นขณะที่ต้องขายหุ้นเพิ่ม แรงกดดันต่ออันดับเครดิตยังไม่หยุด",
+        "source_name": "Oracle 10-Q",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001341439&type=10-Q&dateb=&owner=include&count=10",
+        "source_locator": "Condensed Consolidated Statements of Cash Flows → Net cash provided by operating activities, Capital expenditures, Proceeds from issuances of common stock via at-the-market program · MD&A → ตาราง Free cash flow",
+        "source_tool": "get_filings(ORCL, forms=10-Q) · get_stock_data(ORCL, kind=financials)"
+      },
+      "baseline": {
+        "period": "FQ1 FY27",
+        "value": -5.396,
+        "as_of": "2026-08-31",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/1341439/000119312526389274/orcl-20260831.htm",
+        "quote": "Net cash provided by operating activities $ 23,103 … Capital expenditures (28,499 ) … Free cash flow $ (5,396 )",
+        "note": "ขายหุ้นผ่าน ATM $19,909m ในไตรมาส · FQ4 FY26 −1.873 · FQ3 −11.484 · FQ2 −9.967 · FQ1 FY26 −0.362 (terminal)"
+      },
+      "expectation": {
+        "period": "FQ2 FY27",
+        "expected": "ไม่ติดลบลึกกว่า FQ1",
+        "low": -5.4,
+        "high": null,
+        "basis": "ไม่ได้อ่าน guidance capex ของ Oracle รอบนี้ — ใช้ระดับ FQ1 เป็นขอบล่าง · operating cash flow FQ1 เพิ่ม 184% YoY แต่ capex เพิ่ม 235% (10-Q)",
+        "date_key": "ORCL_10Q"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ขอบล่าง −$5.4bn เป็นข้อเสนอของผม และผมยังไม่ได้อ่าน guidance capex จาก call ของ Oracle — ถ้าบริษัทบอกว่า capex จะเร่งขึ้น ขอบนี้จะหลวมเกินจริง"
+    },
+    {
+      "key": "ORCL-RPO",
+      "thesis": "GOOGL",
+      "metric": {
+        "thesis_id": "4e0b489e-3c64-486a-99a7-76e704048c46",
+        "role": "WATCH",
+        "title": "ORCL — Remaining performance obligations (RPO)",
+        "unit": "$bn",
+        "cadence": "QUARTERLY",
+        "definition": "Remaining performance obligations ณ สิ้นไตรมาส ตาม 10-Q · จดสัดส่วนที่คาดว่าจะรับรู้ใน 12 เดือนไว้ในหมายเหตุ",
+        "why": "หนี้ของ Oracle ถูกกู้มาเพื่อส่งมอบ backlog นี้ — ถ้า RPO ลดหรือส่วนที่รับรู้ใน 12 เดือนไม่เพิ่ม เงินออกจะยังนำหน้ารายได้ และลูกค้าปลายทางกลุ่มเดียวกับ neocloud อาจกำลังถอย",
+        "source_name": "Oracle 10-Q",
+        "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001341439&type=10-Q&dateb=&owner=include&count=10",
+        "source_locator": "Notes → Revenue → \"Remaining performance obligations were $… billion\" และสัดส่วนที่รับรู้ใน 12 เดือน",
+        "source_tool": "get_filings(ORCL, forms=10-Q)"
+      },
+      "baseline": {
+        "period": "FQ1 FY27",
+        "value": 664,
+        "as_of": "2026-08-31",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/1341439/000119312526389274/orcl-20260831.htm",
+        "quote": "Remaining performance obligations were $664 billion as of August 31, 2026, of which we expect to recognize approximately 13% as revenues over the next twelve months",
+        "note": "31 ส.ค. 2025 = $455bn · 37% ในเดือนที่ 13–36 · 34% ในเดือนที่ 37–60"
+      },
+      "expectation": {
+        "period": "FQ2 FY27",
+        "expected": "ไม่ลดจากไตรมาสก่อน",
+        "low": 664,
+        "high": null,
+        "basis": "ไม่มี guidance เรื่อง RPO ที่ผมอ่านรอบนี้ — ใช้ยอด FQ1 เป็นขอบล่าง",
+        "date_key": "ORCL_10Q"
+      },
+      "forecast_origin": "SUGGESTED",
+      "review": "ขอบล่าง = ยอด FQ1 (ไม่ลดลง) เป็นข้อเสนอของผม · สัดส่วน 12 เดือน (13%) ไม่มีช่วงตัวเลข ต้องอ่านเทียบเองตอนบันทึก"
     }
   ]
 }

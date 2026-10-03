@@ -204,7 +204,7 @@ export interface Summary {
   cash_is_estimate?: boolean;
 }
 
-// Legacy — used by backtest / theses
+// Legacy — used by theses
 export interface Transaction {
   id: string;
   symbol: string;
@@ -215,36 +215,6 @@ export interface Transaction {
   commission: number;
   notes: string;
   created_at: string;
-}
-
-export interface ChartPoint {
-  date: string;
-  portfolio_value: number;
-  portfolio_return: number;
-  benchmark_return: number;
-  total_invested: number;
-}
-
-export interface BacktestMetrics {
-  total_return: number;
-  benchmark_total_return: number;
-  cagr: number;
-  sharpe_ratio: number;
-  max_drawdown: number;
-  volatility: number;
-  beta: number;
-  alpha: number;
-  n_days: number;
-  benchmark: string;
-  total_pnl?: number;
-  total_pnl_pct?: number;
-  profit_factor?: number;
-  win_rate?: number;
-  avg_win?: number;
-  avg_loss?: number;
-  total_trades?: number;
-  total_invested?: number;
-  base_currency?: string;
 }
 
 export interface KO {
