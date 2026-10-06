@@ -105,6 +105,7 @@ BT_BACKEND_RELOAD / BT_SUPERVISOR — set by the launcher (dev status + restart)
 ### Next.js (`.env.local`)
 ```
 PYTHON_API_URL=http://localhost:9317   — imported ONLY via lib/constants.ts (PYTHON_API)
+DEV_ORIGINS=                           — optional, comma-separated extra host names the terminal is opened by (tunnel, VPN): next.config.mjs serves dev assets to them AND proxy.ts accepts writes from them (lib/request-origin.ts, 2026-10-06). Local names and IPs need no entry
 ```
 
 ---
