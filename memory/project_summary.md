@@ -21,10 +21,11 @@
 |-----|---------|-------|
 | Windows tray launcher | `BloombergTerminal.exe` (repo root) | starts both servers hidden, logs to `logs\`, restarts a dead server (3 tries), backend `--reload` by default (`--no-reload`, `--prod`). Build: `tools\launcher\build.bat`; details `tools/launcher/README.md`. Log-on start: `scripts\win\install-startup-task.ps1` |
 | One command | `npm run dev:all` / `npm run dev:no-ollama` | `BACKEND_PORT` / `FRONTEND_PORT` override |
-| Two terminals | `cd backend && python -m uvicorn main:app --port 9317 --reload` + `npm run dev` | |
+| Two terminals | `cd backend && python dev_server.py --port 9317` (Windows; elsewhere `python -m uvicorn main:app --port 9317 --reload --timeout-graceful-shutdown 3`) + `npm run dev` | |
 
 - Ports: backend **9317**, frontend **9318**, UI at `http://bloomberg.localhost:9318`. Changing them touches `.env.local` (`PYTHON_API_URL`), `backend/.env` (`CORS_ORIGINS`) and whatever starts the servers — see `CLAUDE.md` → Ports.
 - **Dev status strip** (2026-09-25): in `next dev` the top of the page says RUNNING OLD CODE (+ RESTART) or BACKEND DOWN. `GET /api/dev/status` = files changed since the backend started; `POST /api/dev/restart` asks the supervisor to restart (`backend/dev_status.py`, `routers/dev.py`, `core/backend-status-banner.tsx`).
+- **`backend/dev_server.py`** (2026-10-06): how the backend is started with auto-reload on Windows (`python dev_server.py --port 9317`) — uvicorn's reloader with the worker terminated instead of sent a Ctrl-C that arrives 10–20 s late. `npm run dev:local` / `BloombergTerminal.exe --local-only` = frontend on `127.0.0.1` only. `proxy.ts` = same-origin guard on every write to `/api/**`.
 - **env-doctor**: `npm run doctor` / `doctor:fix` / `doctor:ci` — gitignored env files drift between machines; runs as `predev` and from `.husky/post-merge` / `post-checkout`.
 - **Upstream log**: every outbound call → `logs/upstream.jsonl`; read it first when data is missing/stale (`python backend/scripts/upstream_report.py`, `GET /api/health/upstream`).
 
@@ -494,6 +495,8 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 14. **Heatmap/GMOV leftovers**: `/api/heatmap*` endpoints and `app/api/heatmap/*` proxies have no UI consumer; `clippings.py` has no UI.
 15. **Doc drift fixed 2026-09-26**: `CLAUDE.md` Views table had `3` = HMAP and `4` = BOND; code is `3` BOND · `4` PORT · `5` TAIL · `h` HMAP.
 16. **DB latency (2026-09-30)**: "DB slow" was per-call connection opens (schema re-parse, 396 triggers) + 40-thread pool queueing during bursts, not disk I/O. Fixed with a `get_db` pool (`DB_POOL_SIZE`) and a local thread lane for DB-only routers; check `/api/health/latency` or `logs/latency.jsonl`. Still open: routes in the shared thread queue (portfolio, alerts, margin) can wait seconds during large uncached Yahoo bursts. Schema has no `user_id`; multi-user needs `user_id` + indexes, then Postgres via `DB_MODE` (`reports/db-latency-risk-report.md`).
+17. **`test_db_pool::test_recreated_file_at_same_path_gets_a_fresh_connection`** fails on Windows (`PermissionError [WinError 32]` unlinking a DB file a pooled connection still holds) — also when run alone; seen 2026-10-05, untouched by the NEWS work (`reports/db-pool-test-windows-unlink-risk-report.md`). Rest of the suite passes.
+18. ~~**`--reload` + open browser tab = backend down after every `.py` save**~~ — fixed 2026-10-06: `--timeout-graceful-shutdown 3` ended the hang, then `backend/dev_server.py` replaced `uvicorn --reload` on Windows (the worker's Ctrl-C arrived 10–20 s late). A save is live in ~6 s, measured 4 times with a stream held open.
 
 ---
 

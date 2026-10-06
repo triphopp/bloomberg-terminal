@@ -15,9 +15,11 @@
  *
  * Command line flags:
  *   --no-browser        do not open the browser once the backend is healthy
- *   --no-reload         run uvicorn WITHOUT --reload (auto-reload is the default)
- *   --reload            force --reload even with --prod
+ *   --no-reload         run the backend WITHOUT auto-reload (it is the default)
+ *   --reload            force auto-reload even with --prod
  *   --prod              run `next start` instead of `next dev` (implies --no-reload)
+ *   --local-only        the frontend answers on this machine only (default: the
+ *                       whole network can open it, e.g. a phone on the Wi-Fi)
  *   --backend-port N    backend port (default 9317)
  *   --frontend-port N   frontend port (default 9318)
  *   --host NAME         host name to open (default bloomberg.localhost)
@@ -67,6 +69,13 @@ static BOOL    g_openBrowser  = TRUE;
 static int     g_reloadArg    = -1;
 static BOOL    g_reload       = TRUE;
 static BOOL    g_prod         = FALSE;
+/* next listens on every interface, which is what lets a phone on the same
+ * network open the terminal (next.config.mjs allows the LAN address for that).
+ * It also means whoever can reach the port can read and write everything in
+ * it - the frontend proxies to the backend from this machine, so the backend
+ * sees every caller as local. --local-only binds the loopback address instead:
+ * for a network that is not yours. */
+static BOOL    g_localOnly    = FALSE;
 
 /* ── runtime state ──────────────────────────────────────────────────────── */
 static HANDLE  g_job          = NULL;
@@ -340,7 +349,8 @@ static void startupUninstall(void)
 #define MAX_RESTARTS     3
 #define RESTART_DELAY_MS 5000
 
-/* Backend: python -m uvicorn main:app --port N [--reload] */
+/* Backend: python dev_server.py --port N   (auto-reload)
+ *          python -m uvicorn main:app --port N   (--no-reload) */
 static void startBackend(void)
 {
     wchar_t python[MAX_PATH], cmd[2048], cwd[MAX_PATH];
@@ -350,17 +360,20 @@ static void startBackend(void)
         return;
     }
     _snwprintf(cwd, MAX_PATH, L"%s\\backend", g_root);
-    /* tests/ and scripts/ are not part of the running server; saving a test
-     * must not bounce the backend. dev_status.py skips the same folders.
-     * ABSOLUTE paths: uvicorn keeps a relative exclude dir as-is and tests it
-     * against absolute file paths, so `--reload-exclude tests` never matches. */
+    /* Auto-reload goes through backend\dev_server.py, not `uvicorn --reload`:
+     * uvicorn swaps its worker on Windows by sending it CTRL_C_EVENT, and a
+     * process started the way we start it (no console window, output to a log)
+     * gets that event 10-20 s late - the old code kept answering all that time.
+     * dev_server.py is the same reloader with the worker terminated instead;
+     * it also leaves tests\ and scripts\ out, as dev_status.py does.
+     * --timeout-graceful-shutdown (no reload): a server told to stop must not
+     * wait for the quote stream to end by itself, which it never does. */
     if (g_reload)
-        _snwprintf(cmd, ARRAYSIZE(cmd),
-                   L"\"%s\" -m uvicorn main:app --port %d --reload"
-                   L" --reload-exclude \"%s\\tests\" --reload-exclude \"%s\\scripts\"",
-                   python, g_backendPort, cwd, cwd);
+        _snwprintf(cmd, ARRAYSIZE(cmd), L"\"%s\" dev_server.py --port %d",
+                   python, g_backendPort);
     else
-        _snwprintf(cmd, ARRAYSIZE(cmd), L"\"%s\" -m uvicorn main:app --port %d",
+        _snwprintf(cmd, ARRAYSIZE(cmd),
+                   L"\"%s\" -m uvicorn main:app --port %d --timeout-graceful-shutdown 3",
                    python, g_backendPort);
     /* Tell the backend how it is run: /api/dev/status reports "stale" only
      * when it can be, and /api/dev/restart knows whether to touch a file
@@ -390,8 +403,9 @@ static void startFrontend(void)
         setTip(APP_NAME L" - dependencies missing");
         return;
     }
-    _snwprintf(cmd, ARRAYSIZE(cmd), L"\"%s\" \"%s\" %s --port %d",
-               node, nextBin, g_prod ? L"start" : L"dev", g_frontendPort);
+    _snwprintf(cmd, ARRAYSIZE(cmd), L"\"%s\" \"%s\" %s --port %d%s",
+               node, nextBin, g_prod ? L"start" : L"dev", g_frontendPort,
+               g_localOnly ? L" -H 127.0.0.1" : L"");
     g_frontendProc = spawn(cmd, g_root, L"frontend.log");
     g_frontendDiedAt = 0;
 }
@@ -605,6 +619,7 @@ static void parseArgs(BOOL *installStartup, BOOL *uninstallStartup, BOOL *stop)
         else if (!wcscmp(argv[i], L"--reload"))            g_reloadArg = TRUE;
         else if (!wcscmp(argv[i], L"--no-reload"))         g_reloadArg = FALSE;
         else if (!wcscmp(argv[i], L"--prod"))              g_prod = TRUE;
+        else if (!wcscmp(argv[i], L"--local-only"))        g_localOnly = TRUE;
         else if (!wcscmp(argv[i], L"--install-startup"))   *installStartup = TRUE;
         else if (!wcscmp(argv[i], L"--uninstall-startup")) *uninstallStartup = TRUE;
         else if (!wcscmp(argv[i], L"--stop"))              *stop = TRUE;

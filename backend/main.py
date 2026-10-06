@@ -1,6 +1,6 @@
 """
 Market Data API — Python/FastAPI backend
-Run: uvicorn main:app --port 9317 --reload
+Run: uvicorn main:app --port 9317 --reload --timeout-graceful-shutdown 3
 """ # reload trigger
 import logging
 from datetime import datetime
