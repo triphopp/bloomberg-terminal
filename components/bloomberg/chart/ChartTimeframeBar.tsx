@@ -1,26 +1,26 @@
 "use client";
 
-import type { TimePeriod, BarInterval } from "./types";
+import type { BarInterval, TimePeriod } from "./types";
 import { INTERVAL_VALID_RANGES } from "./types";
-import { TIME_PERIODS, BAR_INTERVALS, PERIOD_LABEL, INTERVAL_LABEL } from "./useChartTimeframe";
+import { BAR_INTERVALS, INTERVAL_LABEL, PERIOD_LABEL, TIME_PERIODS } from "./useChartTimeframe";
 
 interface Colors {
-  accent:        string;
-  border:        string;
+  accent: string;
+  border: string;
   textSecondary: string;
-  background:    string;
-  text:          string;
+  background: string;
+  text: string;
 }
 
 export interface ChartTimeframeBarProps {
-  timePeriod:         TimePeriod;
-  barInterval:        BarInterval;
-  chartType:          "area" | "candle";
-  colors:             Colors;
-  onPeriodChange:     (p: TimePeriod) => void;
-  onIntervalChange:   (iv: BarInterval) => void;
+  timePeriod: TimePeriod;
+  barInterval: BarInterval;
+  chartType: "area" | "candle";
+  colors: Colors;
+  onPeriodChange: (p: TimePeriod) => void;
+  onIntervalChange: (iv: BarInterval) => void;
   /** Subset of TIME_PERIODS to show. Defaults to all seven. */
-  periods?:           TimePeriod[];
+  periods?: TimePeriod[];
 }
 
 export function ChartTimeframeBar({
@@ -38,8 +38,8 @@ export function ChartTimeframeBar({
       <div className="flex gap-1 flex-wrap">
         {periods.map((p) => {
           const validRanges = chartType === "candle" ? INTERVAL_VALID_RANGES[barInterval] : null;
-          const disabled    = !!validRanges && !validRanges.includes(p);
-          const active      = timePeriod === p;
+          const disabled = !!validRanges && !validRanges.includes(p);
+          const active = timePeriod === p;
           return (
             <button
               key={p}
@@ -48,11 +48,13 @@ export function ChartTimeframeBar({
               onClick={() => onPeriodChange(p)}
               className="px-1.5 py-0.5 border text-[9px] font-mono transition-colors"
               style={{
-                borderColor:     active   ? colors.accent : colors.border,
-                backgroundColor: active   ? `${colors.accent}22` : "transparent",
-                color:           disabled ? `${colors.textSecondary}44`
-                                 : active ? colors.accent
-                                 : colors.textSecondary,
+                borderColor: active ? colors.accent : colors.border,
+                backgroundColor: active ? `${colors.accent}22` : "transparent",
+                color: disabled
+                  ? `${colors.textSecondary}44`
+                  : active
+                    ? colors.accent
+                    : colors.textSecondary,
                 cursor: disabled ? "not-allowed" : "pointer",
               }}
             >
@@ -77,10 +79,10 @@ export function ChartTimeframeBar({
                 onClick={() => onIntervalChange(iv)}
                 className="px-2 py-0.5 text-[9px] font-mono border transition-colors"
                 style={{
-                  borderColor:     active ? colors.accent : colors.border,
+                  borderColor: active ? colors.accent : colors.border,
                   backgroundColor: active ? colors.accent : "transparent",
-                  color:           active ? colors.background : colors.textSecondary,
-                  fontWeight:      active ? 700 : 400,
+                  color: active ? colors.background : colors.textSecondary,
+                  fontWeight: active ? 700 : 400,
                 }}
               >
                 {INTERVAL_LABEL[iv]}

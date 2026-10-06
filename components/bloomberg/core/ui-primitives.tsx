@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import type React from "react";
 import type { ThemeColors } from "../lib/theme-config";
 
 // ── PanelHeader — ส่วนหัวของทุก panel ─────────────────────────────────────────
@@ -52,10 +52,15 @@ export function TableHeaderRow({
   return (
     <div
       className="flex items-center px-1 py-0.5 shrink-0 text-[8px] font-bold font-mono tracking-wider"
-      style={{ background: colors.surfaceDeep, borderBottom: `1px solid ${colors.border}`, color: colors.textDimmed }}
+      style={{
+        background: colors.surfaceDeep,
+        borderBottom: `1px solid ${colors.border}`,
+        color: colors.textDimmed,
+      }}
     >
       {columns.map((col, i) => (
         <span
+          // biome-ignore lint/suspicious/noArrayIndexKey: a fixed header row, never reordered
           key={i}
           className={`${col.width ?? "flex-1"} ${col.align === "right" ? "text-right" : ""}`}
         >
@@ -103,6 +108,7 @@ export function DataRow({
   colors: ThemeColors;
 }) {
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: pre-existing mouse-only row, left as it was (TODO keyboard access)
     <div
       className="flex items-center px-1 py-[3px] border-b cursor-pointer transition-colors"
       style={{
