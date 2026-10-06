@@ -32,6 +32,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from cache import TTLCache
 from db import get_db
+from persist_cache import PersistentStore
 from config import MEM_CACHE_TTL, DEFAULT_HTTP_TIMEOUT, POLYMARKET_GAMMA_BASE, GAMMA_POOL_MAX, GAMMA_PAGE_SIZE
 
 router = APIRouter()
@@ -52,11 +53,35 @@ _CACHE_TTL = MEM_CACHE_TTL  # 5 minutes (kept for _market_pool)
 _market_pool: list[dict] = []
 _pool_ts: float = 0
 _POOL_TTL = 10 * 60
+_POOL_STALE_MAX = 30 * 60  # older than this, a caller waits for the new pool
+_POOL_RETRY_S = 60         # after a failed download, nobody tries again for this long
+_pool_failed_at: float = 0
+# The last signals answer, kept across a restart: the pool itself is 13 MB and
+# is not, so a new process would otherwise make the first NEWS open wait for
+# the download before the Polymarket column shows anything.
+_kept_signals = PersistentStore("polymarket_signals", max_age=_POOL_STALE_MAX, maxsize=4)
 # One refresh at a time. Without it a cold start had every caller — 8 signal
 # workers plus 4 NEWS-watchlist workers — see an empty pool and pull all 30
 # pages (~550 KB each) at once: ~360 requests for one 16 MB dataset.
 _pool_lock = threading.Lock()
 _POOL_PAGE_WORKERS = 8
+
+# The slug registry and the signal history are written by one thread, after the
+# answer has gone out. Written inside the request, eight signal types queued on
+# SQLite's single writer — 250 ms of a 320 ms signals request once the pool was
+# in memory (2026-10-05). Nothing in the answer reads what is written here: the
+# 24h delta compares against a row at least 23 hours old.
+_db_writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pm-db")
+
+
+def _write_behind(fn, *args) -> None:
+    def run() -> None:
+        try:
+            fn(*args)
+        except Exception as exc:  # noqa: BLE001 - history is a by-product of the request
+            print(f"[polymarket] {fn.__name__}: {exc}")
+
+    _db_writer.submit(run)
 
 # ═════════════════════════════════════════════════════════════════════════════
 # SIGNAL TYPE DEFINITIONS
@@ -198,25 +223,84 @@ def _refresh_market_pool() -> list[dict]:
     All params except limit/offset/active/closed are silently ignored.
     We fetch the full pool and filter client-side.
 
-    Only one thread refreshes. While it does, callers that already hold an
-    older pool get that one back at once; only a cold start waits.
+    Only one thread refreshes. A pool past its TTL but younger than
+    `_POOL_STALE_MAX` is handed back at once while the refresh runs on its own
+    thread — the caller that happened to find it expired used to pay the whole
+    16 MB download (~1 s) itself. Only a cold start, or a pool too old to show,
+    waits.
     """
     global _market_pool, _pool_ts
-    if _market_pool and (time.time() - _pool_ts) < _POOL_TTL:
+    age = time.time() - _pool_ts
+    if _market_pool and age < _POOL_TTL:
         return _market_pool
 
-    if not _pool_lock.acquire(blocking=not _market_pool):
-        return _market_pool  # a refresh is running — serve the stale pool
-    try:
-        if _market_pool and (time.time() - _pool_ts) < _POOL_TTL:
-            return _market_pool  # refreshed while we waited
-        pool = _fetch_pool_pages()
-        if pool:
-            _market_pool = pool
-            _pool_ts = time.time()
+    # Gamma just failed: hand back what there is (possibly nothing). Without
+    # this, during an outage every caller queued on the lock for its own
+    # attempt, each one a full round of timeouts.
+    if _pool_retry_blocked():
         return _market_pool
+
+    if _market_pool and age < _POOL_STALE_MAX:
+        if _pool_lock.acquire(blocking=False):
+            # Released by the refresh thread (a Lock may be released by another thread).
+            threading.Thread(target=_refresh_pool_locked, name="pm-pool", daemon=True).start()
+        return _market_pool
+
+    with _pool_lock:
+        fresh = _market_pool and (time.time() - _pool_ts) < _POOL_TTL
+        if not fresh and not _pool_retry_blocked():
+            _load_pool()  # nobody refreshed, or failed to, while we waited
+        return _market_pool
+
+
+def _pool_retry_blocked() -> bool:
+    return (time.time() - _pool_failed_at) < _POOL_RETRY_S
+
+
+def _load_pool_behind() -> None:
+    """Start the pool download on its own thread unless one is running."""
+    if not _pool_retry_blocked() and _pool_lock.acquire(blocking=False):
+        threading.Thread(target=_refresh_pool_locked, name="pm-pool", daemon=True).start()
+
+
+def _load_pool() -> None:
+    """Fetch and swap in the pool. Caller holds `_pool_lock`."""
+    global _market_pool, _pool_ts, _pool_failed_at
+    pool = _fetch_pool_pages()
+    if not pool:
+        _pool_failed_at = time.time()
+        return
+    _market_pool = pool
+    _pool_ts = time.time()
+    _pool_failed_at = 0
+
+
+def _refresh_pool_locked() -> None:
+    try:
+        _load_pool()
+    except Exception as exc:  # noqa: BLE001 - the stale pool stays in use
+        print(f"[polymarket] pool refresh: {exc}")
     finally:
         _pool_lock.release()
+
+
+def _pool_stamp() -> dict:
+    """Which pool an answer was computed from. `refreshing` — it was past its
+    TTL and a newer one is on the way: ask again in a few seconds."""
+    return {
+        "pool_ts": _pool_ts,
+        "as_of": datetime.fromtimestamp(_pool_ts or time.time(), timezone.utc).isoformat(),
+        "refreshing": bool(_market_pool) and (time.time() - _pool_ts) >= _POOL_TTL,
+    }
+
+
+def _cached_answer(key: str):
+    """A cached answer, unless the pool it was computed from has been replaced
+    — otherwise prices from the old pool would outlive it by the cache TTL."""
+    hit = _pm_cache.get(key)
+    if hit is not None and hit.get("pool_ts") == _pool_ts:
+        return hit
+    return None
 
 
 def _fetch_pool_page(offset: int) -> list[dict] | None:
@@ -246,7 +330,20 @@ def _fetch_pool_pages() -> list[dict]:
         pool.extend(batch)
         if len(batch) < GAMMA_PAGE_SIZE:
             break
+    # Lower-cased search text, once per pool: every signal type and every
+    # search used to rebuild and lower-case it per market (8 × 2,100 × ~10
+    # keywords — 150 ms of the 200 ms a signals request took, 2026-10-05).
+    for m in pool:
+        m[_HAY] = _haystack(m)
     return pool
+
+
+_HAY = "_hay"
+
+
+def _haystack(m: dict) -> str:
+    """Question + first 400 chars of the description, lower-cased."""
+    return f'{m.get("question") or ""} {(m.get("description") or "")[:400]}'.lower()
 
 
 def _phrase_match(text: str, keywords: list[str]) -> bool:
@@ -258,22 +355,29 @@ def _phrase_match(text: str, keywords: list[str]) -> bool:
     return any(kw.lower() in text_lower for kw in keywords)
 
 
-def _keyword_search_pool(keywords: list[str], limit: int = 20) -> list[dict]:
-    """
-    Search the market pool by keyword against question + first 400 chars of description.
-    Returns top matches sorted by volume descending, up to `limit`.
-    """
-    pool = _refresh_market_pool()
+def _pool_matches(pool: list[dict], keywords: list[str]) -> list[dict]:
+    """Markets whose question / description carries one of the phrases, first
+    per slug, in pool order."""
+    needles = [kw.lower() for kw in keywords]
     matched: list[dict] = []
     seen: set[str] = set()
     for m in pool:
         slug = m.get("slug", "")
         if not slug or slug in seen:
             continue
-        text = m.get("question", "") + " " + m.get("description", "")[:400]
-        if _phrase_match(text, keywords):
+        hay = m.get(_HAY) or _haystack(m)
+        if any(n in hay for n in needles):
             seen.add(slug)
             matched.append(m)
+    return matched
+
+
+def _keyword_search_pool(keywords: list[str], limit: int = 20) -> list[dict]:
+    """
+    Search the market pool by keyword against question + first 400 chars of description.
+    Returns top matches sorted by volume descending, up to `limit`.
+    """
+    matched = _pool_matches(_refresh_market_pool(), keywords)
     matched.sort(key=lambda m: float(m.get("volume", 0) or 0), reverse=True)
     return matched[:limit]
 
@@ -287,20 +391,7 @@ def _discover_markets_for_signal(signal_type: str) -> list[dict]:
     if not cfg:
         return []
 
-    pool = _refresh_market_pool()
-    keywords = cfg["keywords"]
-
-    matched: list[dict] = []
-    seen: set[str] = set()
-    for m in pool:
-        slug = m.get("slug", "")
-        if not slug or slug in seen:
-            continue
-        text = m.get("question", "") + " " + m.get("description", "")[:400]
-        if _phrase_match(text, keywords):
-            seen.add(slug)
-            matched.append(m)
-
+    matched = _pool_matches(_refresh_market_pool(), cfg["keywords"])
     matched.sort(key=lambda m: float(m.get("volume", 0) or 0), reverse=True)
     return matched
 
@@ -426,7 +517,7 @@ def _extract_signal_for_type(signal_type: str) -> dict | None:
     if not markets:
         return None
 
-    _register_slugs(signal_type, markets)
+    _write_behind(_register_slugs, signal_type, markets)
 
     desc_by_slug: dict[str, str] = {
         m.get("slug", ""): (m.get("description") or "")[:300]
@@ -456,7 +547,7 @@ def _extract_signal_for_type(signal_type: str) -> dict | None:
     extracted.sort(key=lambda x: x["volume"], reverse=True)
     best = extracted[0]
 
-    _store_signal({**best, "signal_type": signal_type})
+    _write_behind(_store_signal, {**best, "signal_type": signal_type})
 
     delta     = _get_24h_delta(signal_type, best["probability"])
     classify  = _classify_signal(best["probability"], delta)
@@ -570,10 +661,20 @@ def get_all_signals():
     Primary discovery via Polymarket's own tag categories, keyword fallback.
     Cached 5 minutes.
     """
-    cached = _pm_cache.get("signals")
+    cached = _cached_answer("signals")
     if cached is not None:
         return cached
 
+    if not _market_pool:
+        # New process: answer from the copy on disk (≤ 30 min old, its own
+        # `as_of`) and let the caller ask again once the pool is in.
+        kept = _kept_signals.get("signals")
+        if kept is not None:
+            _load_pool_behind()
+            return {**kept["data"], "refreshing": True}
+
+    _refresh_market_pool()
+    stamp = _pool_stamp()
     signals = _extract_all_signals()
     result = {
         "signals": signals,
@@ -582,9 +683,12 @@ def get_all_signals():
             k: {"label": v["label"], "color": v["color"]}
             for k, v in SIGNAL_TYPES.items()
         },
-        "as_of": datetime.now(timezone.utc).isoformat(),
+        # `as_of`: when the prices were read from Polymarket, not when this was asked.
+        **stamp,
     }
     _pm_cache.set("signals", result)
+    if signals and not stamp["refreshing"]:
+        _kept_signals.put("signals", {"data": result, "ts": stamp["pool_ts"]})
     return result
 
 
@@ -598,10 +702,12 @@ def get_signal(signal_type: str):
         )
 
     cache_key = f"signal:{signal_type}"
-    cached = _pm_cache.get(cache_key)
+    cached = _cached_answer(cache_key)
     if cached is not None:
         return cached
 
+    _refresh_market_pool()
+    stamp = _pool_stamp()
     data = _extract_signal_for_type(signal_type)
     if not data:
         raise HTTPException(status_code=503, detail=f"No market data for '{signal_type}'")
@@ -609,6 +715,7 @@ def get_signal(signal_type: str):
     cfg = SIGNAL_TYPES[signal_type]
     data["label"] = cfg["label"]
     data["color"] = cfg["color"]
+    data.update(stamp)
     _pm_cache.set(cache_key, data)
     return data
 
@@ -620,10 +727,12 @@ def search_markets(q: str = Query(..., min_length=2)):
     Returns top 20 results sorted by volume.
     """
     cache_key = f"search:{q.lower()}"
-    cached = _pm_cache.get(cache_key)
+    cached = _cached_answer(cache_key)
     if cached is not None:
         return cached
 
+    _refresh_market_pool()
+    stamp = _pool_stamp()
     # Search pool by question + description text
     markets = _keyword_search_pool([q], limit=20)
     results = []
@@ -643,7 +752,7 @@ def search_markets(q: str = Query(..., min_length=2)):
             "image": m.get("image", ""),
         })
 
-    data = {"query": q, "results": results, "count": len(results)}
+    data = {"query": q, "results": results, "count": len(results), **stamp}
     _pm_cache.set(cache_key, data)
     return data
 
@@ -778,12 +887,14 @@ def get_latest_signals():
 def refresh_all_signals():
     """Force refresh all signals (bypass cache)."""
     _pm_cache.clear()
+    _refresh_market_pool()
+    stamp = _pool_stamp()
     signals = _extract_all_signals()
     result = {
         "signals": signals,
         "count": len(signals),
         "refreshed": True,
-        "as_of": datetime.now(timezone.utc).isoformat(),
+        **stamp,
     }
     _pm_cache.set("signals", result)
     return result
@@ -792,10 +903,11 @@ def refresh_all_signals():
 @router.delete("/api/polymarket/cache")
 def clear_polymarket_cache():
     """Clear in-memory cache (signals + pool)."""
-    global _market_pool, _pool_ts
+    global _market_pool, _pool_ts, _pool_failed_at
     _pm_cache.clear()
     _market_pool = []
     _pool_ts = 0
+    _pool_failed_at = 0
     return {"cleared": True}
 
 
@@ -822,7 +934,7 @@ def get_mcp_signals():
     regime_flag, and 24h delta — ready for tool-call or RAG injection.
     Cached 5 minutes (shared with /signals).
     """
-    cached = _pm_cache.get("signals")
+    cached = _cached_answer("signals")
     signals: list[dict] = cached["signals"] if cached else _extract_all_signals()
 
     mcp_signals = []

@@ -36,19 +36,30 @@ export function useFreshFlag() {
   return { take, arm, peek };
 }
 
+/** `refreshing: true` — the backend answered at once from an older copy and is
+ *  fetching the new one; ask again shortly, a few times at most (an upstream
+ *  that stays down must not turn this into a poll loop). */
+const MAX_FOLLOW_UPS = 3;
+
 export function useNewsFeed(topics: string[]) {
   const key = topics.join(",");
   const fresh = useFreshFlag();
-  const query = useQuery<{ articles: Article[] }>({
+  const followUps = useRef(0);
+  const query = useQuery<{ articles: Article[]; refreshing?: boolean }>({
     queryKey: ["news-feed", key],
     enabled: topics.length > 0,
     staleTime: FIVE_MIN,
     placeholderData: keepPreviousData,
-    queryFn: ({ signal }) =>
-      getJson(
-        `/api/news/feed?topics=${encodeURIComponent(key)}&limit=80${fresh.take() ? "&fresh=1" : ""}`,
+    refetchInterval: (q) =>
+      q.state.data?.refreshing && followUps.current <= MAX_FOLLOW_UPS ? 2000 : false,
+    queryFn: async ({ signal }) => {
+      const data = await getJson<{ articles: Article[]; refreshing?: boolean }>(
+        `/api/news/feed?topics=${encodeURIComponent(key)}&limit=80&swr=1${fresh.take() ? "&fresh=1" : ""}`,
         signal
-      ),
+      );
+      followUps.current = data.refreshing ? followUps.current + 1 : 0;
+      return data;
+    },
   });
   const refresh = useCallback(() => {
     fresh.arm();
@@ -104,10 +115,22 @@ export function useSocialFeed(handles: SocialHandle[]) {
 }
 
 export function usePolymarketSignals() {
-  return useQuery<{ signals: PolySignal[]; as_of?: string }>({
+  const followUps = useRef(0);
+  return useQuery<{ signals: PolySignal[]; as_of?: string; refreshing?: boolean }>({
     queryKey: ["polymarket-signals"],
     staleTime: FIVE_MIN, // backend caches signals for 5 min too
-    queryFn: ({ signal }) => getJson("/api/polymarket", signal),
+    // The market pool behind the signals is re-downloaded every 10 min; past
+    // that the backend answers from the old pool and flags it.
+    refetchInterval: (q) =>
+      q.state.data?.refreshing && followUps.current <= MAX_FOLLOW_UPS ? 3000 : false,
+    queryFn: async ({ signal }) => {
+      const data = await getJson<{ signals: PolySignal[]; as_of?: string; refreshing?: boolean }>(
+        "/api/polymarket",
+        signal
+      );
+      followUps.current = data.refreshing ? followUps.current + 1 : 0;
+      return data;
+    },
   });
 }
 

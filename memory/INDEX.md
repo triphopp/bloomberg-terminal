@@ -48,6 +48,7 @@ memory/
 
 | Plan | สถานะ |
 |------|--------|
+| [NEWS performance](sessions/2026-10-05-news-performance.md) | ✅ done 2026-10-05 (not committed) — watchlist news as stored pulls per (symbol, source) with partial answers, fast RSS parser, Polymarket pool refresh behind callers, ladder 3.5 s → 0.5 s, ASK render batching; found on the way: [`test_db_pool` on Windows](reports/db-pool-test-windows-unlink-risk-report.md) |
 | [Investment Policy System](plans/investment-policy-system.md) | 📝 design 2026-10-01 — sleeves + plan ticket + stress/theme cap + rebalance bands; waiting on user parameters (§8) |
 | [MCP thesis JSON truncation](reports/mcp-thesis-output-truncation-risk-report.md) | 📋 report 2026-10-02 — `get_thesis` with many events can return invalid truncated JSON; `event_limit=0` workaround |
 | [RISK rebalance + UI](plans/risk-rebalance.md) | 🔄 code done 2026-10-02 — RISK 5 tabs, take-profit rebalance 5/25 + timing, WHAT-IF random market + plan hand-off, guard:REBALANCE alert; waiting on user check |

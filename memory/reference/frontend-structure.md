@@ -51,8 +51,8 @@ components/bloomberg/
 │   │   ├── social-tab.tsx       ← X/YouTube/Reddit/RSS handles
 │   │   ├── polymarket-column.tsx← {SYM} IMPLIED ladder + WATCHLIST MARKETS + MACRO SIGNALS + search
 │   │   ├── prediction-ladder.tsx← implied distribution panel (CLOSE ABOVE CDF + TOUCH LADDER)
-│   │   ├── useWatchlistNews.ts  ← useWatchlistSymbols() (pins atom → localStorage fallback) + React Query
-│   │   ├── useNewsQueries.ts    ← React Query for NEWSFEED / SOCIAL (one query per handle) / Polymarket signals+search; REFRESH → `fresh=1`
+│   │   ├── useWatchlistNews.ts  ← useWatchlistSymbols() (pins atom → localStorage fallback) + React Query (partial answer, then settle polls)
+│   │   ├── useNewsQueries.ts    ← React Query for NEWSFEED / SOCIAL (one query per handle) / Polymarket signals+search; REFRESH → `fresh=1`; follow-up when the backend says `refreshing`
 │   │   ├── constants.ts / helpers.ts / types.ts
 │   ├── heatmap-view.tsx         ← HMAP: `heatmap(MARKET)` sector treemap (replaced GMOV 2026-09-25)
 │   ├── tail-risk-view.tsx       ← TAIL: 6 dimensions + macro context (EventStrip under HealthStrip, MacroPanel in left column, EVENT tag on VIX signals, event ReferenceLines on 90D chart)
@@ -377,8 +377,12 @@ components/bloomberg/
 | `views/news/newsfeed-tab.tsx` | `NewsFeedTab` |
 | `views/news/social-tab.tsx` | `SocialTab` |
 | `views/news/polymarket-column.tsx` | `PolymarketColumn`, `ProbBar` |
-| `views/news/useWatchlistNews.ts` | `useWatchlistSymbols()`, `useWatchlistNews()` (returns query + `refresh()` that bypasses the backend cache) |
-| `views/news/useNewsQueries.ts` | `useNewsFeed()`, `useSocialFeed()`, `usePolymarketSignals()`, `usePolymarketSearch()`, `useFreshFlag()` |
+| `ask/ask-panel.tsx` | Surfaces (see `ask/index.ts` above). `AskAnswers` (internal) holds `useAsk()` itself, so tokens re-render the column only |
+| `ask/ask-settings.tsx` | `AskSettings` — MODEL ▸ panel: provider, model (short list + live `/models` + free text), API key (password field, write-only → `POST /api/news/ask/key`). Opened from `AskBar` and from the answer column header (2026-10-06) |
+| `ask/ask-answer.tsx` | `AnswerBody` (answer laid out as lead · `## ` sections · bullets with the source on its own dim line · signed % coloured; set in `.reading`), `parseAnswer(text)` — the shape is the one `_SYSTEM` in `backend/routers/news_ai.py` asks the model for; change both together |
+| `views/news/useNewsAsk.ts` | `useNewsAsk(symbols)` → `{messages, busy, ask, stop, clear}` (conversation in a module atom, not persisted; streamed events applied in one state update per 50 ms), `useAskStatus()` |
+| `views/news/useWatchlistNews.ts` | `useWatchlistSymbols()`, `useWatchlistNews()` → query + `refresh()` (`fresh=1`) + `isUpdating`. First request `wait=1.5`; while the answer has `pending > 0` it re-asks with `wait=4&settle=1` (≤ 8 times, 200 ms apart) — show progress with `isFetching \|\| isUpdating`, not `isFetching` alone |
+| `views/news/useNewsQueries.ts` | `useNewsFeed()` (`swr=1`), `useSocialFeed()`, `usePolymarketSignals()`, `usePolymarketSearch()`, `useFreshFlag()`. Feed and signals re-ask after 2–3 s when the answer says `refreshing` (≤ 3 times) |
 | `views/news/prediction-ladder.tsx` | `PredictionLadder` |
 | `hooks/useStockPredictions.ts` | `useStockPrediction()`, `useStockPredictionSummaries()`, `probColor()` + prediction types |
 | `hooks/useCompanyOutlook.ts` | `useCompanyOutlook()`, `useCompanyXbrl()`, `useCompanyFilings()`, `isUsListing()`, `shortMetric()` |

@@ -88,7 +88,9 @@ class MarketRequests:
                 return self._ready(error=HTTPException(503, "Market data queue busy", headers={"Retry-After": "2"}))
             if provider not in self._pools:
                 self._pools[provider] = ThreadPoolExecutor(
-                    max_workers={'gamma': 2, 'pm-build': 3, 'quote-build': 4}.get(provider, self.workers),
+                    # gamma 2 → 4 (2026-10-05): a ticker's markets now take one or two
+                    # search calls, no call per event — far fewer requests overall.
+                    max_workers={'gamma': 4, 'pm-build': 3, 'quote-build': 4}.get(provider, self.workers),
                     thread_name_prefix=f'market-{provider}',
                 )
             future = self._pools[provider].submit(self._run, provider, loader)

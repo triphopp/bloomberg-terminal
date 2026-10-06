@@ -124,11 +124,17 @@ Audit CLI: `python scripts/accounting_audit.py --api-url http://localhost:9317 -
 
 ## News (`routers/news.py`)
 - `GET /api/news/facebook` — posts from Facebook pages (RSSHub or Graph API)
-- `GET /api/news/feed?topics=&limit=&fresh=0` — topic newswire (yfinance Search + 3 curated RSS: Yahoo, CNBC, MarketWatch; Reuters/Investopedia dropped 2026-09-30). `fresh=1` skips the 5-min cache (REFRESH button)
+- `GET /api/news/feed?topics=&limit=&fresh=0&swr=0` — topic newswire (yfinance Search + 3 curated RSS: Yahoo, CNBC, MarketWatch; Reuters/Investopedia dropped 2026-09-30). `fresh=1` skips the 5-min cache (REFRESH button)
+  - two cache layers (2026-10-05): the assembled feed (fresh 5 min) and each piece — one topic search, one RSS feed — 5 min on its own, so adding or removing a topic re-reads only the new piece. Topic pulls are sized in buckets (30 / 80 / 150); a bigger cached pull answers a smaller need
+  - `swr=1` (NEWSFEED tab only): a copy 5–30 min old comes back at once with `refreshing: true` while the new one is built; the hook asks again in 2 s. Without it (ASK, one-shot readers) an expired feed is rebuilt before answering
 
 ## Watchlist News (`routers/news_watchlist.py`)
-- `GET /api/news/watchlist?symbols=&per_symbol=6&per_source=6&sources=all&polymarket=1&fresh=0`
-  - per-symbol cache is stale-while-revalidate (fresh 5 min, served ≤30 min while one background refresh runs); `fresh=1` re-pulls (REFRESH button). Polymarket matching runs alongside the news fan-out. All RSS via `backend/rss.py` `fetch_feed` (timeout 4/8 s)
+- `GET /api/news/watchlist?symbols=&per_symbol=6&per_source=6&sources=all&polymarket=1&fresh=0&wait=&settle=0`
+  - **one stored pull per (symbol, source)** (2026-10-05), `backend/cache/news_watchlist.json` via `persist_cache.PersistentStore` — survives a restart. Fresh 5 min; older (≤72 h) it is served at once and refreshed behind the answer; a failed refresh keeps the last good pull and is retried after 90 s; HTTP 404 = "source does not cover this symbol", cached as empty
+  - `wait=<s>` — answer after at most this long with what has arrived; pulls still running are counted in `pending`. `settle=1` — also hold for the refreshes behind stored copies. The NEWS view sends `wait=1.5`, then `wait=4&settle=1` while `pending > 0`. **No `wait` = hold until everything has answered and nothing is older than 5 min** (ASK tool, MCP `get_news`)
+  - `fresh=1` re-pulls every source not pulled in the last 10 s (REFRESH button); combine with `wait`
+  - one thread pool per source = the concurrency that host sees: yahoo 8 · google 6 · seekingalpha 6 · sec 4 · bing 4 · yfinance 3 (shares the app-wide Yahoo gate) · nasdaq 2 (see gotchas — Nasdaq stalls every new connection)
+  - Polymarket matching runs alongside the pulls; on a cold market pool it does not hold the headlines (counted in `pending`). All RSS via `backend/rss.py` `fetch_items` (ElementTree, timeout 4/8 s)
   - per-symbol headlines from 7 free sources: `yahoo` (ticker RSS) · `yfinance` (yf.Search) ·
     `google` (News RSS) · `bing` (News RSS) · `seekingalpha` · `nasdaq` · `sec` (EDGAR 8-K atom)
   - sector/company resolved from SQLite `sector_classifications` → yfinance info (24h cache;
@@ -137,7 +143,7 @@ Audit CLI: `python scripts/accounting_audit.py --api-url http://localhost:9317 -
     every article carries `relevance: direct|feed` so the UI can hide wire noise
   - cross-tags other watchlist names found in a headline (`symbols[]`), keyword sentiment,
     plus Polymarket markets matched on the **question text only** (word-boundary)
-  - caches: meta 24h · per-symbol news 5 min · polymarket match 15 min
+  - caches: meta 24h (symbols Yahoo has no sector for — ETF, future, index — kept 7 days in `backend/cache/news_watchlist_meta.json`, not asked again per restart) · per (symbol, source) news 5 min fresh / 72 h stored · polymarket match 15 min
 - `GET /api/news/sources` — source registry (id/label/kind) for the UI toggles
 
 ## Polymarket — single-name equity markets (`routers/polymarket_stock.py`)
@@ -150,6 +156,7 @@ Audit CLI: `python scripts/accounting_audit.py --api-url http://localhost:9317 -
     `nearest_up`/`nearest_down` (each tagged `basis: close|touch`), `implied_high`/`implied_low`,
     `skew`, `horizon_days`
   - caches: events 90s (prices move) · spot 60s · **miss 15 min** (most tickers have no markets)
+  - **no `/events?slug=` call per event** (2026-10-05): a search result already carries each event's markets and prices (same Cloudflare snapshot, `max-age=300`). Ticker and company name are searched together. MSFT ladder 3.5 s → 0.5 s. `/events` is only the fallback for a search event that came without `markets`. Gamma leaf pool 2 → 4 workers (`market_requests.py`)
 - `GET /api/polymarket/stocks?symbols=A,B` — summary-only per symbol (MKT watchlist PM column)
 
 ## Company filings — SEC EDGAR (`routers/company_filings.py`)
@@ -525,6 +532,7 @@ Proxy: `app/api/v2/portfolio/margin/[[...path]]` (GET + PUT, 60 s timeout). No c
 - `DELETE /api/central-banks/cache` — clear cache
 
 ## Polymarket (`routers/polymarket.py`)
+- **Market pool** (all active markets, ~2,100 / 13 MB, 30 Gamma pages): TTL 10 min. Past that and up to 30 min it is handed back at once while one background thread downloads the new one (2026-10-05); only a cold start or a pool older than 30 min makes a caller wait. `signals` / `signals/{type}` / `search` answers carry `pool_ts`, `as_of` (when the pool was read) and `refreshing` (true = computed from an expired pool, ask again in a few seconds); a cached answer is dropped as soon as the pool it came from is replaced. Slug registry + signal history rows are written by one thread after the answer has gone out. A failed pool download is not retried for 60 s. The last `signals` answer is kept in `backend/cache/polymarket_signals.json` (≤ 30 min) and served with `refreshing: true` by a new process while its pool loads
 - `GET /api/polymarket/signals` — all 8 signal types with implied probabilities (5-min cache)
 - `GET /api/polymarket/signals/{type}` — single type: fed_rate, inflation, recession, global_rates, trade, economy, crypto, election
 - `GET /api/polymarket/search?q=X` — free-text search on market pool

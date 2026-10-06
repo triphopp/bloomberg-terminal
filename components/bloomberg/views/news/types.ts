@@ -53,7 +53,10 @@ export interface WatchlistMarket {
 }
 
 export interface WatchlistNewsResponse {
+  /** When the oldest pull in this answer was made — not when it was requested. */
   as_of: string;
+  /** Source pulls still running when the answer was assembled; > 0 → ask again with settle=1. */
+  pending?: number;
   sources_used: string[];
   symbols: WatchlistSymbolMeta[];
   sectors: WatchlistSectorMeta[];

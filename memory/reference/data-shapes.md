@@ -666,12 +666,20 @@ RStats = `{n, win_pct, avg_return_pct, expectancy_r, avg_win_r, avg_loss_r}`.
   "markets": [{ "symbol": "AAPL", "sector": "Technology", "question": "...", "slug": "...",
                 "event_slug": "...", "probability": 0.14, "volume": 803010.5,
                 "end_date": "2026-12-31T00:00:00Z" }],
-  "errors": []
+  "errors": [],
+  "pending": 0
 }
 ```
 `source_kind`: wire | aggregator | analysis | filing | company.
 `relevance`: `direct` = headline names the ticker/company · `feed` = came off that symbol's wire
 without naming it (UI default hides these). Frontend hardcodes every field name above.
+`pending` (2026-10-05): source pulls / market matches still running when the answer was assembled —
+only > 0 when the caller sent `wait`; ask again with `settle=1`. `as_of` is now the **oldest pull used
+in the answer** (a stored copy shown while it refreshes says how old it is), not the request time.
+TS: `WatchlistNewsResponse.pending?` in `views/news/types.ts`.
+
+`GET /api/news/feed` → `{ "articles": [{title, url, source, published_at, topic}], "refreshing"?: true }` —
+`refreshing` only with `swr=1`, when an older copy was returned while the new one is built.
 
 ## Company Outlook (`GET /api/company/outlook/MU`)
 ```json
@@ -748,7 +756,11 @@ returns `{ "summaries": { "MU": { ...summary, "event_count": 2 } }, "as_of": "�
 }
 ```
 Signal types: `fed_rate`, `inflation`, `recession`, `global_rates`, `trade`, `economy`, `crypto`, `election`  
-URL: `https://polymarket.com/event/{event_slug}` — use `event_slug` NOT `slug`
+URL: `https://polymarket.com/event/{event_slug}` — use `event_slug` NOT `slug`  
+The live answer has no `fetched_at`; top level is `{signals, count, signal_types, pool_ts, as_of, refreshing}` (2026-10-05):
+`as_of` = when the market pool behind the prices was read (not the request time), `refreshing: true` = computed from a
+pool past its 10-min TTL while the new one downloads — `usePolymarketSignals` asks again after 3 s (at most 3 times).
+`/api/polymarket/search` and `/signals/{type}` carry the same three fields.
 
 ## Polymarket MCP (`GET /api/polymarket/mcp`)
 ```json

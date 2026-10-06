@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from fastapi import APIRouter, Query, HTTPException
@@ -121,6 +122,16 @@ def _gamma_json(path: str, params: dict):
 def _search_events(query: str, limit: int = 10) -> list[dict]:
     # An outage is not a successful search with no markets; never negative-cache it.
     return _gamma_json("/public-search", {"q": query, "limit_per_type": limit}).get("events") or []
+
+
+def _search_all(queries: list[str]) -> list[list[dict]]:
+    """One result list per query, in order. Ticker and company name are asked
+    together (the gamma pool bounds how many calls really run at once); the
+    first failure is raised, as a loop over `_search_events` would."""
+    if len(queries) < 2:
+        return [_search_events(q) for q in queries]
+    with ThreadPoolExecutor(max_workers=len(queries), thread_name_prefix="pm-search") as pool:
+        return list(pool.map(_search_events, queries))
 
 
 def _event_detail(slug: str) -> dict | None:
@@ -349,8 +360,8 @@ def _stock_markets(symbol: str, company: str = "") -> dict:
     queries = [sym] + ([company] if company else [])
 
     candidates: dict[str, dict] = {}
-    for q in queries:
-        for ev in _search_events(q):
+    for found in _search_all(queries):
+        for ev in found:
             slug = ev.get("slug", "")
             if not slug or slug in candidates:
                 continue
@@ -362,8 +373,13 @@ def _stock_markets(symbol: str, company: str = "") -> dict:
 
     spot = _spot(sym) if candidates else None
     events: list[dict] = []
-    for slug in candidates:
-        detail = _event_detail(slug)
+    for slug, found in candidates.items():
+        # A search result already carries the event's markets and their prices —
+        # the same CDN snapshot (max-age 300) that /events?slug= serves; of 42
+        # prices that differed between the two, the search copy was the newer
+        # one in 36 (2026-10-05). Fetching each event again was 7 more calls for
+        # MSFT, one after another: 3.5 s for a ladder.
+        detail = found if found.get("markets") else _event_detail(slug)
         if not detail or not _is_live(detail, now):
             continue
         built = _build_event(detail, spot, now)

@@ -137,7 +137,8 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `options.py` | `/api/options/*` — chains, positions + Greeks, `POST smile-fit`, `POST payoff`, IV snapshots / SD bands | yfinance + greeks.py + SciPy SVI |
 | `pins.py` | `/api/pins/*` (watchlist groups, assets, tags) | SQLite |
 | `watchlist_signals.py` | `/api/watchlist/{quotes,signals,sparklines}` | shared `market_snapshots.py` / `market_requests.py` |
-| `news.py` / `news_watchlist.py` / `social.py` | `/api/news/*`, `/api/social/feed` | 7 news sources, RSS, RSSHub/Graph API |
+| `news.py` / `news_watchlist.py` / `social.py` | `/api/news/*`, `/api/social/feed` | 7 news sources, RSS, RSSHub/Graph API. Watchlist news = one stored pull per (symbol, source), kept across restarts in `backend/cache/news_watchlist.json` (`persist_cache.py`); `wait` / `settle` / `pending` let the tab paint before the slow sources answer (2026-10-05) |
+| `news_ai.py` | `/api/news/ask` (POST, SSE) · `/api/news/ask/status` — ASK, the chat on every view (`components/bloomberg/ask`); reads the open page via `read_screen` / `get_page_data` (`backend/ask_pages.py`), theses · questions · tracked numbers · zettel · company accounts via `backend/ask_research.py` (read-only), takes pictures (2026-10-06) | DeepSeek chat-completions via `requests` (upstream source `DeepSeek`) + 9 read-only loopback tools onto this backend + `search_web_news` (Google/Bing News RSS) + `read_page` (`backend/web_reader.py`, Jina Reader fallback) + `web_search` (Tavily/Brave, key optional) |
 | `polymarket.py` / `polymarket_stock.py` | `/api/polymarket/*` | Gamma API (client-side filtering, see gotchas) |
 | `company_filings.py` | `/api/company/{filings,outlook,xbrl}/{symbol}` | SEC EDGAR (US only) |
 | `series.py` | `/api/v2/series/*` (generic indicator series; dramexchange DRAM/NAND) | SQLite + `series_sources/` |
