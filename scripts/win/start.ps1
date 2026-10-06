@@ -38,7 +38,7 @@ if (-not (Test-Path "$root\node_modules")) {
 $backendCmd = "cd /d `"$root\backend`" && " +
     "set CLIPPINGS_DIR=$ClippingsDir && " +
     "set OLLAMA_URL=$OllamaUrl && " +
-    "python -m uvicorn main:app --port $BackendPort --reload"
+    "python dev_server.py --port $BackendPort"
 
 Write-Host "  [1/2] Starting backend (cmd window)..." -ForegroundColor Green
 Start-Process cmd -ArgumentList "/k", "title Bloomberg Backend :$BackendPort && $backendCmd"

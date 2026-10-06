@@ -81,7 +81,7 @@ function Start-Bloomberg {
         "-NoProfile", "-Command",
         "cd '$backendDir'; " +
         ($ENV_VARS.GetEnumerator() | ForEach-Object { "`$env:$($_.Key) = '$($_.Value)'; " }) +
-        "python -m uvicorn main:app --port $BACKEND_PORT --reload *>> '$BACKEND_LOG' 2>&1"
+        "python dev_server.py --port $BACKEND_PORT *>> '$BACKEND_LOG' 2>&1"
     ) -WindowStyle Hidden -PassThru
     Write-Ok "Backend PID: $($backendProc.Id)"
 

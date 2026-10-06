@@ -6,7 +6,7 @@ Windows start-up item without two `cmd` windows popping up on every login.
 
 ## What it does
 
-- Starts **backend** (`python -m uvicorn main:app --port 9317 --reload`, cwd `backend\`)
+- Starts **backend** (`python dev_server.py --port 9317`, cwd `backend\` — the reloading server; `--no-reload` runs `python -m uvicorn main:app --port 9317 --timeout-graceful-shutdown 3`)
   — auto-reload is the default, so a saved `.py` is live a few seconds later
   and **frontend** (`node node_modules/next/dist/bin/next dev --port 9318`,
   cwd repo root) as **hidden** processes — no console windows.
@@ -66,8 +66,9 @@ rewritten to `https://` before it ever reaches the dev server and fails. Use
 | Flag | Effect |
 |------|--------|
 | `--no-browser` | don't open the browser when the backend goes healthy |
-| `--no-reload` | run uvicorn **without** `--reload` (default is ON) |
-| `--reload` | force `--reload` even with `--prod` |
+| `--no-reload` | run the backend **without** auto-reload (default is ON) |
+| `--reload` | force auto-reload even with `--prod` |
+| `--local-only` | the frontend answers on this machine only (`next … -H 127.0.0.1`). Default: every interface, so a phone on the same network can open the terminal — and so can anything else on it |
 | `--prod` | run `next start` instead of `next dev` (needs `npm run build` first); implies `--no-reload` |
 | `--backend-port N` | backend port (default 9317) |
 | `--frontend-port N` | frontend port (default 9318) |
@@ -83,11 +84,19 @@ browser window at you.
 
 ## Backend edits: auto-reload + the stale-backend banner (2026-09-25)
 
-The launcher runs uvicorn with `--reload` by default (the log-on task and the
-Run key included — they pass no reload flag). Saving any backend `.py`
-restarts the worker a few seconds later; `tests\` and `scripts\` are excluded,
-passed as **absolute** paths because uvicorn tests a relative exclude dir
-against absolute file paths and never matches it.
+The launcher runs the backend with auto-reload by default (the log-on task and
+the Run key included — they pass no reload flag), through
+`backend\dev_server.py`. Saving any backend `.py` restarts the worker; the new
+code answers about 6 s later, which is the app's own start-up. `tests\` and
+`scripts\` are excluded.
+
+Why not `uvicorn --reload` (2026-10-06): on Windows uvicorn swaps its worker by
+sending it `CTRL_C_EVENT` and waiting. A process started as the launcher starts
+it — `CREATE_NO_WINDOW`, output to a file — gets that event 10–20 s late
+(measured: change seen at 0.3 s, worker "Shutting down" at 10.6 s and 16.2 s),
+and the old code keeps answering meanwhile. `dev_server.py` is the same
+reloader and server with the worker terminated instead; the listening socket
+stays with the parent, so requests during the swap wait instead of failing.
 
 The launcher also sets `BT_SUPERVISOR=launcher` and `BT_BACKEND_RELOAD=1|0`
 for the backend. `backend/dev_status.py` snapshots the mtime of every backend

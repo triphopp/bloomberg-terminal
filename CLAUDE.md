@@ -9,11 +9,11 @@
 # Backend (Terminal 1) — macOS/Linux
 cd backend
 # env vars are in backend/.env — loaded automatically by python-dotenv
-python -m uvicorn main:app --port 9317 --reload
+python -m uvicorn main:app --port 9317 --reload --timeout-graceful-shutdown 3
 
 # Backend (Terminal 1) — Windows PowerShell
 cd backend
-python -m uvicorn main:app --port 9317 --reload
+python dev_server.py --port 9317     # uvicorn --reload, minus its 10-20 s stall on Windows
 
 # Frontend (Terminal 2)
 npm run dev   # → http://bloomberg.localhost:9318 (or localhost:9318)
@@ -26,8 +26,11 @@ Details + flags: `tools/launcher/README.md`. Auto-start at log-on:
 `scripts\win\install-startup-task.ps1` (scheduled task, 30s delay, restarts the
 launcher if it dies) or the tray's "Run at Windows start-up" (`HKCU\...\Run`) —
 never a copy of the exe in `shell:startup`. The launcher also restarts a dead
-backend/frontend by itself (3 tries, budget resets when healthy). **Backend runs with
-`--reload` by default** (`--no-reload` to opt out); in `next dev` a strip at the top says
+backend/frontend by itself (3 tries, budget resets when healthy). **Backend auto-reloads
+by default** (`--no-reload` to opt out) through `backend/dev_server.py`, not `uvicorn --reload`: on Windows uvicorn swaps
+its worker with a console Ctrl-C that reaches a windowless process 10–20 s late (and, before `--timeout-graceful-shutdown`,
+then hung on the quote stream for good). A save is live in ~6 s — the app's own start-up. `--local-only` binds the
+frontend to this machine (default: the LAN can open it, which is how a phone does); in `next dev` a strip at the top says
 RUNNING OLD CODE (+ RESTART button) or BACKEND DOWN (→ `logs\backend.log`) — read it
 before debugging a "missing" route or field (`GET /api/dev/status`). Icons (exe + browser favicon)
 มาจาก `npm run icons` (`scripts/gen-icons.mjs`) แหล่งเดียว. Per-server debug windows live in

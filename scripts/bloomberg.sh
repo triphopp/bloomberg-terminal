@@ -75,7 +75,7 @@ cmd_start() {
     (
         cd "$PROJECT_ROOT/backend"
         export CLIPPINGS_DIR THESES_DIR SOURCES_DIR OLLAMA_URL
-        nohup "$PYTHON" -m uvicorn main:app --port 8000 --reload \
+        nohup "$PYTHON" -m uvicorn main:app --port 8000 --reload --timeout-graceful-shutdown 3 \
             >> "$BACKEND_LOG" 2>&1 &
         echo $! > /tmp/bloomberg-backend.pid
     )

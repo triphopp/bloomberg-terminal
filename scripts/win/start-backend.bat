@@ -19,5 +19,5 @@ echo  CLIPPINGS_DIR = %CLIPPINGS_DIR%
 echo  OLLAMA_URL    = %OLLAMA_URL%
 echo.
 
-python -m uvicorn main:app --port 9317 --reload
+python dev_server.py --port 9317
 pause
