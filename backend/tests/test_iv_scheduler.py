@@ -14,7 +14,7 @@ Run:
 import shutil
 import sys
 import tempfile
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -23,6 +23,14 @@ import pytest
 sys.path.insert(0, ".")
 
 ET = ZoneInfo("America/New_York")
+
+
+def _today() -> date:
+    """The session a reading taken now is filed under — what the scheduler calls
+    "today". Not `_today()`: that is the machine's date (the bug fixed 2026-10-06)."""
+    import us_session
+
+    return us_session.session_date()
 
 
 @pytest.fixture()
@@ -91,14 +99,14 @@ def test_universe_is_watchlist_union_existing_history(env):
     """A series started by opening the indicator on SPY must keep going even
     though SPY was never pinned — the gap could not be repaired later."""
     env["pin"]("AMD", "MSFT")
-    env["snap"]("SPY", date.today())
+    env["snap"]("SPY", _today())
 
     assert env["iv"].target_symbols() == ["AMD", "MSFT", "SPY"]
 
 
 def test_universe_deduplicates_and_uppercases(env):
     env["pin"]("amd", "AMD")
-    env["snap"]("AMD", date.today())
+    env["snap"]("AMD", _today())
     assert env["iv"].target_symbols() == ["AMD"]
 
 
@@ -127,13 +135,13 @@ def test_empty_universe_is_not_an_error(env):
 # ── Self-gating ───────────────────────────────────────────────────────────────
 
 def test_symbol_with_todays_row_is_not_re_recorded(env):
-    today = date.today()
+    today = _today()
     env["snap"]("AMD", today)
     assert env["iv"].symbols_needing_snapshot(["AMD"], today.isoformat(), False) == []
 
 
 def test_symbol_with_no_row_today_is_needed(env):
-    today = date.today()
+    today = _today()
     env["snap"]("AMD", today - timedelta(days=1))
     assert env["iv"].symbols_needing_snapshot(["AMD"], today.isoformat(), False) == ["AMD"]
 
@@ -141,13 +149,13 @@ def test_symbol_with_no_row_today_is_needed(env):
 def test_front_week_row_does_not_count_as_covered(env):
     """Opening the OPTIONS tab during an expiry week leaves a 0–4 DTE row, which
     the σ-band endpoint excludes — so the day is still uncovered."""
-    today = date.today()
+    today = _today()
     env["snap"]("AMD", today, dte=3)
     assert env["iv"].symbols_needing_snapshot(["AMD"], today.isoformat(), False) == ["AMD"]
 
 
 def test_zero_iv_row_does_not_count_as_covered(env):
-    today = date.today()
+    today = _today()
     env["snap"]("AMD", today)
     with env["db"].get_db() as conn:
         conn.execute("UPDATE iv_snapshots SET iv_mid = 0 WHERE symbol = 'AMD'")
@@ -155,11 +163,11 @@ def test_zero_iv_row_does_not_count_as_covered(env):
 
 
 def test_empty_symbol_list_short_circuits(env):
-    assert env["iv"].symbols_needing_snapshot([], date.today().isoformat(), False) == []
+    assert env["iv"].symbols_needing_snapshot([], _today().isoformat(), False) == []
 
 
 def test_gating_reports_only_the_missing_ones(env):
-    today = date.today()
+    today = _today()
     env["snap"]("AMD", today)
     env["snap"]("MSFT", today, dte=2)          # front week → still missing
     needing = env["iv"].symbols_needing_snapshot(
@@ -173,10 +181,8 @@ def test_gating_reports_only_the_missing_ones(env):
 def test_mid_session_row_is_refreshed_after_the_close(env):
     """A snapshot taken at 11:00 ET is a mid-session IV; once the close has passed
     it should be replaced by a closing-side mark."""
-    today = date.today()
-    mid_session_utc = datetime.now(ET).replace(hour=11, minute=0, second=0).astimezone(
-        timezone.utc
-    )
+    today = _today()
+    mid_session_utc = datetime.combine(today, time(11, 0), ET).astimezone(timezone.utc)
     env["snap"]("AMD", today, created_at=mid_session_utc.strftime("%Y-%m-%d %H:%M:%S"))
 
     assert env["iv"].symbols_needing_snapshot(["AMD"], today.isoformat(), True) == ["AMD"]
@@ -185,15 +191,15 @@ def test_mid_session_row_is_refreshed_after_the_close(env):
 
 
 def test_post_close_row_is_not_refreshed_again(env):
-    today = date.today()
-    after_utc = datetime.now(ET).replace(hour=17, minute=30, second=0).astimezone(timezone.utc)
+    today = _today()
+    after_utc = datetime.combine(today, time(17, 30), ET).astimezone(timezone.utc)
     env["snap"]("AMD", today, created_at=after_utc.strftime("%Y-%m-%d %H:%M:%S"))
     assert env["iv"].symbols_needing_snapshot(["AMD"], today.isoformat(), True) == []
 
 
 def test_unparseable_timestamp_is_treated_as_done(env):
     """Better to skip one refresh than to re-record on every pass forever."""
-    today = date.today()
+    today = _today()
     env["snap"]("AMD", today, created_at="not-a-timestamp")
     assert env["iv"].symbols_needing_snapshot(["AMD"], today.isoformat(), True) == []
 
@@ -205,14 +211,15 @@ def test_unparseable_timestamp_is_treated_as_done(env):
     [(9, False), (12, False), (15, False), (16, True), (17, True), (23, True)],
 )
 def test_after_us_close_boundary(env, et_hour, expected):
-    stamp = datetime.now(ET).replace(hour=et_hour, minute=30).astimezone(timezone.utc)
+    # A Wednesday: on a weekend every hour is after Friday's close.
+    stamp = datetime(2026, 10, 7, et_hour, 30, tzinfo=ET).astimezone(timezone.utc)
     assert env["iv"]._after_us_close(stamp) is expected
 
 
 def test_after_us_close_converts_from_utc(env):
     """20:30 UTC is 16:30 ET in summer — the naive reading of the UTC hour would
     get this wrong in both directions depending on the season."""
-    utc_2030 = datetime.now(timezone.utc).replace(hour=20, minute=30)
+    utc_2030 = datetime(2026, 10, 7, 20, 30, tzinfo=timezone.utc)  # a Wednesday
     et_hour = utc_2030.astimezone(ET).hour
     assert env["iv"]._after_us_close(utc_2030) is (et_hour >= 16)
 
@@ -221,7 +228,7 @@ def test_after_us_close_converts_from_utc(env):
 
 def test_run_once_skips_without_touching_the_network(env, monkeypatch):
     env["pin"]("AMD")
-    env["snap"]("AMD", date.today())
+    env["snap"]("AMD", _today())
 
     import routers.options as opt
 
@@ -243,7 +250,7 @@ def test_run_once_records_missing_symbols(env, monkeypatch):
 
     def fake(symbol, expiry=None, target_dte=30):
         calls.append(symbol)
-        env["snap"](symbol, date.today())
+        env["snap"](symbol, _today())
         return {"symbol": symbol}
 
     monkeypatch.setattr("routers.options.record_snapshot_now", fake)
@@ -271,7 +278,7 @@ def test_a_404_is_permanent_and_a_422_only_lasts_the_day(env, monkeypatch):
     assert out["failed"] == 1
     assert "^VIX" in env["iv"]._no_options
     assert "THINLY" not in env["iv"]._no_options
-    assert env["iv"]._no_quote_today["THINLY"] == date.today().isoformat()
+    assert env["iv"]._no_quote_today["THINLY"] == _today().isoformat()
 
 
 def test_a_422_symbol_is_not_retried_again_today(env, monkeypatch):
@@ -296,13 +303,13 @@ def test_a_422_symbol_is_not_retried_again_today(env, monkeypatch):
 
 def test_a_422_symbol_is_retried_the_next_day(env, monkeypatch):
     env["pin"]("THINLY")
-    env["iv"]._no_quote_today["THINLY"] = (date.today() - timedelta(days=1)).isoformat()
+    env["iv"]._no_quote_today["THINLY"] = (_today() - timedelta(days=1)).isoformat()
 
     calls: list[str] = []
 
     def fake(symbol, expiry=None, target_dte=30):
         calls.append(symbol)
-        env["snap"](symbol, date.today())
+        env["snap"](symbol, _today())
         return {"symbol": symbol}
 
     monkeypatch.setattr("routers.options.record_snapshot_now", fake)
@@ -316,7 +323,7 @@ def test_one_bad_symbol_does_not_abort_the_pass(env, monkeypatch):
     def fake(symbol, expiry=None, target_dte=30):
         if symbol == "BOOM":
             raise RuntimeError("provider exploded")
-        env["snap"](symbol, date.today())
+        env["snap"](symbol, _today())
         return {"symbol": symbol}
 
     monkeypatch.setattr("routers.options.record_snapshot_now", fake)
@@ -397,7 +404,7 @@ def test_the_whole_path_records_with_the_provider_stubbed(env, monkeypatch):
     import routers.options as opt
 
     env["pin"]("FAKE")
-    today = date.today()
+    today = _today()
 
     class _Chain:
         calls = pd.DataFrame(

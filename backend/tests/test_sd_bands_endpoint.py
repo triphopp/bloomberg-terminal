@@ -519,7 +519,7 @@ def test_no_snapshots_at_all_says_so(sd_env):
 
 def test_pick_snapshot_expiry_targets_30_days(sd_env):
     opt = sd_env["opt"]
-    today = date.today()
+    today = __import__("us_session").session_date()  # DTE counts from the session
     exps = [(today + timedelta(days=d)).isoformat() for d in (0, 1, 8, 29, 60, 200)]
     assert opt.pick_snapshot_expiry(exps) == exps[3]   # 29 DTE
 
@@ -527,28 +527,28 @@ def test_pick_snapshot_expiry_targets_30_days(sd_env):
 def test_pick_snapshot_expiry_skips_the_front_week(sd_env):
     """The default `expirations[0]` would be the 0DTE contract."""
     opt = sd_env["opt"]
-    today = date.today()
+    today = __import__("us_session").session_date()  # DTE counts from the session
     exps = [(today + timedelta(days=d)).isoformat() for d in (0, 2, 45)]
     assert opt.pick_snapshot_expiry(exps) == exps[2]
 
 
 def test_pick_snapshot_expiry_falls_back_to_the_longest_when_all_are_near(sd_env):
     opt = sd_env["opt"]
-    today = date.today()
+    today = __import__("us_session").session_date()  # DTE counts from the session
     exps = [(today + timedelta(days=d)).isoformat() for d in (0, 1, 4)]
     assert opt.pick_snapshot_expiry(exps) == exps[2]
 
 
 def test_pick_snapshot_expiry_breaks_ties_toward_the_longer_expiry(sd_env):
     opt = sd_env["opt"]
-    today = date.today()
+    today = __import__("us_session").session_date()  # DTE counts from the session
     exps = [(today + timedelta(days=d)).isoformat() for d in (20, 40)]  # both 10 away
     assert opt.pick_snapshot_expiry(exps, target_dte=30) == exps[1]
 
 
 def test_pick_snapshot_expiry_honours_an_explicit_target(sd_env):
     opt = sd_env["opt"]
-    today = date.today()
+    today = __import__("us_session").session_date()  # DTE counts from the session
     exps = [(today + timedelta(days=d)).isoformat() for d in (10, 30, 90, 180)]
     assert opt.pick_snapshot_expiry(exps, target_dte=95) == exps[2]
 

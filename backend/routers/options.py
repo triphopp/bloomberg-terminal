@@ -31,6 +31,7 @@ from providers.base_options import OptionContract
 from providers.yahoo_options import YahooOptionsProvider
 from sources import market_data
 from sources.errors import UpstreamRateLimited, recently_rate_limited
+import us_session
 
 router = APIRouter()
 
@@ -410,12 +411,14 @@ async def get_options_surface(symbol: str):
 # ── IV snapshots + SD bands ───────────────────────────────────────────────────
 
 def _dte(expiry: str) -> int:
-    """Calendar days to expiry, floored at 0. -1 signals an unparseable date."""
+    """Calendar days from the session being read (us_session) to expiry, floored
+    at 0. -1 signals an unparseable date. Counted from the session, not this
+    machine's date, so a stored row keeps expiry − snapshot_date == dte."""
     try:
         exp = datetime.strptime(expiry, "%Y-%m-%d").date()
     except (ValueError, TypeError):
         return -1
-    return max((exp - date.today()).days, 0)
+    return max((exp - us_session.session_date()).days, 0)
 
 
 #: Expiries this close in are excluded from the σ-band snapshot. Near-dated ATM
@@ -484,6 +487,11 @@ def _record_iv_snapshot(
     Called from the chain endpoint, so a schema problem or a locked DB must not
     take the chain down with it — the snapshot is a side effect, not the answer.
     Re-fetching the same day overwrites: the later read is the fresher one.
+
+    The row is dated by the US session the chain shows (us_session.py), never by
+    `date.today()` — this machine's date turns at 13:00 ET, and two machines
+    filing one session under different days (or two sessions under one day)
+    is what produced the 2026-10-06 iv_snapshots sync conflicts.
     """
     if iv_mid is None or spot <= 0:
         return False
@@ -512,7 +520,7 @@ def _record_iv_snapshot(
                 """,
                 (
                     symbol.upper(),
-                    date.today().isoformat(),
+                    us_session.session_date().isoformat(),
                     expiry,
                     dte,
                     float(spot),
@@ -607,7 +615,7 @@ def record_snapshot_now(
 
         return {
             "symbol": symbol,
-            "snapshotDate": date.today().isoformat(),
+            "snapshotDate": us_session.session_date().isoformat(),
             "expiry": target_expiry,
             "dte": _dte(target_expiry),
             "spot": spot,
