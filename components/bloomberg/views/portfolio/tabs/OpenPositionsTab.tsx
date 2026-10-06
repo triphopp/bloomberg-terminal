@@ -527,17 +527,6 @@ export function OpenPositionsTab({
     return DEFAULT_COLS;
   });
   const [showColPicker, setShowColPicker] = useState(false);
-  // Width of the scroll box, so the group header can pin itself to the visible
-  // area — its colSpan cell is as wide as the TABLE, which on a narrow screen
-  // pushes the account P&L off the right edge.
-  const [scrollW, setScrollW] = useState<number | null>(null);
-  const scrollBoxRef = useCallback((el: HTMLDivElement | null) => {
-    if (!el) return;
-    const ro = new ResizeObserver(() => setScrollW(el.clientWidth));
-    ro.observe(el);
-    setScrollW(el.clientWidth);
-    return () => ro.disconnect();
-  }, []);
   const [filter, setFilter] = useState("");
   const [stockCard, setStockCard] = useState<{
     accountId: string;
@@ -1107,789 +1096,801 @@ export function OpenPositionsTab({
         </div>
       ) : (
         <div
-          ref={scrollBoxRef}
           className="flex-1 overflow-y-auto overflow-x-auto"
           onClick={() => setShowColPicker(false)}
           onKeyDown={() => setShowColPicker(false)}
           role="presentation"
         >
-          <table className="w-full text-[10px] font-mono" style={{ borderCollapse: "collapse" }}>
-            {/* One header for every account — repeating it under each group
+          {/* Query container as wide as the visible area (the scroll box's
+              own cqw would include its scrollbar), so the group headers can pin
+              themselves to it (`cqw` below) — their colSpan cell is as wide as
+              the TABLE, which on a narrow screen pushes the account P&L off the
+              right edge. It was a ResizeObserver → state → width loop; at 110%
+              zoom the header overflowed by a fraction of a pixel, toggled the
+              scrollbar and re-rendered forever (screen shook, memory climbed). */}
+          <div style={{ containerType: "inline-size" }}>
+            <table className="w-full text-[10px] font-mono" style={{ borderCollapse: "collapse" }}>
+              {/* One header for every account — repeating it under each group
                 header cost a row per account and said nothing new. */}
-            <thead>
-              <tr
-                style={{
-                  background: "#0a0a0a",
-                  position: "sticky",
-                  top: 0,
-                  zIndex: 11,
-                  height: HEAD_H,
-                }}
-              >
-                {displayCols.map((h) => (
-                  <th
-                    key={h}
-                    className={`px-2 whitespace-nowrap text-[7px] font-bold tracking-wider border-b ${NUMERIC_COLS.has(h) ? "text-right" : "text-left"}`}
-                    style={{ color: colors.textSecondary, borderColor: colors.border }}
-                  >
-                    {h}
-                  </th>
-                ))}
-                <th className="border-b" style={{ borderColor: colors.border }} />
-              </tr>
-            </thead>
-            {groups.map(([gk, groupPositions]: [string, MergedPosition[]]) => {
-              const groupColor = GROUP_COLORS[gk] ?? colors.accent;
-              const isCollapsed = !!collapsed[gk];
-              const { pnl: groupPnl, cost: groupCost, mv: groupMv } = statsOf(groupPositions);
-              const acctId = groupPositions[0]?.account_id ?? "";
-              // Filtered to one sub-port: the header speaks for that sub-port only.
-              const subDebt = activeSub
-                ? subTakeoverDebt.get(`${acctId}::${activeSub}`)
-                : undefined;
-              const groupDebt = activeSub
-                ? subDebt && { ...subDebt, subs: [activeSub] }
-                : takeoverDebt.get(acctId);
-              const sections = subPortSections(groupPositions);
-
-              return (
-                <tbody key={gk}>
-                  {/* Sticky group header */}
-                  <tr
-                    style={{
-                      background: "#060606",
-                      cursor: "pointer",
-                      position: "sticky",
-                      top: HEAD_H,
-                      zIndex: 10,
-                    }}
-                    onClick={() => setCollapsed((c) => ({ ...c, [gk]: !isCollapsed }))}
-                    onKeyDown={(e) =>
-                      e.key === "Enter" && setCollapsed((c) => ({ ...c, [gk]: !isCollapsed }))
-                    }
-                  >
-                    <td
-                      colSpan={displayCols.length + 1}
-                      className="px-3 border-b border-t"
-                      style={{
-                        borderColor: `${groupColor}55`,
-                        borderLeftWidth: 3,
-                        borderLeftColor: groupColor,
-                      }}
+              <thead>
+                <tr
+                  style={{
+                    background: "#0a0a0a",
+                    position: "sticky",
+                    top: 0,
+                    zIndex: 11,
+                    height: HEAD_H,
+                  }}
+                >
+                  {displayCols.map((h) => (
+                    <th
+                      key={h}
+                      className={`px-2 whitespace-nowrap text-[7px] font-bold tracking-wider border-b ${NUMERIC_COLS.has(h) ? "text-right" : "text-left"}`}
+                      style={{ color: colors.textSecondary, borderColor: colors.border }}
                     >
-                      <div
-                        className="flex items-center gap-3 py-0.5 text-[9px] whitespace-nowrap"
-                        style={
-                          scrollW != null
-                            ? {
-                                position: "sticky",
-                                left: 12,
-                                // scroll box − td padding (px-3 ×2) − 3px left border
-                                width: Math.max(0, scrollW - 27),
-                              }
-                            : undefined
-                        }
+                      {h}
+                    </th>
+                  ))}
+                  <th className="border-b" style={{ borderColor: colors.border }} />
+                </tr>
+              </thead>
+              {groups.map(([gk, groupPositions]: [string, MergedPosition[]]) => {
+                const groupColor = GROUP_COLORS[gk] ?? colors.accent;
+                const isCollapsed = !!collapsed[gk];
+                const { pnl: groupPnl, cost: groupCost, mv: groupMv } = statsOf(groupPositions);
+                const acctId = groupPositions[0]?.account_id ?? "";
+                // Filtered to one sub-port: the header speaks for that sub-port only.
+                const subDebt = activeSub
+                  ? subTakeoverDebt.get(`${acctId}::${activeSub}`)
+                  : undefined;
+                const groupDebt = activeSub
+                  ? subDebt && { ...subDebt, subs: [activeSub] }
+                  : takeoverDebt.get(acctId);
+                const sections = subPortSections(groupPositions);
+
+                return (
+                  <tbody key={gk}>
+                    {/* Sticky group header */}
+                    <tr
+                      style={{
+                        background: "#060606",
+                        cursor: "pointer",
+                        position: "sticky",
+                        top: HEAD_H,
+                        zIndex: 10,
+                      }}
+                      onClick={() => setCollapsed((c) => ({ ...c, [gk]: !isCollapsed }))}
+                      onKeyDown={(e) =>
+                        e.key === "Enter" && setCollapsed((c) => ({ ...c, [gk]: !isCollapsed }))
+                      }
+                    >
+                      <td
+                        colSpan={displayCols.length + 1}
+                        className="px-3 border-b border-t"
+                        style={{
+                          borderColor: `${groupColor}55`,
+                          borderLeftWidth: 3,
+                          borderLeftColor: groupColor,
+                        }}
                       >
-                        <span className="text-[7px] w-2" style={{ color: "#555" }}>
-                          {isCollapsed ? "▶" : "▼"}
-                        </span>
-                        <span className="font-bold tracking-wider" style={{ color: groupColor }}>
-                          {gk.toUpperCase()}
-                        </span>
-                        <span style={{ color: colors.textSecondary }}>{groupPositions.length}</span>
-                        {/* MV next to the weight because the weight is computed
+                        <div
+                          className="flex items-center gap-3 py-0.5 text-[9px] whitespace-nowrap"
+                          style={{
+                            position: "sticky",
+                            left: 12,
+                            // scroll box − td padding (px-3 ×2) − 3px left border
+                            // − 1px so sub-pixel rounding at odd zoom never overflows
+                            width: "max(0px, calc(100cqw - 28px))",
+                          }}
+                        >
+                          <span className="text-[7px] w-2" style={{ color: "#555" }}>
+                            {isCollapsed ? "▶" : "▼"}
+                          </span>
+                          <span className="font-bold tracking-wider" style={{ color: groupColor }}>
+                            {gk.toUpperCase()}
+                          </span>
+                          <span style={{ color: colors.textSecondary }}>
+                            {groupPositions.length}
+                          </span>
+                          {/* MV next to the weight because the weight is computed
                             from IT, not from cost. Two accounts that paid ฿1.0M and
                             ฿1.85M can carry the same weight today. */}
-                        <span
-                          style={{ color: colors.textSecondary }}
-                          title="Market value today ÷ NAV of the selected scope — weight is what you hold TODAY, not what you paid for it"
-                        >
-                          MV{" "}
-                          <span style={{ color: colors.text }}>
-                            {csym}
-                            {fmtAmt(groupMv)}
-                          </span>
-                          {navPct(groupMv) != null && (
-                            <span className="ml-1 font-bold" style={{ color: colors.text }}>
-                              {fmtWeight(navPct(groupMv))}
-                            </span>
-                          )}
-                        </span>
-                        <span
-                          style={{ color: colors.textSecondary }}
-                          title="What this account paid for the positions it still holds"
-                        >
-                          cost {csym}
-                          {fmtAmt(groupCost)}
-                        </span>
-                        {groupDebt && (
                           <span
                             style={{ color: colors.textSecondary }}
-                            title={`Taken over ${groupDebt.date} at a loss (${groupDebt.subs.join(", ")}). The loss before takeover (${csym}${fmtAmt(groupDebt.inherited)}) is this book's debt until its own P&L since then pays it back: realized on every trade closed there + unrealized on what it holds now. Recovered so far ${groupDebt.recovered >= 0 ? "+" : "-"}${csym}${fmtAmt(Math.abs(groupDebt.recovered))}. Disappears at zero; comes back if the book falls under water again.`}
+                            title="Market value today ÷ NAV of the selected scope — weight is what you hold TODAY, not what you paid for it"
                           >
-                            TAKEOVER DEBT{" "}
-                            <span className="font-bold" style={{ color: pnlColor(groupDebt.debt) }}>
-                              -{csym}
-                              {fmtAmt(Math.abs(groupDebt.debt))}
+                            MV{" "}
+                            <span style={{ color: colors.text }}>
+                              {csym}
+                              {fmtAmt(groupMv)}
                             </span>
-                            <span className="ml-1">
-                              {fmtWeight(
-                                (Math.max(0, groupDebt.recovered) / Math.abs(groupDebt.inherited)) *
-                                  100
-                              )}{" "}
-                              repaid
-                            </span>
+                            {navPct(groupMv) != null && (
+                              <span className="ml-1 font-bold" style={{ color: colors.text }}>
+                                {fmtWeight(navPct(groupMv))}
+                              </span>
+                            )}
                           </span>
-                        )}
-                        <span
-                          className="ml-auto font-bold"
-                          style={{ color: pnlColor(groupPnl) }}
-                          title="Unrealized P&L of this account"
-                        >
-                          {groupPnl !== 0
-                            ? `${groupPnl >= 0 ? "+" : "-"}${csym}${fmtAmt(Math.abs(groupPnl))}`
-                            : "—"}
-                        </span>
-                      </div>
-                    </td>
-                  </tr>
-
-                  {/* Position rows — one section per sub-port when the account
-                      has two or more (each is its own average-cost book) */}
-                  {!isCollapsed &&
-                    sections.map((section) => {
-                      const secKey = `${gk}::${section.sub}`;
-                      const secCollapsed = sections.length > 1 && !!collapsed[secKey];
-                      const sec = sections.length > 1 ? statsOf(section.rows) : null;
-                      const secColor = SUBPORT_COLORS[section.sub] ?? "#555";
-                      const secDebt = subTakeoverDebt.get(
-                        `${section.rows[0]?.account_id ?? ""}::${section.sub}`
-                      );
-                      return (
-                        <React.Fragment key={secKey}>
-                          {sec && (
-                            <tr
-                              style={{ background: "#080808", cursor: "pointer" }}
-                              onClick={() =>
-                                setCollapsed((c) => ({ ...c, [secKey]: !secCollapsed }))
-                              }
-                              onKeyDown={(e) =>
-                                e.key === "Enter" &&
-                                setCollapsed((c) => ({ ...c, [secKey]: !secCollapsed }))
-                              }
+                          <span
+                            style={{ color: colors.textSecondary }}
+                            title="What this account paid for the positions it still holds"
+                          >
+                            cost {csym}
+                            {fmtAmt(groupCost)}
+                          </span>
+                          {groupDebt && (
+                            <span
+                              style={{ color: colors.textSecondary }}
+                              title={`Taken over ${groupDebt.date} at a loss (${groupDebt.subs.join(", ")}). The loss before takeover (${csym}${fmtAmt(groupDebt.inherited)}) is this book's debt until its own P&L since then pays it back: realized on every trade closed there + unrealized on what it holds now. Recovered so far ${groupDebt.recovered >= 0 ? "+" : "-"}${csym}${fmtAmt(Math.abs(groupDebt.recovered))}. Disappears at zero; comes back if the book falls under water again.`}
                             >
-                              <td
-                                colSpan={displayCols.length + 1}
-                                className="pl-6 pr-3 border-b"
-                                style={{
-                                  borderColor: "#141414",
-                                  borderLeftWidth: 3,
-                                  borderLeftColor: `${groupColor}55`,
-                                }}
+                              TAKEOVER DEBT{" "}
+                              <span
+                                className="font-bold"
+                                style={{ color: pnlColor(groupDebt.debt) }}
                               >
-                                <div
-                                  className="flex items-center gap-3 text-[8px] whitespace-nowrap"
-                                  style={
-                                    scrollW != null
-                                      ? {
-                                          position: "sticky",
-                                          left: 24,
-                                          width: Math.max(0, scrollW - 39),
-                                        }
-                                      : undefined
-                                  }
-                                >
-                                  <span className="text-[7px] w-2" style={{ color: "#555" }}>
-                                    {secCollapsed ? "▶" : "▼"}
-                                  </span>
-                                  <span
-                                    className="font-bold tracking-wider"
-                                    style={{ color: secColor }}
-                                  >
-                                    {section.sub || "NO SUB-PORT"}
-                                  </span>
-                                  <span style={{ color: colors.textSecondary }}>
-                                    {section.rows.length}
-                                  </span>
-                                  <span style={{ color: colors.textSecondary }}>
-                                    MV{" "}
-                                    <span style={{ color: colors.text }}>
-                                      {csym}
-                                      {fmtAmt(sec.mv)}
-                                    </span>
-                                    {navPct(sec.mv) != null && (
-                                      <span className="ml-1" style={{ color: colors.text }}>
-                                        {fmtWeight(navPct(sec.mv))}
-                                      </span>
-                                    )}
-                                  </span>
-                                  <span style={{ color: colors.textSecondary }}>
-                                    cost {csym}
-                                    {fmtAmt(sec.cost)}
-                                  </span>
-                                  {secDebt && (
-                                    <span
-                                      style={{ color: colors.textSecondary }}
-                                      title={`Sub-port ${section.sub} taken over ${secDebt.date} at a loss of ${csym}${fmtAmt(Math.abs(secDebt.inherited))}. Recovered so far ${secDebt.recovered >= 0 ? "+" : "-"}${csym}${fmtAmt(Math.abs(secDebt.recovered))} (realized since + unrealized now).`}
-                                    >
-                                      TAKEOVER DEBT{" "}
-                                      <span style={{ color: pnlColor(secDebt.debt) }}>
-                                        -{csym}
-                                        {fmtAmt(Math.abs(secDebt.debt))}
-                                      </span>
-                                      <span className="ml-1">
-                                        {fmtWeight(
-                                          (Math.max(0, secDebt.recovered) /
-                                            Math.abs(secDebt.inherited)) *
-                                            100
-                                        )}{" "}
-                                        repaid
-                                      </span>
-                                    </span>
-                                  )}
-                                  <span
-                                    className="ml-auto font-bold"
-                                    style={{ color: pnlColor(sec.pnl) }}
-                                    title={`Unrealized P&L of sub-port ${section.sub}`}
-                                  >
-                                    {sec.pnl !== 0
-                                      ? `${sec.pnl >= 0 ? "+" : "-"}${csym}${fmtAmt(Math.abs(sec.pnl))}`
-                                      : "—"}
-                                  </span>
-                                </div>
-                              </td>
-                            </tr>
+                                -{csym}
+                                {fmtAmt(Math.abs(groupDebt.debt))}
+                              </span>
+                              <span className="ml-1">
+                                {fmtWeight(
+                                  (Math.max(0, groupDebt.recovered) /
+                                    Math.abs(groupDebt.inherited)) *
+                                    100
+                                )}{" "}
+                                repaid
+                              </span>
+                            </span>
                           )}
-                          {!secCollapsed &&
-                            section.rows.map((p: MergedPosition) => {
-                              const acc = posCcy(p);
-                              const backendPnl = (() => {
-                                if (p.unrealized_pnl_base != null) return p.unrealized_pnl_base;
-                                if (currency === "THB") return p.unrealized_pnl_thb ?? null;
-                                if (acc === "USD" || acc === "USDT")
-                                  return p.unrealized_pnl ?? null;
-                                return p.unrealized_pnl != null
-                                  ? p.unrealized_pnl / thb_per_usd
-                                  : null;
-                              })();
-                              const sym = csym;
-                              const overrideRaw = costOverrides[p.symbol];
-                              const overrideNative =
-                                overrideRaw != null ? toBase(overrideRaw, acc) : null;
-                              const entryNative = overrideNative ?? toBase(p.price_entry, acc);
-                              const curNative =
-                                p.current_price != null ? toBase(p.current_price, acc) : null;
-                              const pnl =
-                                overrideNative != null && curNative != null
-                                  ? (curNative - overrideNative) * p.total_volume
-                                  : backendPnl;
-                              const unrealPct =
-                                overrideNative != null && curNative != null && overrideNative > 0
-                                  ? ((curNative - overrideNative) / overrideNative) * 100
-                                  : p.unrealized_pct;
-                              // Use backend's entry-date-FX cost basis (matches badge/ANALYTICS totals);
-                              // only fall back to live-FX entry when backend didn't supply one
-                              // (no live quote) or the user set a manual cost override.
-                              // Same helper the group sort uses — one formula, no drift.
-                              const costVal = costOf(p);
-                              const targetNative =
-                                p.price_target != null ? toBase(p.price_target, acc) : null;
-                              const slNative =
-                                p.price_stoploss != null ? toBase(p.price_stoploss, acc) : null;
-                              const hasMultiLots = p.lots.length > 1;
-                              const lotKey = p.rowKey;
-                              const lotsExpanded = !!expandedLots[lotKey];
-                              const thesis = theses[p.symbol.toUpperCase()];
+                          <span
+                            className="ml-auto font-bold"
+                            style={{ color: pnlColor(groupPnl) }}
+                            title="Unrealized P&L of this account"
+                          >
+                            {groupPnl !== 0
+                              ? `${groupPnl >= 0 ? "+" : "-"}${csym}${fmtAmt(Math.abs(groupPnl))}`
+                              : "—"}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
 
-                              const cellMap: Record<DisplayCol, React.ReactNode> = {
-                                SYMBOL: (
-                                  <div className="flex items-center gap-1">
-                                    {hasMultiLots && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setExpandedLots((x) => ({
-                                            ...x,
-                                            [lotKey]: !lotsExpanded,
-                                          }));
-                                        }}
-                                        className="opacity-60 hover:opacity-100"
-                                      >
-                                        {lotsExpanded ? (
-                                          <ChevronDown
-                                            className="h-2.5 w-2.5"
-                                            style={{ color: groupColor }}
-                                          />
-                                        ) : (
-                                          <ChevronRight
-                                            className="h-2.5 w-2.5"
-                                            style={{ color: groupColor }}
-                                          />
-                                        )}
-                                      </button>
-                                    )}
-                                    <button
-                                      type="button"
-                                      className="font-bold focus:outline-none"
-                                      style={{ color: groupColor }}
-                                      title={`Open ${p.symbol} in MKT chart · priced in ${acc}${thesis ? ` · ${thesis.count} thesis (${thesis.status})` : ""}`}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        openInMarket(p.yf_symbol || p.symbol);
-                                      }}
-                                    >
-                                      {p.symbol}
-                                    </button>
-                                    {hasMultiLots && (
-                                      <span
-                                        className="text-[8px]"
-                                        style={{ color: colors.textSecondary }}
-                                      >
-                                        ×{p.lots.length}
-                                      </span>
-                                    )}
-                                    {subPortLabel(p) && (
-                                      <span
-                                        className="text-[7px]"
-                                        style={{
-                                          color:
-                                            SUBPORT_COLORS[subPortLabel(p) as string] ?? "#555",
-                                        }}
-                                      >
-                                        {subPortLabel(p)}
-                                      </span>
-                                    )}
-                                    {thesis && (
-                                      <span className="text-[7px]" style={{ color: "#a78bfa" }}>
-                                        TH
-                                      </span>
-                                    )}
-                                  </div>
-                                ),
-                                SECTOR: (
-                                  <span
-                                    className="block max-w-[120px] truncate"
-                                    style={{ color: colors.textSecondary }}
-                                    title={p.sector || undefined}
+                    {/* Position rows — one section per sub-port when the account
+                      has two or more (each is its own average-cost book) */}
+                    {!isCollapsed &&
+                      sections.map((section) => {
+                        const secKey = `${gk}::${section.sub}`;
+                        const secCollapsed = sections.length > 1 && !!collapsed[secKey];
+                        const sec = sections.length > 1 ? statsOf(section.rows) : null;
+                        const secColor = SUBPORT_COLORS[section.sub] ?? "#555";
+                        const secDebt = subTakeoverDebt.get(
+                          `${section.rows[0]?.account_id ?? ""}::${section.sub}`
+                        );
+                        return (
+                          <React.Fragment key={secKey}>
+                            {sec && (
+                              <tr
+                                style={{ background: "#080808", cursor: "pointer" }}
+                                onClick={() =>
+                                  setCollapsed((c) => ({ ...c, [secKey]: !secCollapsed }))
+                                }
+                                onKeyDown={(e) =>
+                                  e.key === "Enter" &&
+                                  setCollapsed((c) => ({ ...c, [secKey]: !secCollapsed }))
+                                }
+                              >
+                                <td
+                                  colSpan={displayCols.length + 1}
+                                  className="pl-6 pr-3 border-b"
+                                  style={{
+                                    borderColor: "#141414",
+                                    borderLeftWidth: 3,
+                                    borderLeftColor: `${groupColor}55`,
+                                  }}
+                                >
+                                  <div
+                                    className="flex items-center gap-3 text-[8px] whitespace-nowrap"
+                                    style={{
+                                      position: "sticky",
+                                      left: 24,
+                                      width: "max(0px, calc(100cqw - 40px))",
+                                    }}
                                   >
-                                    {p.sector || "—"}
-                                  </span>
-                                ),
-                                ENTRY: (
-                                  <span
-                                    title={
-                                      overrideNative
-                                        ? "Manual cost override"
-                                        : hasMultiLots
-                                          ? "Volume-weighted average of the lots"
-                                          : undefined
-                                    }
-                                  >
-                                    {sym}
-                                    {fmtPx(entryNative)}
-                                    {overrideNative && <span style={{ color: "#f59e0b" }}>*</span>}
-                                  </span>
-                                ),
-                                CURRENT:
-                                  curNative != null ? (
-                                    <span style={{ color: colors.text }}>
-                                      {sym}
-                                      {fmtPx(curNative)}
+                                    <span className="text-[7px] w-2" style={{ color: "#555" }}>
+                                      {secCollapsed ? "▶" : "▼"}
                                     </span>
-                                  ) : (
-                                    <Loader2 className="h-2 w-2 animate-spin inline" />
-                                  ),
-                                "PRE/POST": (() => {
-                                  const s = session[p.symbol];
-                                  const ext = activeSession(s);
-                                  if (!s || !ext)
-                                    return <span style={{ color: colors.textSecondary }}>—</span>;
-                                  const isPre = ext.label === "PRE";
-                                  const px = isPre ? s.pre_price : s.post_price;
-                                  const pct = ext.pct;
-                                  if (px == null)
-                                    return <span style={{ color: colors.textSecondary }}>—</span>;
-                                  const label = ext.label;
-                                  const labelColor = isPre ? "#f59e0b" : "#38bdf8";
-                                  const pxNative = toBase(px, acc);
-                                  return (
-                                    <span className="inline-flex items-center gap-1">
-                                      <span
-                                        className="text-[7px] font-bold"
-                                        style={{ color: labelColor }}
-                                        title={`marketState: ${s.market_state ?? "?"}`}
-                                      >
-                                        {label}
-                                      </span>
-                                      <span
-                                        className="font-bold"
-                                        style={{ color: pct != null ? pnlColor(pct) : colors.text }}
-                                      >
-                                        {sym}
-                                        {fmtPx(pxNative)}
-                                        {pct != null && (
-                                          <span className="text-[8px] ml-0.5 font-normal">
-                                            ({pct >= 0 ? "+" : ""}
-                                            {pct.toFixed(2)}%)
-                                          </span>
-                                        )}
-                                      </span>
-                                    </span>
-                                  );
-                                })(),
-                                MGN: (() => {
-                                  const key = (p.yf_symbol || p.symbol || "").toUpperCase();
-                                  const m = margin.map.get(`${p.account_id}|${key}`);
-                                  if (!m)
-                                    return <span style={{ color: colors.textSecondary }}>—</span>;
-                                  const c = LEVEL_COLOR[m.asset.level];
-                                  const d = m.asset.drop_to_call;
-                                  return (
                                     <span
-                                      className="font-bold"
-                                      style={{ color: c }}
-                                      title={`MARGIN ${m.asset.level}: ${LEVEL_TEXT[m.asset.level]}\nตัวนี้ลงอีก ${d == null ? "เท่าไรก็ไม่ถึง call (ตัวเดียว)" : pct1(d)} → Excess Liquidity < 0\nmaint ${fmtAmt(m.asset.maint)} (${pct1(m.asset.mm_share)} ของ MM บัญชี) · บัญชี ${m.account.level} cushion ${pct1(m.account.cushion)}`}
+                                      className="font-bold tracking-wider"
+                                      style={{ color: secColor }}
                                     >
-                                      ● {d == null ? "" : `−${pct1(d)}`}
+                                      {section.sub || "NO SUB-PORT"}
                                     </span>
-                                  );
-                                })(),
-                                VOL: <>{fmtQty(p.volume)}</>,
-                                COST: (
-                                  <span style={{ color: colors.textSecondary }}>
-                                    {sym}
-                                    {fmtAmt(costVal)}
-                                  </span>
-                                ),
-                                "% PORT": (() => {
-                                  const mv = marketValueOf(p);
-                                  const w = navPct(mv);
-                                  if (w == null)
-                                    return <span style={{ color: colors.textSecondary }}>—</span>;
-                                  return (
-                                    <span
-                                      className="inline-flex items-center gap-1"
-                                      title={`${csym}${fmtAmt(mv)} market value ÷ NAV ${csym}${fmtAmt(navParts?.nav ?? 0)}`}
-                                    >
-                                      <span
-                                        className="inline-block h-1.5"
-                                        style={{
-                                          width: `${Math.max(1, Math.round((w / maxWeight) * 30))}px`,
-                                          background: `${groupColor}aa`,
-                                        }}
-                                      />
-                                      <span className="font-bold" style={{ color: colors.text }}>
-                                        {fmtWeight(w)}
-                                      </span>
+                                    <span style={{ color: colors.textSecondary }}>
+                                      {section.rows.length}
                                     </span>
-                                  );
-                                })(),
-                                "DAY P&L": (() => {
-                                  const dayPnl =
-                                    p.day_pnl_base != null
-                                      ? p.day_pnl_base
-                                      : currency === "THB"
-                                        ? (p.day_pnl_thb ?? null)
-                                        : acc === "USD" || acc === "USDT"
-                                          ? (p.day_pnl ?? null)
-                                          : p.day_pnl != null
-                                            ? p.day_pnl / thb_per_usd
-                                            : null;
-                                  if (dayPnl == null) {
-                                    // The regular session has not traded today. If an
-                                    // extended-hours session IS running, show that move
-                                    // instead of a blank — it is the only live number
-                                    // there is, and it is what the position is actually
-                                    // doing right now.
-                                    const ext = p.day_stale
-                                      ? activeSession(session[p.symbol])
-                                      : null;
-                                    if (ext) {
-                                      const extPnl = toBase(ext.change * p.volume, acc);
-                                      const extColor = ext.label === "PRE" ? "#f59e0b" : "#38bdf8";
-                                      return (
-                                        <span
-                                          className="inline-flex items-center gap-1"
-                                          title={`${ext.label}-market move — the regular session has not opened yet (last close ${p.day_session_date ?? "unknown"})`}
-                                        >
-                                          <span
-                                            className="text-[7px] font-bold"
-                                            style={{ color: extColor }}
-                                          >
-                                            {ext.label}
-                                          </span>
-                                          <span
-                                            className="font-bold"
-                                            style={{ color: pnlColor(extPnl) }}
-                                          >
-                                            {extPnl >= 0 ? "+" : "-"}
-                                            {sym}
-                                            {fmtAmt(Math.abs(extPnl))}
-                                            {ext.pct != null && (
-                                              <span className="text-[8px] ml-0.5 font-normal">
-                                                ({ext.pct >= 0 ? "+" : ""}
-                                                {ext.pct.toFixed(2)}%)
-                                              </span>
-                                            )}
-                                          </span>
-                                        </span>
-                                      );
-                                    }
-                                    // Blank because that market has not traded today —
-                                    // say so, otherwise it reads as missing data.
-                                    const staleHint = p.day_stale
-                                      ? `Market has not opened yet — last session ${p.day_session_date ?? "unknown"}`
-                                      : undefined;
-                                    return (
-                                      <span
-                                        style={{ color: colors.textSecondary }}
-                                        title={staleHint}
-                                      >
-                                        —
+                                    <span style={{ color: colors.textSecondary }}>
+                                      MV{" "}
+                                      <span style={{ color: colors.text }}>
+                                        {csym}
+                                        {fmtAmt(sec.mv)}
                                       </span>
-                                    );
-                                  }
-                                  return (
-                                    <span style={{ color: pnlColor(dayPnl) }}>
-                                      {dayPnl >= 0 ? "+" : "-"}
-                                      {sym}
-                                      {fmtAmt(Math.abs(dayPnl))}
-                                      {p.day_pct != null && (
-                                        <span className="text-[8px] ml-0.5 font-normal">
-                                          ({p.day_pct >= 0 ? "+" : ""}
-                                          {p.day_pct.toFixed(2)}%)
+                                      {navPct(sec.mv) != null && (
+                                        <span className="ml-1" style={{ color: colors.text }}>
+                                          {fmtWeight(navPct(sec.mv))}
                                         </span>
                                       )}
                                     </span>
-                                  );
-                                })(),
-                                UNREAL:
-                                  pnl != null ? (
-                                    <span className="font-bold" style={{ color: pnlColor(pnl) }}>
-                                      {pnl >= 0 ? "+" : "-"}
-                                      {sym}
-                                      {fmtAmt(Math.abs(pnl))}
+                                    <span style={{ color: colors.textSecondary }}>
+                                      cost {csym}
+                                      {fmtAmt(sec.cost)}
                                     </span>
-                                  ) : (
-                                    <span style={{ color: colors.textSecondary }}>—</span>
-                                  ),
-                                "% RTN":
-                                  unrealPct != null ? (
+                                    {secDebt && (
+                                      <span
+                                        style={{ color: colors.textSecondary }}
+                                        title={`Sub-port ${section.sub} taken over ${secDebt.date} at a loss of ${csym}${fmtAmt(Math.abs(secDebt.inherited))}. Recovered so far ${secDebt.recovered >= 0 ? "+" : "-"}${csym}${fmtAmt(Math.abs(secDebt.recovered))} (realized since + unrealized now).`}
+                                      >
+                                        TAKEOVER DEBT{" "}
+                                        <span style={{ color: pnlColor(secDebt.debt) }}>
+                                          -{csym}
+                                          {fmtAmt(Math.abs(secDebt.debt))}
+                                        </span>
+                                        <span className="ml-1">
+                                          {fmtWeight(
+                                            (Math.max(0, secDebt.recovered) /
+                                              Math.abs(secDebt.inherited)) *
+                                              100
+                                          )}{" "}
+                                          repaid
+                                        </span>
+                                      </span>
+                                    )}
                                     <span
-                                      className="font-bold"
-                                      style={{ color: pnlColor(unrealPct) }}
+                                      className="ml-auto font-bold"
+                                      style={{ color: pnlColor(sec.pnl) }}
+                                      title={`Unrealized P&L of sub-port ${section.sub}`}
                                     >
-                                      {fmtPct(unrealPct)}
+                                      {sec.pnl !== 0
+                                        ? `${sec.pnl >= 0 ? "+" : "-"}${csym}${fmtAmt(Math.abs(sec.pnl))}`
+                                        : "—"}
                                     </span>
-                                  ) : (
-                                    <span style={{ color: colors.textSecondary }}>—</span>
-                                  ),
-                                TARGET:
-                                  targetNative != null ? (
-                                    <span style={{ color: "#4ade80" }}>
-                                      {sym}
-                                      {fmtPx(targetNative)}
-                                    </span>
-                                  ) : (
-                                    <span style={{ color: colors.textSecondary }}>—</span>
-                                  ),
-                                "S/L":
-                                  slNative != null ? (
-                                    <span style={{ color: "#f87171" }}>
-                                      {sym}
-                                      {fmtPx(slNative)}
-                                    </span>
-                                  ) : (
-                                    <span style={{ color: colors.textSecondary }}>—</span>
-                                  ),
-                                STRATEGY: (
-                                  <span
-                                    className="block max-w-[120px] truncate text-[8px]"
-                                    style={{ color: colors.textSecondary }}
-                                    title={p.strategy_name || undefined}
-                                  >
-                                    {p.strategy_name || "—"}
-                                  </span>
-                                ),
-                              };
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                            {!secCollapsed &&
+                              section.rows.map((p: MergedPosition) => {
+                                const acc = posCcy(p);
+                                const backendPnl = (() => {
+                                  if (p.unrealized_pnl_base != null) return p.unrealized_pnl_base;
+                                  if (currency === "THB") return p.unrealized_pnl_thb ?? null;
+                                  if (acc === "USD" || acc === "USDT")
+                                    return p.unrealized_pnl ?? null;
+                                  return p.unrealized_pnl != null
+                                    ? p.unrealized_pnl / thb_per_usd
+                                    : null;
+                                })();
+                                const sym = csym;
+                                const overrideRaw = costOverrides[p.symbol];
+                                const overrideNative =
+                                  overrideRaw != null ? toBase(overrideRaw, acc) : null;
+                                const entryNative = overrideNative ?? toBase(p.price_entry, acc);
+                                const curNative =
+                                  p.current_price != null ? toBase(p.current_price, acc) : null;
+                                const pnl =
+                                  overrideNative != null && curNative != null
+                                    ? (curNative - overrideNative) * p.total_volume
+                                    : backendPnl;
+                                const unrealPct =
+                                  overrideNative != null && curNative != null && overrideNative > 0
+                                    ? ((curNative - overrideNative) / overrideNative) * 100
+                                    : p.unrealized_pct;
+                                // Use backend's entry-date-FX cost basis (matches badge/ANALYTICS totals);
+                                // only fall back to live-FX entry when backend didn't supply one
+                                // (no live quote) or the user set a manual cost override.
+                                // Same helper the group sort uses — one formula, no drift.
+                                const costVal = costOf(p);
+                                const targetNative =
+                                  p.price_target != null ? toBase(p.price_target, acc) : null;
+                                const slNative =
+                                  p.price_stoploss != null ? toBase(p.price_stoploss, acc) : null;
+                                const hasMultiLots = p.lots.length > 1;
+                                const lotKey = p.rowKey;
+                                const lotsExpanded = !!expandedLots[lotKey];
+                                const thesis = theses[p.symbol.toUpperCase()];
 
-                              return (
-                                <React.Fragment key={p.rowKey}>
-                                  <tr
-                                    className="group hover:bg-[#111]"
-                                    style={{ borderBottom: "1px solid #141414", height: rowH }}
-                                  >
-                                    {displayCols.map((col) => (
-                                      <td
-                                        key={col}
-                                        className={`px-2 ${py} whitespace-nowrap ${NUMERIC_COLS.has(col) ? "text-right" : ""}`}
-                                      >
-                                        {cellMap[col]}
-                                      </td>
-                                    ))}
-                                    {/* Pinned to the right edge: on a table wider than the
-                                screen the actions would otherwise sit off-screen. */}
-                                    <td
-                                      className={`px-2 ${py} whitespace-nowrap text-right sticky right-0`}
-                                    >
-                                      <div
-                                        className={`inline-flex gap-2 text-[8px] font-bold px-1 bg-[#111] ${ROW_ACTION}`}
-                                      >
+                                const cellMap: Record<DisplayCol, React.ReactNode> = {
+                                  SYMBOL: (
+                                    <div className="flex items-center gap-1">
+                                      {hasMultiLots && (
                                         <button
                                           type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setExpandedLots((x) => ({
+                                              ...x,
+                                              [lotKey]: !lotsExpanded,
+                                            }));
+                                          }}
+                                          className="opacity-60 hover:opacity-100"
+                                        >
+                                          {lotsExpanded ? (
+                                            <ChevronDown
+                                              className="h-2.5 w-2.5"
+                                              style={{ color: groupColor }}
+                                            />
+                                          ) : (
+                                            <ChevronRight
+                                              className="h-2.5 w-2.5"
+                                              style={{ color: groupColor }}
+                                            />
+                                          )}
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        className="font-bold focus:outline-none"
+                                        style={{ color: groupColor }}
+                                        title={`Open ${p.symbol} in MKT chart · priced in ${acc}${thesis ? ` · ${thesis.count} thesis (${thesis.status})` : ""}`}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          openInMarket(p.yf_symbol || p.symbol);
+                                        }}
+                                      >
+                                        {p.symbol}
+                                      </button>
+                                      {hasMultiLots && (
+                                        <span
+                                          className="text-[8px]"
                                           style={{ color: colors.textSecondary }}
-                                          title="Stock card: compare AVCO and FIFO"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setStockCard({
-                                              accountId: p.account_id,
-                                              symbol: p.symbol,
-                                              subPort: subPortOf(p.note) || undefined,
-                                            });
-                                          }}
                                         >
-                                          CARD
-                                        </button>
-                                        {onOpenThesis && (
-                                          <button
-                                            type="button"
-                                            style={{
-                                              color: thesis ? "#a78bfa" : colors.textSecondary,
-                                            }}
-                                            title={
-                                              thesis ? "Open thesis" : "No thesis yet — write one"
-                                            }
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              onOpenThesis(p.symbol);
-                                            }}
-                                          >
-                                            {thesis ? "THESIS" : "+THESIS"}
-                                          </button>
-                                        )}
-                                        <button
-                                          type="button"
-                                          style={{ color: "#ff9900" }}
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setEditTarget(p.lots[0]);
-                                            setEditMeta({
-                                              mergedAvg: p.avg_entry,
-                                              volume: p.total_volume,
-                                              costOverride: costOverrides[p.symbol],
-                                              siblingLotIds: p.lots.slice(1).map((l) => l.id),
-                                            });
-                                          }}
-                                        >
-                                          EDIT
-                                        </button>
-                                        <button
-                                          type="button"
-                                          style={{ color: "#f87171" }}
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setSellCtx({
-                                              target: p.lots[0],
-                                              avgEntry: costOverrides[p.symbol] ?? p.avg_entry,
-                                              allLots: p.lots,
-                                            });
-                                          }}
-                                        >
-                                          SELL
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                  {/* Expanded lots */}
-                                  {hasMultiLots &&
-                                    lotsExpanded &&
-                                    p.lots.map((lot, li) => {
-                                      const lotEntry = toBase(lot.price_entry, acc);
-                                      const lotPnl =
-                                        lot.unrealized_pnl_base != null
-                                          ? lot.unrealized_pnl_base
-                                          : currency === "THB"
-                                            ? (lot.unrealized_pnl_thb ?? null)
-                                            : toBase(lot.unrealized_pnl ?? 0, posCcy(lot));
-                                      return (
-                                        <tr
-                                          key={`${lot.id}_lot`}
-                                          className="group"
+                                          ×{p.lots.length}
+                                        </span>
+                                      )}
+                                      {subPortLabel(p) && (
+                                        <span
+                                          className="text-[7px]"
                                           style={{
-                                            background: "#0a0a0a",
-                                            borderBottom: "1px solid #0f0f0f",
+                                            color:
+                                              SUBPORT_COLORS[subPortLabel(p) as string] ?? "#555",
                                           }}
                                         >
-                                          <td
-                                            colSpan={displayCols.length + 1}
-                                            className="px-4 py-0.5"
+                                          {subPortLabel(p)}
+                                        </span>
+                                      )}
+                                      {thesis && (
+                                        <span className="text-[7px]" style={{ color: "#a78bfa" }}>
+                                          TH
+                                        </span>
+                                      )}
+                                    </div>
+                                  ),
+                                  SECTOR: (
+                                    <span
+                                      className="block max-w-[120px] truncate"
+                                      style={{ color: colors.textSecondary }}
+                                      title={p.sector || undefined}
+                                    >
+                                      {p.sector || "—"}
+                                    </span>
+                                  ),
+                                  ENTRY: (
+                                    <span
+                                      title={
+                                        overrideNative
+                                          ? "Manual cost override"
+                                          : hasMultiLots
+                                            ? "Volume-weighted average of the lots"
+                                            : undefined
+                                      }
+                                    >
+                                      {sym}
+                                      {fmtPx(entryNative)}
+                                      {overrideNative && (
+                                        <span style={{ color: "#f59e0b" }}>*</span>
+                                      )}
+                                    </span>
+                                  ),
+                                  CURRENT:
+                                    curNative != null ? (
+                                      <span style={{ color: colors.text }}>
+                                        {sym}
+                                        {fmtPx(curNative)}
+                                      </span>
+                                    ) : (
+                                      <Loader2 className="h-2 w-2 animate-spin inline" />
+                                    ),
+                                  "PRE/POST": (() => {
+                                    const s = session[p.symbol];
+                                    const ext = activeSession(s);
+                                    if (!s || !ext)
+                                      return <span style={{ color: colors.textSecondary }}>—</span>;
+                                    const isPre = ext.label === "PRE";
+                                    const px = isPre ? s.pre_price : s.post_price;
+                                    const pct = ext.pct;
+                                    if (px == null)
+                                      return <span style={{ color: colors.textSecondary }}>—</span>;
+                                    const label = ext.label;
+                                    const labelColor = isPre ? "#f59e0b" : "#38bdf8";
+                                    const pxNative = toBase(px, acc);
+                                    return (
+                                      <span className="inline-flex items-center gap-1">
+                                        <span
+                                          className="text-[7px] font-bold"
+                                          style={{ color: labelColor }}
+                                          title={`marketState: ${s.market_state ?? "?"}`}
+                                        >
+                                          {label}
+                                        </span>
+                                        <span
+                                          className="font-bold"
+                                          style={{
+                                            color: pct != null ? pnlColor(pct) : colors.text,
+                                          }}
+                                        >
+                                          {sym}
+                                          {fmtPx(pxNative)}
+                                          {pct != null && (
+                                            <span className="text-[8px] ml-0.5 font-normal">
+                                              ({pct >= 0 ? "+" : ""}
+                                              {pct.toFixed(2)}%)
+                                            </span>
+                                          )}
+                                        </span>
+                                      </span>
+                                    );
+                                  })(),
+                                  MGN: (() => {
+                                    const key = (p.yf_symbol || p.symbol || "").toUpperCase();
+                                    const m = margin.map.get(`${p.account_id}|${key}`);
+                                    if (!m)
+                                      return <span style={{ color: colors.textSecondary }}>—</span>;
+                                    const c = LEVEL_COLOR[m.asset.level];
+                                    const d = m.asset.drop_to_call;
+                                    return (
+                                      <span
+                                        className="font-bold"
+                                        style={{ color: c }}
+                                        title={`MARGIN ${m.asset.level}: ${LEVEL_TEXT[m.asset.level]}\nตัวนี้ลงอีก ${d == null ? "เท่าไรก็ไม่ถึง call (ตัวเดียว)" : pct1(d)} → Excess Liquidity < 0\nmaint ${fmtAmt(m.asset.maint)} (${pct1(m.asset.mm_share)} ของ MM บัญชี) · บัญชี ${m.account.level} cushion ${pct1(m.account.cushion)}`}
+                                      >
+                                        ● {d == null ? "" : `−${pct1(d)}`}
+                                      </span>
+                                    );
+                                  })(),
+                                  VOL: <>{fmtQty(p.volume)}</>,
+                                  COST: (
+                                    <span style={{ color: colors.textSecondary }}>
+                                      {sym}
+                                      {fmtAmt(costVal)}
+                                    </span>
+                                  ),
+                                  "% PORT": (() => {
+                                    const mv = marketValueOf(p);
+                                    const w = navPct(mv);
+                                    if (w == null)
+                                      return <span style={{ color: colors.textSecondary }}>—</span>;
+                                    return (
+                                      <span
+                                        className="inline-flex items-center gap-1"
+                                        title={`${csym}${fmtAmt(mv)} market value ÷ NAV ${csym}${fmtAmt(navParts?.nav ?? 0)}`}
+                                      >
+                                        <span
+                                          className="inline-block h-1.5"
+                                          style={{
+                                            width: `${Math.max(1, Math.round((w / maxWeight) * 30))}px`,
+                                            background: `${groupColor}aa`,
+                                          }}
+                                        />
+                                        <span className="font-bold" style={{ color: colors.text }}>
+                                          {fmtWeight(w)}
+                                        </span>
+                                      </span>
+                                    );
+                                  })(),
+                                  "DAY P&L": (() => {
+                                    const dayPnl =
+                                      p.day_pnl_base != null
+                                        ? p.day_pnl_base
+                                        : currency === "THB"
+                                          ? (p.day_pnl_thb ?? null)
+                                          : acc === "USD" || acc === "USDT"
+                                            ? (p.day_pnl ?? null)
+                                            : p.day_pnl != null
+                                              ? p.day_pnl / thb_per_usd
+                                              : null;
+                                    if (dayPnl == null) {
+                                      // The regular session has not traded today. If an
+                                      // extended-hours session IS running, show that move
+                                      // instead of a blank — it is the only live number
+                                      // there is, and it is what the position is actually
+                                      // doing right now.
+                                      const ext = p.day_stale
+                                        ? activeSession(session[p.symbol])
+                                        : null;
+                                      if (ext) {
+                                        const extPnl = toBase(ext.change * p.volume, acc);
+                                        const extColor =
+                                          ext.label === "PRE" ? "#f59e0b" : "#38bdf8";
+                                        return (
+                                          <span
+                                            className="inline-flex items-center gap-1"
+                                            title={`${ext.label}-market move — the regular session has not opened yet (last close ${p.day_session_date ?? "unknown"})`}
                                           >
-                                            <div className="flex items-center gap-4 text-[8px] font-mono">
-                                              <span className="opacity-40">└ Lot {li + 1}</span>
-                                              <span style={{ color: colors.textSecondary }}>
-                                                {lot.date_entry}
-                                              </span>
-                                              <span>
-                                                {sym}
-                                                {fmtPx(lotEntry)} × {fmtQty(lot.volume)}
-                                              </span>
-                                              <span style={{ color: colors.textSecondary }}>
-                                                Cost {sym}
-                                                {fmtAmt(lotEntry * lot.volume)}
-                                              </span>
-                                              {lotPnl != null && (
-                                                <span style={{ color: pnlColor(lotPnl) }}>
-                                                  {lotPnl >= 0 ? "+" : "-"}
-                                                  {sym}
-                                                  {fmtAmt(Math.abs(lotPnl))}
-                                                  {lot.unrealized_pct != null &&
-                                                    ` (${lot.unrealized_pct >= 0 ? "+" : ""}${lot.unrealized_pct.toFixed(2)}%)`}
+                                            <span
+                                              className="text-[7px] font-bold"
+                                              style={{ color: extColor }}
+                                            >
+                                              {ext.label}
+                                            </span>
+                                            <span
+                                              className="font-bold"
+                                              style={{ color: pnlColor(extPnl) }}
+                                            >
+                                              {extPnl >= 0 ? "+" : "-"}
+                                              {sym}
+                                              {fmtAmt(Math.abs(extPnl))}
+                                              {ext.pct != null && (
+                                                <span className="text-[8px] ml-0.5 font-normal">
+                                                  ({ext.pct >= 0 ? "+" : ""}
+                                                  {ext.pct.toFixed(2)}%)
                                                 </span>
                                               )}
-                                              <div
-                                                className={`ml-auto flex gap-2 font-bold ${ROW_ACTION}`}
-                                              >
-                                                <button
-                                                  type="button"
-                                                  style={{ color: "#ff9900" }}
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    setEditTarget(lot);
-                                                  }}
-                                                >
-                                                  EDIT
-                                                </button>
-                                                <button
-                                                  type="button"
-                                                  style={{ color: "#f87171" }}
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    setSellCtx({
-                                                      target: lot,
-                                                      avgEntry:
-                                                        costOverrides[lot.symbol] ?? undefined,
-                                                    });
-                                                  }}
-                                                >
-                                                  SELL
-                                                </button>
-                                              </div>
-                                            </div>
-                                          </td>
-                                        </tr>
+                                            </span>
+                                          </span>
+                                        );
+                                      }
+                                      // Blank because that market has not traded today —
+                                      // say so, otherwise it reads as missing data.
+                                      const staleHint = p.day_stale
+                                        ? `Market has not opened yet — last session ${p.day_session_date ?? "unknown"}`
+                                        : undefined;
+                                      return (
+                                        <span
+                                          style={{ color: colors.textSecondary }}
+                                          title={staleHint}
+                                        >
+                                          —
+                                        </span>
                                       );
-                                    })}
-                                </React.Fragment>
-                              );
-                            })}
-                        </React.Fragment>
-                      );
-                    })}
-                </tbody>
-              );
-            })}
-          </table>
+                                    }
+                                    return (
+                                      <span style={{ color: pnlColor(dayPnl) }}>
+                                        {dayPnl >= 0 ? "+" : "-"}
+                                        {sym}
+                                        {fmtAmt(Math.abs(dayPnl))}
+                                        {p.day_pct != null && (
+                                          <span className="text-[8px] ml-0.5 font-normal">
+                                            ({p.day_pct >= 0 ? "+" : ""}
+                                            {p.day_pct.toFixed(2)}%)
+                                          </span>
+                                        )}
+                                      </span>
+                                    );
+                                  })(),
+                                  UNREAL:
+                                    pnl != null ? (
+                                      <span className="font-bold" style={{ color: pnlColor(pnl) }}>
+                                        {pnl >= 0 ? "+" : "-"}
+                                        {sym}
+                                        {fmtAmt(Math.abs(pnl))}
+                                      </span>
+                                    ) : (
+                                      <span style={{ color: colors.textSecondary }}>—</span>
+                                    ),
+                                  "% RTN":
+                                    unrealPct != null ? (
+                                      <span
+                                        className="font-bold"
+                                        style={{ color: pnlColor(unrealPct) }}
+                                      >
+                                        {fmtPct(unrealPct)}
+                                      </span>
+                                    ) : (
+                                      <span style={{ color: colors.textSecondary }}>—</span>
+                                    ),
+                                  TARGET:
+                                    targetNative != null ? (
+                                      <span style={{ color: "#4ade80" }}>
+                                        {sym}
+                                        {fmtPx(targetNative)}
+                                      </span>
+                                    ) : (
+                                      <span style={{ color: colors.textSecondary }}>—</span>
+                                    ),
+                                  "S/L":
+                                    slNative != null ? (
+                                      <span style={{ color: "#f87171" }}>
+                                        {sym}
+                                        {fmtPx(slNative)}
+                                      </span>
+                                    ) : (
+                                      <span style={{ color: colors.textSecondary }}>—</span>
+                                    ),
+                                  STRATEGY: (
+                                    <span
+                                      className="block max-w-[120px] truncate text-[8px]"
+                                      style={{ color: colors.textSecondary }}
+                                      title={p.strategy_name || undefined}
+                                    >
+                                      {p.strategy_name || "—"}
+                                    </span>
+                                  ),
+                                };
+
+                                return (
+                                  <React.Fragment key={p.rowKey}>
+                                    <tr
+                                      className="group hover:bg-[#111]"
+                                      style={{ borderBottom: "1px solid #141414", height: rowH }}
+                                    >
+                                      {displayCols.map((col) => (
+                                        <td
+                                          key={col}
+                                          className={`px-2 ${py} whitespace-nowrap ${NUMERIC_COLS.has(col) ? "text-right" : ""}`}
+                                        >
+                                          {cellMap[col]}
+                                        </td>
+                                      ))}
+                                      {/* Pinned to the right edge: on a table wider than the
+                                screen the actions would otherwise sit off-screen. */}
+                                      <td
+                                        className={`px-2 ${py} whitespace-nowrap text-right sticky right-0`}
+                                      >
+                                        <div
+                                          className={`inline-flex gap-2 text-[8px] font-bold px-1 bg-[#111] ${ROW_ACTION}`}
+                                        >
+                                          <button
+                                            type="button"
+                                            style={{ color: colors.textSecondary }}
+                                            title="Stock card: compare AVCO and FIFO"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setStockCard({
+                                                accountId: p.account_id,
+                                                symbol: p.symbol,
+                                                subPort: subPortOf(p.note) || undefined,
+                                              });
+                                            }}
+                                          >
+                                            CARD
+                                          </button>
+                                          {onOpenThesis && (
+                                            <button
+                                              type="button"
+                                              style={{
+                                                color: thesis ? "#a78bfa" : colors.textSecondary,
+                                              }}
+                                              title={
+                                                thesis ? "Open thesis" : "No thesis yet — write one"
+                                              }
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                onOpenThesis(p.symbol);
+                                              }}
+                                            >
+                                              {thesis ? "THESIS" : "+THESIS"}
+                                            </button>
+                                          )}
+                                          <button
+                                            type="button"
+                                            style={{ color: "#ff9900" }}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setEditTarget(p.lots[0]);
+                                              setEditMeta({
+                                                mergedAvg: p.avg_entry,
+                                                volume: p.total_volume,
+                                                costOverride: costOverrides[p.symbol],
+                                                siblingLotIds: p.lots.slice(1).map((l) => l.id),
+                                              });
+                                            }}
+                                          >
+                                            EDIT
+                                          </button>
+                                          <button
+                                            type="button"
+                                            style={{ color: "#f87171" }}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSellCtx({
+                                                target: p.lots[0],
+                                                avgEntry: costOverrides[p.symbol] ?? p.avg_entry,
+                                                allLots: p.lots,
+                                              });
+                                            }}
+                                          >
+                                            SELL
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                    {/* Expanded lots */}
+                                    {hasMultiLots &&
+                                      lotsExpanded &&
+                                      p.lots.map((lot, li) => {
+                                        const lotEntry = toBase(lot.price_entry, acc);
+                                        const lotPnl =
+                                          lot.unrealized_pnl_base != null
+                                            ? lot.unrealized_pnl_base
+                                            : currency === "THB"
+                                              ? (lot.unrealized_pnl_thb ?? null)
+                                              : toBase(lot.unrealized_pnl ?? 0, posCcy(lot));
+                                        return (
+                                          <tr
+                                            key={`${lot.id}_lot`}
+                                            className="group"
+                                            style={{
+                                              background: "#0a0a0a",
+                                              borderBottom: "1px solid #0f0f0f",
+                                            }}
+                                          >
+                                            <td
+                                              colSpan={displayCols.length + 1}
+                                              className="px-4 py-0.5"
+                                            >
+                                              <div className="flex items-center gap-4 text-[8px] font-mono">
+                                                <span className="opacity-40">└ Lot {li + 1}</span>
+                                                <span style={{ color: colors.textSecondary }}>
+                                                  {lot.date_entry}
+                                                </span>
+                                                <span>
+                                                  {sym}
+                                                  {fmtPx(lotEntry)} × {fmtQty(lot.volume)}
+                                                </span>
+                                                <span style={{ color: colors.textSecondary }}>
+                                                  Cost {sym}
+                                                  {fmtAmt(lotEntry * lot.volume)}
+                                                </span>
+                                                {lotPnl != null && (
+                                                  <span style={{ color: pnlColor(lotPnl) }}>
+                                                    {lotPnl >= 0 ? "+" : "-"}
+                                                    {sym}
+                                                    {fmtAmt(Math.abs(lotPnl))}
+                                                    {lot.unrealized_pct != null &&
+                                                      ` (${lot.unrealized_pct >= 0 ? "+" : ""}${lot.unrealized_pct.toFixed(2)}%)`}
+                                                  </span>
+                                                )}
+                                                <div
+                                                  className={`ml-auto flex gap-2 font-bold ${ROW_ACTION}`}
+                                                >
+                                                  <button
+                                                    type="button"
+                                                    style={{ color: "#ff9900" }}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      setEditTarget(lot);
+                                                    }}
+                                                  >
+                                                    EDIT
+                                                  </button>
+                                                  <button
+                                                    type="button"
+                                                    style={{ color: "#f87171" }}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      setSellCtx({
+                                                        target: lot,
+                                                        avgEntry:
+                                                          costOverrides[lot.symbol] ?? undefined,
+                                                      });
+                                                    }}
+                                                  >
+                                                    SELL
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                  </React.Fragment>
+                                );
+                              })}
+                          </React.Fragment>
+                        );
+                      })}
+                  </tbody>
+                );
+              })}
+            </table>
+          </div>
         </div>
       )}
 

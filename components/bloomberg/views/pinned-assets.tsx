@@ -1284,7 +1284,7 @@ const CompactWatchRow = memo(function CompactWatchRow({
     pin.comment || null,
     stale?.title ?? null,
     quoteError ? `price delayed: ${quoteError}` : null,
-    "drag to reorder · double-click to edit",
+    "drag to reorder · drag onto a group to move · double-click to edit",
   ]
     .filter(Boolean)
     .join("\n");
@@ -1441,6 +1441,8 @@ export const PinnedAssets = memo(function PinnedAssets({
   // Drag-to-reorder state
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  /** LIST view: group header the dragged row is hovering — the drop target for a group move. */
+  const [dragOverGroup, setDragOverGroup] = useState<string | null>(null);
 
   // ── localStorage helpers ──────────────────────────────────────────────────
 
@@ -1991,6 +1993,29 @@ export const PinnedAssets = memo(function PinnedAssets({
     [pins, filteredPins, sortKey, sortDir, groups, tags, saveToLS, setPins, getSortValue]
   );
 
+  // Group move only — order and the active sort stay as they are. Used by a
+  // drop on a group header, and by a drop on another group's row while a
+  // column sort is on (reordering there would throw the sort away).
+  const handleMoveToGroup = useCallback(
+    async (pinId: string, groupId: string) => {
+      const pin = pins.find((p) => p.id === pinId);
+      if (!pin || pin.groupId === groupId) return;
+      const prevPins = pins;
+      const newPins = pins.map((p) => (p.id === pinId ? { ...p, groupId } : p));
+      setPins(newPins);
+      saveToLS(groups, newPins, tags);
+      try {
+        await apiPatch(`/api/pins/assets/${encodeURIComponent(pinId)}`, { group_id: groupId });
+      } catch (err) {
+        console.error("[handleMoveToGroup]", err);
+        setPins(prevPins);
+        saveToLS(groups, prevPins, tags);
+        setMutError(`Move ${pin.symbol} to group failed`);
+      }
+    },
+    [pins, groups, tags, saveToLS, setPins]
+  );
+
   const sortedPins = useMemo(
     () =>
       sortKey === "manual"
@@ -2014,33 +2039,69 @@ export const PinnedAssets = memo(function PinnedAssets({
   // LIST-view drag-to-reorder. Callbacks are stable (ref-backed) so the
   // memoised rows only re-render when their own drag highlight changes.
   const dragFromRef = useRef<number | null>(null);
-  const reorderCtx = useRef({ reorder: handleReorder, list: sortedPins, grouped: false });
+  const reorderCtx = useRef({
+    reorder: handleReorder,
+    moveToGroup: handleMoveToGroup,
+    list: sortedPins,
+    grouped: false,
+    manual: false,
+  });
   reorderCtx.current = {
     reorder: handleReorder,
+    moveToGroup: handleMoveToGroup,
     list: sortedPins,
     grouped: groups.length > 1 && filterGroup === "all",
+    manual: sortKey === "manual",
   };
   const rowDragStart = useCallback((idx: number) => {
     dragFromRef.current = idx;
-    setDragIdx(idx);
+    // Deferred: the drag reveals empty-group headers, and Chrome cancels a drag
+    // whose dragstart handler shifts the layout under the pointer.
+    setTimeout(() => {
+      if (dragFromRef.current === idx) setDragIdx(idx);
+    }, 0);
   }, []);
-  const rowDragOver = useCallback((idx: number) => setDragOverIdx(idx), []);
+  const rowDragOver = useCallback((idx: number) => {
+    setDragOverIdx(idx);
+    setDragOverGroup(null);
+  }, []);
   const rowDragEnd = useCallback(() => {
     dragFromRef.current = null;
     setDragIdx(null);
     setDragOverIdx(null);
+    setDragOverGroup(null);
   }, []);
   const rowDrop = useCallback(
     (toIdx: number) => {
       const from = dragFromRef.current;
       rowDragEnd();
       if (from == null) return;
-      const { reorder, list, grouped } = reorderCtx.current;
+      const { reorder, moveToGroup, list, grouped, manual } = reorderCtx.current;
       const src = list[from];
       const dst = list[toIdx];
       if (!src || !dst) return;
-      const patch = grouped && src.groupId !== dst.groupId ? { groupId: dst.groupId } : undefined;
-      reorder(from, toIdx, patch);
+      const crossGroup = grouped && src.groupId !== dst.groupId;
+      // Under a column sort the row's place is decided by the sort, so a drop
+      // into another group changes the group and nothing else.
+      if (crossGroup && !manual) {
+        moveToGroup(src.id, dst.groupId);
+        return;
+      }
+      reorder(from, toIdx, crossGroup ? { groupId: dst.groupId } : undefined);
+    },
+    [rowDragEnd]
+  );
+  const groupDragOver = useCallback((groupId: string) => {
+    setDragOverGroup(groupId);
+    setDragOverIdx(null);
+  }, []);
+  const groupDrop = useCallback(
+    (groupId: string) => {
+      const from = dragFromRef.current;
+      const { moveToGroup, list } = reorderCtx.current;
+      rowDragEnd();
+      const src = from == null ? undefined : list[from];
+      if (src) moveToGroup(src.id, groupId);
     },
     [rowDragEnd]
   );
@@ -2693,6 +2754,11 @@ export const PinnedAssets = memo(function PinnedAssets({
               );
               // More than one group and no filter → groups become foldable
               // sections like TICK DATA's regions; sort order holds inside each.
+              // While a row is being dragged every group shows its header —
+              // empty ones too — because the header is where a group move lands.
+              const draggedPin = dragIdx != null ? sortedPins[dragIdx] : undefined;
+              const hoverRowGroup = dragOverIdx != null ? sortedPins[dragOverIdx]?.groupId : null;
+              const dropGroupId = draggedPin ? (dragOverGroup ?? hoverRowGroup ?? null) : null;
               const sections =
                 groups.length > 1 && filterGroup === "all"
                   ? groups
@@ -2700,7 +2766,7 @@ export const PinnedAssets = memo(function PinnedAssets({
                         group: g as PinGroup | null,
                         rows: displayedPins.filter((p) => p.groupId === g.id),
                       }))
-                      .filter((sec) => sec.rows.length > 0)
+                      .filter((sec) => sec.rows.length > 0 || draggedPin)
                   : [{ group: null as PinGroup | null, rows: displayedPins }];
               const cols = COMPACT_COLS;
               const rowFor = (pin: PinnedAsset) => {
@@ -2744,21 +2810,41 @@ export const PinnedAssets = memo(function PinnedAssets({
                     {sections.map(({ group, rows }) => {
                       if (!group) return rows.map(rowFor);
                       const folded = foldedGroups.includes(group.id);
+                      const isDropTarget =
+                        dropGroupId === group.id && draggedPin?.groupId !== group.id;
                       return [
-                        <tr key={`g-${group.id}`}>
+                        <tr
+                          key={`g-${group.id}`}
+                          onDragOver={(e) => {
+                            if (!draggedPin) return;
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = "move";
+                            groupDragOver(group.id);
+                          }}
+                          onDrop={(e) => {
+                            if (!draggedPin) return;
+                            e.preventDefault();
+                            groupDrop(group.id);
+                          }}
+                        >
                           {/* biome-ignore lint/a11y/useKeyWithClickEvents: the fold header mirrors TICK DATA's RegionHeader; the SYM/LAST sort and the table view stay keyboard-reachable */}
                           <td
                             colSpan={cols}
                             className={`px-1 py-0 cursor-pointer hover:bg-[#141414] ${TICK_REGION}`}
                             style={{
-                              background: "#0a0a0a",
+                              background: isDropTarget ? "#00FFFF1f" : "#0a0a0a",
                               color: group.color,
                               borderBottom: `1px solid ${colors.border}`,
+                              boxShadow: isDropTarget ? "inset 0 0 0 1px #00FFFF" : undefined,
                             }}
+                            title="Drop a row here to move it into this group"
                             onClick={() => toggleGroupFold(group.id)}
                           >
                             {folded ? "▸" : "▾"} {group.name.toUpperCase()}{" "}
                             <span style={{ color: colors.textSecondary }}>{rows.length}</span>
+                            {isDropTarget && draggedPin && (
+                              <span style={{ color: "#00FFFF" }}> ← {draggedPin.symbol}</span>
+                            )}
                           </td>
                         </tr>,
                         ...(folded ? [] : rows.map(rowFor)),
