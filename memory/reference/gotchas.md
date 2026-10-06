@@ -2133,6 +2133,18 @@ place, never rebuilds) — `useChartIndicators().drawingOverlay` = REG channels 
 Tool buttons reserve their width (`minWidth` in ch; undo/× kept laid out with `visibility`).
 **Rule:** anything that changes per click goes in `drawingOverlay`, never in `overlays`. Drawings persist in the backend (`chart_drawings`, synced) — 2026-09-27.
 
+## PORT positions shook at 110% browser zoom — ResizeObserver → state → own width (fixed 2026-10-03)
+`OpenPositionsTab` measured its scroll box (`ResizeObserver` → `setScrollW`) and set the sticky group headers to
+`scrollW − 27px` inside that same box. At fractional zoom the header overflowed by a sub-pixel, the scrollbar toggled,
+the observer fired again → endless re-render (screen shook, memory climbed). Fix: no state — a `container-type:
+inline-size` wrapper INSIDE the scroll box and `width: calc(100cqw − 28px)` (1px slack). Not on the scroll box itself:
+its `cqw` includes the scrollbar and overflows by ~14px. Rule: never size content from a measurement of the box it sits in.
+
+## `adopt_db_copy.py adopt` under op-log restarts this device's seq (found 2026-10-03)
+Device id lives beside the DB, but the own-op counter (`sync_oplog_meta["seq:<device>"]`) lives inside it — an adopted copy
+has no such key, so ops restart at seq 1 while the peer already saw up to N and skips them. After an op-log adopt, delete
+`backend/.oplog_device_<stem>` (fresh id) before starting the backend. [risk report](../reports/adopt-oplog-seq-reset-risk-report.md)
+
 ## New SYNC_TABLES table + op-log: update code on every machine BEFORE it pulls (2026-09-27)
 A peer on older code stores ops for an unknown table as `"kept"` and never applies them later
 (`sync/oplog.py::_apply_one`, no replay after upgrade). Add the table → pull the code on the other
