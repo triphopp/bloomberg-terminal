@@ -258,3 +258,47 @@ def test_composite_key_rows_and_cascade_delete(pair):
         assert c.execute("SELECT COUNT(*) FROM pinned_assets WHERE id='p1'").fetchone()[0] == 0
         assert c.execute("SELECT COUNT(*) FROM pinned_asset_tags WHERE asset_id='p1'").fetchone()[0] == 0
     assert _open(a) == _open(b) == 0
+
+
+def _iv(c, iv, created_at, snap="2026-10-02", sym="IXG"):
+    with _w(c):
+        c.execute("INSERT INTO iv_snapshots (symbol, snapshot_date, expiry, dte, spot, atm_strike,"
+                  " iv_call, iv_put, iv_mid, source, created_at) VALUES (?,?,'2026-10-16',14,100,100,?,?,?,'yfinance',?)"
+                  " ON CONFLICT(symbol, snapshot_date, expiry) DO UPDATE SET iv_mid=excluded.iv_mid,"
+                  " iv_call=excluded.iv_call, iv_put=excluded.iv_put, created_at=excluded.created_at",
+                  (sym, snap, iv, iv, iv, created_at))
+
+
+def _iv_mid(c, sym="IXG"):
+    return c.execute("SELECT iv_mid FROM iv_snapshots WHERE symbol=?", (sym,)).fetchone()[0]
+
+
+def test_two_readings_of_one_iv_key_merge_without_a_conflict(pair):
+    """2026-10-06: two machines read one chain at different times → 61 conflicts.
+    Now the reading taken after that session's close wins on both, silently."""
+    a, b, root, _ = pair
+    _iv(a, 0.8906, "2026-10-02 20:32:00")   # Fri 16:32 ET — after the close
+    _iv(b, 0.7522, "2026-10-02 17:06:00")   # Fri 13:06 ET — mid-session, but B's op is newer
+    _round(a, b, root)
+    assert _iv_mid(a) == _iv_mid(b) == 0.8906
+    assert _open(a) == _open(b) == 0
+
+
+def test_between_two_post_close_readings_the_later_one_wins_everywhere(pair):
+    a, b, root, _ = pair
+    _iv(a, 0.50, "2026-10-03 10:48:00", sym="SPY")   # Saturday — later
+    _iv(b, 0.40, "2026-10-02 20:10:00", sym="SPY")   # Friday after close
+    _round(a, b, root)
+    assert _iv_mid(a, "SPY") == _iv_mid(b, "SPY") == 0.50
+    assert _open(a) == _open(b) == 0
+
+
+def test_an_edited_row_in_another_table_still_opens_a_conflict(pair):
+    """The reading rule is for iv_snapshots only — a user edit keeps its review."""
+    a, b, root, aid = pair
+    tid = _trade(a, aid, vol=100)
+    _round(a, b, root)
+    _set(a, tid, volume=200)
+    _set(b, tid, volume=300)
+    _round(a, b, root)
+    assert _open(a) == _open(b) == 1

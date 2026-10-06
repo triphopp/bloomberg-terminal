@@ -461,6 +461,24 @@ def _conflict_id(table: str, row_key: str, loser_op: str) -> str:
     return hashlib.sha256(f"{table}\x1f{row_key}\x1f{loser_op}".encode()).hexdigest()[:32]
 
 
+def _iv_reading_rank(row: dict) -> tuple:
+    """Which of two readings of one (symbol, session, expiry) to keep: one taken
+    after that session's close beats one taken during it (the closing-side mark
+    is what a snapshot is meant to be), then the later one. The row itself breaks
+    a tie, so every device ranks the same pair the same way."""
+    import us_session  # backend root module; imported here to keep sync/ free of app imports at load
+
+    after = us_session.written_after_close(row.get("created_at"), str(row.get("snapshot_date") or ""))
+    return (bool(after), str(row.get("created_at") or ""), _dumps(_payload(row)) or "")
+
+
+#: Tables whose rows are machine readings of a market fact rather than edits.
+#: When two devices read the same key at different times the readings differ by
+#: nature (2026-10-06: 61 iv_snapshots "conflicts", every one of them two reads
+#: of one chain) — the higher-ranked reading wins everywhere, no conflict opens.
+_READING_RANK = {"iv_snapshots": _iv_reading_rank}
+
+
 def _record_conflict(conn, table, row_key, kept: dict, kept_row, other: dict, other_row, reason="concurrent"):
     """`other` is the losing side."""
     cid = _conflict_id(table, row_key, other["op_id"])
@@ -497,10 +515,19 @@ def _apply_one(conn, op: dict) -> str:
                      (f"resolved on {op['device']}", op["resolves"]))
 
     fast_forward = head is None or op.get("parent") == head["op_id"]
+    # Two machine readings of one market fact (_READING_RANK): the better
+    # reading wins on every device, decided from the rows alone, and nothing is
+    # opened for review — there is no user edit on either side to lose.
+    rank = _READING_RANK.get(table)
+    reading = (rank is not None and not fast_forward and op["kind"] != "delete"
+               and current is not None and op.get("row") is not None)
     # Append-only rows never compete: the insert either adds a missing row or
     # does nothing (a differing row is flagged below), whatever the clocks say.
-    wins = (fast_forward or table in APPEND_ONLY_TABLES
-            or (op["hlc"], op["device"], op["op_id"]) > (head["hlc"], head["device"], head["op_id"]))
+    if reading:
+        wins = rank(op["row"]) > rank(current)
+    else:
+        wins = (fast_forward or table in APPEND_ONLY_TABLES
+                or (op["hlc"], op["device"], op["op_id"]) > (head["hlc"], head["device"], head["op_id"]))
     if wins:
         try:
             with conn_savepoint(conn):
@@ -521,7 +548,7 @@ def _apply_one(conn, op: dict) -> str:
                 _record_conflict(conn, table, row_key, head or {"op_id": "local", "device": "local"},
                                  current, op, op.get("row"), reason="append-only: differing row")
             return "applied"
-        if not fast_forward and not _same(current, op.get("row"), table):
+        if not fast_forward and not reading and not _same(current, op.get("row"), table):
             _record_conflict(conn, table, row_key, op, op.get("row"), head, current)
         return "applied"
     # a concurrent op that loses: keep our row, remember the op, flag it
@@ -529,7 +556,7 @@ def _apply_one(conn, op: dict) -> str:
                  "VALUES (?,?,?,?,?,?,?,?,?,?)", (op["op_id"], op["device"], op["seq"], op["hlc"], table, row_key,
                                                  op["kind"], _dumps(op.get("row")), op.get("parent"), op.get("resolves")))
     _close_superseded(conn, op)
-    if not _same(current, op.get("row"), table):
+    if not reading and not _same(current, op.get("row"), table):
         _record_conflict(conn, table, row_key, head, current, op, op.get("row"))
     return "kept"
 

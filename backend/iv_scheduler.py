@@ -38,8 +38,9 @@ import logging
 import os
 import threading
 import time
-from datetime import date, datetime, timezone
-from zoneinfo import ZoneInfo
+from datetime import datetime
+
+import us_session
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +52,6 @@ DEFAULT_INTERVAL = 3 * 60 * 60
 #: Let the app finish booting (startup already does regime training, BC
 #: calibration and the sync pull) before touching the network.
 STARTUP_DELAY = 90
-
-#: US cash close, the mark a snapshot ideally represents.
-_ET = ZoneInfo("America/New_York")
-_CLOSE_HOUR = 16
 
 #: Symbols with no option chain, learned at runtime. Not persisted: a listing can
 #: gain options, and one wasted probe per restart is cheaper than a stale "never"
@@ -114,15 +111,16 @@ def target_symbols() -> list[str]:
 
 
 def _after_us_close(now: datetime | None = None) -> bool:
-    """True once the US cash session for the ET day is over.
+    """True once the US session a reading at `now` belongs to has closed — from
+    16:00 ET, and also before the next open and over the weekend, when the chain
+    still holds that session's closing-side marks (us_session.py).
 
     Holidays are not consulted on purpose: on a closed day the quote does not
     change, so the only cost of a needless refresh is one request, while wiring a
     holiday calendar in here would be a second source of truth against
     market_session.py.
     """
-    et = (now or datetime.now(timezone.utc)).astimezone(_ET)
-    return et.hour >= _CLOSE_HOUR
+    return us_session.is_after_close(now)
 
 
 def symbols_needing_snapshot(symbols: list[str], today: str, after_close: bool) -> list[str]:
@@ -166,28 +164,31 @@ def symbols_needing_snapshot(symbols: list[str], today: str, after_close: bool) 
         if last_write is None:
             needing.append(sym)
             continue
-        if after_close and not _written_after_close(last_write):
+        if after_close and not _written_after_close(last_write, today):
             needing.append(sym)
     return needing
 
 
-def _written_after_close(created_at: str) -> bool:
-    """Was this row written after the US close? `created_at` is UTC (SQLite
-    `datetime('now')`), so it is converted before comparing."""
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%f", "%Y-%m-%d %H:%M:%S.%f"):
-        try:
-            stamp = datetime.strptime(created_at, fmt).replace(tzinfo=timezone.utc)
-        except ValueError:
-            continue
-        return _after_us_close(stamp)
+def _written_after_close(created_at: str, day: str) -> bool:
+    """Was this row for session `day` written after THAT session's close?
+    `created_at` is UTC (SQLite `datetime('now')`). Compared with the close of
+    the row's own day, not with the clock hour of whatever day the stamp falls
+    on: a Saturday-morning stamp is after Friday's close."""
+    after = us_session.written_after_close(created_at, day)
     # Unparseable stamp: treat as already done rather than re-record every pass.
-    return True
+    return True if after is None else after
+
+
+def session_today() -> str:
+    """The US session a reading taken now belongs to — the snapshot's date.
+    Never `date.today()`: that is this machine's date, which turns mid-session."""
+    return us_session.session_date().isoformat()
 
 
 def run_once() -> dict:
     """One pass. Returns a summary; never raises for a single bad symbol."""
     symbols = target_symbols()
-    today = date.today().isoformat()
+    today = session_today()
     after_close = _after_us_close()
     needing = symbols_needing_snapshot(symbols, today, after_close)
 
