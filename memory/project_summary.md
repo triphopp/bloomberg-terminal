@@ -1,7 +1,7 @@
 # Bloomberg Terminal — Project Summary
 
 **Repo:** `bloomberg-terminal` — macOS `~/bloomberg-terminal`, Windows `D:\Agents\Claude\bloomberg-terminal-main`
-**Last updated:** 2026-09-26 — full rewrite after the 2026-09-25/26 changes (BOND/HMAP views, COT, dev status, portfolio takeover, TWR start-of-day flows, 2024-25 history review)
+**Last updated:** 2026-10-06 — refreshed after PRs #87–#94 (ASK chat on every view + saved conversations, NEWS cold-path work, same-origin write guard, `dev_server.py` reload, `aria-pressed` sweep, IV snapshots dated by the US session). Previous full rewrite 2026-09-26.
 
 > Slim core reference. Navigate via [memory/INDEX.md](INDEX.md).
 > - [reference/architecture.md](reference/architecture.md) — data flow, routers, key files, accounting layer
@@ -19,7 +19,7 @@
 
 | Way | Command | Notes |
 |-----|---------|-------|
-| Windows tray launcher | `BloombergTerminal.exe` (repo root) | starts both servers hidden, logs to `logs\`, restarts a dead server (3 tries), backend `--reload` by default (`--no-reload`, `--prod`). Build: `tools\launcher\build.bat`; details `tools/launcher/README.md`. Log-on start: `scripts\win\install-startup-task.ps1` |
+| Windows tray launcher | `BloombergTerminal.exe` (repo root) | starts both servers hidden, logs to `logs\`, restarts a dead server (3 tries), backend auto-reload through `backend/dev_server.py` by default (`--no-reload`, `--prod`, `--local-only`). Build: `tools\launcher\build.bat`; details `tools/launcher/README.md`. Log-on start: `scripts\win\install-startup-task.ps1` |
 | One command | `npm run dev:all` / `npm run dev:no-ollama` | `BACKEND_PORT` / `FRONTEND_PORT` override |
 | Two terminals | `cd backend && python dev_server.py --port 9317` (Windows; elsewhere `python -m uvicorn main:app --port 9317 --reload --timeout-graceful-shutdown 3`) + `npm run dev` | |
 
@@ -29,19 +29,22 @@
 - **env-doctor**: `npm run doctor` / `doctor:fix` / `doctor:ci` — gitignored env files drift between machines; runs as `predev` and from `.husky/post-merge` / `post-checkout`.
 - **Upstream log**: every outbound call → `logs/upstream.jsonl`; read it first when data is missing/stale (`python backend/scripts/upstream_report.py`, `GET /api/health/upstream`).
 
-## Tests (verified 2026-09-26)
+## Tests (verified 2026-10-06)
 
 ```bash
-cd backend && python -m pytest -q -p no:cacheprovider --basetemp=<scratch dir>   # backend/pytest.ini: tests/ + slip_ocr/tests/ — 1042 pass (2026-09-26)
-npm run typecheck      # tsc --noEmit — clean
-npm run test:chart     # 264 pass
-npm run test:session   # 73 pass
-npm run test:views     # 20 pass
+cd backend && python -m pytest -q -p no:cacheprovider --basetemp=<scratch dir>   # backend/pytest.ini: tests/ + slip_ocr/tests/ — 1661 collected
+npm run typecheck      # tsc --noEmit — clean (also run by the pre-commit hook and CI)
+npm run test:chart     # 317 pass
+npm run test:session   # 111 pass
+npm run test:views     # 40 pass
 npm run test:alerts    # 44 pass
-npm run test:watchlist # 13 pass
+npm run test:watchlist # 24 pass
+npm run test:ask       # 36 pass (ASK history, sessions, math, persist, proxy rules)
 node --test components/bloomberg/core/__tests__/*.test.ts   # 3 pass (navigation + Thai-layout shortcuts)
 npm run lint           # biome
 ```
+
+Backend on 2026-10-06: everything passes except known issue 17 (`test_db_pool`, Windows only) and the occasionally flaky `test_tracking::test_a_revised_forecast_stands_and_the_old_one_is_kept` (known issue 20). CI (`.github/workflows/tests.yml`) runs the backend suite and `tsc` on every PR and every push to main.
 
 This Windows box denies the system temp dir to pytest — pass `--basetemp` to a writable folder. `.husky/pre-commit` runs Biome `check --write` + `tsc` on staged TS/JS and then **re-adds the whole file** (partial staging of a TS file is not possible).
 
@@ -55,13 +58,13 @@ This Windows box denies the system temp dir to pytest — pass `--basetemp` to a
 | State | Jotai (atoms) + TanStack React Query |
 | Charts | lightweight-charts v5 via our `chartkit/` + `chart/` (ModularChart, panes, event rail, regression channels), Recharts for dashboards |
 | Styling | Tailwind CSS, `bloombergColors` theme; text-only controls (`styles/globals.css`) |
-| Backend | Python FastAPI (port 9317) — 68 routers, `main.py` mounts them |
+| Backend | Python FastAPI (port 9317) — 73 routers, `main.py` mounts them; `dev_server.py` = auto-reload runner |
 | Data | yfinance through a provider registry (`sources/`) + app-wide Yahoo gate (`yahoo_gate.py`, 6 concurrent) + shared request coordinator (`market_requests.py`) |
 | Macro / rates | FRED (+ Alpha Vantage fallback), Japan MOF JGB CSV, CBOE vol CSVs, Treasury fiscaldata |
 | Filings / positioning | SEC EDGAR (submissions, 8-K EX-99.1, XBRL, EFTS 424B2/424B5), CFTC Socrata (TFF + Disaggregated) |
 | Other | Polymarket Gamma, Binance aggTrades, World Bank, BOT API, SEC Thailand, SDMX central banks, dramexchange |
-| AI | DeepSeek (NEWS → ASK with live data tools), Claude API (portfolio AI), Ollama (optional, clippings endpoints only), MCP server `backend/mcp_server.py` |
-| Database | SQLite `backend/portfolio.db`; Google Drive JSON sync (`backend/sync/`) |
+| AI | ASK (`components/bloomberg/ask` + `routers/news_ai.py`): DeepSeek by default, OpenAI / Anthropic / Gemini / OpenRouter / Groq / custom OpenAI-compatible, read-only tool loop; Claude API (portfolio AI), Ollama (optional, clippings endpoints only), MCP server `backend/mcp_server.py` |
+| Database | SQLite `backend/portfolio.db`; sync between machines = op-log (`backend/sync/oplog.py`, `OPLOG_ENABLED`) through the Google Drive folder (`SYNC_DIR`); the older JSON snapshot merge stays as fallback |
 | Options | Black-Scholes + Gram-Charlier (`greeks.py`), Raw SVI (`analytics/svi.py`), payoff (`analytics/option_payoff.py`) |
 
 ---
@@ -117,7 +120,7 @@ DEV_ORIGINS=                           — optional, comma-separated extra host 
 
 ## Backend Architecture — Modular Routers
 
-`main.py` = app init + CORS + schema init + router mounting (68 routers). All logic in `backend/routers/`.
+`main.py` = app init + CORS + schema init + router mounting (73 routers). All logic in `backend/routers/`.
 Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo_gate` load before any router.
 
 | Router file | Prefix | Source |
@@ -144,7 +147,7 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `pins.py` | `/api/pins/*` (watchlist groups, assets, tags) | SQLite |
 | `watchlist_signals.py` | `/api/watchlist/{quotes,signals,sparklines}` | shared `market_snapshots.py` / `market_requests.py` |
 | `news.py` / `news_watchlist.py` / `social.py` | `/api/news/*`, `/api/social/feed` | 7 news sources, RSS, RSSHub/Graph API. Watchlist news = one stored pull per (symbol, source), kept across restarts in `backend/cache/news_watchlist.json` (`persist_cache.py`); `wait` / `settle` / `pending` let the tab paint before the slow sources answer (2026-10-05) |
-| `news_ai.py` | `/api/news/ask` (POST, SSE) · `/api/news/ask/status` — ASK, the chat on every view (`components/bloomberg/ask`); reads the open page via `read_screen` / `get_page_data` (`backend/ask_pages.py`), theses · questions · tracked numbers · zettel · company accounts via `backend/ask_research.py` (read-only), takes pictures (2026-10-06) | DeepSeek chat-completions via `requests` (upstream source `DeepSeek`) + 9 read-only loopback tools onto this backend + `search_web_news` (Google/Bing News RSS) + `read_page` (`backend/web_reader.py`, Jina Reader fallback) + `web_search` (Tavily/Brave, key optional) |
+| `news_ai.py` + `ask_sessions.py` | `/api/news/ask` (POST, SSE) · `/ask/status` · `/ask/key` · `/ask/models` · `/ask/sessions[/{id}]` (GET / PUT / PATCH pin / DELETE → trash) · `/ask/sessions/trash[/{id}[/restore]]` · `/ask/sessions/config` — ASK, the chat on every view (`components/bloomberg/ask`). Tools (26, read-only): terminal data, `read_screen` / `get_page_data` (`ask_pages.py`), theses · questions · tracked numbers · zettel · company accounts (`ask_research.py`), `search_sessions` / `read_session` (saved conversations), `search_web_news`, `read_page` (`web_reader.py`), `web_search` (Tavily/Brave). Conversations are files outside the repo (`<SYNC_DIR>/ask-sessions` or app-data; pin, trash, restore, erase only from trash); history turns carry `[asked …]`, a resumed conversation is told its figures are old, turns past the 12-turn window go as one-line digests (2026-10-06) | OpenAI chat-completions format via `requests` (upstream sources DeepSeek / Tavily / Brave Search); `backend/.env` re-read per question |
 | `polymarket.py` / `polymarket_stock.py` | `/api/polymarket/*` | Gamma API (client-side filtering, see gotchas) |
 | `company_filings.py` | `/api/company/{filings,outlook,xbrl}/{symbol}` | SEC EDGAR (US only) |
 | `series.py` | `/api/v2/series/*` (generic indicator series; dramexchange DRAM/NAND) | SQLite + `series_sources/` |
@@ -336,6 +339,10 @@ iv_snapshots        (symbol, snapshot_date, expiry, dte, spot, atm_strike, iv_ca
 --   IV of a chain, so this can never be back-filled — only ACCUMULATED. Written as a
 --   side effect of GET /api/options/{symbol} (and by POST .../iv-snapshot for a cron).
 --   One row per (symbol, day, expiry); /sd-bands picks MIN(dte) per day.
+-- 2026-10-06: `snapshot_date` = the US SESSION the chain shows (`backend/us_session.py`: ET; before 09:30 ET or a
+--   weekend → previous weekday), not `date.today()` (the Thai date turned mid-session and filed Friday as Saturday).
+--   Sync: two readings of one key → the after-close reading wins, then the later one, no conflict (`oplog._READING_RANK`).
+--   Rows written before the fix keep their old dates (1,787 of 2,190 map to another session).
 bond_issuance_filings (adsh PK, file_date, form, issuer, cik, sic, category BANK|ABS|SOV|FIN|CORP, captured_at)
 bond_issuance_days    (date PK, filings, complete, fetched_at)
 cot_reports           (dataset, code, report_date PK; oi, conc4_long/short, conc8_long/short, fetched_at)
@@ -455,12 +462,13 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 | Key | Button | View | Component |
 |-----|--------|------|-----------|
 | `1` | MKT | Market (default, eager-loaded) | `market-view.tsx` — left panel WATCH / FREQ / ACTIVE (`discover-lists.tsx`, watchlist `pinned-assets.tsx` compact/table/cards) · main chart (`chart/ModularChart`, indicators, multiple regression channels, event rail: dividends/earnings/SET deadlines/FOMC/CPI/NFP/PCE/GDP) · REGIME panel CORR / GEOM / ROT (table + RRG map) / IV (smile, SVI, OI, 25Δ) / COT (PC1 + extremes) · TICK DATA board — 7 foldable, drag-reorderable sections (AMERICAS / EMEA / ASIA PACIFIC / RATES·US / RATES·JP / VOLATILITY / FX) in 4 columns NAME · LAST · CHG · YTD, ▼p/▲p CFTC crowding marks, `UsMarketClock` on top |
-| `2` | NEWS | News | `views/news/` — WATCHLIST (per-ticker, 7 sources, by sector; HEADLINES / RATE STRESS / DCF / REGIME panels) · NEWSFEED · SOCIAL · DATA (indicator series board) + Polymarket column |
+| `2` | NEWS | News | `views/news/` — ASK bar + column (`<AskBar />` / `<AskColumn />`, takes the Polymarket column's place while open) · WATCHLIST (per-ticker, 7 sources, by sector; answers from what has arrived, `UPDATING` while slow sources settle) · NEWSFEED · SOCIAL · DATA (indicator series board) + Polymarket column |
 | `3` / `b` | BOND | Bond Monitor | `views/bonds/` — MARKET: KPI strip, 10Y YIELD DECOMPOSITION (ACM: expected real + BE + TP, 20D driver, tripwires), TREASURY LEG, CREDIT LEG (IG/HY trigger lines 2%/5%), CORPORATE ISSUANCE/WEEK (SEC 424B2/424B5 ex-bank) + EVENT STUDY + RECENT DEALS, TREASURY AUCTIONS, DEBT STOCK, CFTC Treasury futures + basis trade · CONDITIONS (ex-CRDT, `useCreditData(isActive)` → `/api/crisis`): crisis level L0–3 (also in the status bar), STL FSI / NFCI, breakevens, 30Y mortgage, delinquencies, dealer balance sheet. `Alt+1/2` tabs |
 | `4` / `p` | PORT | Portfolio | `portfolio-view.tsx` → `views/portfolio/` — PORTFOLIO (POSITIONS incl. TAKEOVER strip · OPTIONS · TRADES · CASH · ENTRY) · ANALYTICS (P&L dashboard: KPI strip, flagged XIRR, period returns, PORTFOLIO GROWTH (TWR, deposit ▲ / withdrawal ▼ / EDIT ◆, estimated span shaded, monthly table) · ROTATION) · RISK (VaR/CVaR/stress/parity/sizing + FUTURES POSITIONING vs BOOK) · TOOLS (one thesis navigator shared by THESES · QUESTIONS · TRACK — search, kind / sector / status / owed-work / unread filters, selection kept across the three; THESES: THESIS / NOTES / KB Zettelkasten / RESEARCH (ex-GRAPHS, internals still `graph*`) / HISTORY / TRADES / AI · QUESTIONS: tree (foldable) + cross-thesis search + calendar · TRACK: tracked numbers, forecast vs actual; read marks on all of it · IMPORT · AUDIT incl. ACCOUNTING CHECK). PAPER tab + ANALYTICS → BACKTEST removed 2026-10-02 (backend routers stay) |
 | `5` / `t` | TAIL | Tail Risk Monitor | `tail-risk-view.tsx` + `views/tail/` — MARKET EVENTS (named cross-asset shocks; SEVERE raises the composite) · 6 risk dimensions → composite · MACRO CONTEXT (not in composite: event strip, Fed, curve, regime, latest prints, MACRO READ) · SECTOR ROTATION (turnover tilt + self-recorded ETF AUM) · POSITIONING (CFTC crowding flags; `cot_crowding` shown with CTX tag, `counted: False`) |
 | `h` | — | HMAP (no nav button) | `heatmap-view.tsx` — one market as a sector treemap (~275 names); command `heatmap(TH)`, `heatmap(US, 52w)`; metrics 1D · 52W · 50D · 200D · HIGH · RVOL switch without a request; click → stock view, shift-click → floating chart |
 
+- **ASK** (`c` or the header icon, every view): drawer over the right edge (`<AskDock />` in the shell); CHAT · HISTORY tabs, MODEL ▸ panel; an empty chat lists RECENT CHATS. Pages add context with `useAskContext` (MKT, stock view, HMAP). Toggle buttons carry `aria-pressed` so `read_screen` sees them (154 in `components/`).
 - **Stock view** (not a nav button): global search `/` / `Ctrl+K`, heatmap or watchlist click → `stock-view.tsx`, 15 tabs (FINANCIALS, OUTLOOK, KEY METRICS, ANALYST, ESTIMATES, OWNERSHIP, CALENDAR, QUANTITATIVE, OPTIONS, EARNINGS QUALITY, GRID TRADING, STRATEGY FIT, DCF, RATE STRESS, REGIME) + COT when the symbol maps to a CFTC contract.
 - **Floating chart windows** (`chart/ChartWindowLayer`) float over every view, cap 10, persisted.
 - **URL = view**: header and mobile nav are `<a href="?view=…">` (`layout/view-navigation.ts`); new tab and Back/Forward restore the view. Shortcuts match the physical key (`core/shortcut-key-match.ts`), so they work on a Thai layout; IME composition, dead keys and Meta combos are ignored.
@@ -476,6 +484,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 | `y` | %Chg YTD ↔ daily (THB ↔ USD in PORT) | `Ctrl+R` | refresh data |
 | `Esc` | back / close overlay | `?` | shortcut help |
 | `Ctrl+Shift+T` | toggle chart type | `Alt+1…9` | tab inside the view (`useTabShortcuts`) |
+| `c` | ASK (drawer, or focus a view's own ASK box) | `Esc` | closes the ASK drawer first |
 
 ---
 
@@ -491,7 +500,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 5. **Dime row typos in the source workbook** — EXEL buy 22 @373.118 (2025-10-09, traded 38.27–39.47) and a duplicate of the 2025-10-08 EXEL sale; InnovestX alt-coins bought 2024-12-08 never sold while the account ends holding BTC only.
 
 ### Code / data sources
-6. **`test_iv_scheduler::test_run_once_skips_without_touching_the_network`** fails (`KeyError: 'skipped'`); untouched by the 2026-09-25/26 work, looks date-dependent — not yet investigated.
+6. ~~**`test_iv_scheduler::test_run_once_skips_without_touching_the_network`** failed date-dependently~~ — the scheduler compared a `date.today()` row against an ET close; fixed 2026-10-06 with the IV session date (see 19); the file passes.
 7. **Pane indicator heights don't persist** 🔴 — lightweight-charts v5 converts `setHeight` px → stretch factor against a stale total (`plans/pane-height-persistence-fix.md`).
 8. **TAIL Layer-A z-score units mismatch** 🟡 — 20-day cumulative return vs daily std inflates |z| ≈ √20; left as-is because the 2026-06-07 backtest used it. Fix = rescale + re-backtest together.
 9. **VT (dime) cost basis unknown** — sells 3.8755 against an empty pool; `repair_avco_history.py` skips it.
@@ -504,6 +513,8 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 16. **DB latency (2026-09-30)**: "DB slow" was per-call connection opens (schema re-parse, 396 triggers) + 40-thread pool queueing during bursts, not disk I/O. Fixed with a `get_db` pool (`DB_POOL_SIZE`) and a local thread lane for DB-only routers; check `/api/health/latency` or `logs/latency.jsonl`. Still open: routes in the shared thread queue (portfolio, alerts, margin) can wait seconds during large uncached Yahoo bursts. Schema has no `user_id`; multi-user needs `user_id` + indexes, then Postgres via `DB_MODE` (`reports/db-latency-risk-report.md`).
 17. **`test_db_pool::test_recreated_file_at_same_path_gets_a_fresh_connection`** fails on Windows (`PermissionError [WinError 32]` unlinking a DB file a pooled connection still holds) — also when run alone; seen 2026-10-05, untouched by the NEWS work (`reports/db-pool-test-windows-unlink-risk-report.md`). Rest of the suite passes.
 18. ~~**`--reload` + open browser tab = backend down after every `.py` save**~~ — fixed 2026-10-06: `--timeout-graceful-shutdown 3` ended the hang, then `backend/dev_server.py` replaced `uvicorn --reload` on Windows (the worker's Ctrl-C arrived 10–20 s late). A save is live in ~6 s, measured 4 times with a stream held open.
+19. **IV snapshots were filed under the machine's date** — fixed 2026-10-06 (`us_session.py`, PR #93). The 61 `iv_snapshots` sync conflicts with alvis were resolved to alvis's in-session values; the peer is no longer DIVERGED. Still open: re-dating the 1,787 older rows (needs a rule for key collisions) and the snapshot-mode merge (`sync/merge.py`), unchanged (`reports/iv-snapshot-sync-conflicts-risk-report.md`).
+20. **`test_tracking::test_a_revised_forecast_stands_and_the_old_one_is_kept`** fails occasionally inside the full backend run only (the file alone passed 3/3) — likely order/timestamp dependent, not investigated.
 
 ---
 
@@ -574,6 +585,12 @@ Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished pl
 - [ ] SEC One Report: frontend view (data available 2021–2023)
 
 ### Done (newest first)
+
+- [x] **IV snapshots dated by the US session** — done 2026-10-06 (PR #93): `backend/us_session.py`; scheduler, writer and DTE use it; op-log keeps the after-close reading without a conflict
+- [x] **ASK — chat on every view** — done 2026-10-06 (PRs #90, #91): providers + MODEL panel, read-only tools incl. screen/page data and research, pictures, HISTORY (Drive / app-data files, pin, trash/restore/erase, RECENT CHATS), resumed-conversation dating, `search_sessions` / `read_session`; `aria-pressed` on toggles
+- [x] **Same-origin write guard** — done 2026-10-06 (PR #89): `proxy.ts` + `lib/request-origin.ts`
+- [x] **NEWS cold path** — done 2026-10-05 (PR #88): per-(symbol, source) pulls, `wait` / `settle` / `pending`, `persist_cache.py`, SWR feed + Polymarket
+- [x] **Backend reload on Windows** — done 2026-10-06 (PR #87): `backend/dev_server.py`, launcher `--local-only`
 
 - [x] **PINS redesign** — done 2026-09-30: one symbol = one pin in one group (`ux_pa_symbol` + dedupe migration), `PUT /api/pins/by-symbol/{symbol}` upsert (create/move, `new_group` in the same transaction), shared `PinGroupPicker` + `usePinActions` with "+ New group…" in search / stock view / WATCHLIST ADD (`plans/completed/pins-redesign.md`)
 - [x] **Portfolio takeover as in-kind transfer** — done 2026-09-26 (no plan file): Finansia 6065151/6065157 lots re-booked at fair value on 2026-02-08 (`acquisition_type='TRANSFER_IN'`, previous owner's cost as memo, `/api/v2/portfolio/takeover`, TAKEOVER strip in POSITIONS); script `backend/scripts/apply_portfolio_takeover.py`; commit `20b4294`

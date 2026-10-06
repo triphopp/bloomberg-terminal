@@ -87,7 +87,7 @@ URL carries the view (`?view=bonds`, `layout/view-navigation.ts`).
 ## Key files
 
 ### Backend
-- `backend/main.py` — app init, CORS, schema init, mounts all 61 routers; imports `dev_status`, `upstream_health`, `yahoo_gate` before any router
+- `backend/main.py` — app init, CORS, schema init, mounts all 73 routers; imports `dev_status`, `upstream_health`, `yahoo_gate` before any router
 - `backend/mcp_server.py` — MCP stdio server (not mounted; separate process spawned by the MCP client via `/.mcp.json`). HTTP client of the backend, writes tagged `X-Thesis-Actor: agent:<name>`
 - `backend/config.py` — All env vars + BOT tokens (BOT_API_TOKEN, BOT_IR_TOKEN, BOT_FX_TOKEN, BOT_STATS_TOKEN) + SEC_KEYS (old portal) + SEC2_KEYS (new portal, falls back to SEC2_API_KEY)
 - `backend/db.py` — SQLite connection manager + schema init + compute_holdings() + sector_classifications helpers

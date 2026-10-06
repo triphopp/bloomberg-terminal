@@ -1,10 +1,10 @@
 # Bloomberg Terminal — Memory Index
 
-> **Navigation map only — no content here** (memory/AGENTS.md). Last rewritten 2026-09-26.
+> **Navigation map only — no content here** (memory/AGENTS.md). Last rewritten 2026-09-26; refreshed 2026-10-06 (PRs #87–#94).
 
 ## Start here
 
-1. [`project_summary.md`](project_summary.md) — how to run, tests, stack, env vars, 61 routers, DB schema, 6 views, known issues, plan list
+1. [`project_summary.md`](project_summary.md) — how to run, tests, stack, env vars, 73 routers, DB schema, 6 views + ASK, known issues, plan list
 2. [`AGENTS.md`](AGENTS.md) — writing rules for every file in `memory/` (read before writing)
 3. [`reference/gotchas.md`](reference/gotchas.md) — read before investigating a bug
 4. `sessions/INDEX.md` — what recent sessions changed (machine-local)
@@ -26,6 +26,8 @@ memory/
 │   ├── terminal-commands.md   command mode (heatmap(US), ALERT, VIEW …)
 │   ├── data-catalog.md        data categories available for analysis
 │   ├── data-sources.md        where to look for data — in-house first, then free APIs
+│   ├── fundamental-analysis.md  "วิเคราะห์พื้นฐาน [ticker]" — data to pull + 12-section report
+│   ├── question-research.md   how to answer an open question (signals, answer levels, assumptions)
 │   └── thesis-tracking.md     tracked numbers: source, forecast vs actual, kill lines (PORT → TOOLS → TRACK)
 ├── plans/                ← ⚠️ gitignored — machine-local (completed/ inside)
 ├── sessions/             ← ⚠️ gitignored — machine-local (INDEX.md + reports/)
@@ -51,7 +53,10 @@ memory/
 
 | Plan | สถานะ |
 |------|--------|
-| [NEWS performance](sessions/2026-10-05-news-performance.md) | ✅ done 2026-10-05 (not committed) — watchlist news as stored pulls per (symbol, source) with partial answers, fast RSS parser, Polymarket pool refresh behind callers, ladder 3.5 s → 0.5 s, ASK render batching; found on the way: [`test_db_pool` on Windows](reports/db-pool-test-windows-unlink-risk-report.md) |
+| [ASK — chat on every view](../components/bloomberg/ask/index.ts) | ✅ merged 2026-10-06 (PRs #90, #91) — providers, read-only tools, HISTORY files on Drive / app-data with pin · trash · restore, resumed-conversation dating, `search_sessions` / `read_session`; [LAN trust report](reports/ask-lan-trust-risk-report.md) |
+| [IV snapshot session date](reports/iv-snapshot-sync-conflicts-risk-report.md) | ✅ fixed 2026-10-06 (PR #93) — `us_session.py`; 61 sync conflicts resolved; re-dating old rows still open |
+| Same-origin write guard · backend `dev_server.py` reload | ✅ merged 2026-10-06 (PRs #89, #87) |
+| [NEWS performance](sessions/2026-10-05-news-performance.md) | ✅ done 2026-10-05, merged PR #88 — watchlist news as stored pulls per (symbol, source) with partial answers, fast RSS parser, Polymarket pool refresh behind callers, ladder 3.5 s → 0.5 s, ASK render batching; found on the way: [`test_db_pool` on Windows](reports/db-pool-test-windows-unlink-risk-report.md) |
 | [Investment Policy System](plans/investment-policy-system.md) | 📝 design 2026-10-01 — sleeves + plan ticket + stress/theme cap + rebalance bands; waiting on user parameters (§8) |
 | [MCP thesis JSON truncation](reports/mcp-thesis-output-truncation-risk-report.md) | 📋 report 2026-10-02 — `get_thesis` with many events can return invalid truncated JSON; `event_limit=0` workaround |
 | [RISK rebalance + UI](plans/risk-rebalance.md) | 🔄 code done 2026-10-02 — RISK 5 tabs, take-profit rebalance 5/25 + timing, WHAT-IF random market + plan hand-off, guard:REBALANCE alert; waiting on user check |
@@ -251,7 +256,7 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 | Load optimization steps ที่ค้าง | `plans/infra/load-optimization.md` |
 | View consolidation (ลบ GVOL/EQTY, reassign keys) (ทำเสร็จแล้ว) | `plans/completed/view-consolidation.md` |
 | UI Design System shared primitives | `plans/ui-design-system.md` + `components/bloomberg/core/ui-primitives.tsx` |
-| 6 views — MKT · NEWS · BOND · PORT · TAIL · HMAP + TICK DATA board | `project_summary.md` → "Frontend Views" (also `CLAUDE.md` → Views) |
+| 6 views — MKT · NEWS · BOND · PORT · TAIL · HMAP + TICK DATA board + ASK drawer (`c`) | `project_summary.md` → "Frontend Views" (also `CLAUDE.md` → Views) |
 | session X ทำอะไร / ไฟล์ไหนเปลี่ยน | `sessions/INDEX.md` |
 | **OPTIONS Greeks math derivation + bug log** | `reports/options-greeks-math-report.md` |
 | **Strategy Builder** (19 templates, multi-expiry Calendar/Diagonal, payoff w/ BS pricing, PoP/E[P&L]/Kelly ranking) | ✅ done 2026-06-08 — `plans/completed/strategy-builder.md` |
@@ -260,6 +265,8 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 | **CI/CD workflow** | `.github/workflows/tests.yml` |
 | **Portfolio takeover (in-kind transfer)** — fair value basis, previous owner's cost memo, TAKEOVER strip | `reference/gotchas.md` + `reference/data-shapes.md` → takeover |
 | **Dev status strip / stale backend** — RUNNING OLD CODE / BACKEND DOWN | `../CLAUDE.md` + `project_summary.md` → How to Run |
+| **ASK** — where the chat code lives, how a view adds context, tools, saved conversations, privacy rules | `../CLAUDE.md` → "ASK — one chat module" · `reference/api-endpoints.md` → News ASK · `reference/frontend-structure.md` → `ask/` |
+| **Sync conflicts** — what they are, how they are resolved, the IV reading rule | `project_summary.md` → op-log sync + Known issue 19 · `reference/gotchas.md` |
 | **Upstream failures (data missing/stale)** | `../CLAUDE.md` → "Data missing / stale" + `python backend/scripts/upstream_report.py` |
 
 > The feature-status table that lived here (frozen 2026-08-01) was removed on 2026-09-26; history is in `plans/completed/` and in `project_summary.md` → Done.
