@@ -2355,12 +2355,15 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
             </span>
           ) : selectedSymbol ? (
             <>
-              <span
-                className="text-sm font-bold font-mono whitespace-nowrap shrink-0"
+              <button
+                type="button"
+                className="text-sm font-bold font-mono whitespace-nowrap shrink-0 cursor-pointer"
                 style={{ color: colors.accent }}
+                title={`Open EQUITY ANALYSIS — ${selectedSymbol} (F)`}
+                onClick={handleGoToEquity}
               >
                 {selectedLabel || selectedSymbol}
-              </span>
+              </button>
               {quote && (
                 <>
                   <span
