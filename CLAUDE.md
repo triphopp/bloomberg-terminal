@@ -121,7 +121,7 @@ goes to the model provider when read), then `get_page_data` = one section of the
 screen lacks it. **New view with data worth asking about → add its sections to `PAGES` in `backend/ask_pages.py`**
 (path + one-line description; the description is prompt text). **A button that switches something — a tab, a range,
 a mode, a show/hide — carries `aria-pressed={<the same condition that colours it>}`**: colour does not reach the
-agent, the attribute does (`▶` in the screen text). 146 buttons have it (2026-10-06); a new toggle without it is
+agent, the attribute does (`▶` in the screen text). 154 places carry it (2026-10-06); a new toggle without it is
 invisible to ASK. ASK also reads theses, open questions, tracked numbers, zettel and company accounts (`backend/ask_research.py`) —
 **read-only by design: never give ASK a tool that writes.** Writing research goes through the MCP and its rules.
 A new ASK tool that returns the user's own data goes in `_PRIVATE_TOOLS` (`routers/news_ai.py`): after one runs,
@@ -352,7 +352,7 @@ async def get_x():
 memory/
 ├── INDEX.md               ← navigation map
 ├── AGENTS.md              ← format rules (อ่านก่อนเขียนไฟล์ใดๆ ใน memory/)
-├── project_summary.md     ← slim core: run, tests, stack, env vars, 61 routers, DB schema, 6 views, known issues, plans
+├── project_summary.md     ← slim core: run, tests, stack, env vars, 73 routers, DB schema, 6 views + ASK, known issues, plans
 ├── reference/
 │   ├── architecture.md         ← data flow, key files, accounting layer, views
 │   ├── api-endpoints.md        ← all endpoints + caching strategy + Next.js proxy routes
