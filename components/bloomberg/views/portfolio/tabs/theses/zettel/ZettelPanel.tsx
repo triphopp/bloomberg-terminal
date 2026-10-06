@@ -180,6 +180,7 @@ export function ZettelPanel({
 
   const tab = (key: Pane, label: string, danger = false) => (
     <button
+      aria-pressed={pane === key}
       type="button"
       key={key}
       onClick={() => setPane(key)}
@@ -224,6 +225,7 @@ export function ZettelPanel({
           ))}
         </select>
         <button
+          aria-pressed={creating}
           type="button"
           onClick={() => setCreating((v) => !v)}
           className="text-[8px] px-2 py-0.5 border font-bold"

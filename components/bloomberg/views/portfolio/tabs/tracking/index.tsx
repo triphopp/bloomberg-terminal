@@ -301,6 +301,7 @@ function MetricRow({
   return (
     <button
       type="button"
+      aria-pressed={selected}
       onClick={onClick}
       className="w-full text-left px-2 py-1 border-b hover:opacity-90"
       style={{

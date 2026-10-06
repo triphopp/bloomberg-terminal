@@ -310,6 +310,7 @@ function AllocationBasisCardView({
           )}
           {(["COST", "VALUE", "DRIFT"] as const).map((m) => (
             <button
+              aria-pressed={mode === m}
               type="button"
               key={m}
               onClick={() => setMode(m)}

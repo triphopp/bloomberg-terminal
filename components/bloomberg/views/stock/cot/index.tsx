@@ -108,6 +108,7 @@ export function CotTab({
         <span className="ml-auto flex gap-2">
           {(Object.keys(RANGES) as RangeKey[]).map((r) => (
             <button
+              aria-pressed={range === r}
               key={r}
               type="button"
               onClick={() => setRange(r)}

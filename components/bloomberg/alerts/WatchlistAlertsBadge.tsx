@@ -61,6 +61,7 @@ export function WatchlistAlertsBadge({ colors }: { colors: typeof bloombergColor
   return (
     <div className="relative" ref={containerRef}>
       <button
+        aria-pressed={open}
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={`text-[9px] px-1.5 py-0 font-bold flex items-center gap-1 border ${hasUnread ? "animate-pulse" : ""}`}

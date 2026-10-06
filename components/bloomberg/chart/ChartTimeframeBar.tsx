@@ -45,6 +45,7 @@ export function ChartTimeframeBar({
               key={p}
               type="button"
               disabled={disabled}
+              aria-pressed={active}
               onClick={() => onPeriodChange(p)}
               className="px-1.5 py-0.5 border text-[9px] font-mono transition-colors"
               style={{
@@ -76,6 +77,7 @@ export function ChartTimeframeBar({
               <button
                 key={iv}
                 type="button"
+                aria-pressed={active}
                 onClick={() => onIntervalChange(iv)}
                 className="px-2 py-0.5 text-[9px] font-mono border transition-colors"
                 style={{

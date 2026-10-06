@@ -153,6 +153,7 @@ function MarginAccountCard({
             ปิดอยู่ — บัญชีนี้คิดเป็น cash account
           </span>
           <button
+            aria-pressed={editing}
             type="button"
             onClick={() => setEditing((v) => !v)}
             className="ml-auto text-[9px] px-2 py-0.5 border font-bold"
@@ -191,6 +192,7 @@ function MarginAccountCard({
           </span>
         )}
         <button
+          aria-pressed={editing}
           type="button"
           onClick={() => setEditing((v) => !v)}
           className="ml-auto text-[8px] px-1.5 border"
@@ -319,6 +321,7 @@ function MarginAccountCard({
       )}
 
       <button
+        aria-pressed={showLines}
         type="button"
         onClick={() => setShowLines((v) => !v)}
         className="self-start text-[8px]"

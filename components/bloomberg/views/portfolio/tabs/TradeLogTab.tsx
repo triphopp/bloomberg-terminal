@@ -84,6 +84,7 @@ export function TradeLogTab({
         <div className="flex gap-0.5 ml-2">
           {(["ALL", "W", "L"] as const).map((f) => (
             <button
+              aria-pressed={filter === f}
               type="button"
               key={f}
               onClick={() => setFilter(f)}

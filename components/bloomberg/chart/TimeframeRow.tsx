@@ -152,6 +152,7 @@ export function TimeframeControls({
                   : colors.textSecondary,
               cursor: disabled ? "not-allowed" : "pointer",
             }}
+            aria-pressed={active}
             onClick={() => onPeriodChange(p)}
           >
             {PERIOD_LABEL[p]}

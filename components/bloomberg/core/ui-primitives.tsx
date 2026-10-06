@@ -145,6 +145,7 @@ export function CompactTabBtn({
   return (
     <button
       type="button"
+      aria-pressed={active}
       onClick={onClick}
       className="px-3 py-1 text-xs font-mono font-bold border tracking-wider transition-colors"
       style={{

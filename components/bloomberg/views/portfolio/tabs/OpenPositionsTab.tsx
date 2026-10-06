@@ -108,6 +108,7 @@ function DerivativesSection({
   return (
     <div className="border-t mt-1" style={{ borderColor: "#f59e0b44" }}>
       <button
+        aria-pressed={collapsed}
         type="button"
         className="w-full flex items-center gap-2 px-3 py-1 text-[9px] font-bold"
         style={{ background: "#f59e0b0a", color: "#f59e0b" }}
@@ -986,6 +987,7 @@ export function OpenPositionsTab({
             </button>
             <div className="relative">
               <button
+                aria-pressed={showColPicker}
                 type="button"
                 onClick={() => setShowColPicker((v) => !v)}
                 className="text-[8px] font-bold"

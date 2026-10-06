@@ -454,6 +454,7 @@ export function HeatmapView() {
         <div className="flex border" style={{ borderColor: colors.border }}>
           {[...new Set([...QUICK_MARKETS, market.toUpperCase()])].map((m) => (
             <button
+              aria-pressed={market === m}
               type="button"
               key={m}
               className="px-1 font-bold leading-4"
@@ -467,6 +468,7 @@ export function HeatmapView() {
         <div className="flex border" style={{ borderColor: colors.border }}>
           {METRICS.map((m) => (
             <button
+              aria-pressed={metricRaw === m.key}
               type="button"
               key={m.key}
               title={m.desc}

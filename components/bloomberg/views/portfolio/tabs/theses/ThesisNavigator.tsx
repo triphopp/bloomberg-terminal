@@ -219,6 +219,7 @@ export function ThesisNavigator({
           </button>
           {kinds.map(([k, n]) => (
             <button
+              aria-pressed={f.kind === k}
               type="button"
               key={k}
               className="px-1.5 border"
@@ -263,6 +264,7 @@ export function ThesisNavigator({
 
         <div className="flex flex-wrap items-center gap-1 text-[9px]">
           <button
+            aria-pressed={f.onlyPending}
             type="button"
             className="px-1.5 border"
             style={chip(f.onlyPending)}
@@ -272,6 +274,7 @@ export function ThesisNavigator({
             มีงานค้าง
           </button>
           <button
+            aria-pressed={f.onlyUnread}
             type="button"
             className="px-1.5 border"
             style={chip(f.onlyUnread)}
@@ -335,6 +338,7 @@ export function ThesisNavigator({
               const c = counts[t.id];
               return (
                 <button
+                  aria-pressed={selectedId === t.id}
                   type="button"
                   key={t.id}
                   onClick={() => onSelect(t.id)}
@@ -450,6 +454,7 @@ export function NavRail({ colors, children }: { colors: Colors; children: ReactN
       style={{ borderColor: colors.border }}
     >
       <button
+        aria-pressed={open}
         type="button"
         onClick={() => setOpen((v) => !v)}
         title={open ? "พับรายการ thesis" : "กางรายการ thesis"}

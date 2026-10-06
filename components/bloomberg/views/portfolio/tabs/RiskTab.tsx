@@ -328,6 +328,7 @@ export function RiskTab({
       <div className="flex items-center gap-1 mb-2">
         {SUB_TABS.map((t) => (
           <button
+            aria-pressed={subTab === t.id}
             type="button"
             key={t.id}
             className="text-[9px] px-2 py-0.5 font-bold"
@@ -579,6 +580,7 @@ function EWSHistorySection({ accountId, colors }: { accountId: string; colors: C
       style={{ border: `1px solid ${colors.border}`, background: "#0a0a0a" }}
     >
       <button
+        aria-pressed={open}
         type="button"
         className="w-full flex items-center gap-2 px-2 py-1.5"
         onClick={() => setOpen((o) => !o)}
@@ -1287,6 +1289,7 @@ function OverviewSection({
           </span>
           {VAR_HORIZONS.map((h) => (
             <button
+              aria-pressed={varHorizon === h}
               type="button"
               key={h.label}
               className="text-[7px] px-1.5 py-0.5 font-bold"
@@ -1460,6 +1463,7 @@ function OverviewSection({
               <div className="flex items-center gap-0 mb-1">
                 {(["contrib", "parity"] as const).map((v) => (
                   <button
+                    aria-pressed={chartView === v}
                     type="button"
                     key={v}
                     onClick={() => setChartView(v)}
@@ -1597,6 +1601,7 @@ function OverviewSection({
       {accountId === "all" && metrics.account_breakdown && (
         <div className="rounded" style={{ border: `1px solid ${colors.border}` }}>
           <button
+            aria-pressed={acctOpen}
             type="button"
             className="w-full flex items-center gap-2 px-2 py-1"
             onClick={() => setAcctOpen((o) => !o)}
@@ -1801,6 +1806,7 @@ function CorrelationSection({ metrics, colors }: { metrics: RiskMetrics; colors:
     >
       {/* Header — clickable to collapse */}
       <button
+        aria-pressed={open}
         type="button"
         className="w-full flex items-center gap-2 px-2 py-1.5"
         onClick={() => setOpen((o) => !o)}

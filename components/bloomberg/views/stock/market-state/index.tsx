@@ -54,6 +54,7 @@ function TabBtn({
   return (
     <button
       type="button"
+      aria-pressed={active}
       onClick={onClick}
       title={hint}
       className="px-2 py-1 text-xs font-mono border"

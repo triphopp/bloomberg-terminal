@@ -316,6 +316,7 @@ export function LedgerPanel({ accountId, colors }: { accountId: string; colors: 
         <span style={{ color: colors.textSecondary }}>MODE</span>
         {(["LEGACY", "SHADOW"] as const).map((m) => (
           <button
+            aria-pressed={acc.ledger_mode === m}
             key={m}
             type="button"
             disabled={busy}

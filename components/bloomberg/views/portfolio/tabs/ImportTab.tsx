@@ -542,6 +542,7 @@ export function ImportTab({
         >
           {(["excel", "manual"] as const).map((m) => (
             <button
+              aria-pressed={mode === m}
               type="button"
               key={m}
               onClick={() => setMode(m)}
@@ -673,6 +674,7 @@ export function ImportTab({
               <div className="flex items-center gap-3">
                 {(["stock", "option"] as const).map((k) => (
                   <button
+                    aria-pressed={instrument === k}
                     type="button"
                     key={k}
                     onClick={() => setInstrument(k)}
@@ -1444,6 +1446,7 @@ export function ImportTab({
                 </span>
                 <span style={{ color: colors.textSecondary }}>เทียบตัวเลขกับฟอร์มด้านซ้าย</span>
                 <button
+                  aria-pressed={slipZoom}
                   type="button"
                   onClick={() => setSlipZoom((z) => !z)}
                   className="hover:opacity-80"

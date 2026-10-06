@@ -212,6 +212,7 @@ export function MonteCarloPanel({
       <span style={{ color: colors.textSecondary }}>ช่วง</span>
       {HORIZONS.map(([h, label]) => (
         <button
+          aria-pressed={s.horizon === h}
           type="button"
           key={h}
           title={`${h} วันทำการ`}
@@ -224,6 +225,7 @@ export function MonteCarloPanel({
       <span style={{ color: colors.textSecondary }}>เส้นทาง</span>
       {PATHS.map(([n, label, title]) => (
         <button
+          aria-pressed={s.paths === n}
           type="button"
           key={n}
           title={title}
@@ -235,6 +237,7 @@ export function MonteCarloPanel({
       ))}
       <span style={{ color: colors.textSecondary }}>ความผันผวนเริ่มต้น</span>
       <button
+        aria-pressed={s.vol === "current"}
         type="button"
         title="เริ่มจากความผันผวนของแต่ละตัว ณ วันนี้ แล้วค่อยๆ กลับเข้าหาค่าเฉลี่ย"
         onClick={() => setS((v) => ({ ...v, vol: "current" }))}
@@ -243,6 +246,7 @@ export function MonteCarloPanel({
         วันนี้
       </button>
       <button
+        aria-pressed={s.vol === "longrun"}
         type="button"
         title="เริ่มจากค่าเฉลี่ย 3 ปีของแต่ละตัว — ไม่สนว่าตอนนี้ตลาดนิ่งหรือเหวี่ยง"
         onClick={() => setS((v) => ({ ...v, vol: "longrun" }))}
@@ -258,6 +262,7 @@ export function MonteCarloPanel({
       </span>
       {DRIFTS.map((d) => (
         <button
+          aria-pressed={s.drift === d}
           type="button"
           key={d}
           onClick={() => setS((v) => ({ ...v, drift: d }))}
@@ -381,6 +386,7 @@ export function MonteCarloPanel({
 
       <div className="flex gap-3 items-baseline flex-wrap" style={{ fontSize: 9 }}>
         <button
+          aria-pressed={showModel}
           type="button"
           onClick={() => setShowModel((v) => !v)}
           style={{ color: colors.accent }}

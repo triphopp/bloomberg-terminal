@@ -809,6 +809,7 @@ export function TradeGuardCard({
             style={{ fontSize: 9, borderColor: colors.border }}
           >
             <button
+              aria-pressed={showTable}
               type="button"
               onClick={() => setShowTable((v) => !v)}
               style={{ color: colors.accent }}
@@ -816,6 +817,7 @@ export function TradeGuardCard({
               {showTable ? "▾ HIDE STOPS" : `▸ STOPS (${data.positions.length})`}
             </button>
             <button
+              aria-pressed={showReport}
               type="button"
               onClick={() => setShowReport((v) => !v)}
               style={{ color: colors.accent }}

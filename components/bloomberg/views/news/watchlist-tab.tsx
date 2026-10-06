@@ -618,6 +618,7 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
           {/* Sources */}
           <div className="relative">
             <button
+              aria-pressed={showSourcePicker}
               type="button"
               onClick={() => setShowSourcePicker((v) => !v)}
               className="flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold border"
@@ -735,6 +736,7 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
                   ] as const
                 ).map((t) => (
                   <button
+                    aria-pressed={panel === t.id}
                     key={t.id}
                     type="button"
                     onClick={() => setPanel(t.id)}

@@ -436,6 +436,7 @@ function SeriesDetail({
       >
         {[30, 90, 365, 3650].map((d) => (
           <button
+            aria-pressed={range === d}
             type="button"
             key={d}
             onClick={() => setRange(d)}

@@ -500,6 +500,7 @@ export function ExpectForm({
       <div className="flex gap-1.5 mb-1 flex-wrap">
         {modes.map((x) => (
           <button
+            aria-pressed={mode === x.id}
             type="button"
             key={x.id}
             onClick={() => setMode(x.id)}

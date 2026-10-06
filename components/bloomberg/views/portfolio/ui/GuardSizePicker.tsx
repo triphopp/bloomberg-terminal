@@ -392,6 +392,7 @@ function RiskRows({
         )}
         {plan && (
           <button
+            aria-pressed={showLadder}
             type="button"
             onClick={() => setShowLadder(!showLadder)}
             style={{ color: colors.accent, fontSize: 8 }}

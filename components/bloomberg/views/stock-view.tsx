@@ -585,6 +585,7 @@ function TabBtn({
   return (
     <button
       type="button"
+      aria-pressed={active}
       onClick={onClick}
       className="px-2 py-1 text-xs font-mono border"
       style={{
@@ -4185,6 +4186,7 @@ function FearGreedDetailView({
       <div className="flex gap-1 mb-3">
         {periods.map((p) => (
           <button
+            aria-pressed={period === p}
             key={p}
             type="button"
             onClick={() => setPeriod(p)}
@@ -4881,6 +4883,7 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                 {/* Chart type toggle */}
                 <div className="flex border overflow-hidden" style={{ borderColor: colors.border }}>
                   <button
+                    aria-pressed={chartType === "area"}
                     type="button"
                     onClick={() => setChartType("area")}
                     title="Area chart"
@@ -4893,6 +4896,7 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                     <LineChart className="h-3 w-3" /> AREA
                   </button>
                   <button
+                    aria-pressed={chartType === "candle"}
                     type="button"
                     onClick={() => setChartType("candle")}
                     title="Candlestick chart"
@@ -5243,6 +5247,7 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
               ] as { id: AnalysisTab; label: string }[]
             ).map(({ id, label }) => (
               <button
+                aria-pressed={analysisTab === id}
                 key={id}
                 type="button"
                 onClick={() => setAnalysisTab(id)}

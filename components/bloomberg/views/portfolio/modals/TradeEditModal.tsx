@@ -556,6 +556,7 @@ export function TradeEditModal({
         {/* Audit log — collapsible */}
         <div className="mb-3 border" style={{ borderColor: colors.border }}>
           <button
+            aria-pressed={auditOpen}
             type="button"
             className="w-full flex items-center gap-1.5 px-2 py-1 text-[8px] font-bold tracking-widest"
             style={{ background: "#060606", color: colors.textSecondary }}

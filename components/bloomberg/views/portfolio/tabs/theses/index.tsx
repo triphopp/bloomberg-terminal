@@ -580,6 +580,7 @@ export function ThesesTab({
                   ))}
                 <span className="flex-1" />
                 <button
+                  aria-pressed={reading}
                   type="button"
                   onClick={() => setReading((v) => !v)}
                   title="อ่านทั้ง thesis เป็นเอกสารหน้าเดียว"
@@ -601,6 +602,7 @@ export function ThesesTab({
                   EDIT
                 </button>
                 <button
+                  aria-pressed={menuOpen}
                   type="button"
                   onClick={() => setMenuOpen((v) => !v)}
                   title="เพิ่มเติม"

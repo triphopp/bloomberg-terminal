@@ -722,6 +722,7 @@ function StrategiesView({
       <div className="flex gap-1 flex-wrap">
         {outlooks.map((o) => (
           <button
+            aria-pressed={filter === o}
             key={o}
             type="button"
             onClick={() => setFilter(o)}
@@ -742,6 +743,7 @@ function StrategiesView({
         <div className="space-y-2 lg:col-span-1 max-h-[520px] overflow-y-auto pr-1">
           {visible.map((s) => (
             <button
+              aria-pressed={selected === s.id}
               key={s.id}
               type="button"
               onClick={() => setSelected(s.id)}
@@ -969,6 +971,7 @@ function StrategiesView({
               <div className="flex gap-1 ml-auto">
                 {(["delta", "gamma", "theta", "vega"] as const).map((g) => (
                   <button
+                    aria-pressed={greekMode === g}
                     key={g}
                     type="button"
                     onClick={() => setGreekMode(g)}
@@ -1353,6 +1356,7 @@ function SurfaceView({
             {/* Metric selector */}
             {SURFACE_METRICS.map((m) => (
               <button
+                aria-pressed={metric === m.id}
                 key={m.id}
                 type="button"
                 onClick={() => setMetric(m.id)}
@@ -1556,6 +1560,7 @@ function GreeksView({
         <div className="flex gap-1">
           {(["delta", "gamma", "theta", "vega"] as const).map((g) => (
             <button
+              aria-pressed={gm === g}
               key={g}
               type="button"
               onClick={() => setGm(g)}
@@ -1770,6 +1775,7 @@ export function OptionsTab({
         </span>
         {data.expirations.slice(0, 12).map((exp) => (
           <button
+            aria-pressed={selectedExpiry === exp}
             key={exp}
             type="button"
             onClick={() => setSelectedExpiry(exp)}
@@ -1794,6 +1800,7 @@ export function OptionsTab({
       <div className="flex gap-1 border-b" style={{ borderColor: colors.border }}>
         {subViews.map(({ id, label }) => (
           <button
+            aria-pressed={subView === id}
             key={id}
             type="button"
             onClick={() => setSubView(id)}

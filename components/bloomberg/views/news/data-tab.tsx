@@ -104,6 +104,7 @@ export function DataTab({
         >
           {groups.map((g) => (
             <button
+              aria-pressed={group === g.group_key}
               type="button"
               key={g.group_key}
               onClick={() => setGroup(g.group_key)}

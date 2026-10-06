@@ -155,6 +155,7 @@ export function RebalancePanel({
         </span>
         <div className="flex items-baseline gap-3 ml-auto" style={{ fontSize: 9 }}>
           <button
+            aria-pressed={showRules}
             type="button"
             onClick={() => setShowRules((v) => !v)}
             style={{ color: colors.accent }}
@@ -257,6 +258,7 @@ export function RebalancePanel({
       {rest.length > 0 && (
         <div>
           <button
+            aria-pressed={showOk}
             type="button"
             onClick={() => setShowOk((v) => !v)}
             style={{ color: colors.accent, fontSize: 9 }}

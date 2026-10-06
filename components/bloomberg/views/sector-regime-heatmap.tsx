@@ -632,6 +632,7 @@ function RegimeTrendStrip({ mode, colors, onPeriodClick, activePeriod }: RegimeT
               key={p}
               className="flex flex-col items-center gap-px flex-1 cursor-pointer hover:opacity-80"
               style={{ outline: isActive ? `1px solid ${ps.color}44` : "none" }}
+              aria-pressed={isActive}
               onClick={() => onPeriodClick(p)}
               title={`${p.toUpperCase()}: ${ps.label} (${ps.score.toFixed(3)}) — click to select`}
             >
@@ -818,6 +819,7 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
             >
               {(["matrix", "space"] as GeomView[]).map((v) => (
                 <button
+                  aria-pressed={geomView === v}
                   type="button"
                   key={v}
                   className="text-[7px] font-bold px-1 py-0 leading-4"
@@ -838,6 +840,7 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
             <div className="flex ml-auto gap-px">
               {PERIODS.map((p) => (
                 <button
+                  aria-pressed={period === p}
                   type="button"
                   key={p}
                   className="text-[7px] font-bold px-0.5 py-0 leading-4"
@@ -1076,6 +1079,7 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
                 <div className="flex gap-1 ml-2">
                   {PERIODS.map((p) => (
                     <button
+                      aria-pressed={period === p}
                       type="button"
                       key={p}
                       className="text-[9px] font-bold px-1.5 py-0.5 border"
@@ -1148,6 +1152,7 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
                 <div className="flex border overflow-hidden" style={{ borderColor: colors.border }}>
                   {(["matrix", "space"] as GeomView[]).map((v) => (
                     <button
+                      aria-pressed={geomView === v}
                       type="button"
                       key={v}
                       className="text-[8px] font-bold px-2 py-0.5"

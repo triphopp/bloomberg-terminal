@@ -56,6 +56,7 @@ export function RegressionControls({
       {channels.map((channel, index) => (
         <div key={channel.id} className="flex shrink-0 items-center">
           <button
+            aria-pressed={activeId === channel.id}
             type="button"
             className="border px-1 py-0 font-normal"
             style={{
