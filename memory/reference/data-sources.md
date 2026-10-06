@@ -1,6 +1,6 @@
 # Data Sources — หาข้อมูลที่นี่ก่อนออกไปข้างนอก
 
-**อัปเดตล่าสุด:** 2026-10-02 (เพิ่ม §3.2 หน่วยความจำ / AI hardware)
+**อัปเดตล่าสุด:** 2026-10-06 (เพิ่ม §3.2 inference benchmark และ methodology; §3.3 earnings-call transcript)
 **ใช้เมื่อ:** ต้องหาข้อมูลอะไรก็ตาม — ตัวเลขมหภาค ประเทศ ดอกเบี้ย บริษัท ข่าว — ก่อนค้นเว็บ
 **ใช้กับ:** ทุก agent (Claude, Codex, DeepSeek, …) ทั้งใน repo และผ่าน MCP
 **ส่งผ่าน MCP:** ไฟล์นี้คือแหล่งเดียว — MCP `bloomberg-terminal` อ่านไฟล์นี้ตอนเรียก ให้บริการเป็น tool `get_data_sources` และ resource `spec://data-sources` (แก้ไฟล์แล้วมีผลทันที)
@@ -127,6 +127,8 @@ board/forum ทุกแหล่ง **ต้องตรวจ ToS ก่อน
 
 | แหล่ง | URL / ตัวอย่าง | ได้อะไร | หมายเหตุ |
 |---|---|---|---|
+| **Artificial Analysis provider benchmarks** | `https://artificialanalysis.ai/models/gpt-oss-120b/providers` · `https://artificialanalysis.ai/methodology/endpoint-accuracy-index` | ความเร็ว, first chunk, ราคา, accuracy index และวิธีวัด | ตรวจ 2026-10-06; dynamic snapshot ต้องระบุวันที่/บริบท ตัวเลข summary/table อาจไม่ตรงกัน; index ไม่ใช่ probability of success และไม่ใช่ hardware-only quality test |
+| **Baseten engineering benchmarks** | `https://www.baseten.co/blog/how-we-made-the-fastest-gpt-oss-on-nvidia-gpus-60-percent-faster/` | Speculative decoding และ workload/hardware configuration | บทความ 2025-10-24 ตรวจ 2026-10-06; vendor benchmark ใช้ทดสอบคำอ้างเชิงสถาปัตยกรรม ไม่ใช่ matched-SLA TCO |
 | **SEC XBRL companyfacts** (inventory/COGS) | `data.sec.gov/api/xbrl/companyfacts/CIK0002023554.json` (SNDK) · `CIK0000723125` (MU) · `CIK0001652044` (GOOGL) | `InventoryNet` + `CostOfGoodsAndServicesSold` รายไตรมาส → คำนวณ DIO ได้ทันที | ✅ ต้องส่ง User-Agent พร้อมอีเมล · ไตรมาส 4 ต้องลบยอดสะสม 9 เดือนออกจากปีเต็ม |
 | **SK hynix บน EDGAR** | CIK `0002120882` (SKHY) · F-1 `000119312526280172/d32785df1.htm` | งบ IFRS (inventory, cost of sales รายปี + Q1/26) · 6-K รายเหตุการณ์ | ⚠️ XBRL มีแค่ namespace `ffd` ไม่มี `us-gaap` — ต้อง grep HTML · 6-K ส่วนใหญ่เป็นประกาศย่อย ไม่ใช่งบ |
 | **NVIDIA หน้าสเปกผลิตภัณฑ์** | `nvidia.com/en-us/data-center/vera-rubin-nvl72/` · `/gb300-nvl72/` | HBM/LPDDR ต่อ GPU/ชั้นวาง · โรงงาน 100 MW = 40K GPU = fast memory 42 PB | ✅ WebFetch อ่านได้ · ตัวเลขเป็น "up to" (เพดาน) |

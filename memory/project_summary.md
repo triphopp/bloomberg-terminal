@@ -509,6 +509,9 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 
 ## What Could Be Built Next
 
+- [x] **CBRS evidence audit** — done 2026-10-06; MCP research v3, 11 evidence notes, contradictions and proposed answers verified (`plans/completed/cbrs-evidence-audit-2026-10-06.md`)
+- [x] **CBRS governance and cooling correlation** — done 2026-10-06; new MCP graph with Buffett-inspired governance audit, verified cooling links and 98-day matched-return analysis (`plans/completed/cbrs-governance-cooling-correlation-2026-10-06.md`)
+
 Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished plan becomes `- [x] … done YYYY-MM-DD` only with a Completion Evidence section.
 
 - [ ] **Thesis Navigator Redesign** — THESES / QUESTIONS / TRACK: navigator ตัวเดียว (ค้นหา + กรอง kind / sector / สถานะ / งานค้าง / ยังไม่อ่าน), `theses` += `kind` `sector` `tags`, ค้นคำถามข้าม thesis + พับกิ่ง, เครื่องหมายอ่านแล้ว (`read_marks`), ตัวอักษรอ่าน IBM Plex (`.reading`), GRAPHS → RESEARCH; โค้ดเสร็จ 2026-10-02 เหลือ pull + restart ทุกเครื่องก่อนใส่ kind / tags / อ่านแล้ว และผู้ใช้ตรวจหน้าจอ (`plans/thesis-navigator-redesign.md`)

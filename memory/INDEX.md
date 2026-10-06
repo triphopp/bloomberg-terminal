@@ -46,6 +46,9 @@ memory/
 
 ## งานที่ยังเปิดอยู่ (plans)
 
+- [CBRS governance and cooling correlation](plans/completed/cbrs-governance-cooling-correlation-2026-10-06.md) — ✅ done 2026-10-06; new MCP graph, sourced governance/cooling map and quantitative return test
+- [CBRS evidence audit](plans/completed/cbrs-evidence-audit-2026-10-06.md) — ✅ done 2026-10-06; research v3, evidence and questions verified
+
 | Plan | สถานะ |
 |------|--------|
 | [NEWS performance](sessions/2026-10-05-news-performance.md) | ✅ done 2026-10-05 (not committed) — watchlist news as stored pulls per (symbol, source) with partial answers, fast RSS parser, Polymarket pool refresh behind callers, ladder 3.5 s → 0.5 s, ASK render batching; found on the way: [`test_db_pool` on Windows](reports/db-pool-test-windows-unlink-risk-report.md) |
