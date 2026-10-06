@@ -161,6 +161,7 @@ export function IssuanceChart({ weeks, height = 220 }: { weeks: IssuanceWeek[]; 
           <span style={{ color: C.dim }}>LINE</span>
           {(["UST10Y", "IG_OAS"] as const).map((k) => (
             <button
+              aria-pressed={overlay === k}
               key={k}
               type="button"
               onClick={() => setOverlay(k)}

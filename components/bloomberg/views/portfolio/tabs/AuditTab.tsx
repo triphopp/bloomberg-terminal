@@ -121,6 +121,7 @@ export function AuditTab({ accountId, colors }: { accountId: string; colors: Col
       >
         {(["checks", "ledger", "evidence", "prepare", "events"] as const).map((m) => (
           <button
+            aria-pressed={mode === m}
             type="button"
             key={m}
             onClick={() => setMode(m)}
@@ -163,6 +164,7 @@ export function AuditTab({ accountId, colors }: { accountId: string; colors: Col
           >
             {TABLES.map((t) => (
               <button
+                aria-pressed={table === t.id}
                 key={t.id || "all"}
                 type="button"
                 onClick={() => setTable(t.id)}
@@ -177,6 +179,7 @@ export function AuditTab({ accountId, colors }: { accountId: string; colors: Col
             </span>
             {["", "INSERT", "UPDATE", "DELETE"].map((a) => (
               <button
+                aria-pressed={action === a}
                 key={a || "any"}
                 type="button"
                 onClick={() => setAction(a)}

@@ -129,6 +129,7 @@ function OptionAttributionCardView({ accountId, colors }: { accountId: string; c
         style={{ color: colors.accent }}
       >
         <button
+          aria-pressed={collapsed}
           type="button"
           className="flex items-center gap-2 flex-1 min-w-0 text-left"
           style={{ color: colors.accent }}
@@ -151,6 +152,7 @@ function OptionAttributionCardView({ accountId, colors }: { accountId: string; c
         <span className="flex items-center gap-1 shrink-0">
           {[30, 90, 365].map((d) => (
             <button
+              aria-pressed={days === d}
               key={d}
               type="button"
               onClick={() => setDays(d)}

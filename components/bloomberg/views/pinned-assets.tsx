@@ -224,6 +224,7 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (hex: strin
     <div className="flex gap-1 flex-wrap">
       {PALETTE.map(({ hex, label }) => (
         <button
+          aria-pressed={value === hex}
           type="button"
           key={hex}
           data-frame
@@ -2105,6 +2106,7 @@ export const PinnedAssets = memo(function PinnedAssets({
             after the signal summary ADD/GRP were clipped off the right edge. */}
         <div className="flex items-center gap-1 shrink-0">
           <button
+            aria-pressed={showAddRow}
             type="button"
             title="Add symbol"
             className="flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 border font-bold hover:opacity-80"
@@ -2117,6 +2119,7 @@ export const PinnedAssets = memo(function PinnedAssets({
 
           <div className="relative">
             <button
+              aria-pressed={showGroupMgr}
               type="button"
               title="Groups — create, rename, recolour, delete"
               className="flex items-center gap-0.5 text-[9px] px-1 py-0.5 border font-bold hover:opacity-80"
@@ -2271,6 +2274,7 @@ export const PinnedAssets = memo(function PinnedAssets({
 
           <div className="relative">
             <button
+              aria-pressed={showTagMgr}
               type="button"
               title="Tags"
               className="flex items-center gap-0.5 text-[9px] px-1 py-0.5 border font-bold hover:opacity-80"
@@ -2301,6 +2305,7 @@ export const PinnedAssets = memo(function PinnedAssets({
           </button>
 
           <button
+            aria-pressed={collapsed}
             type="button"
             className="p-0.5 hover:opacity-70"
             onClick={() => setCollapsed((v) => !v)}

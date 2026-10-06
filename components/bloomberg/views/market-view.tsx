@@ -1890,6 +1890,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
             <div className="flex overflow-hidden border" style={{ borderColor: colors.border }}>
               {LEFT_FEEDS.map(({ key, label, desc }) => (
                 <button
+                  aria-pressed={leftFeed === key}
                   type="button"
                   key={key}
                   title={desc}
@@ -2685,6 +2686,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
             </div>
             {scalingUnit !== "NATIVE" && (
               <button
+                aria-pressed={scalingUnit === "NATIVE"}
                 type="button"
                 className="shrink-0 text-[8px] font-normal"
                 style={{ color: colors.accent }}
@@ -2848,6 +2850,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
           {/* Chart type toggle */}
           <div className="flex border overflow-hidden" style={{ borderColor: colors.border }}>
             <button
+              aria-pressed={heatmapChartType === "area"}
               className="flex items-center gap-0.5 px-1 py-0 text-[8px] font-mono transition-colors"
               style={{
                 backgroundColor: heatmapChartType === "area" ? colors.accent : "transparent",
@@ -2858,6 +2861,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
               <LineChart className="h-2 w-2" /> AREA
             </button>
             <button
+              aria-pressed={heatmapChartType === "candle"}
               className="flex items-center gap-0.5 px-1 py-0 text-[8px] font-mono transition-colors border-l"
               style={{
                 borderColor: colors.border,
@@ -2871,6 +2875,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
           </div>
           {heatmapChartType === "area" && (
             <button
+              aria-pressed={showVolume}
               className="text-[8px] px-1 py-0 font-bold"
               style={{
                 color: showVolume ? "#00FFFF" : colors.textSecondary,
@@ -2883,6 +2888,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
           )}
           {heatmapChartType === "area" && (
             <button
+              aria-pressed={showMACD}
               className="text-[8px] px-1 py-0 font-bold"
               style={{
                 color: showMACD ? "#ff9800" : colors.textSecondary,

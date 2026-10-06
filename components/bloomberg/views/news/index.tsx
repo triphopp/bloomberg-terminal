@@ -82,6 +82,7 @@ export default function NewsView({ isDarkMode }: NewsViewProps) {
         <div className="flex items-end gap-0">
           {TABS.map((tab, i) => (
             <button
+              aria-pressed={activeTab === tab.id}
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}

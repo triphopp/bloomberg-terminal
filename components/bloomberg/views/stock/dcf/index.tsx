@@ -123,6 +123,7 @@ function TabButton({
   return (
     <button
       type="button"
+      aria-pressed={active}
       onClick={onClick}
       className="px-2 py-1 text-[10px] font-mono border tracking-wide"
       style={{
@@ -694,6 +695,7 @@ export function DcfTab({ symbol, colors }: { symbol: string; colors: Colors }) {
           <div className="flex gap-1">
             {(["bear", "base", "bull"] as DcfScenario[]).map((scenario) => (
               <button
+                aria-pressed={draftScenario === scenario}
                 key={scenario}
                 type="button"
                 onClick={() => setDraftScenario(scenario)}

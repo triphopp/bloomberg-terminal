@@ -416,6 +416,7 @@ export function WhatIfSimPanel({
             ] as const
           ).map(([m, label, title]) => (
             <button
+              aria-pressed={market === m}
               type="button"
               key={m}
               title={title}
@@ -431,6 +432,7 @@ export function WhatIfSimPanel({
           <span style={{ color: colors.textSecondary }}>horizon</span>
           {HORIZONS.map((h) => (
             <button
+              aria-pressed={horizon === h}
               type="button"
               key={h}
               onClick={() => setHorizon(h)}
@@ -679,6 +681,7 @@ export function WhatIfSimPanel({
             </table>
           </div>
           <button
+            aria-pressed={showAll}
             type="button"
             onClick={() => setShowAll((v) => !v)}
             className="mt-0.5"
@@ -703,6 +706,7 @@ export function WhatIfSimPanel({
             <div className="grid grid-cols-4 gap-1">
               {data.scenarios.map((s) => (
                 <button
+                  aria-pressed={selK === s.k}
                   type="button"
                   key={String(s.k)}
                   onClick={() => setSelK(s.k)}
@@ -744,6 +748,7 @@ export function WhatIfSimPanel({
 
       <div className="flex gap-3 items-baseline flex-wrap" style={{ fontSize: 9 }}>
         <button
+          aria-pressed={showModel}
           type="button"
           onClick={() => setShowModel((v) => !v)}
           style={{ color: colors.accent }}

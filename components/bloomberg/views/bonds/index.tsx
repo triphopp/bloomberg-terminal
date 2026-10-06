@@ -161,6 +161,7 @@ export function BondView() {
         <div className="flex items-center gap-2" style={{ fontSize: 10.5 }}>
           {TABS.map((t, i) => (
             <button
+              aria-pressed={tab === t.id}
               key={t.id}
               type="button"
               onClick={() => setTab(t.id)}
@@ -173,6 +174,7 @@ export function BondView() {
         </div>
         {level != null && (
           <button
+            aria-pressed={tab === "conditions"}
             type="button"
             onClick={() => setTab("conditions")}
             title={`crisis level — ${credit.data?.triggered.length ?? 0} threshold breaches`}
@@ -187,6 +189,7 @@ export function BondView() {
         >
           {(Object.keys(RANGES) as RangeKey[]).map((r) => (
             <button
+              aria-pressed={range === r}
               key={r}
               type="button"
               onClick={() => setRange(r)}
@@ -296,6 +299,7 @@ export function BondView() {
                 note="fiscaldata · high yield vs dealer takedown"
                 right={
                   <button
+                    aria-pressed={couponsOnly}
                     type="button"
                     onClick={() => setCouponsOnly((v) => !v)}
                     style={{ color: couponsOnly ? C.amber : "#555", fontSize: 9 }}

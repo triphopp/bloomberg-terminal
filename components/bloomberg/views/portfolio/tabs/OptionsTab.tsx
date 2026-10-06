@@ -421,6 +421,7 @@ export function OptionsTab({
         <div className="flex items-center gap-1">
           {(["lots", "trades"] as const).map((v) => (
             <button
+              aria-pressed={view === v}
               key={v}
               type="button"
               onClick={() => setView(v)}

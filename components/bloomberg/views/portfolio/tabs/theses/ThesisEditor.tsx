@@ -193,6 +193,7 @@ export function ThesisEditor({
           BODY (markdown)
         </label>
         <button
+          aria-pressed={preview}
           type="button"
           onClick={() => setPreview((p) => !p)}
           className="text-[7px] px-1.5 py-0.5 border font-bold"

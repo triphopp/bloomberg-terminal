@@ -142,6 +142,7 @@ export function PayoffCalculator({ colors }: { colors: Colors }) {
   return (
     <div className="border rounded mb-2" style={{ borderColor: colors.border }}>
       <button
+        aria-pressed={open}
         type="button"
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center gap-1 px-2 py-1 text-[10px] font-bold"

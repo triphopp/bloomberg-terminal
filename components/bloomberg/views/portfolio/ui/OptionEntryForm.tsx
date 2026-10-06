@@ -136,6 +136,7 @@ function Toggle<T extends string>({
     <div className="flex items-center gap-1">
       {options.map((o) => (
         <button
+          aria-pressed={value === o.v}
           type="button"
           key={o.v}
           onClick={() => onPick(o.v)}

@@ -698,6 +698,7 @@ function StrategySelector({
       <div className="flex gap-1 flex-wrap">
         {outlooks.map((o) => (
           <button
+            aria-pressed={filterOutlook === o}
             key={o}
             type="button"
             onClick={() => setFilterOutlook(o)}
@@ -715,6 +716,7 @@ function StrategySelector({
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1.5 max-h-[280px] overflow-y-auto pr-1">
         {visible.map((t) => (
           <button
+            aria-pressed={selected === t.id}
             key={t.id}
             type="button"
             onClick={() => onSelect(t.id)}

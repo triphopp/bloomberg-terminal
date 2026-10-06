@@ -338,6 +338,7 @@ export function ThesisNotes({
     <div className="flex-1 overflow-y-auto p-3">
       <div className="flex items-center gap-1 flex-wrap mb-2">
         <button
+          aria-pressed={kindFilter === "ALL"}
           type="button"
           onClick={() => setKindFilter("ALL")}
           className="text-[8px] px-1.5 py-0.5 border font-bold"
@@ -350,6 +351,7 @@ export function ThesisNotes({
           if (n === 0 && kindFilter !== k) return null;
           return (
             <button
+              aria-pressed={kindFilter === k}
               type="button"
               key={k}
               onClick={() => setKindFilter(k)}
@@ -362,6 +364,7 @@ export function ThesisNotes({
         })}
 
         <button
+          aria-pressed={showResolved}
           type="button"
           onClick={() => setShowResolved((v) => !v)}
           title="confirmed and dismissed notes"

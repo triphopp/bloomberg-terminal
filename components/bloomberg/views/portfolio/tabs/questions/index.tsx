@@ -431,6 +431,7 @@ export function QuestionsTab({
           />
           {fields.map(([k, label]) => (
             <button
+              aria-pressed={flt === k}
               type="button"
               key={k || "all"}
               className="px-1.5 border whitespace-nowrap"
@@ -441,6 +442,7 @@ export function QuestionsTab({
             </button>
           ))}
           <button
+            aria-pressed={hideClear}
             type="button"
             className="px-1.5 border whitespace-nowrap"
             style={chip(hideClear)}
@@ -463,6 +465,7 @@ export function QuestionsTab({
           )}
           <span className="flex-1" />
           <button
+            aria-pressed={view === "calendar"}
             type="button"
             onClick={() => setView((v) => (v === "calendar" ? "tree" : "calendar"))}
             className="px-1.5 border font-bold whitespace-nowrap"
@@ -506,6 +509,7 @@ export function QuestionsTab({
               rows.map((r, i) =>
                 r.stubUnder !== undefined ? (
                   <button
+                    aria-pressed={selectedId === r.node.id}
                     type="button"
                     key={`stub-${r.node.id}-${i}`}
                     onClick={() => setSelectedId(r.node.id)}
@@ -1031,6 +1035,7 @@ function AddForm({
           .filter((m) => m.show)
           .map((m) => (
             <button
+              aria-pressed={mode === m.id}
               type="button"
               key={m.id}
               onClick={() => setMode(m.id)}

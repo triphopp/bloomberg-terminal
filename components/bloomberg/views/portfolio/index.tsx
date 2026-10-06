@@ -79,6 +79,7 @@ function TabStrip<T extends string>({
     <>
       {tabs.map((t, i) => (
         <button
+          aria-pressed={active === t.id}
           type="button"
           key={t.id}
           className={`${sub ? "text-[8px] px-1.5" : "text-[9px] px-2"} py-1 font-bold hover:opacity-80 whitespace-nowrap`}
@@ -327,6 +328,7 @@ export function PortfolioView() {
       >
         <div className="flex items-center overflow-x-auto">
           <button
+            aria-pressed={activeAccount === "all"}
             type="button"
             className={acctBtnCls}
             style={{ color: activeAccount === "all" ? colors.accent : colors.textSecondary }}
@@ -337,6 +339,7 @@ export function PortfolioView() {
           {accounts.map((acc) => (
             <div key={acc.id} className="group relative flex items-center">
               <button
+                aria-pressed={activeAccount === acc.id}
                 type="button"
                 className={acctBtnCls}
                 style={{ color: activeAccount === acc.id ? colors.accent : colors.textSecondary }}

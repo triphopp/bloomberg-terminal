@@ -411,6 +411,7 @@ export function DecompositionPanel({
       note={`expected real + breakeven + term premium · ${data.modelNote}`}
       right={
         <button
+          aria-pressed={showRead}
           type="button"
           onClick={() => setShowRead((v) => !v)}
           style={{ color: showRead ? C.amber : "#555", fontSize: 9 }}

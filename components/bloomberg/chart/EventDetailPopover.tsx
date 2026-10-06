@@ -208,6 +208,7 @@ export function EventDetailPopover({
             const Icon = ICON[chip.icon];
             return (
               <button
+                aria-pressed={picked === i}
                 key={`${m.type}-${m.macroKind ?? ""}-${String(m.time)}`}
                 type="button"
                 className="flex w-full items-center gap-2 px-1.5 py-0.5 text-left hover:bg-white/5"

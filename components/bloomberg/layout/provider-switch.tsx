@@ -24,6 +24,7 @@ export function ProviderSwitch({ isDarkMode }: { isDarkMode: boolean }) {
   return (
     <div className="relative h-full">
       <button
+        aria-pressed={open}
         type="button"
         onClick={() => setOpen((o) => !o)}
         className="flex items-center justify-center px-2 h-full transition-opacity hover:opacity-100"

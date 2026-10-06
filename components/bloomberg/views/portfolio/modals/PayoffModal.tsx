@@ -73,6 +73,7 @@ export function PayoffModal({
           <div className="flex items-center gap-2">
             {siblings.length > 1 && (
               <button
+                aria-pressed={combined}
                 type="button"
                 onClick={() => setCombined((c) => !c)}
                 className="px-2 py-0.5 text-[8px] font-bold border rounded"

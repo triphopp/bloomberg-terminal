@@ -161,6 +161,7 @@ export function ReadView({
         </div>
         {sections.map((s) => (
           <button
+            aria-pressed={active === s.id}
             type="button"
             key={s.id}
             onClick={() => jump(s.id)}

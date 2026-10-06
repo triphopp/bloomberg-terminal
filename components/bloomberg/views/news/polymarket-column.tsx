@@ -297,6 +297,7 @@ export function PolymarketColumn({
 
             {/* ── Macro signal cards ── */}
             <button
+              aria-pressed={showMacro}
               type="button"
               onClick={() => setShowMacro((v) => !v)}
               className="sticky top-0 z-10 w-full text-left px-2 py-1 border-b text-[8px] font-bold font-mono tracking-widest hover:opacity-80"

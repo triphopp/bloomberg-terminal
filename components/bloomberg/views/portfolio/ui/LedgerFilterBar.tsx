@@ -86,6 +86,7 @@ export function LedgerFilterBar({
         <span className="flex items-center gap-2">
           {typeOptions.map((t) => (
             <button
+              aria-pressed={filter.types.length === 0 || filter.types.includes(t.key)}
               type="button"
               key={t.key}
               onClick={() => toggleType(t.key)}
@@ -105,6 +106,7 @@ export function LedgerFilterBar({
       <span className="flex items-center gap-2" style={{ color: colors.textSecondary }}>
         {RANGES.map((r) => (
           <button
+            aria-pressed={filter.range === r}
             type="button"
             key={r}
             onClick={() => set({ range: r })}

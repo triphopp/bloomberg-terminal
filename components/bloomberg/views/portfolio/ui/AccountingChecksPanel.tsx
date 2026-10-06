@@ -32,6 +32,7 @@ export function AccountingChecksPanel({
       >
         {(["", "error", "warn", "info"] as const).map((s) => (
           <button
+            aria-pressed={severity === s}
             key={s}
             type="button"
             onClick={() => setSeverity(s)}

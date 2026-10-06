@@ -228,6 +228,7 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
     <div className="flex items-center gap-1.5 shrink-0">
       {(["TABLE", "MAP"] as View[]).map((v) => (
         <button
+          aria-pressed={view === v}
           type="button"
           key={v}
           className={`${btnFs} font-bold leading-4`}
@@ -252,6 +253,7 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
           <span style={{ color: "#333" }}>│</span>
           {(["US", "TH"] as Market[]).map((m) => (
             <button
+              aria-pressed={market === m}
               type="button"
               key={m}
               className={`${btnFs} font-bold leading-4`}
@@ -267,6 +269,7 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
           </span>
           {TAILS.map((t) => (
             <button
+              aria-pressed={tail === t}
               type="button"
               key={t}
               className={`${btnFs} font-bold leading-4`}
@@ -328,6 +331,7 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
         <div className="flex overflow-hidden border" style={{ borderColor: colors.border }}>
           {(["US", "TH"] as Market[]).map((m, i) => (
             <button
+              aria-pressed={market === m}
               type="button"
               key={m}
               className={`${compact ? "text-[6px]" : "text-[8px]"} font-bold px-1 py-0 leading-4`}
@@ -346,6 +350,7 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
           <div className="flex overflow-hidden border" style={{ borderColor: colors.border }}>
             {(["all", "theme", "sector"] as KindFilter[]).map((k, i) => (
               <button
+                aria-pressed={kind === k}
                 type="button"
                 key={k}
                 className={`${compact ? "text-[6px]" : "text-[8px]"} font-bold px-1 py-0 leading-4`}
