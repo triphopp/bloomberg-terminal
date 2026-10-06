@@ -55,12 +55,12 @@ This Windows box denies the system temp dir to pytest — pass `--basetemp` to a
 | State | Jotai (atoms) + TanStack React Query |
 | Charts | lightweight-charts v5 via our `chartkit/` + `chart/` (ModularChart, panes, event rail, regression channels), Recharts for dashboards |
 | Styling | Tailwind CSS, `bloombergColors` theme; text-only controls (`styles/globals.css`) |
-| Backend | Python FastAPI (port 9317) — 67 routers, `main.py` mounts them |
+| Backend | Python FastAPI (port 9317) — 68 routers, `main.py` mounts them |
 | Data | yfinance through a provider registry (`sources/`) + app-wide Yahoo gate (`yahoo_gate.py`, 6 concurrent) + shared request coordinator (`market_requests.py`) |
 | Macro / rates | FRED (+ Alpha Vantage fallback), Japan MOF JGB CSV, CBOE vol CSVs, Treasury fiscaldata |
 | Filings / positioning | SEC EDGAR (submissions, 8-K EX-99.1, XBRL, EFTS 424B2/424B5), CFTC Socrata (TFF + Disaggregated) |
 | Other | Polymarket Gamma, Binance aggTrades, World Bank, BOT API, SEC Thailand, SDMX central banks, dramexchange |
-| AI | Claude API (portfolio AI), Ollama (optional, clippings endpoints only), MCP server `backend/mcp_server.py` |
+| AI | DeepSeek (NEWS → ASK with live data tools), Claude API (portfolio AI), Ollama (optional, clippings endpoints only), MCP server `backend/mcp_server.py` |
 | Database | SQLite `backend/portfolio.db`; Google Drive JSON sync (`backend/sync/`) |
 | Options | Black-Scholes + Gram-Charlier (`greeks.py`), Raw SVI (`analytics/svi.py`), payoff (`analytics/option_payoff.py`) |
 
@@ -75,6 +75,11 @@ ALPHA_VANTAGE_API_KEY — macro fallback
 FISCAL_AI_API_KEY / FISCAL_AI_DAILY_LIMIT — Fiscal.ai fundamentals (free trial: 100 fixed companies, 250 calls/day; base `https://api.fiscal.ai/v3`, key in `apiKey` query param — never log URLs). Used by `routers/fiscal_ai.py` + MCP `get_fiscal_data` (2026-09-28)
 EIA_API_KEY           — optional: TAIL oil balance (EIA weekly); unset = public DEMO_KEY, 10 calls/h (2026-10-02)
 ANTHROPIC_API_KEY     — portfolio AI; CLAUDE_MODEL / CLAUDE_MAX_TOKENS optional
+ASK_SESSIONS_STORE (auto | drive | local | off) / ASK_SESSIONS_DIR (explicit folder, outside the repo) — where THIS machine keeps ASK conversations (`backend/ask_sessions.py`): `<SYNC_DIR>/ask-sessions` on Google Drive, or the user's app-data folder. Set from ASK → HISTORY → STORAGE or `python scripts/ask_sessions.py`, 2026-10-06
+NEWS_AI_TOOL_BUDGET (100000 chars of tool results per question) / NEWS_AI_READ_ANY_URL (1 = ASK may open any address even after reading private data; default 0) — ASK limits, 2026-10-06
+TAVILY_API_KEY / BRAVE_API_KEY — optional, free tiers: general web search tool for NEWS → ASK (Tavily first); unset = news search + page reading only
+OPENAI_API_KEY / GEMINI_API_KEY / OPENROUTER_API_KEY / GROQ_API_KEY / NEWS_AI_CUSTOM_URL + NEWS_AI_CUSTOM_KEY — other ASK providers (Anthropic uses ANTHROPIC_API_KEY); NEWS_AI_PROVIDER = default provider. Keys can be saved from NEWS → ASK → MODEL ▸, which writes this file (2026-10-06)
+DEEPSEEK_API_KEY      — NEWS → ASK question box; NEWS_AI_MODEL (deepseek-chat) / NEWS_AI_MAX_TOKENS (8000) / NEWS_AI_WEB_SEARCH (1 = web tools on) / NEWS_AI_READER (1 = Jina Reader fallback for page reads) optional; backend/.env is re-read per question, no restart (2026-10-05)
 BINANCE_API_KEY       — crypto order footprint
 THESES_DIR / SOURCES_DIR / OBSIDIAN_WIKI_DIR / GRAPHS_DIR — thesis md, sources, Zettelkasten export, analysis pages
 CLIPPINGS_DIR / OLLAMA_URL — backend clippings router (no UI since 2026-09-25)
@@ -112,7 +117,7 @@ DEV_ORIGINS=                           — optional, comma-separated extra host 
 
 ## Backend Architecture — Modular Routers
 
-`main.py` = app init + CORS + schema init + router mounting (67 routers). All logic in `backend/routers/`.
+`main.py` = app init + CORS + schema init + router mounting (68 routers). All logic in `backend/routers/`.
 Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo_gate` load before any router.
 
 | Router file | Prefix | Source |

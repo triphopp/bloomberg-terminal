@@ -77,7 +77,7 @@ from analytics.regime_v2 import ensure_v2_fresh
 from contextlib import asynccontextmanager
 
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, news_watchlist, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, bonds, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, questions, tracking, graphs, reads, series, ir_stress, market_state, dcf, discover, market_heatmap, cot, stream, google_trends, fiscal_ai
+from routers import market, stock, options, pins, clippings, news, news_watchlist, news_ai, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, bonds, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, questions, tracking, graphs, reads, series, ir_stress, market_state, dcf, discover, market_heatmap, cot, stream, google_trends, fiscal_ai
 from routers import health as upstream_health_router
 from routers import chart_drawings
 from routers import changes as changes_router
@@ -195,6 +195,7 @@ app.include_router(pins.router)
 app.include_router(clippings.router)
 app.include_router(news.router)
 app.include_router(news_watchlist.router, tags=["News"])
+app.include_router(news_ai.router, tags=["News"])
 app.include_router(social.router)
 app.include_router(macro.router)
 app.include_router(global_yields.router)

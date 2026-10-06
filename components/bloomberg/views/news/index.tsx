@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
+import { AskBar, AskColumn, useAskColumnShown } from "../../ask";
 import { useTabShortcuts } from "../../hooks/useTabShortcuts";
 import { bloombergColors } from "../../lib/theme-config";
 import { NEWS_TAB_KEY } from "./constants";
@@ -10,6 +11,14 @@ import { PolymarketColumn } from "./polymarket-column";
 import { SocialTab } from "./social-tab";
 import type { NewsTab, WatchlistMarket } from "./types";
 import { WatchlistNewsTab } from "./watchlist-tab";
+
+// Memoised: their props (theme, callbacks, matched markets) change rarely, and
+// NewsView re-renders for reasons that are none of their business.
+const WatchlistTab = memo(WatchlistNewsTab);
+const FeedTab = memo(NewsFeedTab);
+const SocialFeedTab = memo(SocialTab);
+const SeriesTab = memo(DataTab);
+const MarketsColumn = memo(PolymarketColumn);
 
 const TABS: { id: NewsTab; label: string }[] = [
   { id: "watchlist", label: "WATCHLIST" },
@@ -51,6 +60,9 @@ export default function NewsView({ isDarkMode }: NewsViewProps) {
     },
     []
   );
+
+  // ASK lives in components/bloomberg/ask; this view only gives it a column.
+  const askShown = useAskColumnShown();
 
   const tabStyle = (active: boolean) => ({
     borderBottom: active ? `2px solid ${colors.accent}` : "2px solid transparent",
@@ -94,17 +106,27 @@ export default function NewsView({ isDarkMode }: NewsViewProps) {
         </span>
       </div>
 
-      {/* ── Body: tab content + shared polymarket column ────────────────────── */}
+      {/* ── Body: ask + tab content + shared polymarket column ────────────────────── */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {activeTab === "watchlist" && (
-          <WatchlistNewsTab colors={colors} onMarketsChange={handleMarkets} />
-        )}
-        {activeTab === "feed" && <NewsFeedTab colors={colors} />}
-        {activeTab === "social" && <SocialTab colors={colors} />}
-        {activeTab === "data" && <DataTab colors={colors} />}
+        <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
+          {/* ASK: the question box sits above every tab until a conversation is open;
+              then it lives at the foot of the answer column on the right. */}
+          <AskBar />
+          <div className="flex flex-1 min-h-0 overflow-hidden">
+            {activeTab === "watchlist" && (
+              <WatchlistTab colors={colors} onMarketsChange={handleMarkets} />
+            )}
+            {activeTab === "feed" && <FeedTab colors={colors} />}
+            {activeTab === "social" && <SocialFeedTab colors={colors} />}
+            {activeTab === "data" && <SeriesTab colors={colors} />}
+          </div>
+        </div>
 
-        {activeTab !== "data" && (
-          <PolymarketColumn
+        <AskColumn />
+
+        {/* The answer column takes this one's place while it is open. */}
+        {activeTab !== "data" && !askShown && (
+          <MarketsColumn
             colors={colors}
             isDark={isDarkMode}
             watchlistMarkets={markets}

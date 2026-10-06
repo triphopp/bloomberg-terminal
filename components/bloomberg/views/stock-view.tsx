@@ -30,6 +30,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { useAskContext } from "../ask";
 import { chartTypeAtom, isDarkModeAtom, stockAnalysisTabAtom } from "../atoms";
 import {
   ChartTimeframeBar,
@@ -4368,6 +4369,12 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
   });
 
   const [analysisTab, setAnalysisTab] = useState<AnalysisTab>("financials");
+  // ASK: "this stock" is the one on screen, without the model having to read the page.
+  useAskContext(
+    activeSymbol
+      ? { symbols: [activeSymbol], note: `Stock analysis of ${activeSymbol}, ${analysisTab} tab` }
+      : null
+  );
 
   // A caller can ask for a specific panel on the way in (NEWS opens a name straight
   // into RATE STRESS). Consume it once so an ordinary navigation later still lands
