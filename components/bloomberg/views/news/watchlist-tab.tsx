@@ -3,7 +3,7 @@
 import { useSetAtom } from "jotai";
 import { AlertTriangle, ExternalLink, Filter, Layers, RefreshCw, Settings2, X } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { currentViewAtom, stockSearchSymbolAtom } from "../../atoms";
 import { BloombergButton } from "../../core/bloomberg-button";
 import {
@@ -75,7 +75,10 @@ const DEFAULT_LAYOUT: LayoutPrefs = {
 
 // ── Row ───────────────────────────────────────────────────────────────────────
 
-function ArticleRow({
+// memo: the list re-renders on every filter keystroke and on each settle poll;
+// React Query keeps an unchanged article's object identity across refetches, so
+// only the rows that are new or changed render again.
+const ArticleRow = memo(function ArticleRow({
   article,
   colors,
   showSector,
@@ -177,7 +180,7 @@ function ArticleRow({
       />
     </div>
   );
-}
+});
 
 // ── Group header ──────────────────────────────────────────────────────────────
 
@@ -283,11 +286,14 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
     localStorage.setItem(WL_LAYOUT_KEY, JSON.stringify(layout));
   }, [layout]);
 
-  const { data, isFetching, error, refresh } = useWatchlistNews({
+  const { data, isFetching, isUpdating, error, refresh } = useWatchlistNews({
     symbols,
     sources,
     perSymbol: layout.perSymbol,
   });
+  // The first answer can arrive before the slow sources do; the rest follows in
+  // short polls, and between two of them `isFetching` alone would say "idle".
+  const busy = isFetching || isUpdating;
 
   // Module-level empties, never `?? []`: a fresh array per render while `data`
   // is undefined (loading, failed, or the query disabled by an empty watchlist)
@@ -375,10 +381,13 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
       }));
   }, [visible, layout.group, colors.accent]);
 
-  const openStock = (sym: string) => {
-    setStockSymbol(sym);
-    setCurrentView("stock");
-  };
+  const openStock = useCallback(
+    (sym: string) => {
+      setStockSymbol(sym);
+      setCurrentView("stock");
+    },
+    [setStockSymbol, setCurrentView]
+  );
 
   const toggleSource = (id: string) => {
     setSources((prev) => {
@@ -669,10 +678,11 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
           <div className="ml-auto flex items-center gap-2">
             <span className="text-[9px] font-mono" style={{ color: colors.textSecondary }}>
               {visible.length}/{articles.length} · {data?.as_of ? clockStr(data.as_of) : "—"}
+              {isUpdating && <span style={{ color: colors.accent }}> · UPDATING</span>}
             </span>
-            <BloombergButton color="default" onClick={() => refresh()} disabled={isFetching}>
-              <RefreshCw className={`h-3 w-3 ${isFetching ? "animate-spin" : "mr-1"}`} />
-              {!isFetching && "REFRESH"}
+            <BloombergButton color="default" onClick={() => refresh()} disabled={busy}>
+              <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : "mr-1"}`} />
+              {!busy && "REFRESH"}
             </BloombergButton>
           </div>
         </div>
@@ -804,7 +814,7 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
             </div>
           )}
 
-          {isFetching && articles.length === 0 && (
+          {busy && articles.length === 0 && (
             <div className="flex items-center justify-center py-16 gap-2">
               <RefreshCw className="h-4 w-4 animate-spin" style={{ color: colors.accent }} />
               <span className="text-xs" style={{ color: colors.textSecondary }}>
@@ -813,7 +823,7 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
             </div>
           )}
 
-          {!isFetching && visible.length === 0 && (
+          {!busy && visible.length === 0 && (
             <div className="py-16 text-center text-xs" style={{ color: colors.textSecondary }}>
               {articles.length === 0 ? "No articles found" : "No articles match the filters"}
             </div>

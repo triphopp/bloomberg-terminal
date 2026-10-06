@@ -5,8 +5,11 @@ Supported platforms: Facebook (RSSHub), Twitter/X (Nitter RSS), YouTube (officia
 import calendar
 import datetime
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlsplit
 
+import requests
 from fastapi import APIRouter, Query
 
 from cache import TTLCache
@@ -27,6 +30,20 @@ _NITTER_INSTANCES = [
 ]
 
 _UA = "Mozilla/5.0 (compatible; BloombergTerminal/1.0)"
+
+# X mirrors that did not answer (DNS gone, refused, 5xx) and when to try them
+# again. Asked every 5 minutes, five dead hosts failing DNS together read in
+# logs/upstream.jsonl as "the network is down" (2026-10-05).
+_X_RETRY_S = 6 * 3600
+_x_down: dict[str, float] = {}
+
+
+def _mirror_is_down(exc: Exception) -> bool:
+    """The host itself failed — not this handle on a working host (404, 403)."""
+    if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+        return True
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status is not None and status >= 500
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -76,22 +93,39 @@ def _parse_rss(url: str, platform: str, handle: str, limit: int) -> list[dict]:
 
 def _fetch_twitter(handle: str, limit: int) -> list[dict]:
     handle = handle.lstrip("@").strip()
-    # Try RSSHub first (works if user has their own RSSHub with Twitter route)
+    # RSSHub (works if the user runs their own with the Twitter route) and every
+    # Nitter instance at once; the first that has posts wins. Tried one after
+    # another, a handle whose instances were down held the request for the sum
+    # of their timeouts — six of them is past the 30 s proxy limit.
+    now = time.time()
+    urls = [
+        url
+        for url in [f"{RSSHUB_URL}/twitter/user/{handle}"]
+        + [f"https://{instance}/{handle}/rss" for instance in _NITTER_INSTANCES]
+        if _x_down.get(urlsplit(url).hostname or "", 0) <= now
+    ]
+    # Said out loud: an empty list read as "this account has not posted", when
+    # the truth is that no public mirror serves X any more.
+    nothing = RuntimeError(
+        "no RSSHub or Nitter instance returned posts (set RSSHUB_URL to your own RSSHub)"
+    )
+    if not urls:
+        raise nothing
+    pool = ThreadPoolExecutor(max_workers=len(urls), thread_name_prefix="social-x")
     try:
-        posts = _parse_rss(f"{RSSHUB_URL}/twitter/user/{handle}", "twitter", handle, limit)
-        if posts:
-            return posts
-    except Exception:
-        pass
-    # Fall back to Nitter RSS instances
-    for instance in _NITTER_INSTANCES:
-        try:
-            posts = _parse_rss(f"https://{instance}/{handle}/rss", "twitter", handle, limit)
+        futures = {pool.submit(_parse_rss, url, "twitter", handle, limit): url for url in urls}
+        for future in as_completed(futures):
+            try:
+                posts = future.result()
+            except Exception as exc:
+                if _mirror_is_down(exc):
+                    _x_down[urlsplit(futures[future]).hostname or ""] = now + _X_RETRY_S
+                continue
             if posts:
                 return posts
-        except Exception:
-            continue
-    return []
+        raise nothing
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def _fetch_youtube(channel: str, limit: int) -> list[dict]:

@@ -1,8 +1,9 @@
 """
 News feed endpoints — Facebook social feed + multi-source financial newswire.
 """
-import calendar
 import datetime
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 
@@ -12,14 +13,27 @@ from fastapi import APIRouter, Query
 
 from cache import TTLCache
 from config import FACEBOOK_TOKEN, RSSHUB_URL, FB_CACHE_TTL
-from rss import fetch_feed
+from rss import fetch_feed, fetch_items
 from sources import market_data
 
 router = APIRouter()
 
 # ── Module-level caches ───────────────────────────────────────────────────────
 _fb_cache   = TTLCache(ttl=FB_CACHE_TTL, maxsize=50)
-_feed_cache = TTLCache(ttl=300, maxsize=100)  # 5-min cache
+# /api/news/feed, two layers:
+#   _feed_cache   topics+limit → {"data", "ts"}. Fresh for 5 min; up to 30 min
+#                 old it is served at once while a refresh runs behind it.
+#   _piece_cache  one topic search / one RSS feed, 5 min. Adding or removing a
+#                 topic re-reads only the piece that is new.
+_FEED_FRESH_S = 300
+_feed_cache = TTLCache(ttl=1800, maxsize=100)
+_piece_cache = TTLCache(ttl=_FEED_FRESH_S, maxsize=200)
+_feed_pool = ThreadPoolExecutor(max_workers=10, thread_name_prefix="news-feed")
+_feed_refreshing: set[str] = set()
+_feed_refresh_lock = threading.Lock()
+#: Headlines asked of yfinance per topic, rounded up to one of these — so a
+#: topic's cache entry does not change with every other topic added or removed.
+_TOPIC_BUCKETS = (30, 80, 150)
 
 # ── Curated free RSS feeds (no auth) ─────────────────────────────────────────
 # Dropped 2026-09-30: Reuters (feeds.reuters.com no longer resolves) and
@@ -168,13 +182,6 @@ def _ts_to_iso(ts: int | float) -> str:
         return ""
 
 
-def _struct_to_iso(struct) -> str:
-    try:
-        return datetime.datetime.utcfromtimestamp(calendar.timegm(struct)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    except Exception:
-        return ""
-
-
 def _fetch_yfinance_topic(topic: str, count: int) -> list[dict]:
     try:
         result = yf.Search(topic, news_count=count, enable_fuzzy_query=True)
@@ -213,22 +220,22 @@ def _fetch_yfinance_topic(topic: str, count: int) -> list[dict]:
 
 def _fetch_rss(name: str, url: str, limit: int) -> list[dict]:
     try:
-        feed = fetch_feed(
+        _, entries = fetch_items(
             url,
             headers={"User-Agent": "Mozilla/5.0 (compatible; BloombergTerminal/1.0)"},
+            limit=limit,
         )
         out = []
-        for entry in feed.entries[:limit]:
-            title = (entry.get("title") or "").strip()
-            link  = entry.get("link", "")
+        for entry in entries:
+            title = entry["title"]
+            link  = entry["link"]
             if not title or not link:
                 continue
-            struct = entry.get("published_parsed") or entry.get("updated_parsed")
             out.append({
                 "title":        title,
                 "url":          link,
                 "source":       name,
-                "published_at": _struct_to_iso(struct) if struct else "",
+                "published_at": entry["published"],
                 "topic":        "general",
             })
         return out
@@ -237,44 +244,99 @@ def _fetch_rss(name: str, url: str, limit: int) -> list[dict]:
         return []
 
 
+def _topic_piece(topic: str, need: int, fresh: bool) -> list[dict]:
+    """One topic's headlines, at least `need` of them when Yahoo has that many."""
+    name = topic.lower()
+    bucket = next((b for b in _TOPIC_BUCKETS if b >= need), _TOPIC_BUCKETS[-1])
+    if fresh:
+        for b in _TOPIC_BUCKETS:
+            _piece_cache.delete(f"topic:{name}:{b}")
+    else:
+        # A bigger pull already in the cache answers a smaller need.
+        for b in _TOPIC_BUCKETS:
+            if b > bucket:
+                hit = _piece_cache.get(f"topic:{name}:{b}")
+                if hit is not None:
+                    return hit
+    # get_or_set: one fetch per piece even when two requests want it at once,
+    # and an empty answer is kept too (a failed source is not re-hit for 5 min).
+    return _piece_cache.get_or_set(f"topic:{name}:{bucket}",
+                                   lambda: _fetch_yfinance_topic(topic, bucket))
+
+
+def _rss_piece(name: str, url: str, fresh: bool) -> list[dict]:
+    if fresh:
+        _piece_cache.delete(f"rss:{name}")
+    return _piece_cache.get_or_set(f"rss:{name}", lambda: _fetch_rss(name, url, 20))
+
+
+def _build_feed(topic_list: list[str], limit: int, fresh: bool = False) -> dict:
+    """Pull every piece (cached 5 min each), merge, de-duplicate, newest first."""
+    per_topic = max(8, limit // max(len(topic_list), 1))
+    futures = [
+        *[(_feed_pool.submit(_topic_piece, t, per_topic, fresh), per_topic) for t in topic_list],
+        *[(_feed_pool.submit(_rss_piece, name, url, fresh), None) for name, url in _RSS_FEEDS.items()],
+    ]
+
+    # Deduplicate by URL (keep first seen), in request order so the result does
+    # not depend on which source happened to answer first.
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for future, cap in futures:
+        try:
+            items = future.result() or []
+        except Exception as e:
+            print(f"[news/feed] {e}")
+            continue
+        for item in items[:cap]:
+            u = item["url"]
+            if u and u not in seen:
+                seen.add(u)
+                unique.append(item)
+
+    unique.sort(key=lambda x: x.get("published_at", ""), reverse=True)
+    return {"articles": unique[:limit]}
+
+
+def _refresh_feed_behind(cache_key: str, topic_list: list[str], limit: int) -> None:
+    with _feed_refresh_lock:
+        if cache_key in _feed_refreshing:
+            return
+        _feed_refreshing.add(cache_key)
+
+    def run() -> None:
+        try:
+            _feed_cache.set(cache_key, {"data": _build_feed(topic_list, limit), "ts": time.time()})
+        except Exception as exc:  # noqa: BLE001 - the stale copy stays in place
+            print(f"[news/feed] refresh: {exc}")
+        finally:
+            with _feed_refresh_lock:
+                _feed_refreshing.discard(cache_key)
+
+    threading.Thread(target=run, name="news-feed-swr", daemon=True).start()
+
+
 @router.get("/api/news/feed")
 def news_feed(
     topics: str = Query(default="market", description="Comma-separated search terms or ticker symbols"),
     limit: int = Query(default=60, le=150),
     fresh: int = Query(default=0, description="1 = skip the cache (REFRESH button)"),
+    swr: int = Query(default=0, description="1 = a copy up to 30 min old may be returned at once "
+                                           "(`refreshing: true`) while the new one is fetched"),
 ):
     """Multi-source financial newswire: yfinance Search + curated RSS feeds."""
     topic_list = [t.strip() for t in topics.split(",") if t.strip()][:10]
     cache_key = f"feed:{','.join(sorted(topic_list))}:{limit}"
     cached = None if fresh else _feed_cache.get(cache_key)
     if cached is not None:
-        return cached
+        if time.time() - cached["ts"] < _FEED_FRESH_S:
+            return cached["data"]
+        if swr:
+            # Only for a caller that will ask again (the NEWSFEED tab). ASK and
+            # other one-shot readers get the rebuilt feed below.
+            _refresh_feed_behind(cache_key, topic_list, limit)
+            return {**cached["data"], "refreshing": True}
 
-    per_topic = max(8, limit // max(len(topic_list), 1))
-    all_items: list[dict] = []
-
-    with ThreadPoolExecutor(max_workers=10) as pool:
-        futures = [
-            *[pool.submit(_fetch_yfinance_topic, t, per_topic) for t in topic_list],
-            *[pool.submit(_fetch_rss, name, url, 20) for name, url in _RSS_FEEDS.items()],
-        ]
-        for f in as_completed(futures):
-            try:
-                all_items.extend(f.result())
-            except Exception as e:
-                print(f"[news/feed] {e}")
-
-    # Deduplicate by URL (keep first seen)
-    seen: set[str] = set()
-    unique: list[dict] = []
-    for item in all_items:
-        u = item["url"]
-        if u and u not in seen:
-            seen.add(u)
-            unique.append(item)
-
-    unique.sort(key=lambda x: x.get("published_at", ""), reverse=True)
-
-    result = {"articles": unique[:limit]}
-    _feed_cache.set(cache_key, result)
+    result = _build_feed(topic_list, limit, fresh=bool(fresh))
+    _feed_cache.set(cache_key, {"data": result, "ts": time.time()})
     return result

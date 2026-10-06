@@ -178,6 +178,18 @@ URL carries the view (`?view=bonds`, `layout/view-navigation.ts`).
 
 Signals cache per symbol900s; alert closed-bar trimming remains after the shared raw-history layer. Known absent history404 is skipped by alert frame conversion; transient failures do not become a cached successful scan. PM search/event-detail leaf requests share the coordinator, and confirmed no-market results alone get a900s negative cache. Instances are per Python process; multiple workers do not share memory/limits. No Redis dependency, DB migration or new background scheduler.
 
+**2026-10-05:** Gamma leaf pool 2 → 4. A ticker's Polymarket ladder is built from the `/public-search` answer alone (it carries each event's markets); `/events?slug=` is only a fallback, so the "event-detail leaf requests" above are now rare.
+
+## NEWS data path (2026-10-05)
+
+`NEWS tab → React Query (first answer wait=1.5, then settle polls while pending) → Next proxy → routers/news_watchlist.py → one pull per (symbol, source) → rss.fetch_items / yf.Search`.
+
+- `backend/rss.py` — pooled `requests.Session` (timeout 4/8 s). `fetch_items` / `parse_items`: ElementTree headline parser (title, link, summary, published ISO-UTC, thumbnail, video_id), feedparser fallback for malformed XML. `fetch_feed`: full feedparser object (social, Facebook).
+- `backend/persist_cache.py` — `PersistentStore(name, max_age, maxsize)`: keyed dict of JSON-able entries (each with `ts`), written to `backend/cache/<name>.json` at most once per 5 s and read back at import. Used for the NEWS pulls and for symbol metadata Yahoo has no sector for. In-memory only with `name=None` (tests).
+- `routers/news_watchlist.py` — `_pull_source` (one source, one symbol → store; a failure keeps the last good items and sets a 90 s retry), `_source_job` (single-flight per key, one executor per source), `_gather_news` (store + deadline → items per symbol, pulls still running, oldest pull time), `_resolve_metas` (memory → one SQLite query → persisted no-sector answers → yfinance).
+- `routers/news.py` — `/api/news/feed`: assembled feed cache + per-piece cache (`_topic_piece`, `_rss_piece`), `swr=1` for the tab.
+- `routers/polymarket.py` — market pool refreshed by one background thread while the expired pool is still served (≤ 30 min); answers are tagged with the pool they came from (`_pool_stamp`, `_cached_answer`); DB writes go through `_write_behind`.
+
 ## Request path & fan-out (2026-09-28)
 
 - **Vendor calls once:** `market_snapshots.v7_quotes` batches Yahoo quotes (≤50/request, 30 s, in-flight sharing, no lock across I/O); `fast_info` / rich quote / heatmap / FX / portfolio read it first. Rich quote = v7 row + `info` fundamentals reused 30 min.

@@ -6,9 +6,10 @@ export async function GET(request: Request) {
   const topics = searchParams.get("topics") ?? "market";
   const limit = searchParams.get("limit") ?? "60";
   const fresh = searchParams.get("fresh") === "1" ? "&fresh=1" : "";
+  const swr = searchParams.get("swr") === "1" ? "&swr=1" : "";
 
   try {
-    const url = `${PYTHON_API}/api/news/feed?topics=${encodeURIComponent(topics)}&limit=${encodeURIComponent(limit)}${fresh}`;
+    const url = `${PYTHON_API}/api/news/feed?topics=${encodeURIComponent(topics)}&limit=${encodeURIComponent(limit)}${fresh}${swr}`;
     const res = await fetch(url, {
       cache: "no-store",
       signal: AbortSignal.timeout(25_000),
