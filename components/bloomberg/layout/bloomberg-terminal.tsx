@@ -1,9 +1,10 @@
 "use client";
 
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import dynamic from "next/dynamic";
 import { Suspense, memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { askDrawerShownAtom, askOpenAtom, toggleAskAtom } from "../ask";
 import {
   chartTypeAtom,
   focusHeatmapSearchAtom,
@@ -64,6 +65,9 @@ const TailRiskView = dynamic(() => import("../views/tail-risk-view").then((m) =>
 const BondView = dynamic(() => import("../views/bonds").then((m) => m.BondView), {
   loading: () => <ViewSkeleton />,
 });
+
+// Quick ASK drawer — pulls in the answer renderer, so only once it is opened.
+const AskDock = dynamic(() => import("../ask").then((m) => m.AskDock), { ssr: false });
 
 const MemoHeatmap = memo(HeatmapView);
 const MemoNews = memo(NewsView);
@@ -139,6 +143,11 @@ function BloombergTerminal() {
   const [, setGlobalChartType] = useAtom(chartTypeAtom);
   const [, signalHeatmapSearch] = useAtom(focusHeatmapSearchAtom);
   const [, setShowHeatmapSettings] = useAtom(showHeatmapSettingsAtom);
+  // ASK (components/bloomberg/ask): header icon / `c`. The module decides
+  // whether that opens the drawer or focuses a column the view already has.
+  const handleAsk = useSetAtom(toggleAskAtom);
+  const isAskDrawerShown = useAtomValue(askDrawerShownAtom);
+  const setAskOpen = useSetAtom(askOpenAtom);
 
   // Market data
   const { marketData: data, refreshData, isLoading } = useMarketDataQuery();
@@ -155,12 +164,17 @@ function BloombergTerminal() {
 
   // ── Esc handler: back to parent view (NOT cancl confirm) ──────────────────
   const handleEscape = useCallback(() => {
+    // The ASK drawer is the overlay on top — it closes first.
+    if (isAskDrawerShown) {
+      setAskOpen(false);
+      return;
+    }
     // If we're in a sub-view, go back to market (home)
     if (currentView !== "market") {
       setCurrentView("market");
     }
     // If already on market view, Esc does nothing (no annoying confirm dialog)
-  }, [currentView, setCurrentView]);
+  }, [currentView, setCurrentView, isAskDrawerShown, setAskOpen]);
 
   // ── Navigation items with shortcut keys ──────────────────────────────────
   const navItems: NavItem[] = [
@@ -224,6 +238,7 @@ function BloombergTerminal() {
     },
     { key: "t", action: handleTailView, description: "Tail Risk Monitor" },
     { key: "b", action: handleBondView, description: "Bond Monitor (price vs supply)" },
+    { key: "c", action: handleAsk, description: "Ask (chat)" },
     // Help
     { key: "?", shiftKey: true, action: handleHelpClick, description: "Show keyboard shortcuts" },
     // Toggle chart type
@@ -268,6 +283,7 @@ function BloombergTerminal() {
         navItems={navItems}
         onSearchClick={() => setIsGlobalSearchOpen(true)}
         onHelpClick={handleHelpClick}
+        onAskClick={handleAsk}
         showYTD={showYTD}
         onYTDToggle={() => setShowYTD((v) => !v)}
         centerSlot={
@@ -351,8 +367,11 @@ function BloombergTerminal() {
       {process.env.NODE_ENV === "development" && <BackendStatusBanner />}
       <TickFlash />
       {headerBlock}
-      <div className="flex-1 min-h-0 overflow-hidden">
+      {/* data-ask-screen: what ASK reads when asked about the page (ask/screen.ts). */}
+      <div className="relative flex-1 min-h-0 overflow-hidden" data-ask-screen>
         <Suspense fallback={<ViewSkeleton />}>{viewElement}</Suspense>
+        {/* Over the view, not beside it: no view gives up width for the chat. */}
+        <AskDock />
       </div>
       {/* Ribbon + crawl are desktop furniture: on a phone they eat ~40px of a
           ~700px screen for text too small to read, and the TAIL view has it all. */}

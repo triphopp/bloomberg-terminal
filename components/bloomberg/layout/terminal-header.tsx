@@ -1,8 +1,10 @@
 "use client";
 
 import { useIsMobile } from "@/hooks/use-mobile";
-import { Search, Settings } from "lucide-react";
+import { useAtomValue } from "jotai";
+import { MessageSquare, Search, Settings } from "lucide-react";
 import type React from "react";
+import { askBusyAtom, askDrawerShownAtom } from "../ask";
 import { bloombergColors } from "../lib/theme-config";
 import { ProviderSwitch } from "./provider-switch";
 import { SyncStatus } from "./sync-status";
@@ -22,6 +24,7 @@ type TerminalHeaderProps = {
   navItems: NavItem[];
   onSearchClick: () => void;
   onHelpClick: () => void;
+  onAskClick: () => void;
   showYTD: boolean;
   onYTDToggle: () => void;
   centerSlot?: React.ReactNode;
@@ -35,6 +38,7 @@ export function TerminalHeader({
   navItems,
   onSearchClick,
   onHelpClick,
+  onAskClick,
   showYTD,
   onYTDToggle,
   centerSlot,
@@ -42,6 +46,24 @@ export function TerminalHeader({
   onBack,
 }: TerminalHeaderProps) {
   const colors = isDarkMode ? bloombergColors.dark : bloombergColors.light;
+  // ASK: lit while the drawer is open (a view with its own ASK column has the
+  // conversation on the page, so nothing is lit there); the dot is an answer still coming in.
+  const askOpen = useAtomValue(askDrawerShownAtom);
+  const askBusy = useAtomValue(askBusyAtom);
+  const askIcon = (size: string) => (
+    <span className="relative flex items-center">
+      <MessageSquare
+        className={size}
+        style={{ color: askOpen ? colors.accent : colors.textSecondary }}
+      />
+      {askBusy && (
+        <span
+          className="absolute -top-0.5 -right-1 inline-block rounded-full animate-pulse"
+          style={{ width: 4, height: 4, background: colors.accent }}
+        />
+      )}
+    </span>
+  );
   const sep = `1px solid ${colors.border}33`;
   const isMobile = useIsMobile();
 
@@ -73,6 +95,15 @@ export function TerminalHeader({
           {active?.label ?? currentView.toUpperCase()}
         </span>
         <div className="ml-auto flex items-center">
+          <button
+            type="button"
+            onClick={onAskClick}
+            className="h-10 w-10 flex items-center justify-center"
+            aria-label="Ask"
+            aria-pressed={askOpen}
+          >
+            {askIcon("h-4 w-4")}
+          </button>
           <button
             type="button"
             onClick={onSearchClick}
@@ -199,6 +230,19 @@ export function TerminalHeader({
             ?
           </span>
           <span>HELP</span>
+        </button>
+
+        {/* Quick ASK — the NEWS chat as a drawer over the right edge of any view */}
+        <button
+          type="button"
+          onClick={onAskClick}
+          className="flex items-center px-2 h-full transition-colors hover:opacity-70"
+          style={{ borderLeft: sep }}
+          title={`Ask (C)${askBusy ? " — answering…" : ""}`}
+          aria-label="Ask"
+          aria-pressed={askOpen}
+        >
+          {askIcon("h-2.5 w-2.5")}
         </button>
 
         {/* Search */}

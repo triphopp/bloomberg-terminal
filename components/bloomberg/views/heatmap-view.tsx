@@ -19,6 +19,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAtom, useSetAtom } from "jotai";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAskContext } from "../ask";
 import {
   currentViewAtom,
   heatmapMarketAtom,
@@ -350,6 +351,10 @@ export function HeatmapView() {
   const [market, setMarket] = useAtom(heatmapMarketAtom);
   const [metricRaw, setMetric] = useAtom(heatmapMetricAtom);
   const metric = (METRICS.some((m) => m.key === metricRaw) ? metricRaw : "d1") as Metric;
+  // ASK: which market the page shows — the key of get_page_data's heatmap section.
+  useAskContext({
+    note: `Heatmap of market ${String(market).toUpperCase()}, coloured by ${metric}`,
+  });
   const [sizeMode, setSizeMode] = useState<"cap" | "sqrt">("cap");
   const [zoom, setZoom] = useState<string | null>(null);
   const [hover, setHover] = useState<Tile | null>(null);

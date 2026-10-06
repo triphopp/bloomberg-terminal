@@ -34,7 +34,8 @@ components/bloomberg/
 │   ├── bloomberg-terminal.tsx   ← root view router (6 views: MKT · NEWS · BOND · PORT · TAIL · HMAP)
 │   ├── tail-risk-ribbon.tsx     ← fixed TAIL level + top 3 named events in shared 24px status row
 │   ├── alert-ticker.tsx        ← fixed alert summary beside continuously scrolling market quotes
-│   ├── terminal-header.tsx      ← top nav bar + view buttons (phone <768px: title + search only)
+│   ├── terminal-header.tsx      ← top nav bar + view buttons (phone <768px: title + ask + search)
+├── ask/                         ← ASK, the one chat with the model (2026-10-06): store.ts (atoms) · useAskConversation.ts (request/stream) · ask-panel.tsx (AskDock / AskBar / AskColumn / useAskContext) · ask-answer.tsx · ask-settings.tsx · index.ts (public API). Views import from `ask`, never copy
 │   ├── mobile-nav.tsx           ← phone bottom view switcher (replaces header nav; ribbon + ticker hidden)
 │   ├── terminal-layout.tsx      ← keyboard shortcut binding wrapper
 │   └── terminal-filter-bar.tsx  ← watchlist filter
@@ -49,6 +50,7 @@ components/bloomberg/
 │   │   │                          (group: SECTOR/TICKER/TIME · match: NAMED/ALL NEWS · sentiment · source toggles)
 │   │   ├── newsfeed-tab.tsx     ← topic newswire (was the FEED tab)
 │   │   ├── social-tab.tsx       ← X/YouTube/Reddit/RSS handles
+│   │   ├── (ASK moved to components/bloomberg/ask — NewsView mounts `<AskBar />` + `<AskColumn />`, which takes the Polymarket column's place while shown)
 │   │   ├── polymarket-column.tsx← {SYM} IMPLIED ladder + WATCHLIST MARKETS + MACRO SIGNALS + search
 │   │   ├── prediction-ladder.tsx← implied distribution panel (CLOSE ABOVE CDF + TOUCH LADDER)
 │   │   ├── useWatchlistNews.ts  ← useWatchlistSymbols() (pins atom → localStorage fallback) + React Query (partial answer, then settle polls)
@@ -286,6 +288,18 @@ components/bloomberg/
 | `layout/tail-risk-ribbon.tsx` | `TailRiskRibbon` — content-width risk level + 3 named events ranked by severity/score; LIVE starts immediately after it; click opens TAIL |
 | `layout/alert-ticker.tsx` | `AlertTicker` — fixed alert summary + moving quote feed in the same 24px row |
 | `layout/terminal-header.tsx` | `TerminalHeader` |
+| `ask/index.ts` | **The only ASK code.** `AskDock` (mounted once in `layout/bloomberg-terminal.tsx`, `next/dynamic`; the drawer over every view that has no column of its own — a new view gets ASK with no code), `AskBar` + `AskColumn` (a view that wants the conversation as a column: bar above the content, column last in the flex row; mounting `AskColumn` registers the view as host and the drawer stays away), `useAskColumnShown()` (view makes room), `useAskContext({symbols, note})` (page tells the model what is on screen; the view name is sent automatically), atoms `toggleAskAtom` (header icon / `c`), `askDrawerShownAtom`, `askOpenAtom`, `askBusyAtom`. No prop drilling: surfaces read theme and state themselves (2026-10-06) |
+| `ask/images.ts` | Pictures for a question: `toAskImage(file)` (canvas → JPEG data URL, long side ≤1568 px), `imageFiles(dataTransfer)`, `MAX_ASK_IMAGES` = 4 (same as backend `_MAX_IMAGES`). Tray = `askDraftImagesAtom`; `useAskAttach()` in `ask-panel.tsx` gives paste (`onPaste` on both question boxes), drop (whole column / bar) and the `ImagePlus` button; sent pictures show under the `Q ▸` line (2026-10-06) |
+| `ask/math.ts` | LaTeX in an answer, pure: `splitMath(text)` (inline `$…$` / `\(…\)`, display `$$…$$` / `\[…\]`; a `$` pair is math only with one of `\ _ ^ = {` inside or a lone letter, so dollar amounts stay text), `displayMathAt(lines, i)` (formula on its own lines; null while the closing fence is still streaming). Drawn by `Tex` in `ask-answer.tsx` with **KaTeX** (`katex` dep + `katex/dist/katex.min.css`, HTML cached per formula); also in headings and the `Q ▸` line (`MathText`). Tests: `node --test components/bloomberg/ask/__tests__/math.test.ts`. The prompt (`_SYSTEM`) asks for `$` / `$$` (2026-10-06) |
+| `ask/screen.ts` | `readScreen()` — the open view as text for the model's `read_screen` tool: walks the element marked `data-ask-screen` (the view area in `layout/bloomberg-terminal.tsx`), skips `data-ask-surface` (ASK's own bar / column), canvas, svg, hidden nodes and password fields; children of a flex row / table row / grid are joined with ` | `, everything else stacks; `aria-selected` / `aria-pressed` items get `▶`; select / input values in `[ ]`; cut at 24,000 chars. Called by `useAskConversation` when a question is sent — no code in any view. What is switched on is known only from `aria-pressed` / `aria-selected`: every tab, range, mode and show/hide button in `components/bloomberg` got `aria-pressed` on 2026-10-06 (146 buttons, 66 files; shared ones: `CompactTabBtn`, the `TabBtn`s of the stock tabs, PORT's tab strip, `Seg`). TAIL has no toggles. A new toggle needs the attribute too |
+| `ask/history.ts` | Pure: `historyFor(messages)` — what goes back to the model: finished question + answer pairs only (a stopped / failed / empty answer is dropped **with its question**, so the roles always alternate), a note in place of earlier pictures, answers cut at 12,000 chars; `historyIsPrivate(messages)`. Tests in `ask/__tests__/history.test.ts` |
+| `ask/sessions.ts` + `ask/ask-history.tsx` | Saved conversations: `newSessionId()` (`YYYYMMDD-HHMMSS-xxxxxx`), `archiveSession()` (PUT after each answer, from `useAskPersistence`; skipped when `sessionSignature` has not moved), `fetchSessions()`, `fetchSession()`, `removeSession()`, `setSessionStore()`. `AskHistory` = the HISTORY ▸ panel in the column header and the NEWS bar: STORAGE (GOOGLE DRIVE · THIS MACHINE · OFF · FOLDER — this machine's setting), where it is saved, the list (open · ✕ = move to `_deleted`). Atoms `askSessionIdAtom`, `askHistoryOpenAtom`, `askArchiveNoteAtom`. `conversation.openSaved(id, messages)`; **NEW** (was CLEAR) starts a new conversation and leaves the old one in its file (2026-10-06) `pinSession()` (PATCH), pure `groupSessions()` (PINNED · TODAY · YESTERDAY · LAST 7/30 DAYS · EARLIER) and `matchesFilter()`. `AskHistory mode="drop"` = dropdown under the AskBar; `mode="tab"` = the HISTORY tab of the ASK column (CHAT · HISTORY share `askHistoryOpenAtom`; filter box, ★ pin, STORAGE folded) (2026-10-06). Delete: ✕ on a row → inline DELETE/CANCEL (the open chat too — then `onDeletedCurrent` = `ask.clear`); TRASH view: RESTORE · ERASE (confirm) · EMPTY TRASH (confirm); `fetchTrash` / `restoreSession` / `purgeSession`. `AskRecent` = RECENT CHATS under the starters of an empty chat; `useAskSessions()` = the shared `["ask-sessions"]` query. |
+| `ask/persist.ts` | The working copy of the conversation this tab is in: `sessionStorage["bloomberg_ask_conversation"]` = `{v: 2, id, messages}` (closing the tab ends it; the record is the file, above). An empty conversation never erases it — only NEW does. `restore(raw)` / `forStorage(messages, pictures)` pure, `loadConversation()` / `saveConversation()`; an answer cut by the reload comes back marked. `useAskPersistence()` (in `useAskConversation.ts`) is mounted once by `AskDock`: saves when a question starts, when it ends and on CLEAR. Over the quota the pictures are dropped and counted (`lostImages`). Each question carries `at` and shows its time |
+| `ask/history.ts` (2) | `PICTURE_MEMORY` = 3: the latest question with pictures has them sent again (`AskTurn.images`) for 3 exchanges; older ones are only mentioned. `conversation.again()` + COPY / ASK AGAIN under an answer (`ask-panel.tsx` `Answer`; ASK AGAIN on the last one only, it replaces that exchange) |
+| `proxy.ts` (repo root) + `lib/request-origin.ts` | Next 16 middleware: every non-GET request to `/api/**` must come from the app's own page (`crossOriginReason`). One place for ~60 write routes |
+| `lib/ask-proxy.ts` | Pure helpers of the ASK proxy routes: `crossSiteReason(headers, allowed)` (same-site guard for the POST routes), `allowedHosts(env)`, `backendError(raw, status)`. Tests in `lib/__tests__/ask-proxy.test.ts`. **`npm run test:ask`** runs these + the ask tests (21) |
+| `ask/store.ts` | All ASK state as atoms (incl. `askDraftTextAtom`: the unsent text survives hide / show, the bar ↔ column move and a view change): messages (not persisted), busy, model choice (`atomWithStorage` `bloomberg_news_ask_model`), settings open, focus signal, host count, separate open flags for column and drawer, page context. `ASK_API` = the one proxy path |
+| `ask/useAskConversation.ts` | `useAskConversation()` → `{messages, busy, ask, stop, clear}` — reads watchlist, model choice, current view and page context itself at send time; streamed events applied once per 50 ms. `useAskStatus(choice)`, `useAskModels()`, `useSaveAskKey()` |
 | `core/tick-flash.tsx` | `TickFlash` |
 | `layout/mobile-nav.tsx` | `MobileNav` |
 | `portfolio/index.tsx` | `PortfolioView` (default) |
@@ -372,7 +386,7 @@ components/bloomberg/
 | `views/market-view.tsx` | `MarketView` (default), `KeyIndicatorsBar` |
 | `views/market-view.tsx` (compare/scaling) | COMPARE button before VP edits 2–10 symbols; `compare(...)` and `<unit>_scaling` arrive through Jotai atoms from GlobalSearch. Compare plots normalized percent, scaling transforms OHLC and adds an active-unit reset button. |
 | `views/news-view.tsx` | re-export of `views/news/index.tsx` |
-| `views/news/index.tsx` | `NewsView` (default) |
+| `views/news/index.tsx` | `NewsView` (default). Hosts ASK with `<AskBar />` + `<AskColumn />` and reads only `useAskColumnShown()` — it no longer re-renders per streamed token. Tabs and the Polymarket column are still mounted through `memo` wrappers |
 | `views/news/watchlist-tab.tsx` | `WatchlistNewsTab` |
 | `views/news/newsfeed-tab.tsx` | `NewsFeedTab` |
 | `views/news/social-tab.tsx` | `SocialTab` |
@@ -432,6 +446,7 @@ components/bloomberg/
 | `E` | *(free — was FX until 2026-08-01)* |
 | `Alt+1`–`Alt+N` | Switch sub-tab within current view (BOND 1-2, PORT 1-8, NEWS 1-2) |
 | `/` or `Ctrl+K` | Open global search |
+| `c` | ASK drawer (on a view with its own ASK column — NEWS — focus its box) |
 | `Esc` / `← ESC` button | Back to market/home |
 | `Ctrl+R` | Refresh data |
 | `Y` | Toggle %Chg YTD / Daily (non-PORT) or THB/USD (PORT) |

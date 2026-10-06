@@ -107,6 +107,42 @@ be negative-cached, or "empty = expired" re-fires them on every request.
 - State lives in Jotai atoms (`components/bloomberg/atoms/index.ts`) + React Query for server data
 - Native `<select>` menus must use the app-wide popup palette in `styles/globals.css` (`color-scheme` plus explicit `<option>` foreground/background, with light/forced-colors variants). Do not style only the closed select with light text on a transparent background: Windows can render its popup with a light system background. Verify new selectors in DCF/IV-style panels on Windows and Mac when available.
 
+## ASK — one chat module (2026-10-06)
+
+All chat-with-the-model code is `components/bloomberg/ask/` (public API in `index.ts`). `<AskDock />` in the shell
+gives **every** view the drawer (header icon / `c`) — a new view needs no code. Optional, one line each:
+`useAskContext({ symbols, note })` (what the page shows; the view name is sent automatically) ·
+`<AskBar />` + `<AskColumn />` (conversation as a column of the view, as NEWS does; `useAskColumnShown()` to make room).
+Never copy ASK state or UI into a view, never branch on the view name to place it, never call `/api/news/ask` outside
+`ask/` (`ASK_API`). Backend: `routers/news_ai.py`. Pictures: paste / drop / attach icon, ≤4 per question, scaled in
+the browser (`ask/images.ts`), sent as data URLs — the backend never fetches an image link. The agent reads the
+page it was asked from: `read_screen` = the view's text as displayed (`ask/screen.ts`, every view, PORT included — it
+goes to the model provider when read), then `get_page_data` = one section of the data behind a view, only when the
+screen lacks it. **New view with data worth asking about → add its sections to `PAGES` in `backend/ask_pages.py`**
+(path + one-line description; the description is prompt text). **A button that switches something — a tab, a range,
+a mode, a show/hide — carries `aria-pressed={<the same condition that colours it>}`**: colour does not reach the
+agent, the attribute does (`▶` in the screen text). 146 buttons have it (2026-10-06); a new toggle without it is
+invisible to ASK. ASK also reads theses, open questions, tracked numbers, zettel and company accounts (`backend/ask_research.py`) —
+**read-only by design: never give ASK a tool that writes.** Writing research goes through the MCP and its rules.
+A new ASK tool that returns the user's own data goes in `_PRIVATE_TOOLS` (`routers/news_ai.py`): after one runs,
+`read_page` opens only links a tool returned or the user typed — that is what stops a news story from talking the model
+into sending the portfolio somewhere. `npm run test:ask`. The conversation on screen survives a reload in `sessionStorage`
+(this tab), and every conversation is saved as a file for ASK → HISTORY (a tab of the ASK column beside CHAT: grouped by day, filter, ★ pin kept in the file, ✕ delete → TRASH (restore, or erase for good — only from the trash); an empty chat lists RECENT CHATS) — **outside the repository, where each machine
+decides**: the Google Drive folder the portfolio syncs through (`<SYNC_DIR>/ask-sessions`) or the user's app-data folder
+(`backend/ask_sessions.py`; `ASK_SESSIONS_STORE` / `ASK_SESSIONS_DIR` in `backend/.env`, set from HISTORY → STORAGE or
+`python scripts/ask_sessions.py`). A folder inside the repo is refused — conversations hold portfolio data and must not be
+one `git add .` from a commit. Each question shows when it was asked: an answer is a reading of that moment; the latest pictures
+travel with the next 3 exchanges; a conversation opened again from HISTORY is told when each question was asked and, after
+≥6 h, that its figures are old; exchanges past the 12-turn window go as one-line digests; `search_sessions` / `read_session`
+let ASK read other saved conversations (private tools, their links never unlock `read_page`); `get_page_data` has sections for all seven views (`key` = ticker / market code).
+
+## Writes to `/api/**` — same origin only (2026-10-06)
+
+`proxy.ts` (Next 16's middleware) refuses every non-GET request to `/api/**` that did not come from this app's own page
+(`lib/request-origin.ts`: `Sec-Fetch-Site`, `Origin` = `Host`, host is local or in `DEV_ORIGINS`). The route handlers
+relabel any body as JSON and the backend sees the proxy as a local caller, so without it another site open in the same
+browser could book a trade with a plain form. A new route is covered automatically — do not add a way around it.
+
 ## Number format (house rule, 2026-09-26)
 
 | What | Decimals | Helper |
@@ -277,7 +313,7 @@ async def get_x():
 | Key | Button | View | Content |
 |-----|--------|------|---------|
 | `1` | MKT   | market-view    | Watchlist · Chart · TICK DATA board (indices · RATES·US · RATES·JP · VOLATILITY · FX; ▼p/▲p CFTC crowding mark on flagged rows) · REGIME panel modes CORR/GEOM/ROT/IV/**COT** (positioning PC1) |
-| `2` | NEWS  | news-view → `views/news/` | WATCHLIST tab (ข่าวรายหุ้นจาก watchlist, 7 แหล่ง, แบ่งตาม SECTOR) · NEWSFEED (topic) · SOCIAL · Polymarket column (right 256px: watchlist markets + macro signals) |
+| `2` | NEWS  | news-view → `views/news/` | **ASK** bar above every tab (question → DeepSeek with read-only terminal tools + news search + page reading, `/api/news/ask`, needs `DEEPSEEK_API_KEY`; general web search with `TAVILY_API_KEY`/`BRAVE_API_KEY`) · WATCHLIST tab (ข่าวรายหุ้นจาก watchlist, 7 แหล่ง, แบ่งตาม SECTOR) · NEWSFEED (topic) · SOCIAL · Polymarket column (right 256px: watchlist markets + macro signals) |
 | `h` / `heatmap(MKT)` | HMAP (no nav button) | `views/heatmap-view.tsx` | One equity market as a sector-grouped treemap sized by market cap (~275 names, 25/sector). Command `heatmap(TH)`, `heatmap(US, 52w)`, bare `HMAP` = last market; `h` reopens it. Metrics 1D · 52W · 50D · 200D · HIGH · RVOL switch with no request; sector strip = zoom; hover line = all metrics; click → equity, shift-click → chart window. `/api/market-heatmap` (`routers/market_heatmap.py`, Yahoo screener, 11 parallel sector calls, 90s cache + last-good) |
 | `5` / `t` | TAIL  | tail-risk-view | MARKET EVENTS (named: Rates Volatility Shock, Treasury Selloff — Bear Flattening … from z of 1d/5d changes; SEVERE raises composite; ribbon shows top 2) + 6 risk dimensions (composite) + MACRO CONTEXT (not in composite): event strip FOMC/SEP/CPI/NFP/PCE/GDP + EVENT WINDOW tag on VIX signals, Fed rate/stance, 10Y−2Y/10Y−3M, regime, latest prints, event markers on 90D chart · MACRO READ (inflation/growth/rates-vol) · SECTOR ROTATION (turnover tilt, ไม่ใช่ fund flow) · **POSITIONING** (CFTC COT crowding flags + table; `cot_crowding` signal shown with CTX tag, `counted: False`, backtest WEAK) |
 | `3` / `b` | BOND  | `views/bonds/` | 2 tabs (Alt+1/2). **MARKET** — price vs supply: KPI strip · **10Y YIELD DECOMPOSITION** (expected real + breakeven + term premium via NY Fed ACM; 20D driver REAL/TP/BE; Δ attribution 1/5/20/60D; tripwires TP>10y high · BE≥2.5→20y high · 10Y 5.5%; `/api/bonds/decomposition`, `backend/bond_decomposition.py`) · TREASURY LEG (2/10/30Y, real, term premium) · CREDIT LEG (IG/HY OAS, Baa−Aaa, BBB yield) · CORPORATE ISSUANCE/WEEK = SEC EFTS 424B2/424B5 deals ex-bank (SIC-classified, 365d backfill into SQLite) + EVENT STUDY (heavy days vs rest, Δ10Y/ΔIG OAS t..t+3) + RECENT DEALS · TREASURY AUCTIONS (fiscaldata) · DEBT STOCK (Z.1, C&I, SLOOS). Counts deals, not $ — no free daily $ source. **CONDITIONS** (ex-CRDT, `/api/crisis`) — crisis level L0–3 (also in status bar) · STL FSI/NFCI · 5Y/10Y breakeven · 30Y mortgage · CC/mortgage delinquency. IG/HY trigger lines (2%/5%) on CREDIT LEG. **CFTC** (`/api/cot/basis`): TREASURY FUTURES POSITIONING · BASIS TRADE (MARKET, DV01 10Y-eq) + DEALER BALANCE SHEET (CONDITIONS) |

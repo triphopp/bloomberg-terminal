@@ -133,10 +133,20 @@ board/forum ทุกแหล่ง **ต้องตรวจ ToS ก่อน
 | **Micron prepared remarks (PDF)** | `s25.q4cdn.com/621799436/files/doc_financials/2026/q4/Q4-FY26-Prepared-Remarks.pdf` | ไทม์ไลน์โรงงาน, bit growth อุตสาหกรรม | WebFetch คืน binary → บันทึกไฟล์แล้วใช้ `pypdf` แยกข้อความ |
 | **Yahoo estimates = S&P Global MI** | `help.yahoo.com/kb/finance-for-web/SLN2310.html` | ยืนยันว่าคอนเซนซัสใน `get_stock_data(estimates/analyst)` มาจาก S&P Global Market Intelligence | ใช้ตอบว่า "คอนเซนซัสมาจากใคร" |
 
+### 3.3 อ่านเนื้อหน้าเว็บ (ทดสอบ 2026-10-05)
+
+| แหล่ง | Endpoint | ได้อะไร | ผล |
+|---|---|---|---|
+| Stock Analysis earnings transcripts | `https://stockanalysis.com/stocks/{symbol}/transcripts/` | บันทึกคำพูด CEO/CFO และ Q&A พร้อมวันที่ call | ✅ CBRS Q2/2026 ตรวจ 2026-10-06; เป็น transcript ที่ผู้เผยแพร่ถอดคำพูด ควรเทียบ guidance ตัวเลขกับ 8-K/IR ที่เป็นเอกสารบริษัท |
+| Jina Reader | `https://r.jina.ai/<url>` (header `Accept: text/plain`) | เนื้อหน้าเว็บเป็น markdown — หน้า JavaScript และ PDF ด้วย | ✅ ไม่ต้องมี key · ❌ บล็อก `news.google.com` · paywall (WSJ, Barron's) ไม่ผ่าน · ใช้ผ่าน `backend/web_reader.py::read_page` (ลองดึงตรงก่อน แล้วค่อย fallback) |
+| Google News link → URL จริง | `web_reader.resolve_news_link(url)` | URL ของสำนักข่าวจากลิงก์ `news.google.com/rss/articles/<id>` | ✅ ~1 วินาที/ลิงก์ |
+| ค้นเว็บทั่วไปแบบไม่มี key | DuckDuckGo / Brave / Yahoo HTML, Bing RSS | — | ❌ ทุกเจ้าบล็อก script หรือคืนผลไม่ตรง — ใช้ §4 Tavily/Brave |
+
 ## 4. ฟรีแต่ต้องมี key
 
 | แหล่ง | สถานะในระบบ | ข้อมูล |
 |---|---|---|
+| **Tavily / Brave Search** | ⬜ ยังไม่มี key — ใส่ `TAVILY_API_KEY` หรือ `BRAVE_API_KEY` ใน `backend/.env` (free tier) | ค้นเว็บทั่วไปสำหรับ NEWS → ASK (`web_search` tool) — ไม่มี key ก็ยังค้นข่าว + เปิดอ่านหน้าเว็บได้ |
 | **ธปท. (BOT API Portal)** | ✅ มี `BOT_*_TOKEN` ใน `backend/.env` — rates / auctions / statistics ใช้ได้; **FX ยังไม่ได้ subscribe** | ข้อมูลเศรษฐกิจไทยทั้งหมด → ใช้ผ่าน §2 |
 | **FRED** | ✅ `FRED_API_KEY` | series สหรัฐเกือบทั้งหมด — ผ่าน §2 |
 | **ก.ล.ต. (SEC TH)** | ✅ `SEC_*` keys | กองทุน, หุ้นกู้, One Report — ผ่าน §2 |

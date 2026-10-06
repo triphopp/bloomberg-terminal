@@ -649,6 +649,22 @@ RStats = `{n, win_pct, avg_return_pct, expectancy_r, avg_win_r, avg_loss_r}`.
 }
 ```
 
+## News ASK (`POST /api/news/ask` — SSE, one `data: {json}` frame per event)
+
+```json
+{"type": "status",  "text": "THINKING"}
+{"type": "tool",    "name": "get_quote", "label": "QUOTE", "detail": "NVDA"}
+{"type": "token",   "text": "…"}
+{"type": "reset"}
+{"type": "error",   "text": "…"}
+{"type": "sources", "sources": [{"url": "https://…", "title": "…"}]}
+{"type": "done",    "model": "deepseek-chat", "usage": {"input_tokens": 0, "output_tokens": 0}, "private": false}
+```
+
+`reset` = the text so far was a preamble before a tool call, the panel clears it. `sources` (2026-10-06, sent just before `done`, only when there are any) = the pages `read_page` opened for this answer, in order, no duplicates — shown as PAGES READ; the links an answer cites are still written into its text. `done.private` = the answer was written from private data (a thesis / question / tracked number / zettel tool, `read_screen` on PORT, or `get_page_data` of page `portfolio`); the panel shows PRIVATE and sends `private: true` with later questions of the conversation. A stream ends with `done` or `error`, never both; a model that returns no text ends with `error`. An event type the page does not know is skipped. Request body: `{question, images[], history[{role, content, images[]?, at?}], symbols[], page, focus[], context, screen, private, session, provider, model}` — `history[].at` = when a user turn was asked (epoch ms; sent as `[asked YYYY-MM-DD HH:MM]` before it), `session` = the saved conversation id (2026-10-06). TS: `AskEvent`, `AskMessage`, `AskStatus` in `components/bloomberg/ask/types.ts`.
+
+**Saved conversation file** (`<root>/<YYYY-MM>/<id>.json`, `backend/ask_sessions.py`): `{v: 1, id, created_at, updated_at, device, page, model, messages[]}` — a message keeps `role, content, at, tools, sources, error, model, private, lostImages`, and a user message with pictures has `image_files: ["<id>.<message>-<n>.jpg"]` (files beside the JSON; the API returns them as `images` data URLs again). List row / `AskSessionMeta`: `{id, title, created_at, updated_at, questions, private, pinned, device, page}` — file-level `pinned: true` (set by PATCH, carried over by every save, never moves `updated_at`). TS in `ask/sessions.ts`. ASK tool results: `search_sessions` → `{query, days, scanned, sessions:[{id, title, created_at, updated_at, questions, current?, matches?:[{role, asked, text}]}]}`; `read_session` → `{id, title, created_at, updated_at, exchanges, items:[{n, asked, question, answer, pictures?, error?}], continue_from}` (answers cut at 4,000 chars; `continue_from` null when all fit).
+
 ## Watchlist News (`GET /api/news/watchlist?symbols=AAPL,XOM`)
 ```json
 {

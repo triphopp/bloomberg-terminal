@@ -46,6 +46,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { useAskContext } from "../ask";
 import {
   chartCompareSymbolsAtom,
   chartScalingUnitAtom,
@@ -1291,6 +1292,12 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     if (isMobile && prev && selectedSymbol && prev !== selectedSymbol) setMobilePanel("chart");
   }, [selectedSymbol, isMobile]);
   const [selectedLabel, setSelectedLabel] = useState("");
+  // ASK: the symbol on the chart is what "this" means on MKT.
+  useAskContext(
+    selectedSymbol
+      ? { symbols: [selectedSymbol], note: `Chart shows ${selectedLabel || selectedSymbol}` }
+      : null
+  );
   const {
     timePeriod,
     barInterval,
