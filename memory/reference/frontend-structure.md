@@ -513,7 +513,11 @@ row tooltip; buy/sell target hit = tinted row + coloured symbol. With >1 group a
 groups render as foldable sections (`localStorage["bloomberg_watchlist_folded_groups"]`).
 Click = open in chart, shift-click = chart window, double-click = edit form, right-click = context
 menu, **drag row = reorder** (switches sort to manual, same `handleReorder` as TABLE; dropping on a
-row of another group also moves the pin into that group via `patch.groupId`). Rows get `stableOpen`/`stableRemove` (ref-backed) so a quote tick doesn't re-render them all.
+row of another group also moves the pin into that group via `patch.groupId`). **Group move by drag
+(2026-10-06):** a group header is a drop target (`groupDrop` → `handleMoveToGroup`, group only — order
+and sort untouched, rolls back on a failed PATCH); while a row is dragged, empty groups show their header
+too and the target header is outlined with `← SYM`. A drop on another group's row under a column sort is
+also group-only (no switch to manual); under manual sort it reorders + moves. Rows get `stableOpen`/`stableRemove` (ref-backed) so a quote tick doesn't re-render them all.
 Header actions (ADD · GRP · group filter) sit left of the signal summary so a squeezed panel never
 clips them; the header wraps instead.
 
