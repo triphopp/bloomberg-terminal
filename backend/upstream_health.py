@@ -76,6 +76,9 @@ SOURCES: dict[str, str] = {
     "trends.google.com": "Google Trends",
     "fiscal.ai": "Fiscal.ai",
     "eia.gov": "EIA",
+    "deepseek.com": "DeepSeek",
+    "tavily.com": "Tavily",
+    "search.brave.com": "Brave Search",
 }
 
 #: Hosts that are not vendors — local services must never raise a data alert.
