@@ -2611,6 +2611,40 @@ def init_guard_schema() -> None:
                 updated_at TEXT NOT NULL
             )
         """)
+        # Risk budgets (risk_budget.Budget as JSON, one row per book view —
+        # 'all' or an account id). Machine-local for the same reason.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS risk_budgets (
+                account_id  TEXT PRIMARY KEY,
+                budget_json TEXT NOT NULL DEFAULT '{}',
+                updated_at  TEXT NOT NULL
+            )
+        """)
+        # Risk decision journal (backend/risk_journal.py): why a stop or a
+        # rebalance was held, followed or changed, with the numbers of that
+        # moment. Rows are never edited; `cleared_at` ends a REBALANCE HOLD.
+        # Machine-local for the same reason as the two tables above.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS risk_decisions (
+                id         TEXT PRIMARY KEY,
+                kind       TEXT NOT NULL,
+                decision   TEXT NOT NULL,
+                account_id TEXT,
+                symbol     TEXT,
+                yf_symbol  TEXT,
+                reason     TEXT NOT NULL,
+                snapshot   TEXT NOT NULL DEFAULT '{}',
+                review_on  TEXT,
+                ref_id     TEXT,
+                source     TEXT NOT NULL DEFAULT 'user',
+                cleared_at TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_risk_decisions_sym ON risk_decisions(kind, symbol, created_at)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_risk_decisions_ref ON risk_decisions(ref_id)")
 
 
 def init_margin_schema() -> None:

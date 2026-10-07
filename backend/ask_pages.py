@@ -77,6 +77,22 @@ PAGES: dict[str, dict[str, tuple[str, dict, str]]] = {
                       "every open position: quantity, cost, price, market value, P&L, weight; open options"),
         "guard": ("/api/v2/portfolio/risk/guard", {"base_currency": "THB"},
                   "TRADE GUARD: light, required actions, per-position and per-sector risk, heat, drawdown, sizing multiplier"),
+        "factors": ("/api/v2/portfolio/risk/factors", {"base_currency": "THB"},
+                    "RISK → BUDGET · FACTOR: the book's beta to US / Thai equity, size, value, momentum, rates, credit, USD/THB, oil, "
+                    "gold, Bitcoin; each factor's share of the book's risk, the effect of a one-SD month, which holdings bring it"),
+        "budget": ("/api/v2/portfolio/risk/budget", {"base_currency": "THB", "scope": "symbol"},
+                   "RISK → BUDGET · FACTOR: share of the book's risk each holding uses against the budget the user set, "
+                   "over / under budget and how much to sell or room to add, the volatility cap"),
+        "rebalance": ("/api/v2/portfolio/risk/rebalance", {},
+                      "RISK → REBALANCE: holdings whose gain pushed their weight past target — TRIM (sell now, how much), "
+                      "HOLD (declined for now, with the user's reason and review date), WAIT, WATCH; the rules in force"),
+        "bear-paths": ("/api/v2/portfolio/risk/bear-paths", {"base_currency": "THB"},
+                       "RISK → down-tilted paths: the book held as is through random paths with more losing days than "
+                       "winning ones at 3 / 5 / 7 / 21 / 42 trading days — median, worst 5%, chance of ending down, "
+                       "drawdown on the way, the neutral run beside it, which holdings cost most. A stress, not a forecast"),
+        "decisions": ("/api/v2/portfolio/risk/decisions", {"limit": 60},
+                      "RISK → decision journal: why a stop-loss or a rebalance was held, followed or changed — the "
+                      "reason typed, the numbers at that moment, the review date, whether the hold is still live"),
     },
     "stock": {
         "overview": ("/api/stock/{symbol}", {},
