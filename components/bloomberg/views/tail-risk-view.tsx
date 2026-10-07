@@ -30,6 +30,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { CyclePanel } from "./tail/cycle";
 import { type Decomposition, EnergySpreadsPanel, RealRatesPanel } from "./tail/decomposition";
 import {
   EventStrip,
@@ -818,6 +819,12 @@ export function TailRiskView() {
             >
               <PositioningPanel />
             </div>
+
+            <SectionRule
+              label="BUSINESS CYCLE"
+              note="ตัวชี้วัดทางการ อ่านตามนิยามต้นทาง · บริบท ไม่นับใน risk level"
+            />
+            <CyclePanel />
 
             <SectionRule label="MACRO & ROTATION" note="บริบท ไม่นับใน risk level" />
             <div
