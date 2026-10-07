@@ -1,13 +1,24 @@
 "use client";
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { ImagePlus } from "lucide-react";
+import {
+  ArrowUp,
+  Cpu,
+  History,
+  ImagePlus,
+  MessageCircleDashed,
+  MessageSquare,
+  Square,
+  SquarePen,
+  X,
+} from "lucide-react";
 import {
   type ClipboardEvent,
   type DragEvent,
   type FormEvent,
   memo,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -30,6 +41,7 @@ import {
   askOpenAtom,
   askPageContextAtom,
   askSettingsOpenAtom,
+  askTemporaryAtom,
 } from "./store";
 import type { AskMessage, AskPageContext, AskToolCall, ThemeColors } from "./types";
 import { useAskConversation, useAskPersistence, useAskStatus } from "./useAskConversation";
@@ -218,6 +230,8 @@ function useAsk() {
   };
   /** The last save to the conversation's file failed, and why. */
   const archiveNote = useAtomValue(askArchiveNoteAtom);
+  /** Temporary chat: this conversation is not saved (store.ts). */
+  const temporary = useAtomValue(askTemporaryAtom);
   const status = useAskStatus(choice);
   const conversation = useAskConversation();
   const [open, setOpen] = useAtom(askOpenAtom);
@@ -250,6 +264,7 @@ function useAsk() {
     historyOpen,
     setHistoryOpen,
     archiveNote,
+    temporary,
     focusSignal,
     submit,
     attach,
@@ -399,6 +414,91 @@ interface AskProps {
   ask: AskController;
 }
 
+const ICON = "h-3.5 w-3.5";
+
+/** Send, or stop while an answer is coming — one slot, so the row does not shift. */
+function SendButton({ colors, ask, empty }: AskProps & { empty: boolean }) {
+  if (ask.busy) {
+    return (
+      <button
+        type="button"
+        onClick={ask.stop}
+        className="shrink-0 hover:opacity-70"
+        style={{ color: "#ef5350" }}
+        title="หยุดคำตอบ"
+        aria-label="Stop"
+      >
+        <Square className={ICON} fill="currentColor" />
+      </button>
+    );
+  }
+  return (
+    <button
+      type="submit"
+      disabled={!ask.ready || empty}
+      className="shrink-0 hover:opacity-70 disabled:opacity-30"
+      style={{ color: colors.accent }}
+      title="ส่ง (Enter)"
+      aria-label="Send"
+    >
+      <ArrowUp className={ICON} strokeWidth={2.5} />
+    </button>
+  );
+}
+
+/** Temporary chat on / off. */
+function TemporaryButton({ colors, ask }: AskProps) {
+  const filled = ask.messages.length > 0;
+  return (
+    <button
+      type="button"
+      aria-pressed={ask.temporary}
+      onClick={() => {
+        ask.setTemporary(!ask.temporary);
+        ask.setHistoryOpen(false);
+      }}
+      className="shrink-0 hover:opacity-70"
+      style={{ color: ask.temporary ? colors.accent : colors.textSecondary }}
+      title={
+        ask.temporary
+          ? filled
+            ? "แชตชั่วคราว (เปิดอยู่) — กดเพื่อเก็บบทสนทนานี้ลง HISTORY"
+            : "แชตชั่วคราว (เปิดอยู่) — กดเพื่อกลับเป็นแชตปกติ"
+          : filled
+            ? "เริ่มแชตชั่วคราว — ไม่บันทึกลง HISTORY · บทสนทนานี้ยังอยู่ใน HISTORY"
+            : "แชตชั่วคราว — ไม่บันทึกลง HISTORY หายเมื่อเริ่มแชตใหม่หรือโหลดหน้าใหม่"
+      }
+      aria-label="Temporary chat"
+    >
+      <MessageCircleDashed className={ICON} />
+    </button>
+  );
+}
+
+/** Opens the provider / model panel; the choice itself is in the tooltip. */
+function ModelButton({ colors, ask }: AskProps) {
+  const data = ask.status.data;
+  if (!data) return null;
+  const web = data.web_search
+    ? ` · WEB${data.search_provider ? `+${data.search_provider.toUpperCase()}` : ""}`
+    : "";
+  return (
+    <button
+      type="button"
+      aria-pressed={ask.settingsOpen}
+      onClick={() => ask.setSettingsOpen(!ask.settingsOpen)}
+      className="shrink-0 hover:opacity-70"
+      style={{
+        color: !ask.ready ? "#ffc107" : ask.settingsOpen ? colors.accent : colors.textSecondary,
+      }}
+      title={`MODEL — ${data.provider} · ${data.model || "no model"}${web} · ${data.tools.length} tools\nกดเพื่อเลือก provider, model และ API key`}
+      aria-label="Model"
+    >
+      <Cpu className={ICON} />
+    </button>
+  );
+}
+
 /**
  * Tell ASK what this page is showing, for as long as the page is mounted:
  * `useAskContext({ symbols: [symbol], note: "Stock view, OPTIONS tab" })`.
@@ -452,7 +552,7 @@ function AskBarLine() {
     : status.isError
       ? "backend ไม่ตอบ — ดู logs\\backend.log"
       : !status.data?.configured
-        ? `${status.data?.provider ?? "ASK"} is not configured — open MODEL ▸ to set an API key and model`
+        ? `${status.data?.provider ?? "ASK"} is not configured — open MODEL (chip icon) to set an API key and model`
         : "ถามเรื่องข่าว ตลาด หุ้น หรือตัวเลขเศรษฐกิจ — ตอบจากข้อมูลล่าสุด";
 
   const onSubmit = (e: FormEvent) => {
@@ -498,26 +598,12 @@ function AskBarLine() {
           style={{ color: colors.text }}
         />
 
-        {busy ? (
-          <button
-            type="button"
-            onClick={ask.stop}
-            className="text-[9px] font-bold tracking-widest shrink-0 hover:opacity-70"
-            style={{ color: "#ef5350" }}
-          >
-            STOP
-          </button>
-        ) : (
-          <button
-            type="submit"
-            disabled={!ready || (!draft.trim() && ask.attach.images.length === 0)}
-            className="text-[9px] font-bold tracking-widest shrink-0 hover:opacity-70 disabled:opacity-30"
-            style={{ color: colors.accent }}
-          >
-            SEND ⏎
-          </button>
-        )}
         <AttachButton colors={colors} attach={ask.attach} disabled={!ready} />
+        <SendButton
+          colors={colors}
+          ask={ask}
+          empty={!draft.trim() && ask.attach.images.length === 0}
+        />
         {questions > 0 && !open && (
           <button
             type="button"
@@ -528,33 +614,26 @@ function AskBarLine() {
             SHOW ({questions})
           </button>
         )}
+        <span className="shrink-0 w-px self-stretch" style={{ backgroundColor: colors.border }} />
+        <TemporaryButton colors={colors} ask={ask} />
         <button
           type="button"
+          aria-pressed={ask.historyOpen}
           onClick={() => ask.setHistoryOpen(!ask.historyOpen)}
-          className="text-[8px] shrink-0 hover:opacity-70"
-          style={{ color: ask.archiveNote ? "#ffc107" : colors.accent }}
-          title={ask.archiveNote ?? "บทสนทนาที่บันทึกไว้ และที่เก็บของเครื่องนี้"}
+          className="shrink-0 hover:opacity-70"
+          style={{
+            color: ask.archiveNote
+              ? "#ffc107"
+              : ask.historyOpen
+                ? colors.accent
+                : colors.textSecondary,
+          }}
+          title={ask.archiveNote ?? "HISTORY — บทสนทนาที่บันทึกไว้ และที่เก็บของเครื่องนี้"}
+          aria-label="History"
         >
-          HISTORY {ask.historyOpen ? "▾" : "▸"}
+          <History className={ICON} />
         </button>
-        {status.data && (
-          <button
-            type="button"
-            onClick={() => ask.setSettingsOpen(!ask.settingsOpen)}
-            className="text-[8px] shrink-0 hover:opacity-70"
-            style={{ color: ready ? colors.textSecondary : "#ffc107" }}
-            title={`Provider, model and API key\nTools: ${status.data.tools.join(", ")}`}
-          >
-            <span style={{ color: colors.accent }}>MODEL {ask.settingsOpen ? "▾" : "▸"}</span>{" "}
-            {status.data.provider} · {status.data.model || "no model"}
-            <span className="hidden md:inline">
-              {status.data.web_search
-                ? ` · WEB${status.data.search_provider ? `+${status.data.search_provider.toUpperCase()}` : ""}`
-                : ""}{" "}
-              · {status.data.tools.length} tools
-            </span>
-          </button>
-        )}
+        <ModelButton colors={colors} ask={ask} />
       </form>
 
       {(ask.attach.images.length > 0 || ask.attach.note) && (
@@ -687,9 +766,13 @@ function AskAnswers({ overlay = false }: { overlay?: boolean }) {
         className="shrink-0 flex items-center justify-between px-2 py-1 border-b"
         style={{ borderColor: tint(colors, 16), backgroundColor: tint(colors, 10) }}
       >
-        <div className="flex items-center gap-3 text-[9px] tracking-widest">
-          <span className="font-bold" style={{ color: colors.accent }}>
-            ASK{busy ? " · WORKING" : ""}
+        <div className="flex items-center gap-3">
+          <span
+            className={`text-[9px] font-bold tracking-widest ${busy ? "animate-pulse" : ""}`}
+            style={{ color: colors.accent }}
+            title={busy ? "กำลังตอบ" : undefined}
+          >
+            ASK
           </span>
           {/* Two tabs over one body: the conversation, or the saved ones. */}
           <button
@@ -697,13 +780,11 @@ function AskAnswers({ overlay = false }: { overlay?: boolean }) {
             aria-pressed={!ask.historyOpen}
             onClick={() => ask.setHistoryOpen(false)}
             className="hover:opacity-70"
-            style={{
-              color: ask.historyOpen ? colors.textSecondary : colors.text,
-              fontWeight: ask.historyOpen ? 400 : 700,
-            }}
-            title="บทสนทนาที่อยู่บนจอ"
+            style={{ color: ask.historyOpen ? colors.textSecondary : colors.text }}
+            title="CHAT — บทสนทนาที่อยู่บนจอ"
+            aria-label="Chat"
           >
-            CHAT
+            <MessageSquare className={ICON} />
           </button>
           <button
             type="button"
@@ -716,43 +797,42 @@ function AskAnswers({ overlay = false }: { overlay?: boolean }) {
                 : ask.historyOpen
                   ? colors.text
                   : colors.textSecondary,
-              fontWeight: ask.historyOpen ? 700 : 400,
             }}
-            title={ask.archiveNote ?? "แชตเก่าที่บันทึกไว้ — เปิดแล้วถามต่อได้"}
+            title={ask.archiveNote ?? "HISTORY — แชตเก่าที่บันทึกไว้ เปิดแล้วถามต่อได้"}
+            aria-label="History"
           >
-            HISTORY
+            <History className={ICON} />
           </button>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => ask.setSettingsOpen(!ask.settingsOpen)}
-            className="text-[9px] tracking-widest hover:opacity-70 truncate max-w-[150px]"
-            style={{ color: ask.ready ? colors.textSecondary : "#ffc107" }}
-            title="Provider, model and API key"
-          >
-            MODEL {ask.settingsOpen ? "▾" : "▸"} {ask.status.data?.model || "no model"}
-          </button>
+          <TemporaryButton colors={colors} ask={ask} />
+          <ModelButton colors={colors} ask={ask} />
           <button
             type="button"
             onClick={() => {
               ask.clear();
               ask.setHistoryOpen(false);
             }}
-            className="text-[9px] tracking-widest hover:opacity-70"
+            className="hover:opacity-70"
             style={{ color: colors.textSecondary }}
-            title="เริ่มบทสนทนาใหม่ — อันนี้ยังอยู่ใน HISTORY"
+            title={
+              ask.temporary
+                ? "เริ่มบทสนทนาใหม่ — แชตชั่วคราวนี้จะหายไป"
+                : "เริ่มบทสนทนาใหม่ — อันนี้ยังอยู่ใน HISTORY"
+            }
+            aria-label="New chat"
           >
-            NEW
+            <SquarePen className={ICON} />
           </button>
           <button
             type="button"
             onClick={close}
-            className="text-[9px] tracking-widest hover:opacity-70"
+            className="hover:opacity-70"
             style={{ color: colors.textSecondary }}
-            title="Hide the answers — the conversation is kept"
+            title="ซ่อน — บทสนทนายังอยู่"
+            aria-label="Hide"
           >
-            HIDE ✕
+            <X className={ICON} />
           </button>
         </div>
       </div>
@@ -792,8 +872,13 @@ function AskAnswers({ overlay = false }: { overlay?: boolean }) {
             <span>
               {ask.ready
                 ? "ถามเรื่องข่าว ตลาด หุ้น หรือตัวเลขเศรษฐกิจ — ตอบจากข้อมูลล่าสุด"
-                : "ASK ยังใช้ไม่ได้ — เปิด MODEL ▸ เพื่อตั้ง API key และ model"}
+                : "ASK ยังใช้ไม่ได้ — กดไอคอน MODEL ด้านบนเพื่อตั้ง API key และ model"}
             </span>
+            {ask.temporary && (
+              <span style={{ color: colors.accent }}>
+                แชตชั่วคราว — ไม่บันทึกลง HISTORY หายเมื่อเริ่มแชตใหม่หรือโหลดหน้าใหม่
+              </span>
+            )}
             {ask.ready &&
               EXAMPLES.map((ex) => (
                 <button
@@ -887,7 +972,7 @@ function AskAnswers({ overlay = false }: { overlay?: boolean }) {
  * AskBar across the top — NewsView shows one or the other, never both.)
  */
 function AskComposer({ colors, ask }: AskProps) {
-  const { busy, ready } = ask;
+  const { ready } = ask;
   const [draft, setDraft] = useAtom(askDraftTextAtom);
   const boxRef = useRef<HTMLTextAreaElement>(null);
 
@@ -898,6 +983,19 @@ function AskComposer({ colors, ask }: AskProps) {
   useEffect(() => {
     boxRef.current?.focus();
   }, [ask.focusSignal]);
+
+  // The box is as tall as what is typed in it — wrapped lines included, which
+  // counting "\n" missed — and grows upward, the conversation above giving way.
+  // Past the cap it scrolls inside itself.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `draft` is the change signal
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    box.style.height = "auto";
+    const cap = Math.max(96, Math.round(window.innerHeight * 0.4));
+    box.style.height = `${Math.min(box.scrollHeight, cap)}px`;
+    box.style.overflowY = box.scrollHeight > cap ? "auto" : "hidden";
+  }, [draft]);
 
   const send = () => {
     if (ask.submit(draft)) setDraft("");
@@ -910,16 +1008,14 @@ function AskComposer({ colors, ask }: AskProps) {
         send();
       }}
       className="shrink-0 flex flex-col gap-1.5 px-3 py-2 border-t"
-      style={{ borderColor: tint(colors, 16), backgroundColor: tint(colors, 10) }}
+      style={{
+        borderColor: ask.temporary ? colors.accent : tint(colors, 16),
+        borderTopStyle: ask.temporary ? "dashed" : "solid",
+        backgroundColor: tint(colors, 10),
+      }}
     >
       <AttachTray colors={colors} attach={ask.attach} />
       <div className="flex items-end gap-2">
-        <span
-          className="text-[9px] font-bold tracking-widest shrink-0 pb-1"
-          style={{ color: colors.accent }}
-        >
-          ASK ▸
-        </span>
         <textarea
           ref={boxRef}
           value={draft}
@@ -936,33 +1032,20 @@ function AskComposer({ colors, ask }: AskProps) {
           onPaste={ask.attach.onPaste}
           disabled={!ready}
           maxLength={4000}
-          rows={Math.min(5, Math.max(1, draft.split("\n").length))}
-          placeholder={ready ? "ถามต่อ…  (Enter ส่ง · Shift+Enter ขึ้นบรรทัด)" : "ASK ยังใช้ไม่ได้"}
+          rows={1}
+          placeholder={!ready ? "ASK ยังใช้ไม่ได้" : ask.temporary ? "ถาม… (แชตชั่วคราว)" : "ถามต่อ…"}
+          title="Enter ส่ง · Shift+Enter ขึ้นบรรทัด"
           aria-label="Ask a question"
-          className="flex-1 min-w-0 resize-none bg-transparent text-[11px] outline-none placeholder:opacity-40 disabled:cursor-not-allowed"
-          style={{ color: colors.text }}
+          className="flex-1 min-w-0 resize-none bg-transparent text-[11px] leading-[1.5] outline-none placeholder:opacity-40 disabled:cursor-not-allowed"
+          style={{ color: colors.text, scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}
         />
-        {busy ? (
-          <button
-            type="button"
-            onClick={ask.stop}
-            className="text-[9px] font-bold tracking-widest shrink-0 pb-1 hover:opacity-70"
-            style={{ color: "#ef5350" }}
-          >
-            STOP
-          </button>
-        ) : (
-          <button
-            type="submit"
-            disabled={!ready || (!draft.trim() && ask.attach.images.length === 0)}
-            className="text-[9px] font-bold tracking-widest shrink-0 pb-1 hover:opacity-70 disabled:opacity-30"
-            style={{ color: colors.accent }}
-          >
-            SEND ⏎
-          </button>
-        )}
-        <span className="pb-1 flex items-center">
+        <span className="flex items-center gap-2 pb-0.5">
           <AttachButton colors={colors} attach={ask.attach} disabled={!ready} />
+          <SendButton
+            colors={colors}
+            ask={ask}
+            empty={!draft.trim() && ask.attach.images.length === 0}
+          />
         </span>
       </div>
     </form>
