@@ -18,6 +18,7 @@ import {
   askMessagesAtom,
   askPageContextAtom,
   askSessionIdAtom,
+  askTemporaryAtom,
 } from "./store";
 import type { AskChoice, AskEvent, AskMessage, AskStatus } from "./types";
 
@@ -145,8 +146,11 @@ export function useAskConversation() {
       // A picture alone is a question too; the model still needs words to answer to.
       const q = question.trim() || (images.length ? "อธิบายรูปที่แนบ" : "");
       if (!q || busy) return;
-      // The file this conversation is saved to gets its name with the first question.
-      if (!store.get(askSessionIdAtom)) store.set(askSessionIdAtom, newSessionId());
+      // The file this conversation is saved to gets its name with the first
+      // question — a temporary chat has no file, so it gets no name.
+      if (!store.get(askSessionIdAtom) && !store.get(askTemporaryAtom)) {
+        store.set(askSessionIdAtom, newSessionId());
+      }
 
       // Finished exchanges only (history.ts); pictures of earlier questions stay
       // on screen but are not sent again.
@@ -260,9 +264,30 @@ export function useAskConversation() {
     activeRequest?.abort();
     store.set(askSessionIdAtom, null);
     store.set(askArchiveNoteAtom, null);
+    store.set(askTemporaryAtom, false);
     setMessages([]);
     saveConversation([]); // forget it in this tab; its file stays
   }, [store, setMessages]);
+
+  /**
+   * Temporary chat on / off. On: a conversation already on screen is saved, so
+   * a new, empty one starts. Off: what was asked so far is kept — it gets a
+   * file now and is saved like any other (useAskPersistence).
+   */
+  const setTemporary = useCallback(
+    (on: boolean) => {
+      if (on) {
+        if (store.get(askMessagesAtom).length) clear();
+        store.set(askTemporaryAtom, true);
+        return;
+      }
+      if (store.get(askMessagesAtom).length && !store.get(askSessionIdAtom)) {
+        store.set(askSessionIdAtom, newSessionId());
+      }
+      store.set(askTemporaryAtom, false);
+    },
+    [store, clear]
+  );
 
   /** Put a saved conversation on screen (HISTORY). It continues in the same file. */
   const openSaved = useCallback(
@@ -272,12 +297,13 @@ export function useAskConversation() {
       archived = sessionSignature(id, restored); // as it is in the file: nothing to write
       store.set(askSessionIdAtom, id);
       store.set(askArchiveNoteAtom, null);
+      store.set(askTemporaryAtom, false);
       setMessages(restored);
     },
     [busy, store, setMessages]
   );
 
-  return { messages, busy, ask, again, stop, clear, openSaved };
+  return { messages, busy, ask, again, stop, clear, openSaved, setTemporary };
 }
 
 // The conversation as it was last written to its file — an unchanged one is not sent again.
@@ -294,9 +320,10 @@ export function useAskPersistence() {
   const client = useQueryClient();
   const busy = useAtomValue(askBusyAtom);
   const count = useAtomValue(askMessageCountAtom);
+  const temporary = useAtomValue(askTemporaryAtom);
   const loaded = useRef(false);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `busy` and `count` are the change signals
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `busy`, `count` and `temporary` are the change signals
   useEffect(() => {
     if (!loaded.current) {
       loaded.current = true;
@@ -314,6 +341,8 @@ export function useAskPersistence() {
     // is (clear() below). A dev rebuild re-creates the atoms empty, and saving
     // that would wipe what the next reload should bring back.
     if (!messages.length) return;
+    // A temporary chat is written nowhere: not to this tab's storage, not to a file.
+    if (temporary) return;
     saveConversation(messages, id);
 
     // …and, once an answer has ended, to the conversation's file (sessions.ts):
@@ -327,5 +356,5 @@ export function useAskPersistence() {
       if (error) archived = ""; // not written: try again after the next answer
       void client.invalidateQueries({ queryKey: ["ask-sessions"] });
     });
-  }, [busy, count, store, client]);
+  }, [busy, count, temporary, store, client]);
 }

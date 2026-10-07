@@ -23,6 +23,13 @@ export const askDraftImagesAtom = atom<string[]>([]);
  * question, null again after NEW. Null also for a conversation not started.
  */
 export const askSessionIdAtom = atom<string | null>(null);
+/**
+ * A temporary chat: the conversation is on screen and nowhere else — no file
+ * (so not in HISTORY), no sessionStorage copy. NEW, a reload or opening a saved
+ * conversation ends it. Switched off again with messages on screen, the
+ * conversation becomes an ordinary one and is saved from then on.
+ */
+export const askTemporaryAtom = atom(false);
 /** ASK → HISTORY is open. */
 export const askHistoryOpenAtom = atom(false);
 /** Why the last save to the conversation file failed; null when it did not. */
