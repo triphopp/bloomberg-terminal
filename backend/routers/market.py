@@ -1,6 +1,7 @@
 """
 Market data & heatmap endpoints — extracted from main.py.
 """
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
@@ -518,6 +519,59 @@ def get_market_data():
 def get_volatility():
     """VIX-family "fear" indices for the TICK DATA board."""
     return _vol_cache.get_or_set("volatility", build_volatility_data)
+
+
+_custom_cache = TTLCache(ttl=CACHE_TTL, maxsize=32)
+_CUSTOM_MAX = 80
+_SYMBOL_OK = re.compile(r"^[A-Z0-9.^=\-&]{1,20}$")
+
+
+@router.get("/api/tick-custom")
+def get_tick_custom(symbols: str = Query(..., description="Comma-separated Yahoo symbols")):
+    """Rows the user added to the TICK DATA board themselves (custom sections).
+
+    Same row shape as /api/market-data so the board reuses TickRow — `id` is the
+    symbol; the label a user gave a row lives in the browser with the layout.
+    `missing` names the symbols that returned no quote. The whole answer —
+    misses included — is cached per symbol set, so a typo is not re-asked of
+    Yahoo on every poll.
+    """
+    wanted: list[str] = []
+    for raw in symbols.split(","):
+        sym = raw.strip().upper()
+        if sym and _SYMBOL_OK.match(sym) and sym not in wanted:
+            wanted.append(sym)
+    wanted = wanted[:_CUSTOM_MAX]
+    if not wanted:
+        return {"items": [], "missing": [], "lastUpdated": datetime.utcnow().isoformat() + "Z"}
+
+    def _build() -> dict:
+        cfgs = [{"id": s, "symbol": s, "num": ""} for s in wanted]
+        _prefetch(cfgs)
+        rows: dict[str, dict] = {}
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            for cfg, row in zip(cfgs, pool.map(fetch_one, cfgs)):
+                if row:
+                    rows[cfg["symbol"]] = row
+        # fetch_one rounds to 2 dp — right for an index, wrong for what a user
+        # may add here: EUR/USD would read 1.12 and a sub-dollar coin 0.12.
+        # The batched quote is still in its cache; take the price from it.
+        quotes = v7_quotes(wanted)
+        for sym, row in rows.items():
+            q = quotes.get(sym) or {}
+            price = q.get("regularMarketPrice")
+            if price:
+                row["value"] = round(float(price), 6)
+                if q.get("regularMarketChange") is not None:
+                    row["change"] = round(float(q["regularMarketChange"]), 6)
+        return {
+            "items": [rows[s] for s in wanted if s in rows],
+            "missing": [s for s in wanted if s not in rows],
+            "lastUpdated": datetime.utcnow().isoformat() + "Z",
+            "dataSource": "yfinance",
+        }
+
+    return _custom_cache.get_or_set(",".join(sorted(wanted)), _build)
 
 
 @router.get("/api/heatmap")
