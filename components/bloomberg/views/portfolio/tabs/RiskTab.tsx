@@ -1,4 +1,6 @@
 "use client";
+import { useQuery } from "@tanstack/react-query";
+import { useAtom } from "jotai";
 import {
   Activity,
   AlertTriangle,
@@ -7,30 +9,50 @@ import {
   Loader2,
   RefreshCw,
   Shield,
-  TrendingDown,
 } from "lucide-react";
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { riskSubTabRequestAtom } from "../../../atoms";
 import { type Colors, fmt, fmtAmt, fmtPx, fmtQty, pnlColor } from "../helpers";
+import { BearPathPanel, BearPathStrip, useBearTilt } from "../ui/BearPathPanel";
 import { CotCrowdingPanel } from "../ui/CotCrowdingPanel";
+import { DecisionJournalPanel } from "../ui/DecisionJournalPanel";
+import { FactorExposurePanel } from "../ui/FactorExposurePanel";
 import { MarginCard } from "../ui/MarginCard";
 import { MonteCarloPanel } from "../ui/MonteCarloPanel";
 import { RebalancePanel, useRebalance } from "../ui/RebalancePanel";
+import { RiskBalanceBlock } from "../ui/RiskBalanceBlock";
+import { RiskBudgetPanel, useBudgetScope, useRiskBudget } from "../ui/RiskBudgetPanel";
+import {
+  type BacktestDay,
+  CoMoveBlock,
+  LossLadderBlock,
+  ModelTrustBlock,
+  WhoCarriesRiskBlock,
+} from "../ui/RiskDetailBlocks";
 import { RiskSummaryCard } from "../ui/RiskSummaryCard";
 import { TradeGuardCard } from "../ui/TradeGuardCard";
 import { VarValidationCard } from "../ui/VarValidationCard";
 import { WhatIfSimPanel } from "../ui/WhatIfSimPanel";
 
 /**
- * PORT → RISK, ordered by the questions a person asks (2026-10-02):
- *   สรุป       — how risky is the book, in plain words, and what to do (+ margin, TRADE GUARD)
- *   REBALANCE  — which winners grew past their slice; how much to take off
- *   WHAT-IF    — do vs don't, simulated on the real book
- *   MONTE CARLO — hold as is: where the book could end, over thousands of paths
- *   เชิงลึก     — the methods: VaR/CVaR ensemble, correlation, ERC, EWS, COT
- *   OPTIONS    — greeks
+ * PORT → RISK. One look at the first page has to show the book and the risk it
+ * carries — no going back and forth (2026-10-07, eight pages → six):
+ *   สรุป             — everything at once: the risk in plain words and what to do, what a run
+ *                      of down days would cost, margin, TRADE GUARD, the decisions on record,
+ *                      then the methods behind the numbers (ex-เชิงลึก: VaR/CVaR ensemble,
+ *                      correlation, ERC, EWS, COT)
+ *   REBALANCE        — which winners grew past their slice; how much to take off, or why not yet
+ *   BUDGET · FACTOR  — where the risk comes from: share of the book's risk per holding / sector /
+ *                      thesis against its budget, then what the book is betting on (betas)
+ *   WHAT-IF          — do vs don't, simulated on the real book
+ *   MONTE CARLO      — hold as is: down-tilted paths at 3/5/7/21/42 days, then the neutral
+ *                      distribution over thousands of paths
+ *   OPTIONS          — greeks
+ * Another component can ask for a page through riskSubTabRequestAtom
+ * (a guard:REBALANCE alert → REBALANCE).
  */
-type SubTab = "summary" | "rebalance" | "whatif" | "mc" | "detail" | "options";
+type SubTab = "summary" | "rebalance" | "exposure" | "whatif" | "mc" | "options";
 
 interface RiskSnapshot {
   snapshot_date: string;
@@ -88,6 +110,8 @@ interface RiskMetrics {
   /** Out-of-sample days scored (rolling window) — 2026-09-29. */
   var_backtest_obs?: number;
   var_backtest_method?: string;
+  /** The days behind the rolling test: return vs that day's VaR line. */
+  var_backtest_series?: BacktestDay[];
   // NAV basis — 2026-09-29
   nav_value?: number;
   cash_value?: number;
@@ -132,8 +156,9 @@ interface RiskMetrics {
     buy_value: number | null;
     current_price: number | null;
   }[];
-  // Breach checker
+  // Breach checker — the last COMPLETED daily bar, not the live day
   today_return_pct: number;
+  last_return_date?: string | null;
   breach_hist: boolean;
   breach_cf: boolean;
   breach_mc: boolean;
@@ -241,15 +266,49 @@ export function RiskTab({
   currency: "THB" | "USD";
   colors: Colors;
 }) {
-  const [subTab, setSubTab] = useState<SubTab>("summary");
+  // Start on the requested page (alert link → REBALANCE) rather than flipping
+  // to it in an effect, which would mount the summary for one throwaway render.
+  const [subRequest, setSubRequest] = useAtom(riskSubTabRequestAtom);
+  const [subTab, setSubTab] = useState<SubTab>(() => subRequest ?? "summary");
   // WHAT-IF mounts on first visit and then stays mounted (hidden), so ticks
   // and typed quantities survive a trip to another sub-tab.
-  const [whatIfSeen, setWhatIfSeen] = useState(false);
+  const [whatIfSeen, setWhatIfSeen] = useState(subRequest === "whatif");
+  useEffect(() => {
+    if (!subRequest) return;
+    if (subRequest === "whatif") setWhatIfSeen(true);
+    setSubTab(subRequest);
+    setSubRequest(null);
+  }, [subRequest, setSubRequest]);
+  const [bearTilt, setBearTilt] = useBearTilt();
+  // The live day (price vs previous close). Same key as TradeGuardCard, so the
+  // summary card and the guard card read one request.
+  const { data: guardDay } = useQuery<{ day_pnl_pct: number | null }>({
+    queryKey: ["risk-guard", accountId, currency],
+    queryFn: async () => {
+      const qs = new URLSearchParams({ base_currency: currency });
+      if (accountId !== "all") qs.set("account_id", accountId);
+      const r = await fetch(`/api/v2/portfolio/risk/guard?${qs}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    },
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+  });
+  const detailRef = useRef<HTMLDivElement>(null);
   const [simFocus, setSimFocus] = useState(0);
   const rebal = useRebalance(accountId);
+  const [budgetScope, setBudgetScope] = useBudgetScope();
+  const budget = useRiskBudget(accountId, currency, budgetScope);
   const go = (t: SubTab) => {
     if (t === "whatif") setWhatIfSeen(true);
     setSubTab(t);
+  };
+  /** The methods live at the foot of the summary page now: go there. */
+  const goDetail = () => {
+    setSubTab("summary");
+    requestAnimationFrame(() =>
+      detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+    );
   };
   const [metrics, setMetrics] = useState<RiskMetrics | null>(null);
   const [loading, setLoading] = useState(false);
@@ -310,12 +369,25 @@ export function RiskTab({
 
   const sym = currency === "THB" ? "฿" : "$";
   const trimCount = rebal.data?.counts.TRIM ?? 0;
-  const SUB_TABS: { id: SubTab; label: string; badge?: number }[] = [
+  const overBudget = (budget.data?.counts.OVER ?? 0) + (budget.data?.vol.status === "OVER" ? 1 : 0);
+  const SUB_TABS: {
+    id: SubTab;
+    label: string;
+    badge?: number;
+    badgeTitle?: string;
+    badgeColor?: string;
+  }[] = [
     { id: "summary", label: "สรุป" },
-    { id: "rebalance", label: "REBALANCE", badge: trimCount },
+    { id: "rebalance", label: "REBALANCE", badge: trimCount, badgeTitle: "ตัวที่ขายทำกำไรได้" },
+    {
+      id: "exposure",
+      label: "BUDGET · FACTOR",
+      badge: overBudget,
+      badgeTitle: "กองที่ใช้ความเสี่ยงเกินงบ",
+      badgeColor: "#FF4444",
+    },
     { id: "whatif", label: "WHAT-IF" },
-    { id: "mc", label: "MONTE CARLO" },
-    { id: "detail", label: "เชิงลึก" },
+    { id: "mc", label: "MONTE CARLO · ขาลง" },
     { id: "options", label: "OPTIONS" },
   ];
 
@@ -343,8 +415,8 @@ export function RiskTab({
             {!!t.badge && (
               <span
                 className="ml-1 px-1 rounded"
-                style={{ background: colors.positive, color: "#000", fontSize: 8 }}
-                title="ตัวที่ขายทำกำไรได้"
+                style={{ background: t.badgeColor ?? colors.positive, color: "#000", fontSize: 8 }}
+                title={t.badgeTitle}
               >
                 {t.badge}
               </span>
@@ -370,12 +442,23 @@ export function RiskTab({
           <RiskSummaryCard
             metrics={metrics}
             rebal={rebal.data}
+            budgetOver={overBudget}
+            dayPnlPct={guardDay?.day_pnl_pct}
             colors={colors}
             sym={sym}
-            onGo={(t) => go(t)}
+            onGo={(t) => (t === "detail" ? goDetail() : go(t))}
+          />
+          <BearPathStrip
+            accountId={accountId}
+            currency={currency}
+            colors={colors}
+            tilt={bearTilt}
+            onTilt={setBearTilt}
+            onOpen={() => go("mc")}
           />
           <MarginCard scope="port" accountId={accountId} colors={colors} />
           <TradeGuardCard accountId={accountId} currency={currency} colors={colors} />
+          <DecisionJournalPanel accountId={accountId} colors={colors} />
         </div>
       )}
 
@@ -389,6 +472,19 @@ export function RiskTab({
               go("whatif");
             }}
           />
+        </div>
+      )}
+
+      {subTab === "exposure" && (
+        <div className="space-y-2 mb-2">
+          <RiskBudgetPanel
+            accountId={accountId}
+            currency={currency}
+            colors={colors}
+            scope={budgetScope}
+            onScope={setBudgetScope}
+          />
+          <FactorExposurePanel accountId={accountId} currency={currency} colors={colors} />
         </div>
       )}
 
@@ -409,17 +505,39 @@ export function RiskTab({
 
       {subTab === "mc" && (
         <div className="space-y-2 mb-2">
+          <BearPathPanel
+            accountId={accountId}
+            currency={currency}
+            colors={colors}
+            tilt={bearTilt}
+            onTilt={setBearTilt}
+          />
           <MonteCarloPanel accountId={accountId} currency={currency} colors={colors} />
         </div>
       )}
 
-      {subTab === "detail" && !metrics && loading && (
+      {/* The methods behind the summary (ex-เชิงลึก) — same page, below it. */}
+      {subTab === "summary" && (
+        <div
+          ref={detailRef}
+          className="flex items-baseline gap-2 mt-3 mb-1 font-mono"
+          style={{ borderTop: `1px solid ${colors.border}`, paddingTop: 6, fontSize: 10 }}
+        >
+          <span className="font-bold" style={{ color: colors.accent, letterSpacing: "0.08em" }}>
+            เชิงลึก · วิธีคิดเบื้องหลังตัวเลข
+          </span>
+          <span style={{ color: colors.textSecondary, fontSize: 9 }}>
+            VaR / CVaR หลายวิธี · สหสัมพันธ์ · ERC · EWS · COT
+          </span>
+        </div>
+      )}
+      {subTab === "summary" && !metrics && loading && (
         <div className="flex items-center justify-center py-10">
           <Loader2 className="h-5 w-5 animate-spin" style={{ color: colors.accent }} />
         </div>
       )}
 
-      {(subTab === "detail" || subTab === "summary") && !metrics && !loading && error && (
+      {subTab === "summary" && !metrics && !loading && error && (
         <div
           className="flex flex-col items-center gap-2 py-10 px-4 text-center"
           style={{ color: colors.textSecondary }}
@@ -440,15 +558,17 @@ export function RiskTab({
         </div>
       )}
 
-      {metrics && subTab === "detail" && (
+      {metrics && subTab === "summary" && (
         <OverviewSection
           metrics={metrics}
           colors={colors}
           sym={sym}
           riskColor={riskColor}
           accountId={accountId}
+          currency={currency}
           validation={
             <VarValidationCard
+              embedded
               accountId={accountId}
               colors={colors}
               sym={sym}
@@ -464,7 +584,7 @@ export function RiskTab({
           }
         />
       )}
-      {subTab === "detail" && (
+      {subTab === "summary" && (
         <CotCrowdingPanel accountId={accountId} currency={currency} colors={colors} />
       )}
       {subTab === "options" && (
@@ -1097,37 +1217,7 @@ function VaRBreachChecker({
   );
 }
 
-// ── VaR horizon scaling (square-root-of-time) ───────────────────────────────
-const VAR_HORIZONS = [
-  { label: "1D", days: 1 },
-  { label: "1W", days: 5 },
-  { label: "1M", days: 21 },
-  { label: "3M", days: 63 },
-  { label: "6M", days: 126 },
-] as const;
-
 // ── Ensemble helper components ───────────────────────────────────────────────
-
-function EnsembleSignalBadge({ signal }: { signal: RiskMetrics["ensemble_signal"] }) {
-  const cfg = {
-    STABLE: { label: "STABLE", bg: "#001a00", border: "#00FF0044", color: "#00FF00" },
-    FAT_TAIL_RISK: { label: "FAT TAIL ⚠", bg: "#1a1000", border: "#ff990077", color: "#ff9900" },
-    CORRELATION_RISK: {
-      label: "CORR RISK ⚠",
-      bg: "#1a0000",
-      border: "#FF444477",
-      color: "#FF4444",
-    },
-  }[signal];
-  return (
-    <span
-      className="text-[7px] px-1 py-0.5 rounded font-bold"
-      style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.color }}
-    >
-      {cfg.label}
-    </span>
-  );
-}
 
 function EnsembleRow({
   label,
@@ -1163,36 +1253,6 @@ function EnsembleRow({
   );
 }
 
-function RegimeBadge({
-  regime,
-  stressedPct,
-  stressedAmt,
-  sym,
-}: {
-  regime: RiskMetrics["vol_regime"];
-  stressedPct: number;
-  stressedAmt: number;
-  sym: string;
-}) {
-  const cfg = {
-    CALM: { color: "#00FF00", label: "Vol: CALM" },
-    ELEVATED: { color: "#ff9900", label: "Vol: ELEVATED" },
-    STRESSED: { color: "#FF4444", label: "Vol: STRESSED" },
-    UNKNOWN: { color: "#666", label: "Vol: UNKNOWN" },
-  }[regime];
-  return (
-    <span style={{ color: cfg.color }}>
-      {cfg.label}
-      {(regime === "STRESSED" || regime === "ELEVATED") && stressedPct > 0 && (
-        <span style={{ color: "#FF4444", marginLeft: 4 }}>
-          · Stressed CVaR: {stressedPct.toFixed(2)}% ({sym}
-          {fmtAmt(stressedAmt)})
-        </span>
-      )}
-    </span>
-  );
-}
-
 // ── Overview Section ─────────────────────────────────────────────────────────
 
 function OverviewSection({
@@ -1201,6 +1261,7 @@ function OverviewSection({
   sym,
   riskColor,
   accountId,
+  currency,
   validation,
 }: {
   metrics: RiskMetrics;
@@ -1208,396 +1269,66 @@ function OverviewSection({
   sym: string;
   riskColor: (s: number) => string;
   accountId: string;
-  /** VaR validation card — the ONE place backtest / Kupiec numbers are shown. */
+  currency: "THB" | "USD";
+  /** The live VaR forecast log — sits inside the "can the model be trusted" block. */
   validation?: React.ReactNode;
 }) {
-  const [varHorizon, setVarHorizon] = useState<(typeof VAR_HORIZONS)[number]>(VAR_HORIZONS[0]);
   const [acctOpen, setAcctOpen] = useState(false);
-  const [chartView, setChartView] = useState<"contrib" | "parity">("contrib");
-  const [parity, setParity] = useState<ParityData | null>(null);
-  const [parityLoading, setParityLoading] = useState(false);
-  const scoreColor = riskColor(metrics.risk_score);
-
-  // Tracks which accountId we've already fetched parity for — a ref (not
-  // state) so it can never itself become an effect dependency and re-trigger
-  // this effect. Fetching was previously guarded by `parity`/`parityLoading`
-  // state, which are also *set inside* this same effect — any code path that
-  // left `parity` null after a fetch attempt (e.g. an error) caused the
-  // effect to refire indefinitely (infinite abort/retry loop on ERC PARITY).
-  const parityFetchedFor = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (chartView !== "parity") return;
-    if (parityFetchedFor.current === accountId) return;
-    parityFetchedFor.current = accountId;
-    const ac = new AbortController();
-    setParity(null);
-    setParityLoading(true);
-    const qs = accountId !== "all" ? `&account_id=${accountId}` : "";
-    fetch(`/api/v2/portfolio/risk/risk-parity?lookback=252${qs}`, { signal: ac.signal })
-      .then((r) => {
-        if (!r.ok) throw new Error();
-        return r.json();
-      })
-      .then((d) => setParity(d))
-      .catch((e) => {
-        if (e?.name === "AbortError") return;
-        setParity({ current_weights: [], optimal_weights: [], rebalance_actions: [], method: "" });
-      })
-      .finally(() => setParityLoading(false));
-    return () => ac.abort();
-  }, [chartView, accountId]);
-  const scale = Math.sqrt(varHorizon.days);
 
   return (
-    <div className="space-y-1.5">
-      {/* ── HEADER: Score · Regime · Vol · Horizon · Today · Stats ── */}
-      <div
-        className="flex flex-wrap items-center gap-2 px-2 py-1 rounded"
-        style={{ background: "#111" }}
-      >
-        {/* Risk score */}
-        <div className="flex items-baseline gap-1 shrink-0">
-          <span className="text-base font-bold font-mono" style={{ color: scoreColor }}>
-            {metrics.risk_score.toFixed(0)}
-          </span>
-          <span className="text-[6px]" style={{ color: colors.textSecondary }}>
-            RISK
-          </span>
-        </div>
-        <div className="w-px h-4 shrink-0" style={{ background: colors.border }} />
-        {/* Vol regime */}
-        {metrics.vol_regime !== "UNKNOWN" && (
-          <div className="text-[7px] shrink-0">
-            <RegimeBadge
-              regime={metrics.vol_regime}
-              stressedPct={metrics.cvar_stressed_pct * scale}
-              sym={sym}
-              stressedAmt={metrics.cvar_stressed_amount * scale}
-            />
-          </div>
-        )}
-        {/* Vol */}
-        <span className="text-[7px] font-mono shrink-0" style={{ color: colors.textSecondary }}>
-          σ {metrics.volatility_annual_pct.toFixed(1)}%ann ·{" "}
-          {metrics.volatility_daily_pct.toFixed(3)}%d
-        </span>
-        {/* Horizon selector */}
-        <div className="flex items-center gap-0 ml-auto shrink-0">
-          <span className="text-[6px] mr-1" style={{ color: colors.textSecondary }}>
-            HRZ
-          </span>
-          {VAR_HORIZONS.map((h) => (
-            <button
-              aria-pressed={varHorizon === h}
-              type="button"
-              key={h.label}
-              className="text-[7px] px-1.5 py-0.5 font-bold"
-              style={{
-                color: varHorizon.label === h.label ? colors.accent : colors.textSecondary,
-                borderBottom:
-                  varHorizon.label === h.label
-                    ? `1px solid ${colors.accent}`
-                    : "1px solid transparent",
-              }}
-              onClick={() => setVarHorizon(h)}
-            >
-              {h.label}
-            </button>
-          ))}
-        </div>
-        <div className="w-px h-4 shrink-0" style={{ background: colors.border }} />
-        {/* Today return */}
-        <div className="flex items-center gap-1 shrink-0">
-          <span className="text-[6px]" style={{ color: colors.textSecondary }}>
-            TODAY
-          </span>
-          <span
-            className="text-[8px] font-mono font-bold"
-            style={{ color: metrics.today_return_pct >= 0 ? "#00FF00" : "#FF4444" }}
-          >
-            {metrics.today_return_pct >= 0 ? "+" : ""}
-            {metrics.today_return_pct.toFixed(2)}%
-          </span>
-        </div>
-        {/* Performance stats — inline, one line instead of a 9-tile row */}
-        <div className="w-px h-4 shrink-0" style={{ background: colors.border }} />
-        <div className="flex items-center gap-2 flex-wrap text-[7px] font-mono">
-          {(
-            [
-              ["SHARPE", metrics.sharpe_ratio.toFixed(2), metrics.sharpe_ratio > 1],
-              ["SORTINO", metrics.sortino_ratio.toFixed(2), metrics.sortino_ratio > 1.5],
-              ["CALMAR", metrics.calmar_ratio.toFixed(2), metrics.calmar_ratio > 1],
-              ["MAX DD", `${metrics.max_drawdown_pct.toFixed(1)}%`, metrics.max_drawdown_pct < 15],
-              [
-                "CUR DD",
-                `${metrics.current_drawdown_pct.toFixed(1)}%`,
-                metrics.current_drawdown_pct < 5,
-              ],
-              [
-                "DIV",
-                metrics.diversification_ratio.toFixed(2),
-                metrics.diversification_ratio > 1.5,
-              ],
-              ["EFF N", metrics.effective_n.toFixed(1), metrics.effective_n > 3],
-            ] as const
-          ).map(([label, value, good]) => (
-            <span key={label}>
-              <span style={{ color: colors.textSecondary }}>{label} </span>
-              <span className="font-bold" style={{ color: good ? "#00FF00" : "#FF4444" }}>
-                {value}
-              </span>
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* ── ROW 3: 2-col layout — Left: VaR detail | Right: Chart + Correlation ── */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-        {/* LEFT 2/5: VaR table + validation (the one backtest / Kupiec view) */}
-        <div className="col-span-2 space-y-1.5">
-          <div
-            className="p-2 rounded"
-            style={{ background: "#111", border: `1px solid ${colors.border}` }}
-          >
-            <div className="flex items-center gap-1 mb-1">
-              <TrendingDown className="h-3 w-3" style={{ color: colors.textSecondary }} />
-              <span className="text-[7px]" style={{ color: colors.textSecondary }}>
-                ENSEMBLE VaR/CVaR 95%
-              </span>
-              <EnsembleSignalBadge signal={metrics.ensemble_signal} />
-            </div>
-            <table className="w-full text-[7px]">
-              <thead>
-                <tr style={{ color: colors.textSecondary }}>
-                  <th className="text-left font-normal pb-0.5">Method</th>
-                  <th className="text-right font-normal pb-0.5">%</th>
-                  <th className="text-right font-normal pb-0.5">{sym}</th>
-                  <th className="text-right font-normal pb-0.5">●</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(
-                  [
-                    {
-                      label: "Hist CVaR",
-                      pct: metrics.cvar_pct * scale,
-                      amt: metrics.cvar_amount * scale,
-                      color: "#ff9900",
-                      breach: metrics.breach_hist,
-                    },
-                    {
-                      label: "CF VaR",
-                      pct: metrics.var_cf_pct * scale,
-                      amt: metrics.var_cf_amount * scale,
-                      color: metrics.ensemble_signal === "FAT_TAIL_RISK" ? "#FF4444" : colors.text,
-                      breach: metrics.breach_cf,
-                    },
-                    {
-                      label: "MC CVaR",
-                      pct: metrics.cvar_mc_pct * scale,
-                      amt: metrics.cvar_mc_amount * scale,
-                      color:
-                        metrics.ensemble_signal === "CORRELATION_RISK" ? "#FF4444" : colors.text,
-                      breach: metrics.breach_mc,
-                    },
-                  ] as const
-                ).map((row) => (
-                  <tr key={row.label}>
-                    <td style={{ color: colors.textSecondary }}>{row.label}</td>
-                    <td className="text-right font-mono" style={{ color: row.color }}>
-                      {row.pct.toFixed(2)}%
-                    </td>
-                    <td
-                      className="text-right font-mono text-[6px]"
-                      style={{ color: colors.textSecondary }}
-                    >
-                      {sym}
-                      {fmtAmt(row.amt)}
-                    </td>
-                    <td
-                      className="text-right"
-                      style={{ color: row.breach ? "#FF4444" : "#444444" }}
-                    >
-                      ●
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div
-              className="mt-1 pt-1 border-t flex items-baseline justify-between"
-              style={{ borderColor: colors.border }}
-            >
-              <span className="text-[6px]" style={{ color: colors.textSecondary }}>
-                Conservative
-              </span>
-              <span className="text-[9px] font-bold" style={{ color: "#FF4444" }}>
-                {(metrics.ensemble_conservative_pct * scale).toFixed(2)}%
-              </span>
-              <span className="text-[6px]" style={{ color: colors.textSecondary }}>
-                {sym}
-                {fmtAmt(metrics.ensemble_conservative_amount * scale)}
-              </span>
-            </div>
-            {metrics.cvar_ci_lo > 0 && (
-              <div
-                className="text-[6px] mt-0.5"
-                style={{ color: metrics.cvar_ci_width_ratio > 1.5 ? "#ff9900" : "#555" }}
-              >
-                CI {(metrics.cvar_ci_lo * scale).toFixed(2)}%–
-                {(metrics.cvar_ci_hi * scale).toFixed(2)}%
-                {metrics.cvar_ci_width_ratio > 1.5 && " ⚠ wide"}
-                {varHorizon.days > 1 && <span className="opacity-40"> ×√{varHorizon.days}</span>}
-              </div>
-            )}
-          </div>
-
+    <div className="space-y-2">
+      {/* Four questions, each one sentence + one picture (ui/RiskDetailBlocks.tsx). */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 items-start">
+        <WhoCarriesRiskBlock assets={metrics.assets} colors={colors} />
+        <LossLadderBlock metrics={metrics} colors={colors} sym={sym} />
+        <ModelTrustBlock
+          series={metrics.var_backtest_series}
+          rolling={{
+            exceptions: metrics.var_backtest_exceptions,
+            obs: metrics.var_backtest_obs,
+            rate: metrics.var_backtest_rate,
+            signal: metrics.var_backtest_signal,
+            kupiec: metrics.kupiec_pvalue,
+          }}
+          confidence={metrics.confidence}
+          colors={colors}
+        >
           {validation}
-        </div>
-
-        {/* RIGHT 3/5: Chart toggle + Correlation */}
-        <div className="col-span-3 space-y-1.5">
-          {metrics.assets.length > 0 && (
-            <div>
-              <div className="flex items-center gap-0 mb-1">
-                {(["contrib", "parity"] as const).map((v) => (
-                  <button
-                    aria-pressed={chartView === v}
-                    type="button"
-                    key={v}
-                    onClick={() => setChartView(v)}
-                    className="text-[7px] px-1.5 py-0.5 font-bold"
-                    style={{
-                      color: chartView === v ? colors.accent : colors.textSecondary,
-                      borderBottom:
-                        chartView === v ? `1px solid ${colors.accent}` : "1px solid transparent",
-                    }}
-                  >
-                    {v === "contrib" ? "RISK CONTRIB" : "ERC PARITY"}
-                  </button>
-                ))}
-              </div>
-
-              {chartView === "contrib" && (
-                <ResponsiveContainer width="100%" height={Math.max(70, metrics.assets.length * 14)}>
-                  <BarChart data={metrics.assets} layout="vertical" margin={{ left: 56, right: 6 }}>
-                    <XAxis type="number" tick={{ fontSize: 7, fill: colors.textSecondary }} />
-                    <YAxis
-                      type="category"
-                      dataKey="symbol"
-                      tick={{ fontSize: 7, fill: colors.text }}
-                      width={54}
-                      interval={0}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        background: "#111",
-                        border: `1px solid ${colors.border}`,
-                        fontSize: 8,
-                      }}
-                    />
-                    <Bar dataKey="weight_pct" name="Weight %" fill="#3b82f6" barSize={5} />
-                    <Bar dataKey="risk_contribution_pct" name="Risk Contrib %" barSize={5}>
-                      {metrics.assets.map((a) => (
-                        <Cell
-                          key={a.symbol}
-                          fill={
-                            a.risk_contribution_pct > a.weight_pct * 1.5 ? "#FF4444" : "#ff9900"
-                          }
-                        />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-
-              {chartView === "parity" && (
-                <>
-                  {parityLoading && (
-                    <div className="flex items-center justify-center py-4">
-                      <Loader2 className="h-4 w-4 animate-spin" style={{ color: colors.accent }} />
-                    </div>
-                  )}
-                  {!parityLoading &&
-                    parity &&
-                    parity.current_weights.length > 0 &&
-                    (() => {
-                      const combined = parity.current_weights.map((c, i) => ({
-                        symbol: c.symbol,
-                        current: c.weight_pct,
-                        optimal: parity.optimal_weights[i]?.weight_pct ?? 0,
-                      }));
-                      return (
-                        <>
-                          <ResponsiveContainer
-                            width="100%"
-                            height={Math.max(70, combined.length * 14)}
-                          >
-                            <BarChart
-                              data={combined}
-                              layout="vertical"
-                              margin={{ left: 56, right: 6 }}
-                            >
-                              <XAxis
-                                type="number"
-                                tick={{ fontSize: 7, fill: colors.textSecondary }}
-                                unit="%"
-                              />
-                              <YAxis
-                                type="category"
-                                dataKey="symbol"
-                                tick={{ fontSize: 7, fill: colors.text }}
-                                width={54}
-                                interval={0}
-                              />
-                              <Tooltip
-                                contentStyle={{
-                                  background: "#111",
-                                  border: `1px solid ${colors.border}`,
-                                  fontSize: 8,
-                                }}
-                              />
-                              <Bar dataKey="current" name="Current %" fill="#3b82f6" barSize={5} />
-                              <Bar
-                                dataKey="optimal"
-                                name="Optimal ERC %"
-                                fill="#00FF00"
-                                barSize={5}
-                              />
-                            </BarChart>
-                          </ResponsiveContainer>
-                          {parity.rebalance_actions.length === 0 && (
-                            <div
-                              className="flex items-center gap-1 text-[7px] mt-1"
-                              style={{ color: "#00FF00" }}
-                            >
-                              <Shield className="h-2.5 w-2.5" /> Within ERC tolerance
-                            </div>
-                          )}
-                        </>
-                      );
-                    })()}
-                  {!parityLoading && (!parity || parity.current_weights.length === 0) && (
-                    <div
-                      className="text-[7px] py-4 text-center"
-                      style={{ color: colors.textSecondary }}
-                    >
-                      Need ≥2 positions with price history
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-          <CorrelationSection metrics={metrics} colors={colors} />
-        </div>
+        </ModelTrustBlock>
+        <CoMoveBlock
+          symbols={metrics.correlation_matrix.symbols}
+          matrix={metrics.correlation_matrix.matrix}
+          colors={colors}
+        />
       </div>
 
-      {/* ── ROW 4: EWS History Heatmap ── */}
+      {/* The follow-up to "who carries the risk": what to trade to even it out. */}
+      <RiskBalanceBlock accountId={accountId} currency={currency} colors={colors} />
+
+      {/* Performance of TODAY'S basket replayed backwards — hindsight, not risk:
+          the names held now are the ones that did well. Kept, but said so. */}
+      <div
+        className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 px-2 font-mono"
+        style={{ fontSize: 9, color: colors.textSecondary }}
+        title="คำนวณจากตะกร้าที่ถืออยู่วันนี้ย้อนหลัง 1 ปี — ตัวที่ถืออยู่คือตัวที่ผ่านมาทำได้ดี ตัวเลขจึงดูดีกว่าผลงานจริงของพอร์ต (ดู ANALYTICS)"
+      >
+        <span>ย้อนหลังของตะกร้าวันนี้ (ไม่ใช่ผลงานจริง):</span>
+        {(
+          [
+            ["Sharpe", metrics.sharpe_ratio],
+            ["Sortino", metrics.sortino_ratio],
+            ["Calmar", metrics.calmar_ratio],
+            ["Diversification", metrics.diversification_ratio],
+          ] as const
+        ).map(([label, value]) => (
+          <span key={label}>
+            {label} <span style={{ color: colors.text }}>{value.toFixed(2)}</span>
+          </span>
+        ))}
+      </div>
+
       <EWSHistorySection accountId={accountId} colors={colors} />
 
-      {/* ── ROW 5: Account breakdown (collapsible) ── */}
       {accountId === "all" && metrics.account_breakdown && (
         <div className="rounded" style={{ border: `1px solid ${colors.border}` }}>
           <button
@@ -1756,186 +1487,6 @@ function VaRBreachCompact({ metrics, colors }: { metrics: RiskMetrics; colors: C
 }
 
 // ── Correlation Matrix ───────────────────────────────────────────────────────
-
-function CorrelationSection({ metrics, colors }: { metrics: RiskMetrics; colors: Colors }) {
-  const [open, setOpen] = useState(false);
-  const { symbols, matrix } = metrics.correlation_matrix;
-  if (!symbols.length) return null;
-
-  const n = symbols.length;
-  const abbr = (s: string) => (s.length > 7 ? s.slice(0, 6) : s);
-
-  // Off-diagonal values only
-  const offDiag: number[] = [];
-  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) offDiag.push(matrix[i][j]);
-
-  const avgCorr = offDiag.length > 0 ? offDiag.reduce((a, b) => a + b, 0) / offDiag.length : 0;
-
-  // High-correlation pairs (> 0.7, upper triangle only)
-  const highPairs: { a: string; b: string; v: number }[] = [];
-  for (let i = 0; i < n; i++)
-    for (let j = i + 1; j < n; j++)
-      if (matrix[i][j] >= 0.7) highPairs.push({ a: symbols[i], b: symbols[j], v: matrix[i][j] });
-  highPairs.sort((a, b) => b.v - a.v);
-
-  // Cell background: heatmap blend
-  const cellBg = (v: number): string => {
-    if (v >= 0.8) return "rgba(255,68,68,0.35)";
-    if (v >= 0.6) return "rgba(255,68,68,0.18)";
-    if (v >= 0.4) return "rgba(255,153,0,0.20)";
-    if (v >= 0.2) return "rgba(255,204,0,0.15)";
-    if (v >= -0.2) return "rgba(80,80,80,0.10)";
-    if (v >= -0.5) return "rgba(59,130,246,0.18)";
-    return "rgba(59,130,246,0.32)";
-  };
-  const cellFg = (v: number): string => {
-    if (v >= 0.8) return "#FF6666";
-    if (v >= 0.6) return "#ff9900";
-    if (v >= 0.4) return "#ffcc00";
-    if (v >= 0.2) return "#aaa";
-    if (v >= -0.2) return "#555";
-    return "#60a5fa";
-  };
-
-  const avgColor = avgCorr >= 0.6 ? "#FF4444" : avgCorr >= 0.4 ? "#ff9900" : "#00FF00";
-
-  return (
-    <div
-      className="rounded"
-      style={{ border: `1px solid ${colors.border}`, background: "#0c0c0c" }}
-    >
-      {/* Header — clickable to collapse */}
-      <button
-        aria-pressed={open}
-        type="button"
-        className="w-full flex items-center gap-2 px-2 py-1.5"
-        onClick={() => setOpen((o) => !o)}
-      >
-        <span className="text-[9px] font-bold" style={{ color: colors.textSecondary }}>
-          CORRELATION MATRIX
-        </span>
-        <span
-          className="text-[7px] px-1 rounded"
-          style={{ background: "#1a1a1a", color: colors.textSecondary }}
-        >
-          Ledoit-Wolf
-        </span>
-        {/* Summary stats */}
-        <span className="text-[8px] font-mono ml-1" style={{ color: avgColor }}>
-          avg {avgCorr.toFixed(2)}
-        </span>
-        {highPairs.length > 0 && (
-          <span
-            className="text-[7px] px-1 rounded font-bold"
-            style={{ background: "#1a0000", border: "1px solid #FF444444", color: "#FF4444" }}
-          >
-            {highPairs.length} high-corr pair{highPairs.length > 1 ? "s" : ""}
-          </span>
-        )}
-        <span className="ml-auto text-[8px]" style={{ color: colors.textSecondary }}>
-          {open ? "▾" : "▸"}
-        </span>
-      </button>
-
-      {open && (
-        <div className="px-2 pb-2">
-          {/* High-correlation warnings */}
-          {highPairs.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-1">
-              {highPairs.map((p) => (
-                <span
-                  key={`${p.a}/${p.b}`}
-                  className="text-[7px] px-1.5 py-0.5 rounded font-mono font-bold"
-                  style={{
-                    background: p.v >= 0.85 ? "#2a0000" : "#1a0800",
-                    border: `1px solid ${p.v >= 0.85 ? "#FF444444" : "#ff990033"}`,
-                    color: p.v >= 0.85 ? "#FF6666" : "#ff9900",
-                  }}
-                >
-                  {abbr(p.a)}/{abbr(p.b)} {p.v.toFixed(2)}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {/* Heatmap table */}
-          <div className="overflow-x-auto">
-            <table style={{ borderCollapse: "separate", borderSpacing: 2 }}>
-              <thead>
-                <tr>
-                  <th style={{ width: 52 }} />
-                  {symbols.map((s) => (
-                    <th
-                      key={s}
-                      className="text-center text-[7px] font-bold pb-1"
-                      style={{ color: colors.textSecondary, minWidth: 34 }}
-                    >
-                      {abbr(s)}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {matrix.map((row, i) => (
-                  <tr key={symbols[i]}>
-                    <td
-                      className="text-[7px] font-bold pr-1.5 text-right"
-                      style={{
-                        color: colors.text,
-                        maxWidth: 52,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {abbr(symbols[i])}
-                    </td>
-                    {row.map((v, j) => (
-                      <td
-                        key={symbols[j]}
-                        className="text-center font-mono text-[7px]"
-                        style={{
-                          width: 34,
-                          height: 22,
-                          background: i === j ? "#1a1a1a" : cellBg(v),
-                          color: i === j ? "#333" : cellFg(v),
-                          borderRadius: 3,
-                          fontWeight: i !== j && Math.abs(v) >= 0.6 ? 700 : 400,
-                        }}
-                      >
-                        {i === j ? "·" : v.toFixed(2)}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Legend */}
-          <div className="flex items-center gap-2 mt-2 flex-wrap">
-            {[
-              { bg: "rgba(255,68,68,0.35)", fg: "#FF6666", label: "≥0.8" },
-              { bg: "rgba(255,153,0,0.20)", fg: "#ff9900", label: "0.4–0.8" },
-              { bg: "rgba(80,80,80,0.10)", fg: "#555", label: "±0.2" },
-              { bg: "rgba(59,130,246,0.32)", fg: "#60a5fa", label: "≤-0.5" },
-            ].map((l) => (
-              <div key={l.label} className="flex items-center gap-1">
-                <div
-                  className="w-3 h-3 rounded-sm"
-                  style={{ background: l.bg, border: `1px solid ${l.fg}44` }}
-                />
-                <span className="text-[7px]" style={{ color: l.fg }}>
-                  {l.label}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ── Risk Parity ──────────────────────────────────────────────────────────────
 

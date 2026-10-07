@@ -21,9 +21,11 @@ A holding is a TRIM when ALL of these hold:
 How much: `rebal_to` = "half" (halfway back to target, default — fewer trades),
 "band" (back to the edge of the band) or "target". Proceeds go to cash.
 
-Statuses: TRIM (do it) · WAIT (would trim, timing blocks; `ready_on` says when)
-· SMALL (under one lot) · WATCH (one condition met, or ≥ 60% of the band used
-with the gain there) · OK · SKIP (options / unpriced — no share count).
+Statuses: TRIM (do it) · HOLD (a TRIM the user declined for now, with a reason
+and a review date — `apply_holds`) · WAIT (would trim, timing blocks;
+`ready_on` says when) · SMALL (under one lot) · WATCH (one condition met, or
+≥ 60% of the band used with the gain there) · OK · SKIP (options / unpriced —
+no share count).
 
 Pure: no I/O. routers/risk.py GET /risk/rebalance does the I/O. Design source:
 memory/plans/investment-policy-system.md §4 (this is its per-holding slice,
@@ -227,17 +229,53 @@ def plan(
         else:
             row["status"] = "TRIM"
 
-    order = {"TRIM": 0, "WAIT": 1, "SMALL": 2, "WATCH": 3, "OK": 4, "SKIP": 5}
-    rows.sort(key=lambda r: (order[r["status"]], -(r["over_pp"] or 0)))
-    trims = [r for r in rows if r["status"] == "TRIM"]
-    return {
+    return _totals({
         "rules": rules.as_dict(),
         "as_of": today.isoformat(),
         "total_value": round(total_mv, 2),
         "rows": rows,
-        "counts": {k: sum(1 for r in rows if r["status"] == k) for k in order},
-        "sell_value": round(sum(r["sell_value"] for r in trims), 2),
-        "est_realized": round(sum(r["est_realized"] for r in trims), 2),
-        # Ready for WHAT-IF: symbol → shares to sell (split across accounts by the UI).
-        "trades": [{"symbol": r["symbol"], "delta_shares": -r["sell_shares"]} for r in trims],
-    }
+    })
+
+
+_ORDER = {"TRIM": 0, "HOLD": 1, "WAIT": 2, "SMALL": 3, "WATCH": 4, "OK": 5, "SKIP": 6}
+
+
+def _totals(out: dict) -> dict:
+    """Sort the rows and (re)build everything derived from their statuses."""
+    rows = out["rows"]
+    rows.sort(key=lambda r: (_ORDER[r["status"]], -(r["over_pp"] or 0)))
+    trims = [r for r in rows if r["status"] == "TRIM"]
+    out["counts"] = {k: sum(1 for r in rows if r["status"] == k) for k in _ORDER}
+    out["sell_value"] = round(sum(r["sell_value"] for r in trims), 2)
+    out["est_realized"] = round(sum(r["est_realized"] for r in trims), 2)
+    # Ready for WHAT-IF: symbol → shares to sell (split across accounts by the UI).
+    out["trades"] = [{"symbol": r["symbol"], "delta_shares": -r["sell_shares"]} for r in trims]
+    return out
+
+
+def apply_holds(out: dict, holds: Optional[dict[str, dict]], today: date) -> dict:
+    """"Not yet, and here is why" — the user's decision on a TRIM row.
+
+    `holds` = symbol → {id, reason, review_on, created_at} (risk_journal). A
+    TRIM row with a live hold becomes HOLD: it keeps its numbers (what was
+    declined stays visible) but leaves the sell totals, the WHAT-IF trades and
+    the weekly alert. Once `review_on` has passed the row is a TRIM again and
+    carries `hold_ended`, so the screen says the decision is due, not new.
+    A hold on a row that is not a TRIM changes nothing — there is nothing to
+    decline.
+    """
+    for r in out["rows"]:
+        r["hold"] = None
+        r["hold_ended"] = None
+        h = (holds or {}).get(str(r["symbol"]).upper())
+        if not h or r["status"] != "TRIM":
+            continue
+        info = {"id": h["id"], "reason": h.get("reason") or "", "review_on": h.get("review_on"),
+                "created_at": h.get("created_at")}
+        rv = _to_date(h.get("review_on"))
+        if rv is None or rv >= today:
+            r["status"] = "HOLD"
+            r["hold"] = info
+        else:
+            r["hold_ended"] = info
+    return _totals(out)

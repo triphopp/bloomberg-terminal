@@ -10,6 +10,7 @@
  */
 
 import { atom } from "jotai";
+import type { RiskSubTabRequest } from "../atoms";
 import type { AlertEvent } from "../hooks/useAlertRules";
 import { fmtAmt, fmtPx } from "../views/portfolio/helpers";
 
@@ -60,13 +61,26 @@ const NEXT_STEP: Record<string, string> = {
   "guard:STOP_HIT": "ราคาหลุด stop แล้ว → ขายตามแผน หรือกด HOLD ใน PORT → RISK พร้อมเหตุผล",
   "guard:DAY_LOSS": "พอร์ตลงเกินเพดานรายวัน → หยุดเปิดไม้ใหม่วันนี้",
   "guard:DD_STOP": "NAV drawdown ≥10% → หยุดเปิดไม้ใหม่จนกว่าจะฟื้น",
-  "guard:REBALANCE": "กำไรโตจนน้ำหนักเกินเป้า → ดูแผนขายบางส่วนใน PORT → RISK → REBALANCE",
+  "guard:REBALANCE":
+    "กำไรโตจนน้ำหนักเกินเป้า → ดูแผนขายบางส่วนใน PORT → RISK → REBALANCE หรือกด ยังไม่ขาย พร้อมเหตุผล",
   "margin:DANGER": "ใกล้โดน liquidate → ลดสถานะหรือเติมเงิน",
   "margin:LIQUIDATION": "excess liquidity ติดลบ → โบรกเกอร์จะบังคับขาย",
 };
 
 export function isGuardEvent(e: AlertEvent): boolean {
   return e.ruleId.startsWith("guard:") || e.ruleId.startsWith("margin:");
+}
+
+/** The PORT → RISK page where this event is acted on; null = not a guard event. */
+export function riskTargetOf(e: Pick<AlertEvent, "ruleId">): RiskSubTabRequest | null {
+  if (e.ruleId === "guard:REBALANCE") return "rebalance";
+  if (e.ruleId.startsWith("guard:") || e.ruleId.startsWith("margin:")) return "summary";
+  return null;
+}
+
+/** Label of the link that goes there. */
+export function riskLinkLabel(target: RiskSubTabRequest): string {
+  return target === "rebalance" ? "RISK → REBALANCE" : "OPEN RISK";
 }
 
 export function isModalEvent(e: AlertEvent): boolean {

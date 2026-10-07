@@ -469,6 +469,35 @@ def _var_backtest_oos(
     return exc, n, float(rate), signal
 
 
+def _var_backtest_series(
+    port_returns: "pd.Series", confidence: float, window: Optional[int] = None,
+) -> list[dict]:
+    """The days behind `_var_backtest_oos`, one row each, for the chart that
+    shows WHEN the line was crossed (clustered = a regime the window had not
+    seen; scattered = a line that is simply too tight).
+
+    Same rule: day t against the VaR of the `window` days before it. → rows
+    {d: date, r: that day's return %, v: the VaR line that day % (negative),
+    x: crossed}. Empty when there are too few days to judge.
+    """
+    vals = np.asarray(port_returns.values, dtype=float)
+    T = len(vals)
+    w = window or max(60, min(126, T // 2))
+    if T - w < 30:
+        return []
+    q = (1 - confidence) * 100
+    out = []
+    for t in range(w, T):
+        line = float(np.percentile(vals[t - w:t], q))  # perf-ok: ≤250 obs, once per request
+        out.append({
+            "d": port_returns.index[t].strftime("%Y-%m-%d"),
+            "r": round(float(vals[t]) * 100, 3),
+            "v": round(line * 100, 3),
+            "x": bool(vals[t] < line),
+        })
+    return out
+
+
 def _kupiec_pvalue(n_exceptions: int, n_obs: int, confidence: float) -> float:
     """Kupiec POF test: H0 = VaR exception rate equals 1-confidence.
     Returns p-value; p > 0.05 means model is adequate (fail to reject H0).
@@ -652,7 +681,13 @@ def _compute_portfolio_risk(
     bt_exceptions, bt_obs, bt_rate, bt_signal = _var_backtest_oos(port_returns, confidence)
 
     # ── Breach detection: most-recent return vs each VaR threshold ────────────
+    # NOT the live day. It is the last COMPLETED daily bar of the history the
+    # model is fitted on: today's basket at today's weights, close to close, in
+    # the base currency (FX included). While a session is open that is
+    # yesterday's move — `last_return_date` says which day, and the screen
+    # shows the live day (TRADE GUARD's price vs previous close) beside it.
     today_return = float(port_returns[-1]) if len(port_returns) > 0 else 0.0
+    last_return_date = returns_df.index[-1].strftime("%Y-%m-%d") if len(returns_df.index) else None
     breach_hist = today_return < -var_hist_pct
     breach_cf   = today_return < -var_cf_pct
     breach_mc   = today_return < -cvar_mc_pct
@@ -761,8 +796,10 @@ def _compute_portfolio_risk(
         "var_backtest_signal": bt_signal,              # GREEN | YELLOW | RED | INSUFFICIENT_DATA
         "var_backtest_obs": bt_obs,
         "var_backtest_method": "rolling_oos_current_basket",
+        "var_backtest_series": _var_backtest_series(port_returns_dated, confidence),
         # Breach checker
         "today_return_pct": round(today_return * 100, 3),
+        "last_return_date": last_return_date,
         "breach_hist": breach_hist,
         "breach_cf": breach_cf,
         "breach_mc": breach_mc,
@@ -1092,37 +1129,17 @@ def _kelly_size(symbol: str, account_id: str, portfolio_value: float,
 
 # ── Risk Parity Weights ──────────────────────────────────────────────────────
 
-def _risk_parity_weights(cov: np.ndarray, budget: Optional[np.ndarray] = None,
-                          max_iter: int = 500, tol: float = 1e-8) -> np.ndarray:
-    """Cyclical Coordinate Descent for Risk Parity (Griveau-Billion 2013).
-    O(n * max_iter) — very fast for small n.
+def _risk_parity_weights(cov: np.ndarray, budget: Optional[np.ndarray] = None) -> np.ndarray:
+    """Equal Risk Contribution weights (or risk shares = `budget`).
+
+    Was a coordinate descent that re-normalised w inside the loop — that moves
+    the fixed point, so the result was NOT equal risk (five holdings came out
+    13–30% each instead of 20%). Now the convex formulation in
+    risk_balance.erc_weights, which is exact and unique.
     """
-    n = cov.shape[0]
-    if budget is None:
-        budget = np.ones(n) / n
+    import risk_balance
 
-    w = np.ones(n) / n
-
-    for _ in range(max_iter):
-        w_old = w.copy()
-        for i in range(n):
-            # Marginal risk excluding i
-            others = cov[i] @ w - cov[i, i] * w[i]
-            # Solve quadratic for w_i
-            a = cov[i, i]
-            b = others
-            c = -budget[i]
-            disc = b * b - 4 * a * c
-            if disc < 0:
-                continue
-            w[i] = (-b + np.sqrt(disc)) / (2 * a)
-
-        # Normalize
-        w = w / w.sum()
-        if np.max(np.abs(w - w_old)) < tol:
-            break
-
-    return w
+    return risk_balance.erc_weights(cov, budget)
 
 
 # ── Early Warning Score ──────────────────────────────────────────────────────
@@ -2306,6 +2323,189 @@ def get_risk_parity_allocation(
     }
 
 
+_balance_cache: TTLCache = TTLCache(ttl=300, maxsize=64)
+
+
+BALANCE_LEVELS = ("symbol", "sector", "thesis", "account")
+
+
+@router.get("/balance")
+def get_risk_balance(
+    account_id: Optional[str] = Query(None),
+    cash: Optional[float] = Query(None, ge=0, description="New money for the add-only plan, base "
+                                  "currency; omitted = whatever the full plan takes"),
+    lookback: int = Query(252),
+    base_currency: str = Query("THB"),
+    level: str = Query("symbol", description="What the targets are set on: symbol | sector | thesis | account"),
+    target: Literal["auto", "equal"] = Query(
+        "auto", description="auto = the user's saved targets at `level` when any is set; "
+                            "equal = every holding / group the same share regardless"),
+):
+    """What to trade so that every part of the book carries its TARGET share of the risk.
+
+    `level` says what a "part" is — a holding, a sector, a thesis, or an account
+    (the book as its sub-portfolios; all-accounts view only). The targets are
+    the user's, saved by PUT /risk/budget with scope = level (the symbol /
+    sector / thesis sets are the ones the BUDGET page shows). A part without a
+    target takes an equal piece of what is left of 100%; a group's share is
+    split equally among its holdings. With no target at all, or `target=equal`,
+    every part gets the same share.
+
+    Two plans from one covariance (backend/risk_balance.py):
+      `rebalance` — sell + buy, money in the book unchanged, lands on the targets;
+      `add`       — buy only. `cash_to_balance` is the new money that lands on
+                    them; a smaller `cash` scales the same buys down.
+    At level=account a symbol held in two accounts is two rows — the trade says
+    in which account. Stock positions only (no options, no cash).
+    """
+    import risk_balance
+    from fastapi import HTTPException
+
+    if level not in BALANCE_LEVELS:
+        raise HTTPException(status_code=400, detail=f"level must be one of {BALANCE_LEVELS}")
+    base = report_currency(base_currency)
+    scope = account_id if account_id and account_id != "all" else None
+    budget = _risk_budget_saved(scope)
+    saved = budget.of(level)
+    key = (f"{scope or 'all'}:{base}:{lookback}:{cash}:{_mc_book_stamp(scope)}:{level}:{target}:"
+           f"{json.dumps(saved, sort_keys=True)}")
+    hit = _balance_cache.get(key)
+    if hit is not None:
+        return hit
+
+    # One unit per holding — per (account, holding) when the targets are per account.
+    per_account = level == "account"
+    value: dict[tuple, float] = {}
+    label: dict[str, str] = {}
+    ccy: dict[str, str] = {}
+    price: dict[str, float] = {}
+    sector: dict[str, str] = {}
+    acc_name: dict[str, str] = {}
+    lots: dict[str, list[tuple[str, str, float]]] = {}
+    for pos in _open_positions_priced(scope):
+        sym = _position_yf_symbol(pos)
+        px = pos.get("current_price") or pos.get("price_entry")
+        if not sym or not px:
+            continue
+        v = convert_amount(float(px) * float(pos.get("volume", 0)), trade_currency(pos), base)
+        if not v or v <= 0:
+            continue
+        acct = str(pos["account_id"])
+        unit = (acct, sym) if per_account else ("", sym)
+        value[unit] = value.get(unit, 0.0) + v
+        label[sym] = pos["symbol"]
+        ccy.setdefault(sym, trade_currency(pos))
+        price[sym] = float(px)
+        acc_name.setdefault(acct, str(pos.get("acc_name") or acct))
+        if str(pos.get("sector") or "").strip():
+            sector.setdefault(sym, str(pos["sector"]).strip())
+        lots.setdefault(sym, []).append((str(pos.get("id") or ""), str(pos["symbol"]), v))
+    empty = {"rows": [], "base_currency": base, "level": level,
+             "note": "need at least 2 holdings with price history"}
+    held = list(dict.fromkeys(u[1] for u in value))
+    if len(value) < 2:
+        return empty
+
+    returns_df, excluded = _aligned_returns(held, lookback, ccy_map=ccy, base_currency=base)
+    ok = set(returns_df.columns) if not returns_df.empty else set()
+    units = [u for u in value if u[1] in ok]
+    if len(units) < 2:
+        return empty
+    # Two units of one symbol share its return series: perfectly correlated, as they are.
+    cov = _ledoit_wolf_shrinkage(returns_df[[u[1] for u in units]].values)
+    v0 = np.array([value[u] for u in units])
+    total = float(v0.sum())
+
+    # ── which group each unit belongs to, and what the group is called ──
+    if level == "symbol":
+        group = [u[1] for u in units]
+        g_label = {u[1]: label[u[1]] for u in units}
+    elif level == "sector":
+        group = [sector.get(u[1]) or "Other" for u in units]
+        g_label = {g: g for g in group}
+    elif level == "thesis":
+        theses = _budget_theses({"symbols": [u[1] for u in units], "lots": lots, "name": label})
+        group = [theses[u[1]][0] for u in units]
+        g_label = {theses[u[1]][0]: theses[u[1]][1] for u in units}
+    else:
+        group = [u[0] for u in units]
+        g_label = {u[0]: acc_name.get(u[0], u[0]) for u in units}
+    if level == "account" and len(set(group)) < 2:
+        return {**empty, "note": "targets per account need the all-accounts view with at least 2 accounts"}
+
+    shares, g_share, g_source = risk_balance.group_target_shares(group, saved if target != "equal" else {})
+    target_w = risk_balance.erc_weights(cov, shares)
+    g_keys = list(g_share)
+
+    def plan(delta: np.ndarray) -> dict:
+        v1 = v0 + delta
+        sh0, sh1 = risk_balance.risk_shares(v0, cov), risk_balance.risk_shares(v1, cov)
+        rows = []
+        for i, u in enumerate(units):
+            s_ = u[1]
+            px_base = convert_amount(price[s_], ccy[s_], base) or 0.0
+            rows.append({
+                "key": f"{u[0]}|{s_}", "symbol": label[s_], "yf_symbol": s_, "currency": ccy[s_],
+                "account_id": u[0] or None, "account": acc_name.get(u[0]) if u[0] else None,
+                "group": group[i], "group_label": g_label[group[i]],
+                "price": round(price[s_], 4),
+                "weight_now_pct": round(float(v0[i] / total) * 100, 2),
+                "weight_after_pct": round(float(v1[i] / v1.sum()) * 100, 2),
+                "risk_now_pct": round(float(sh0[i]) * 100, 2),
+                "risk_after_pct": round(float(sh1[i]) * 100, 2),
+                "target_risk_pct": round(float(shares[i]) * 100, 2),
+                "target_source": g_source[group[i]],
+                "trade_value": round(float(delta[i]), 2),
+                "shares": round(float(delta[i]) / px_base, 4) if px_base > 0 else None,
+            })
+        rows.sort(key=lambda r: -r["risk_now_pct"])
+        groups = []
+        for g in g_keys:
+            idx = [i for i, x in enumerate(group) if x == g]
+            groups.append({
+                "key": g, "label": g_label[g], "n": len(idx),
+                "target_pct": round(g_share[g] * 100, 2), "source": g_source[g],
+                "budget_pct": saved.get(g),
+                "weight_now_pct": round(float(v0[idx].sum() / total) * 100, 2),
+                "weight_after_pct": round(float(v1[idx].sum() / v1.sum()) * 100, 2),
+                "risk_now_pct": round(float(sh0[idx].sum()) * 100, 2),
+                "risk_after_pct": round(float(sh1[idx].sum()) * 100, 2),
+                "trade_value": round(float(delta[idx].sum()), 2),
+            })
+        groups.sort(key=lambda r: -r["risk_now_pct"])
+        top2 = sorted(range(len(groups)), key=lambda i: -groups[i]["risk_now_pct"])[:2]
+        return {
+            "rows": rows, "groups": groups,
+            "buy_value": round(float(delta[delta > 0].sum()), 2),
+            "sell_value": round(float(-delta[delta < 0].sum()), 2),
+            "vol_now_pct": round(risk_balance.book_vol_annual(v0, cov) * 100, 2),
+            "vol_after_pct": round(risk_balance.book_vol_annual(v1, cov) * 100, 2),
+            "top2": [groups[i]["label"] for i in top2],
+            "top2_risk_now_pct": round(sum(groups[i]["risk_now_pct"] for i in top2), 1),
+            "top2_risk_after_pct": round(sum(groups[i]["risk_after_pct"] for i in top2), 1),
+            "max_risk_after_pct": round(float(sh1.max()) * 100, 1),
+        }
+
+    full = risk_balance.add_to_balance(v0, target_w)
+    need = float(full.sum())
+    frac = 1.0 if cash is None or need <= 0 else min(1.0, cash / need)
+    out = {
+        "base_currency": base, "account_id": scope or "all", "lookback_days": int(len(returns_df)),
+        "level": level, "invested_value": round(total, 2),
+        "equal_share_pct": round(100 / len(g_keys), 2), "n_groups": len(g_keys),
+        "target_mode": "budget" if "budget" in g_source.values() else "equal",
+        "budgets": {k: v for k, v in saved.items() if k in g_share},
+        "budgets_all": dict(saved),
+        "budget_total_pct": round(sum(v for k, v in saved.items() if k in g_share), 2),
+        "rebalance": plan(risk_balance.rebalance(v0, target_w)),
+        "add": {**plan(full * frac), "cash": round(float(full.sum() * frac), 2),
+                "cash_to_balance": round(need, 2), "fraction_pct": round(frac * 100, 1)},
+        "excluded": [{"symbol": label.get(e["symbol"], e["symbol"])} for e in excluded if e["symbol"] in held],
+    }
+    _balance_cache.set(key, out)
+    return out
+
+
 @router.get("/stress-test")
 def stress_test(
     account_id: Optional[str] = Query(None),
@@ -2617,6 +2817,15 @@ def create_guard_override(body: GuardOverrideIn):
             (oid, body.account_id, body.yf_symbol.upper(), body.symbol, body.first_entry[:10],
              json.dumps(codes), body.reason.strip()[:500], review_on, body.floor_price),
         )
+        # The same decision in the journal that also holds rebalance and
+        # stop-level decisions, so "why did I not sell" is one list.
+        import risk_journal
+        risk_journal.record(
+            conn, kind="STOP", decision="HOLD", reason=body.reason, account_id=body.account_id,
+            symbol=body.symbol or body.yf_symbol, yf_symbol=body.yf_symbol,
+            snapshot={"codes": codes, "floor_price": body.floor_price, "first_entry": body.first_entry[:10]},
+            review_on=review_on, ref_id=oid, source="guard",
+        )
         conn.commit()
     return {"ok": True, "id": oid, "codes": codes, "review_on": review_on,
             "floor_price": body.floor_price}
@@ -2628,6 +2837,8 @@ def delete_guard_override(override_id: str):
     was superseded by a newer one keeps its row with `cleared_at` set."""
     with get_db() as conn:
         cur = conn.execute("DELETE FROM guard_overrides WHERE id = ?", (override_id,))
+        # An undone mis-click was never a decision: its journal row goes too.
+        conn.execute("DELETE FROM risk_decisions WHERE ref_id = ? AND source = 'guard'", (override_id,))
         conn.commit()
     return {"ok": True, "deleted": cur.rowcount}
 
@@ -3337,6 +3548,13 @@ def _rebalance_plan(account_id: Optional[str], fresh: bool = False) -> dict:
         earn = _rebalance_earnings(cand)
         out = rebalance.plan(symbols, total, rules, today, first, last,
                              earnings={s: v or [] for s, v in earn.items()})
+    # "Not yet, because …" decisions (risk_decisions) take a TRIM off the list
+    # until their review date. Symbol-wide: a hold made in one account view is
+    # the same decision in ALL.
+    import risk_journal
+    with get_db() as conn:
+        holds = risk_journal.rebalance_holds(conn)
+    out = rebalance.apply_holds(out, holds, today)
     out["base_currency"] = "THB"
     _rebal_cache.set(key, out)
     return out
@@ -3394,6 +3612,425 @@ def reset_rebalance_rules():
         conn.commit()
     _rebal_cache.clear()
     return {"rules": rebalance.Rules().as_dict()}
+
+
+# ── Risk decision journal ────────────────────────────────────────────────────
+
+class RiskDecisionIn(BaseModel):
+    kind: str                                  # STOP | REBALANCE | BUDGET | OTHER
+    decision: str                              # HOLD | FOLLOW | CHANGE | NOTE
+    reason: str
+    account_id: Optional[str] = None
+    symbol: Optional[str] = None
+    yf_symbol: Optional[str] = None
+    snapshot: Optional[dict] = None
+    # HOLD only: when the decision comes back for review (default 14 days).
+    review_days: Optional[int] = None
+
+
+@router.get("/decisions")
+def get_risk_decisions(
+    account_id: Optional[str] = Query(None),
+    kind: Optional[str] = Query(None),
+    symbol: Optional[str] = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    """The journal of risk decisions, newest first: why a stop or a rebalance
+    was held, followed or changed (backend/risk_journal.py). `active` = a HOLD
+    still inside its review date."""
+    import risk_journal
+
+    with get_db() as conn:
+        rows = risk_journal.list_decisions(conn, account_id, kind, symbol, limit)
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r["kind"]] = counts.get(r["kind"], 0) + 1
+    return {"decisions": rows, "counts": counts,
+            "active_holds": sum(1 for r in rows if r["active"]),
+            "kinds": list(risk_journal.KINDS), "decision_types": list(risk_journal.DECISIONS)}
+
+
+@router.post("/decisions")
+def post_risk_decision(body: RiskDecisionIn):
+    """Write one decision. A REBALANCE HOLD needs a symbol; it replaces the live
+    hold on that symbol and takes it off the TRIM list until `review_on`.
+    A STOP HOLD is written by POST /guard/override, not here — it needs the
+    holding period and a floor."""
+    import risk_journal
+    from fastapi import HTTPException
+
+    kind, decision = body.kind.upper(), body.decision.upper()
+    if kind == "STOP" and decision == "HOLD":
+        raise HTTPException(status_code=400,
+                            detail="a stop HOLD is recorded from TRADE GUARD (POST /guard/override)")
+    review_on = None
+    try:
+        if decision == "HOLD":
+            if not (body.symbol or "").strip():
+                raise ValueError("symbol required for a HOLD")
+            review_on = risk_journal.review_date(body.review_days)
+        with get_db() as conn:
+            if decision == "HOLD":
+                risk_journal.end_previous_holds(conn, kind, body.symbol)
+            did = risk_journal.record(
+                conn, kind=kind, decision=decision, reason=body.reason, account_id=body.account_id,
+                symbol=body.symbol, yf_symbol=body.yf_symbol, snapshot=body.snapshot, review_on=review_on,
+            )
+            conn.commit()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if kind == "REBALANCE":
+        _rebal_cache.clear()
+    return {"ok": True, "id": did, "review_on": review_on}
+
+
+@router.delete("/decisions/{decision_id}")
+def end_risk_decision(decision_id: str):
+    """End a live HOLD now (the row stays in the journal with `cleared_at`).
+    Guard holds are ended from TRADE GUARD, which owns their state."""
+    from fastapi import HTTPException
+
+    with get_db() as conn:
+        row = conn.execute("SELECT kind, decision, source, cleared_at FROM risk_decisions WHERE id = ?",
+                           (decision_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="decision not found")
+        if row["source"] == "guard":
+            raise HTTPException(status_code=400, detail="end a stop HOLD from TRADE GUARD")
+        if row["decision"] != "HOLD" or row["cleared_at"]:
+            raise HTTPException(status_code=400, detail="only a live HOLD can be ended")
+        conn.execute("UPDATE risk_decisions SET cleared_at = ? WHERE id = ?",
+                     (datetime.now().isoformat(timespec="seconds"), decision_id))
+        conn.commit()
+    _rebal_cache.clear()
+    return {"ok": True}
+
+
+# ── Down-tilted paths (stress on the Monte Carlo) ────────────────────────────
+
+@router.get("/bear-paths")
+def get_bear_paths(
+    account_id: Optional[str] = Query(None),
+    p_down: float = Query(0.6, ge=0.5, le=0.95, description="Chance a day is a losing day for the book"),
+    n_paths: int = Query(10_000, ge=1_000, le=30_000),
+    vol: Literal["current", "longrun"] = Query("current"),
+    base_currency: str = Query("THB"),
+    fresh: bool = Query(False, description="Skip the 10-min cache"),
+):
+    """The book as held, run through random paths that hold MORE losing days
+    than winning ones, at 3 / 5 / 7 / 21 / 42 trading days — with a neutral run
+    beside each. A stress, not a forecast. Model: backend/bear_paths.py; inputs
+    are the Monte Carlo's (`_mc_inputs`)."""
+    import bear_paths
+
+    base = report_currency(base_currency)
+    scope = account_id if account_id and account_id != "all" else None
+    inp = _mc_inputs(scope, base, fresh)
+    if not inp.get("symbols"):
+        return {"horizons": [], "note": inp.get("note", "no open positions"),
+                "excluded": inp.get("excluded", [])}
+
+    key = f"bear:{scope or 'all'}:{base}:{inp['stamp']}:{p_down}:{n_paths}:{vol}"
+    hit = _mc_cache.get(key)
+    if hit is not None:
+        return hit
+
+    t0 = time.perf_counter()
+    try:
+        out = bear_paths.simulate(
+            inp["exposure"], inp["nav"], inp["Z"],
+            inp["s2"] if vol == "current" else inp["lr"], inp["lr"],
+            p_down=p_down, n_paths=n_paths, labels=inp["labels"],
+        )
+    except ValueError as e:
+        return {"horizons": [], "note": str(e), "excluded": inp.get("excluded", [])}
+    out.update({
+        "model": "FHS, down-tilted", "vol": vol, "account_id": scope or "all", "base_currency": base,
+        "nav": round(inp["nav"], 2), "cash": round(inp["cash"], 2),
+        "window_days": inp["window_days"], "window_from": inp["window_from"], "as_of": inp["as_of"],
+        "excluded": inp["excluded"], "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1),
+    })
+    _mc_cache.set(key, out)
+    return out
+
+
+# ── Factor exposure + risk budget ────────────────────────────────────────────
+
+_factor_cache: TTLCache = TTLCache(ttl=300, maxsize=32)
+_FACTOR_COL = "F:"       # factor legs ride in the close frame under this prefix
+
+
+def _risk_book(account_id: Optional[str], base_currency: str) -> dict:
+    """The open book on the NAV basis `_compute_portfolio_risk` uses: value per
+    yf symbol in `base_currency` (lots summed, shorts negative, options as
+    delta-equivalent underlying), cash in the denominator."""
+    base = report_currency(base_currency)
+    positions = _open_positions_priced(account_id)
+    try:
+        from routers.portfolio_v2 import get_summary
+        summ = get_summary(base_currency=base)
+    except Exception:
+        summ = None
+    cash, opt = _risk_extras(account_id, base, summ)
+
+    value: dict[str, float] = {}
+    ccy: dict[str, str] = {}
+    name: dict[str, str] = {}
+    sector: dict[str, str] = {}
+    lots: dict[str, list[tuple[str, str, float]]] = {}   # yf → (trade id, symbol, value)
+    for pos in positions:
+        yf_sym = _position_yf_symbol(pos)
+        if not yf_sym:
+            continue
+        price = pos.get("current_price") or pos.get("price_entry", 0)
+        val = convert_amount(float(price or 0) * float(pos.get("volume", 0)),
+                             trade_currency(pos), base)
+        ccy.setdefault(yf_sym, trade_currency(pos))
+        if val == 0:
+            continue
+        value[yf_sym] = value.get(yf_sym, 0.0) + val
+        name[yf_sym] = pos["symbol"]
+        if str(pos.get("sector") or "").strip():
+            sector.setdefault(yf_sym, str(pos["sector"]).strip())
+        lots.setdefault(yf_sym, []).append((str(pos.get("id") or ""), str(pos["symbol"]), val))
+    for yf_sym, (val, c, label) in opt.items():
+        if not val:
+            continue
+        value[yf_sym] = value.get(yf_sym, 0.0) + val
+        ccy.setdefault(yf_sym, c)
+        name.setdefault(yf_sym, label)
+
+    value = {s: v for s, v in value.items() if v != 0}
+    nav = sum(value.values()) + cash
+    if nav <= 0:
+        nav = sum(abs(v) for v in value.values())
+    return {"base": base, "symbols": list(value), "value": value, "ccy": ccy, "name": name,
+            "sector": sector, "lots": lots, "nav": nav, "cash": cash}
+
+
+def _book_weights(book: dict, valid: list[str]) -> np.ndarray:
+    """NAV weights of `valid`; symbols without history lend theirs to the rest
+    (as `_compute_portfolio_risk` does), so cash stays cash."""
+    nav = book["nav"] or 1.0
+    w = np.array([book["value"][s] / nav for s in valid], dtype=float)
+    total = sum(book["value"].values()) / nav
+    if abs(w.sum()) > 1e-12:
+        w = w * (total / w.sum())
+    return w
+
+
+@router.get("/factors")
+def get_factor_exposure(
+    account_id: Optional[str] = Query(None),
+    lookback: int = Query(252, ge=120, le=1260),
+    base_currency: str = Query("THB"),
+    fresh: bool = Query(False),
+):
+    """What the book is betting on: betas to market-wide factors (ETF proxies),
+    each one's share of the book's risk, and which holdings bring it.
+    Model and factor list: backend/factor_exposure.py."""
+    import factor_exposure as fx
+
+    base = report_currency(base_currency)
+    key = f"{account_id or 'all'}:{lookback}:{base}"
+    hit = None if fresh else _factor_cache.get(key)
+    if hit is not None:
+        return hit
+
+    book = _risk_book(account_id, base)
+    out = {"account_id": account_id or "all", "base_currency": base,
+           "as_of": date.today().isoformat(), "lookback_days": lookback,
+           "nav": round(book["nav"], 2), "excluded": [], "missing_factors": []}
+    if not book["symbols"]:
+        out.update(fx.analyze(pd.DataFrame(), {}, pd.DataFrame()))
+        _factor_cache.set(key, out)
+        return out
+
+    fset = fx.factor_set(book["symbols"])
+    legs = fx.tickers(fset)
+    close = _fetch_close_frame(list(dict.fromkeys(book["symbols"] + legs)), lookback)
+    # A factor leg the book also holds (SPY, GLD, BTC-USD) must stay in its own
+    # currency while the holding is translated — so the legs get their own columns.
+    for t in legs:
+        if not close.empty and t in close.columns:
+            close = close.assign(**{_FACTOR_COL + t: close[t]})
+    leg_cols = [_FACTOR_COL + t for t in legs]
+    rets, excluded = _aligned_returns(
+        book["symbols"] + leg_cols, lookback, ccy_map=book["ccy"], base_currency=base,
+        min_history=fx.MIN_HISTORY, close=close,
+    )
+    out["excluded"] = [e for e in excluded if not e["symbol"].startswith(_FACTOR_COL)]
+    valid = [s for s in book["symbols"] if not rets.empty and s in rets.columns]
+    if not valid:
+        out.update(fx.analyze(pd.DataFrame(), {}, pd.DataFrame()))
+        _factor_cache.set(key, out)
+        return out
+
+    simple = np.expm1(rets)
+    leg_rets = simple[[c for c in leg_cols if c in simple.columns]].rename(
+        columns=lambda c: c[len(_FACTOR_COL):])
+    factors, missing = fx.factor_returns(leg_rets, fset)
+    out["missing_factors"] = missing
+    weights = dict(zip(valid, _book_weights(book, valid)))
+    out.update(fx.analyze(simple[valid], weights, factors, nav=book["nav"],
+                          names=book["name"], factor_defs=fset))
+    _factor_cache.set(key, out)
+    return out
+
+
+def _risk_budget_saved(account_id: Optional[str]):
+    import risk_budget
+
+    with get_db() as conn:
+        row = conn.execute("SELECT budget_json FROM risk_budgets WHERE account_id = ?",
+                           (account_id or "all",)).fetchone()
+    try:
+        return risk_budget.Budget.from_dict(json.loads(row["budget_json"]) if row else None)
+    except (ValueError, TypeError):
+        logger.warning("risk_budgets row for %s is invalid — treating as unset", account_id or "all")
+        return risk_budget.Budget()
+
+
+def _budget_theses(book: dict) -> dict[str, tuple[str, str, Optional[int]]]:
+    """yf symbol → (thesis id, title, conviction). An explicit thesis_links row
+    wins; else the newest live thesis on the same symbol; else NONE_KEY. A
+    symbol whose lots point at different theses goes with the larger value."""
+    import sqlite3
+
+    from risk_budget import NONE_KEY
+
+    try:
+        with get_db() as conn:
+            theses = [dict(r) for r in conn.execute(
+                "SELECT id, symbol, title, conviction, status FROM theses "
+                "WHERE deleted_at IS NULL ORDER BY COALESCE(updated_at, created_at) DESC").fetchall()]
+            links = conn.execute("SELECT thesis_id, trade_id FROM thesis_links").fetchall()
+    except sqlite3.OperationalError:
+        theses, links = [], []
+    by_id = {t["id"]: t for t in theses}
+    by_symbol: dict[str, dict] = {}
+    for t in theses:
+        if t["status"] not in ("invalidated", "closed"):
+            by_symbol.setdefault(str(t["symbol"] or "").upper(), t)
+    linked = {r["trade_id"]: r["thesis_id"] for r in links if r["thesis_id"] in by_id}
+
+    out: dict[str, tuple[str, str, Optional[int]]] = {}
+    for yf_sym in book["symbols"]:
+        tally: dict[str, float] = {}
+        # Option exposure on a symbol with no stock lot: match on the underlying
+        # (its label reads "NVDA (options Δ)").
+        lots = book["lots"].get(yf_sym) or [("", book["name"].get(yf_sym, yf_sym).split(" ")[0], 1.0)]
+        for trade_id, symbol, val in lots:
+            t = by_id.get(linked.get(trade_id, "")) or by_symbol.get(symbol.upper())
+            tid = t["id"] if t else NONE_KEY
+            tally[tid] = tally.get(tid, 0.0) + abs(val)
+        tid = max(tally, key=tally.get)
+        t = by_id.get(tid)
+        out[yf_sym] = (tid, (t["title"] or t["symbol"]) if t else "ไม่มี thesis",
+                       t["conviction"] if t else None)
+    return out
+
+
+@router.get("/budget")
+def get_risk_budget(
+    account_id: Optional[str] = Query(None),
+    scope: str = Query("symbol"),
+    lookback: int = Query(252),
+    base_currency: str = Query("THB"),
+):
+    """Risk in use against the budget, per bucket (`scope` = symbol | sector |
+    thesis) and for the whole book (volatility cap). Same weights and
+    covariance as /metrics. Model: backend/risk_budget.py."""
+    import risk_budget
+    from fastapi import HTTPException
+
+    if scope not in risk_budget.SCOPES:
+        raise HTTPException(status_code=400, detail=f"scope must be one of {risk_budget.SCOPES}")
+    base = report_currency(base_currency)
+    budget = _risk_budget_saved(account_id)
+    book = _risk_book(account_id, base)
+    out = {"account_id": account_id or "all", "base_currency": base,
+           "as_of": date.today().isoformat(), "budget": budget.as_dict(),
+           "lookback_days": 0, "excluded": []}
+
+    rets, excluded = (pd.DataFrame(), [])
+    if book["symbols"]:
+        rets, excluded = _aligned_returns(book["symbols"], lookback, ccy_map=book["ccy"],
+                                          base_currency=base)
+    valid = list(rets.columns) if not rets.empty else []
+    out["excluded"] = excluded
+    if not valid:
+        return {**out, **risk_budget.plan([], np.zeros((0, 0)), budget, scope, book["nav"])}
+
+    cov = _ledoit_wolf_shrinkage(rets.values)
+    w = _book_weights(book, valid)
+    theses = _budget_theses(book) if scope == "thesis" else {}
+    items = []
+    for s, wi in zip(valid, w):
+        item = {"symbol": book["name"].get(s, s), "weight": float(wi), "value": book["value"][s]}
+        if scope == "symbol":
+            item.update(key=s, label=book["name"].get(s, s))
+        elif scope == "sector":
+            sec = book["sector"].get(s) or ("Options" if not book["lots"].get(s) else "Other")
+            item.update(key=sec, label=sec)
+        else:
+            tid, title, conviction = theses[s]
+            item.update(key=tid, label=title, meta={"conviction": conviction})
+        items.append(item)
+    out["lookback_days"] = int(len(rets))
+    return {**out, **risk_budget.plan(items, cov, budget, scope, book["nav"])}
+
+
+class RiskBudgetIn(BaseModel):
+    account_id: Optional[str] = None
+    scope: Optional[str] = None                 # with `budgets`: the scope they replace
+    budgets: Optional[dict[str, float]] = None  # key → % of total risk; replaces the scope's set
+    vol_cap_pct: Optional[float] = None         # sent as null = clear the cap
+    band_pp: Optional[float] = None
+
+
+@router.put("/budget")
+def put_risk_budget(body: RiskBudgetIn):
+    """Save budgets. `budgets` replaces the whole set of `scope`; the cap and
+    the band change only when sent."""
+    import risk_budget
+    from fastapi import HTTPException
+
+    cur = _risk_budget_saved(body.account_id).as_dict()
+    if body.budgets is not None:
+        if body.scope not in risk_budget.TARGET_SCOPES:
+            raise HTTPException(status_code=400,
+                                detail=f"scope must be one of {risk_budget.TARGET_SCOPES}")
+        cur[body.scope] = {k: v for k, v in body.budgets.items() if v is not None}
+    if "vol_cap_pct" in body.model_fields_set:
+        cur["vol_cap_pct"] = body.vol_cap_pct
+    if body.band_pp is not None:
+        cur["band_pp"] = body.band_pp
+    try:
+        budget = risk_budget.Budget.from_dict(cur)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO risk_budgets (account_id, budget_json, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(account_id) DO UPDATE SET budget_json = excluded.budget_json, "
+            "updated_at = excluded.updated_at",
+            (body.account_id or "all", json.dumps(budget.as_dict(), ensure_ascii=False),
+             datetime.now().isoformat(timespec="seconds")),
+        )
+        conn.commit()
+    return {"budget": budget.as_dict()}
+
+
+@router.delete("/budget")
+def delete_risk_budget(account_id: Optional[str] = Query(None)):
+    """Forget every budget of this book view (all scopes, cap, band)."""
+    import risk_budget
+
+    with get_db() as conn:
+        conn.execute("DELETE FROM risk_budgets WHERE account_id = ?", (account_id or "all",))
+        conn.commit()
+    return {"budget": risk_budget.Budget().as_dict()}
 
 
 # ── VaR forecast log (live out-of-sample test) ───────────────────────────────

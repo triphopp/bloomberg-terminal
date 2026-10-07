@@ -10,19 +10,37 @@
  * what the user should do: ขายได้เลย · รอเวลา · เล็กกว่า 1 lot · เฝ้าดู · ปกติ.
  * "จำลองใน WHAT-IF" hands the TRIM rows to the simulator.
  *
+ * "ยังไม่ขาย" on a TRIM row records why not, with a review date — the same idea
+ * as HOLD on a stop in TRADE GUARD. The row moves to ถือต่อ, leaves the sell
+ * totals and the weekly alert, and comes back as a TRIM when the date passes.
+ * The reason is kept in the decision journal (ui/DecisionJournalPanel.tsx).
+ *
  * Backend: GET /api/v2/portfolio/risk/rebalance, PUT|DELETE …/rebalance/rules
- * (backend/rebalance.py). Alerts: guard_scheduler writes "guard:REBALANCE" once
- * a week per holding while it stays a TRIM.
+ * (backend/rebalance.py), POST|DELETE …/risk/decisions (backend/risk_journal.py).
+ * Alerts: guard_scheduler writes "guard:REBALANCE" once a week per holding
+ * while it stays a TRIM.
  */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import type { Colors } from "../helpers";
 import { fmtAmt, fmtQty } from "../helpers";
+import { endRiskDecision, postRiskDecision } from "./DecisionJournalPanel";
 import { NumInput } from "./NumInput";
 
-export type RebalStatus = "TRIM" | "WAIT" | "SMALL" | "WATCH" | "OK" | "SKIP";
+export type RebalStatus = "TRIM" | "HOLD" | "WAIT" | "SMALL" | "WATCH" | "OK" | "SKIP";
+
+/** A "not yet" decision on a TRIM row (risk_decisions, kind REBALANCE). */
+export interface RebalHold {
+  id: string;
+  reason: string;
+  review_on: string | null;
+  created_at: string | null;
+}
+
+/** Review periods offered when declining a trim (days). */
+const HOLD_DAYS = [7, 14, 30, 60] as const;
 
 export interface RebalRules {
   min_gain_pct: number;
@@ -37,6 +55,12 @@ export interface RebalRules {
 
 export interface RebalRow {
   symbol: string;
+  yf_symbol?: string | null;
+  price?: number | null;
+  /** Live "not yet" decision — the row's status is HOLD while it stands. */
+  hold?: RebalHold | null;
+  /** A hold whose review date passed: the row is a TRIM again, decision due. */
+  hold_ended?: RebalHold | null;
   sector: string | null;
   weight_pct: number;
   target_pct: number;
@@ -97,6 +121,12 @@ const GROUPS: {
   tone: "act" | "wait" | "dim";
 }[] = [
   { status: ["TRIM"], title: "ขายทำกำไรได้เลย", hint: "ผ่านทุกเงื่อนไข", tone: "act" },
+  {
+    status: ["HOLD"],
+    title: "ถือต่อ — ยังไม่ขาย",
+    hint: "ถึงเกณฑ์ขายแล้ว แต่คุณบันทึกเหตุผลไว้ · กลับมาเตือนเมื่อถึงวันทบทวน",
+    tone: "wait",
+  },
   { status: ["WAIT"], title: "รอเวลา", hint: "ถึงเกณฑ์แล้ว แต่ยังไม่ถึงจังหวะ", tone: "wait" },
   { status: ["SMALL"], title: "เล็กกว่า 1 lot", hint: "ถึงเกณฑ์ แต่ขายจริงไม่ได้", tone: "dim" },
   { status: ["WATCH"], title: "เฝ้าดู", hint: "ผ่านแล้ว 1 ข้อ หรือใกล้ band", tone: "dim" },
@@ -207,6 +237,9 @@ export function RebalancePanel({
           }
           colors={colors}
         />
+        {!!data.counts.HOLD && (
+          <Kpi label="ถือต่อ (มีเหตุผล)" value={`${data.counts.HOLD}`} color={WAIT} colors={colors} />
+        )}
         <Kpi
           label="รอเวลา"
           value={`${data.counts.WAIT}`}
@@ -245,11 +278,16 @@ export function RebalancePanel({
               </span>
               <span style={{ color: colors.textSecondary }}>{g.hint}</span>
             </div>
-            <RebalTable rows={rows} colors={colors} tone={tone} />
+            <RebalTable rows={rows} colors={colors} tone={tone} accountId={accountId} />
           </div>
         );
       })}
-      {data.counts.TRIM + data.counts.WAIT + data.counts.SMALL + data.counts.WATCH === 0 && (
+      {data.counts.TRIM +
+        (data.counts.HOLD ?? 0) +
+        data.counts.WAIT +
+        data.counts.SMALL +
+        data.counts.WATCH ===
+        0 && (
         <div style={{ color: colors.textSecondary }}>
           ยังไม่มีตัวไหนกำไรมากพอและโตเกินสัดส่วน — ไม่ต้องทำอะไร
         </div>
@@ -265,7 +303,14 @@ export function RebalancePanel({
           >
             {showOk ? "▾" : "▸"} ตัวอื่นที่ยังอยู่ในสัดส่วน ({rest.length})
           </button>
-          {showOk && <RebalTable rows={rest} colors={colors} tone={colors.textSecondary} />}
+          {showOk && (
+            <RebalTable
+              rows={rest}
+              colors={colors}
+              tone={colors.textSecondary}
+              accountId={accountId}
+            />
+          )}
         </div>
       )}
 
@@ -340,7 +385,76 @@ function WeightBar({ row, colors, tone }: { row: RebalRow; colors: Colors; tone:
   );
 }
 
-function RebalTable({ rows, colors, tone }: { rows: RebalRow[]; colors: Colors; tone: string }) {
+function RebalTable({
+  rows,
+  colors,
+  tone,
+  accountId,
+}: { rows: RebalRow[]; colors: Colors; tone: string; accountId: string }) {
+  const qc = useQueryClient();
+  // One "ยังไม่ขาย" form open at a time, like HOLD in TRADE GUARD.
+  const [holdFor, setHoldFor] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  const [days, setDays] = useState<number>(14);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const refresh = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ["rebalance"] }),
+      qc.invalidateQueries({ queryKey: ["risk-decisions"] }),
+    ]);
+  const openHold = (symbol: string) => {
+    setHoldFor((cur) => (cur === symbol ? null : symbol));
+    setReason("");
+    setDays(14);
+    setErr(null);
+  };
+  const submitHold = async (row: RebalRow) => {
+    if (!reason.trim() || busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await postRiskDecision({
+        kind: "REBALANCE",
+        decision: "HOLD",
+        reason: reason.trim(),
+        symbol: row.symbol,
+        yf_symbol: row.yf_symbol ?? null,
+        account_id: accountId !== "all" ? accountId : null,
+        review_days: days,
+        // What was declined, as it stood: the reason is read against these.
+        snapshot: {
+          weight_pct: row.weight_pct,
+          target_pct: row.target_pct,
+          growth_pct: row.growth_pct,
+          sell_shares: row.sell_shares,
+          sell_value: row.sell_value,
+          est_realized: row.est_realized,
+          price: row.price ?? null,
+        },
+      });
+      setHoldFor(null);
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const endHold = async (id: string) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await endRiskDecision(id);
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const th = (h: string, right = true, title?: string) => (
     <th
       key={h}
@@ -364,62 +478,163 @@ function RebalTable({ rows, colors, tone }: { rows: RebalRow[]; colors: Colors; 
             {th("มูลค่า")}
             {th("กำไรที่รับรู้")}
             {th("เหตุผล / พร้อมเมื่อ", false)}
+            {th("ตัดสินใจ")}
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.symbol} style={{ borderBottom: `1px solid ${colors.border}33` }}>
-              <td className="px-1 py-0.5 whitespace-nowrap">
-                <span className="font-bold" style={{ color: colors.text }}>
-                  {row.symbol}
-                </span>
-                {row.target_source === "explicit" && (
-                  <span
-                    className="ml-1"
-                    style={{ color: colors.accent, fontSize: 8 }}
-                    title="เป้าที่ตั้งเอง"
-                  >
-                    SET
+            <Fragment key={row.symbol}>
+              <tr style={{ borderBottom: `1px solid ${colors.border}33` }}>
+                <td className="px-1 py-0.5 whitespace-nowrap">
+                  <span className="font-bold" style={{ color: colors.text }}>
+                    {row.symbol}
                   </span>
-                )}
-              </td>
-              <td
-                className="px-1 text-right"
-                style={{ color: (row.growth_pct ?? 0) >= 0 ? colors.positive : colors.negative }}
-              >
-                {pct(row.growth_pct)}
-              </td>
-              <td className="px-1 text-right whitespace-nowrap" style={{ color: colors.text }}>
-                {row.weight_pct.toFixed(1)}% → {row.target_pct.toFixed(1)}%
-                <span style={{ color: colors.textSecondary }}> ±{row.band_pp.toFixed(1)}</span>
-              </td>
-              <td className="px-1">
-                <WeightBar row={row} colors={colors} tone={tone} />
-              </td>
-              <td
-                className="px-1 text-right"
-                style={{ color: row.sell_shares ? tone : colors.textSecondary }}
-              >
-                {row.sell_shares ? `−${fmtQty(row.sell_shares)}` : "—"}
-              </td>
-              <td className="px-1 text-right" style={{ color: colors.text }}>
-                {row.sell_value ? `฿${fmtAmt(row.sell_value)}` : "—"}
-              </td>
-              <td
-                className="px-1 text-right"
-                style={{ color: row.est_realized > 0 ? colors.positive : colors.textSecondary }}
-              >
-                {row.est_realized ? `฿${fmtAmt(row.est_realized)}` : "—"}
-              </td>
-              <td className="px-1" style={{ color: colors.textSecondary, fontSize: 9 }}>
-                {row.ready_on && (
-                  <span className="font-bold mr-1" style={{ color: "#FFB300" }}>
-                    พร้อม {row.ready_on} ·
-                  </span>
-                )}
-                {row.reasons.join(" · ")}
-              </td>
-            </tr>
+                  {row.target_source === "explicit" && (
+                    <span
+                      className="ml-1"
+                      style={{ color: colors.accent, fontSize: 8 }}
+                      title="เป้าที่ตั้งเอง"
+                    >
+                      SET
+                    </span>
+                  )}
+                </td>
+                <td
+                  className="px-1 text-right"
+                  style={{ color: (row.growth_pct ?? 0) >= 0 ? colors.positive : colors.negative }}
+                >
+                  {pct(row.growth_pct)}
+                </td>
+                <td className="px-1 text-right whitespace-nowrap" style={{ color: colors.text }}>
+                  {row.weight_pct.toFixed(1)}% → {row.target_pct.toFixed(1)}%
+                  <span style={{ color: colors.textSecondary }}> ±{row.band_pp.toFixed(1)}</span>
+                </td>
+                <td className="px-1">
+                  <WeightBar row={row} colors={colors} tone={tone} />
+                </td>
+                <td
+                  className="px-1 text-right"
+                  style={{ color: row.sell_shares ? tone : colors.textSecondary }}
+                >
+                  {row.sell_shares ? `−${fmtQty(row.sell_shares)}` : "—"}
+                </td>
+                <td className="px-1 text-right" style={{ color: colors.text }}>
+                  {row.sell_value ? `฿${fmtAmt(row.sell_value)}` : "—"}
+                </td>
+                <td
+                  className="px-1 text-right"
+                  style={{ color: row.est_realized > 0 ? colors.positive : colors.textSecondary }}
+                >
+                  {row.est_realized ? `฿${fmtAmt(row.est_realized)}` : "—"}
+                </td>
+                <td className="px-1" style={{ color: colors.textSecondary, fontSize: 9 }}>
+                  {row.hold && (
+                    <span className="mr-1" style={{ color: colors.text }}>
+                      <b style={{ color: "#FFB300" }}>ถือต่อถึง {row.hold.review_on ?? "—"}</b> —{" "}
+                      {row.hold.reason || "ไม่ระบุเหตุผล"} ·
+                    </span>
+                  )}
+                  {row.hold_ended && (
+                    <span className="font-bold mr-1" style={{ color: "#FF4444" }}>
+                      ครบวันทบทวน {row.hold_ended.review_on} ("{row.hold_ended.reason}") → ตัดสินใจใหม่
+                      ·
+                    </span>
+                  )}
+                  {row.ready_on && (
+                    <span className="font-bold mr-1" style={{ color: "#FFB300" }}>
+                      พร้อม {row.ready_on} ·
+                    </span>
+                  )}
+                  {row.reasons.join(" · ")}
+                </td>
+                <td className="px-1 whitespace-nowrap text-right" style={{ fontSize: 9 }}>
+                  {row.status === "TRIM" && (
+                    <button
+                      aria-pressed={holdFor === row.symbol}
+                      type="button"
+                      onClick={() => openHold(row.symbol)}
+                      style={{ color: colors.accent }}
+                      title="บันทึกว่ายังไม่ขายตอนนี้ พร้อมเหตุผลและวันทบทวน — ถึงวันนั้นจะกลับมาเตือน"
+                    >
+                      ยังไม่ขาย
+                    </button>
+                  )}
+                  {row.status === "HOLD" && row.hold && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => row.hold && endHold(row.hold.id)}
+                      style={{ color: colors.textSecondary }}
+                      title="จบการถือต่อ — กลับไปอยู่ในรายการขายได้เลย (เหตุผลยังอยู่ในบันทึก)"
+                    >
+                      เลิกถือต่อ
+                    </button>
+                  )}
+                </td>
+              </tr>
+              {holdFor === row.symbol && row.status === "TRIM" && (
+                <tr style={{ background: colors.surfaceDeep }}>
+                  <td colSpan={9} className="px-1 py-1">
+                    <div className="flex items-center gap-2 flex-wrap" style={{ fontSize: 9.5 }}>
+                      <span style={{ color: colors.textSecondary }}>ทำไมยังไม่ขาย {row.symbol}</span>
+                      <input
+                        // biome-ignore lint/a11y/noAutofocus: the form opens on a click to type here
+                        autoFocus
+                        className="min-w-0 flex-1 border px-1 outline-none"
+                        style={{
+                          background: "transparent",
+                          color: colors.text,
+                          borderColor: colors.border,
+                        }}
+                        placeholder="เหตุผล เช่น รองบ Q3 / thesis ยังไม่จบ / รอแนวต้าน"
+                        aria-label={`Reason for not selling ${row.symbol}`}
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void submitHold(row);
+                          else if (e.key === "Escape") setHoldFor(null);
+                        }}
+                      />
+                      <span style={{ color: colors.textSecondary }}>ทบทวนใน</span>
+                      {HOLD_DAYS.map((d) => (
+                        <button
+                          aria-pressed={days === d}
+                          type="button"
+                          key={d}
+                          onClick={() => setDays(d)}
+                          style={{
+                            color: days === d ? colors.accent : colors.textSecondary,
+                            textDecoration: days === d ? "underline" : "none",
+                          }}
+                        >
+                          {d} วัน
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        disabled={busy || !reason.trim()}
+                        onClick={() => void submitHold(row)}
+                        className="px-2 border font-bold"
+                        style={{
+                          borderColor: reason.trim() ? colors.accent : colors.border,
+                          color: reason.trim() ? colors.accent : colors.textSecondary,
+                        }}
+                      >
+                        {busy ? "…" : "บันทึก"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHoldFor(null)}
+                        style={{ color: colors.textSecondary }}
+                      >
+                        ยกเลิก
+                      </button>
+                    </div>
+                    {err && <div style={{ color: colors.negative, fontSize: 9 }}>{err}</div>}
+                  </td>
+                </tr>
+              )}
+            </Fragment>
           ))}
         </tbody>
       </table>

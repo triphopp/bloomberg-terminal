@@ -161,3 +161,19 @@ def test_compute_risk_nav_basis_cash_short_and_options(risk, monkeypatch):
     # +1000 delta on a correlated name: NAV 3000, risky share 2/3 vs 1/2 → ≈ ×4/3
     assert with_opt["nav_value"] == 3000
     assert with_opt["var_historical_pct"] == pytest.approx(diluted["var_historical_pct"] * 4 / 3, rel=0.1)
+
+
+def test_backtest_series_is_the_same_days_the_count_is_made_of(risk):
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(5)
+    vals = np.concatenate([rng.normal(0, 0.01, 200), rng.normal(0, 0.03, 60)])
+    dated = pd.Series(vals, index=pd.bdate_range("2025-10-01", periods=len(vals)))
+    exc, n, _, _ = risk._var_backtest_oos(vals, 0.95)
+    rows = risk._var_backtest_series(dated, 0.95)
+    assert len(rows) == n and sum(r["x"] for r in rows) == exc
+    assert rows[-1]["d"] == dated.index[-1].strftime("%Y-%m-%d")
+    assert all(r["v"] < 0 for r in rows)                      # the line is a loss
+    assert all((r["r"] < r["v"]) == r["x"] for r in rows if abs(r["r"] - r["v"]) > 0.002)
+    assert risk._var_backtest_series(dated.iloc[:50], 0.95) == []   # too short to judge

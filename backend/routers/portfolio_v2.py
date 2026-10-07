@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import re
+import sqlite3
 import threading
 import uuid
 from decimal import Decimal
@@ -1185,6 +1186,26 @@ def patch_trade(trade_id: str, body: TradePatch):
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Trade not found")
         _write_audit_log(conn, trade_id, "PATCH", old_dict, updates, reason)
+        # A moved or removed stop on an open lot is a risk decision: it goes in
+        # the journal (risk_decisions) with its reason, next to the HOLDs.
+        if "price_stoploss" in updates and old_dict.get("win_loss") == "P":
+            old_sl, new_sl = old_dict.get("price_stoploss"), updates["price_stoploss"]
+            if abs(float(old_sl or 0) - float(new_sl or 0)) > 1e-9:
+                import risk_journal
+                try:
+                    risk_journal.record(
+                        conn, kind="STOP", decision="CHANGE", reason=reason or risk_journal.NO_REASON,
+                        account_id=old_dict["account_id"], symbol=old_dict["symbol"],
+                        yf_symbol=old_dict.get("resolved_symbol"),
+                        snapshot={"stop_from": old_sl, "stop_to": new_sl,
+                                  "price_entry": old_dict.get("price_entry"), "trade_id": trade_id},
+                        ref_id=trade_id, source="trade_edit",
+                    )
+                except sqlite3.Error as e:
+                    # The journal is a record of the edit, never a condition
+                    # of it: a DB without the table (a copy a script works
+                    # on) still takes the new stop.
+                    logger.warning("stop change on %s not journalled: %s", trade_id, e)
         # A corrected buy price is the whole buy's: carry it to the rows split
         # off the same lot that still hold the old price.
         if "lot_price" in updates and old_dict.get("lot_price") is not None:

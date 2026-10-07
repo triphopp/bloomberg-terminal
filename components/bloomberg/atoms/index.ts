@@ -88,6 +88,11 @@ export const portfolioTabRequestAtom = atom<"portfolio" | "analytics" | "risk" |
   null
 );
 
+// PORT → RISK page another component asks to open with it (a guard:REBALANCE
+// alert → "rebalance"). RiskTab consumes it and resets it to null.
+export type RiskSubTabRequest = "summary" | "rebalance" | "exposure" | "whatif" | "mc" | "options";
+export const riskSubTabRequestAtom = atom<RiskSubTabRequest | null>(null);
+
 // Symbol requested by another view for the main MKT chart. The market view
 // consumes and clears this when it becomes active.
 export const marketSearchSymbolAtom = atom<string>("");
