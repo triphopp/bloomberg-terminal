@@ -60,7 +60,11 @@ export function VarValidationCard({
   sym,
   rolling,
   nav,
+  embedded = false,
 }: {
+  /** Inside ModelTrustBlock: no frame of its own and no ROLLING line — the
+   *  block above it already says it, with the picture. */
+  embedded?: boolean;
   accountId: string;
   colors: Colors;
   sym: string;
@@ -97,11 +101,21 @@ export function VarValidationCard({
 
   return (
     <div
-      className="rounded p-2 mb-2 flex flex-col gap-1 font-mono"
-      style={{ border: `1px solid ${colors.border}`, fontSize: 10 }}
+      className={
+        embedded
+          ? "pt-1.5 flex flex-col gap-1 font-mono"
+          : "rounded p-2 mb-2 flex flex-col gap-1 font-mono"
+      }
+      style={
+        embedded
+          ? { borderTop: `1px solid ${colors.border}`, fontSize: 10 }
+          : { border: `1px solid ${colors.border}`, fontSize: 10 }
+      }
     >
       <div className="flex items-baseline gap-2 flex-wrap">
-        <span style={{ color: colors.textSecondary, letterSpacing: "0.12em" }}>VAR VALIDATION</span>
+        <span style={{ color: colors.textSecondary, letterSpacing: "0.12em" }}>
+          {embedded ? "บันทึกพยากรณ์จริง" : "VAR VALIDATION"}
+        </span>
         {nav.nav_value != null && (
           <span
             className="ml-auto tabular-nums"
@@ -118,7 +132,7 @@ export function VarValidationCard({
       </div>
 
       <div className="flex gap-6 flex-wrap">
-        <div className="flex flex-col">
+        <div className="flex flex-col" style={embedded ? { display: "none" } : undefined}>
           <span style={{ color: colors.textSecondary, fontSize: 8.5 }}>
             ROLLING OOS (พอร์ตวันนี้ย้อนหลัง)
           </span>

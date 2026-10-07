@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * PORT → RISK → MONTE CARLO: the book exactly as it is held, run forward over
+ * PORT → RISK → MONTE CARLO · ขาลง (lower panel; BearPathPanel sits above):
+ * the book exactly as it is held, run forward over
  * thousands of paths — nothing bought, nothing sold.
  *
  * Scope follows the account selector: ALL = every account as one book (the

@@ -3,7 +3,8 @@
 /**
  * PORT → RISK → สรุป: the risk numbers in plain Thai, one line each, plus what
  * to do next. Every figure here comes from /risk/metrics (computed elsewhere);
- * the detail tab (เชิงลึก) still shows the methods behind them.
+ * the methods behind them (เชิงลึก) sit at the foot of the same page — "detail"
+ * scrolls there.
  */
 
 import type { Colors } from "../helpers";
@@ -22,12 +23,24 @@ export interface RiskSummaryMetrics {
   max_drawdown_pct: number;
   effective_n: number;
   n_positions: number;
+  /** Return of the last COMPLETED daily bar of the model's history (today's
+   *  basket, close to close) — not the live day. See `last_return_date`. */
   today_return_pct: number;
+  last_return_date?: string | null;
+  var_historical_pct: number;
+  var_historical_amount: number;
+  cvar_pct: number;
+  cvar_amount: number;
+  cvar_stressed_pct: number;
+  cvar_stressed_amount: number;
+  confidence: number;
   breach_hist: boolean;
   breach_cf: boolean;
   breach_mc: boolean;
   assets: { symbol: string; weight_pct: number; risk_contribution_pct: number }[];
 }
+
+type SummaryTarget = "rebalance" | "exposure" | "whatif" | "detail";
 
 const REGIME: Record<RiskSummaryMetrics["vol_regime"], [string, string]> = {
   CALM: ["ปกติ", "#00C853"],
@@ -39,18 +52,24 @@ const REGIME: Record<RiskSummaryMetrics["vol_regime"], [string, string]> = {
 export function RiskSummaryCard({
   metrics: m,
   rebal,
+  budgetOver = 0,
+  dayPnlPct,
   colors,
   sym,
   onGo,
 }: {
+  /** The live day: every holding's price against its previous close (TRADE GUARD). */
+  dayPnlPct?: number | null;
   metrics: RiskSummaryMetrics | null;
   rebal?: RebalData;
+  /** Buckets (and the book's volatility cap) past their risk budget. */
+  budgetOver?: number;
   colors: Colors;
   sym: string;
-  onGo: (tab: "rebalance" | "whatif" | "detail") => void;
+  onGo: (tab: SummaryTarget) => void;
 }) {
   const lines: { label: string; text: React.ReactNode; color?: string }[] = [];
-  const todo: { text: string; tab?: "rebalance" | "whatif" | "detail"; tone: string }[] = [];
+  const todo: { text: string; tab?: SummaryTarget; tone: string }[] = [];
 
   if (m) {
     const score = m.risk_score;
@@ -58,18 +77,6 @@ export function RiskSummaryCard({
     const topRisk = [...m.assets].sort(
       (a, b) => b.risk_contribution_pct - a.risk_contribution_pct
     )[0];
-    lines.push({
-      label: "วันแย่ ๆ",
-      text: (
-        <>
-          ใน 20 วันจะมีราว 1 วันที่แย่ที่สุด — วันแบบนั้นพอร์ตอาจลด{" "}
-          <b>
-            ≈{m.ensemble_conservative_pct.toFixed(1)}% ({sym}
-            {fmtAmt(m.ensemble_conservative_amount)})
-          </b>
-        </>
-      ),
-    });
     lines.push({
       label: "ความผันผวน",
       text: (
@@ -112,7 +119,7 @@ export function RiskSummaryCard({
 
     if (m.breach_hist || m.breach_cf || m.breach_mc)
       todo.push({
-        text: `วันนี้พอร์ต ${m.today_return_pct.toFixed(2)}% — ลงเกินที่โมเดลคาดไว้ (VaR) ตรวจว่ามีอะไรผิดปกติ`,
+        text: `วันปิดล่าสุด${m.last_return_date ? ` (${m.last_return_date})` : ""} พอร์ต ${m.today_return_pct.toFixed(2)}% — ลงเกินที่โมเดลคาดไว้ (VaR) ตรวจว่ามีอะไรผิดปกติ`,
         tab: "detail",
         tone: "#FF4444",
       });
@@ -140,6 +147,26 @@ export function RiskSummaryCard({
       text: `${rebal.counts.TRIM} ตัวกำไรโตเกินสัดส่วน — ขายทำกำไรได้ ${sym}${fmtAmt(rebal.sell_value)} (กำไรที่รับรู้ ${sym}${fmtAmt(rebal.est_realized)})`,
       tab: "rebalance",
       tone: colors.positive,
+    });
+  if (budgetOver > 0)
+    todo.push({
+      text: `${budgetOver} กองใช้ความเสี่ยงเกินงบที่ตั้งไว้ — ดูว่าต้องลดเท่าไร`,
+      tab: "exposure",
+      tone: "#FF4444",
+    });
+  // A "not yet" whose review date has passed is a decision that is due again.
+  const holdsDue = rebal?.rows.filter((r) => r.status === "TRIM" && r.hold_ended).length ?? 0;
+  if (holdsDue)
+    todo.unshift({
+      text: `${holdsDue} ตัวที่เคยบันทึกว่ายังไม่ขาย ครบวันทบทวนแล้ว — ขาย หรือบันทึกเหตุผลใหม่`,
+      tab: "rebalance",
+      tone: "#FF4444",
+    });
+  if (rebal?.counts.HOLD)
+    todo.push({
+      text: `${rebal.counts.HOLD} ตัวถึงเกณฑ์ขายทำกำไร แต่ถือต่อโดยมีเหตุผลบันทึกไว้`,
+      tab: "rebalance",
+      tone: "#FFB300",
     });
   if (rebal?.counts.WAIT)
     todo.push({
@@ -179,20 +206,71 @@ export function RiskSummaryCard({
         <span className="font-bold" style={{ color: scoreColor }}>
           {scoreLabel}
         </span>
+        {dayPnlPct != null && (
+          <span
+            style={{ color: dayPnlPct >= 0 ? colors.positive : colors.negative, fontSize: 9 }}
+            title="ราคาตอนนี้ เทียบราคาปิดครั้งก่อน ของทุกตัวที่ถือ — ตัวเดียวกับ TODAY ใน TRADE GUARD"
+          >
+            วันนี้ {dayPnlPct >= 0 ? "+" : ""}
+            {dayPnlPct.toFixed(2)}%
+          </span>
+        )}
         {m && (
           <span
-            style={{
-              color: m.today_return_pct >= 0 ? colors.positive : colors.negative,
-              fontSize: 9,
-            }}
+            style={{ color: colors.textSecondary, fontSize: 8.5 }}
+            title="ผลตอบแทนของแท่งวันล่าสุดที่ปิดแล้ว คิดจากพอร์ตน้ำหนักวันนี้ (รวมค่าเงิน) — เป็นตัวที่โมเดล VaR ใช้ตรวจว่าลงเกินคาดหรือไม่ ไม่ใช่กำไรขาดทุนของวันนี้"
           >
-            วันนี้ {m.today_return_pct >= 0 ? "+" : ""}
+            วันปิดล่าสุด{m.last_return_date ? ` ${m.last_return_date.slice(5)}` : ""}{" "}
+            {m.today_return_pct >= 0 ? "+" : ""}
             {m.today_return_pct.toFixed(2)}%
           </span>
         )}
       </div>
 
       <div className="flex flex-col gap-1">
+        {m && (
+          <div
+            className="flex flex-wrap gap-x-5 gap-y-1 pb-1 mb-0.5"
+            style={{ borderBottom: `1px solid ${colors.border}55` }}
+          >
+            {(
+              [
+                [
+                  `VaR ${(m.confidence * 100).toFixed(0)}% · 1 วัน`,
+                  m.var_historical_pct,
+                  m.var_historical_amount,
+                  "ใน 20 วันมีราว 1 วันที่ขาดทุนเกินเส้นนี้ (historical)",
+                  colors.text,
+                ],
+                [
+                  `CVaR ${(m.confidence * 100).toFixed(0)}% · 1 วัน`,
+                  m.cvar_pct,
+                  m.cvar_amount,
+                  "ขาดทุนเฉลี่ยของวันที่แย่ที่สุด 5% — เมื่อหลุดเส้น VaR แล้ว โดยเฉลี่ยเสียเท่านี้",
+                  "#FFB300",
+                ],
+                [
+                  "CVaR ช่วงตึงเครียด",
+                  m.cvar_stressed_pct,
+                  m.cvar_stressed_amount,
+                  "CVaR เดียวกัน แต่ใช้ความผันผวนและสหสัมพันธ์ของช่วงตลาดตึงเครียด",
+                  "#FF4444",
+                ],
+              ] as [string, number, number, string, string][]
+            ).map(([label, p, amt, title, tone]) => (
+              <div key={label} title={title}>
+                <div style={{ color: colors.textSecondary, fontSize: 8.5 }}>{label}</div>
+                <div className="tabular-nums font-bold" style={{ color: tone, fontSize: 13 }}>
+                  −{p.toFixed(2)}%
+                </div>
+                <div className="tabular-nums" style={{ color: colors.textSecondary, fontSize: 9 }}>
+                  −{sym}
+                  {fmtAmt(amt)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {m ? (
           lines.map((l) => (
             <div key={l.label} className="flex gap-2" style={{ lineHeight: 1.4 }}>
