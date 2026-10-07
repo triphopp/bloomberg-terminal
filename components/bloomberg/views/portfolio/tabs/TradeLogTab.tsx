@@ -3,6 +3,7 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { type Colors, FLAG, fmt, fmtAmt, fmtPx, fmtQty, pnlColor } from "../helpers";
 import { TradeEditModal } from "../modals/TradeEditModal";
+import { TRANSFER_PX, transferCostHint } from "../takeover-hint";
 import type { Trade } from "../types";
 import { WLBadge } from "../ui/AccBadge";
 
@@ -155,6 +156,9 @@ export function TradeLogTab({
                 t.pnl_base ?? (t.pnl_amount != null ? toBase(t.pnl_amount, t.currency) : null);
               const amountVal =
                 t.amount_base ?? (t.amount != null ? toBase(Math.abs(t.amount), t.currency) : null);
+              const transferHint =
+                transferCostHint([t], (n) => `${csym}${fmtPx(toBase(n, t.currency))}`, fmtQty) ??
+                undefined;
               return (
                 <tr
                   key={t.id}
@@ -181,9 +185,11 @@ export function TradeLogTab({
                     {t.sector || "—"}
                   </td>
                   <td className="px-2 py-0.5">
-                    {t.price_entry
-                      ? `${csym}${fmtPx(t.price_entry_base ?? toBase(t.price_entry, t.currency))}`
-                      : "—"}
+                    <span className={transferHint ? TRANSFER_PX : undefined} title={transferHint}>
+                      {t.price_entry
+                        ? `${csym}${fmtPx(t.price_entry_base ?? toBase(t.price_entry, t.currency))}`
+                        : "—"}
+                    </span>
                   </td>
                   <td className="px-2 py-0.5">
                     {t.price_exit

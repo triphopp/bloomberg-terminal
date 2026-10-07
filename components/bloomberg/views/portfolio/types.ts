@@ -42,6 +42,12 @@ export interface Trade {
   fee_entry?: number | null;
   /** Broker fees on the sale (commission, VAT, SEC, TAF). Already inside pnl_amount. */
   fee_exit?: number | null;
+  /** "TRANSFER_IN" = received in kind at a takeover; price_entry is then the fair value that day. */
+  acquisition_type?: string | null;
+  /** Previous owner's cost of a transferred lot (memo, never rebased). */
+  original_price_entry?: number | null;
+  /** Fair value on the transfer date (memo, never rebased). */
+  transfer_price_entry?: number | null;
   current_price?: number;
   /** Yahoo symbol the price comes from — the key for the live quote stream. */
   yf_symbol?: string | null;
