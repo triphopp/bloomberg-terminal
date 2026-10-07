@@ -41,9 +41,10 @@ INDICES = [
 # and skew gauges, then one index per market whose own vol is worth watching.
 #
 # Every symbol here was checked against the live quote feed. ^RVX (Russell 2000)
-# is deliberately absent — Yahoo lists it but returns no price — and ^MOVE is
-# absent because that ticker resolves to a Northern Trust ETF, not the ICE MOVE
-# bond-vol index.
+# is deliberately absent — Yahoo lists it but returns no price. ^MOVE IS the ICE
+# BofA MOVE bond-vol index even though Yahoo's shortName for it reads "Northern
+# Trust iBoxx 5-Year Tar…": the series runs 65–114 and moves ~4% a day (checked
+# 2026-10-07), which no bond fund does — vol_indices.py / TAIL read the same one.
 VOL_INDICES = [
     # S&P 500 term structure — shortest to longest
     {"id": "VIX 1D",       "symbol": "^VIX1D", "num": "v1)", "group": "S&P TERM"},
@@ -69,6 +70,7 @@ VOL_INDICES = [
     {"id": "VXSLV SILVER", "symbol": "^VXSLV", "num": "v17)", "group": "COMMOD/RATES"},
     {"id": "VXGDX MINERS", "symbol": "^VXGDX", "num": "v18)", "group": "COMMOD/RATES"},
     {"id": "VXTLT 20Y UST","symbol": "^VXTLT", "num": "v19)", "group": "COMMOD/RATES"},
+    {"id": "MOVE UST",     "symbol": "^MOVE",  "num": "v20)", "group": "COMMOD/RATES"},
 ]
 
 # ── Heatmap groups ────────────────────────────────────────��───────────────────

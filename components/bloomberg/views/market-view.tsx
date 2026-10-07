@@ -15,6 +15,7 @@ import {
   GripVertical,
   LineChart,
   Loader2,
+  Pencil,
   PictureInPicture2,
   RefreshCw,
   RotateCcw,
@@ -118,6 +119,29 @@ import { openSymbolsOf } from "../lib/stream-cadence";
 import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import { displayName, displaySymbol } from "../lib/symbol-display";
 import { bloombergColors } from "../lib/theme-config";
+import {
+  BUILTIN_TICK_SECTIONS,
+  type BuiltinTickSection,
+  DEFAULT_TICK_BOARD,
+  type TickBoardPrefs,
+  type TickSectionId,
+  addRow,
+  addSection,
+  customSymbols,
+  hiddenKey,
+  isBuiltinSection,
+  isCustomSection,
+  loadTickBoard,
+  moveRow,
+  normalizeSectionOrder,
+  removeRow,
+  removeSection,
+  renameSection,
+  saveTickBoard,
+  toggleHiddenRow,
+  toggleHiddenSection,
+  visibleRows,
+} from "../lib/tick-board";
 import { TICK_HEAD, TICK_NOTE, TICK_REGION, TICK_SUBGROUP, TICK_TABLE } from "../lib/tick-grammar";
 import type { MarketItem } from "../types";
 import { FrequentSearchList, MostActiveList } from "./discover-lists";
@@ -176,24 +200,20 @@ function loadLayout(): LayoutSettings {
 const LS_TICK_SECTIONS = "bloomberg_tickdata_sections";
 const LS_TICK_ORDER = "bloomberg_tickdata_order";
 
-type TickSection =
-  | "americas"
-  | "emea"
-  | "asiaPacific"
-  | "ratesUS"
-  | "ratesJP"
-  | "volatility"
-  | "fx";
+// Seven built-in sections plus the ones the user made (`c:…`) — lib/tick-board.ts.
+type TickSection = TickSectionId;
 
-const TICK_SECTIONS: TickSection[] = [
-  "ratesUS",
-  "ratesJP",
-  "americas",
-  "emea",
-  "asiaPacific",
-  "volatility",
-  "fx",
-];
+const TICK_SECTIONS: TickSection[] = [...BUILTIN_TICK_SECTIONS];
+
+const BUILTIN_LABEL: Record<BuiltinTickSection, string> = {
+  ratesUS: "RATES · US",
+  ratesJP: "RATES · JP",
+  americas: "AMERICAS",
+  emea: "EMEA",
+  asiaPacific: "ASIA PACIFIC",
+  volatility: "VOLATILITY",
+  fx: "FX",
+};
 
 /** JP curve and FX start collapsed — 35 extra rows on first open is a wall. */
 const DEFAULT_COLLAPSED_SECTIONS: TickSection[] = ["ratesJP", "fx"];
@@ -205,27 +225,22 @@ function loadTickSections(): TickSection[] {
     if (!s) return DEFAULT_COLLAPSED_SECTIONS;
     const parsed = JSON.parse(s);
     if (!Array.isArray(parsed)) return DEFAULT_COLLAPSED_SECTIONS;
-    return parsed.filter((x): x is TickSection => TICK_SECTIONS.includes(x));
+    return parsed.filter(
+      (x): x is TickSection => typeof x === "string" && (isBuiltinSection(x) || isCustomSection(x))
+    );
   } catch {
     return DEFAULT_COLLAPSED_SECTIONS;
   }
 }
 
-/** Keep valid saved positions, then append newly introduced sections. */
-function normalizeTickOrder(value: unknown): TickSection[] {
-  if (!Array.isArray(value)) return [...TICK_SECTIONS];
-  const order: TickSection[] = [];
-  for (const id of value) {
-    if (TICK_SECTIONS.includes(id) && !order.includes(id)) order.push(id);
-  }
-  return [...order, ...TICK_SECTIONS.filter((id) => !order.includes(id))];
-}
-
+/** Saved order as stored — reconciled with the sections that exist at render
+ *  (normalizeSectionOrder), since custom sections come and go. */
 function loadTickOrder(): TickSection[] {
   if (typeof window === "undefined") return [...TICK_SECTIONS];
   try {
     const stored = localStorage.getItem(LS_TICK_ORDER);
-    return stored ? normalizeTickOrder(JSON.parse(stored)) : [...TICK_SECTIONS];
+    const parsed = stored ? JSON.parse(stored) : null;
+    return Array.isArray(parsed) ? parsed : [...TICK_SECTIONS];
   } catch {
     return [...TICK_SECTIONS];
   }
@@ -559,6 +574,9 @@ function RegionHeader({
   onDragOver,
   onDrop,
   onDragEnd,
+  controls,
+  labelNode,
+  dim,
 }: {
   id: TickSection;
   label: string;
@@ -568,6 +586,13 @@ function RegionHeader({
   onToggle: (id: TickSection) => void;
   /** small right-aligned annotation, e.g. a stale-data warning */
   note?: string;
+  /** EDIT mode: buttons at the right of the header. While present the row is
+   *  neither a drag handle nor a fold toggle — a click belongs to a button. */
+  controls?: React.ReactNode;
+  /** EDIT mode: replaces the label (the rename field of a custom section). */
+  labelNode?: React.ReactNode;
+  /** A hidden section, shown struck through while editing. */
+  dim?: boolean;
   isDropTarget: boolean;
   onDragStart: (id: TickSection, event: DragEvent<HTMLTableRowElement>) => void;
   onDragOver: (id: TickSection, event: DragEvent<HTMLTableRowElement>) => void;
@@ -578,8 +603,8 @@ function RegionHeader({
   // cost ~50px of a row that is read at minimum width.
   return (
     <tr
-      draggable
-      title={`${label} — click to fold, drag to reorder`}
+      draggable={!controls}
+      title={controls ? undefined : `${label} — click to fold, drag to reorder`}
       onDragStart={(event) => onDragStart(id, event)}
       onDragOver={(event) => onDragOver(id, event)}
       onDrop={(event) => onDrop(id, event)}
@@ -587,26 +612,38 @@ function RegionHeader({
     >
       <td
         colSpan={TICK_COLS}
-        className={`px-1 py-0 cursor-pointer hover:bg-[#141414] ${TICK_REGION}`}
+        className={`px-1 py-0 ${controls ? "" : "cursor-pointer hover:bg-[#141414]"} ${TICK_REGION}`}
         style={{
           background: "#0a0a0a",
           color: colors.accent,
           borderBottom: `1px solid ${colors.border}`,
           boxShadow: isDropTarget ? `inset 0 2px ${colors.accent}` : undefined,
         }}
-        onClick={() => onToggle(id)}
+        onClick={controls ? undefined : () => onToggle(id)}
       >
         <span className="flex items-center gap-0.5 w-full min-w-0">
-          {collapsed ? (
+          {collapsed && !controls ? (
             <ChevronRight className="h-2.5 w-2.5 shrink-0" />
           ) : (
             <ChevronDown className="h-2.5 w-2.5 shrink-0" />
           )}
-          <span className="truncate">{label}</span>
+          {labelNode ?? (
+            <span
+              className="truncate"
+              style={dim ? { opacity: 0.45, textDecoration: "line-through" } : undefined}
+            >
+              {label}
+            </span>
+          )}
           <span className="font-mono shrink-0" style={{ color: colors.textSecondary }}>
             {count}
           </span>
-          {note && (
+          {controls && (
+            <span className="ml-auto flex items-center gap-2 shrink-0 font-mono tracking-normal">
+              {controls}
+            </span>
+          )}
+          {note && !controls && (
             <span
               className="ml-auto font-mono text-[8px] normal-case truncate"
               style={{ color: "#facc15" }}
@@ -615,6 +652,153 @@ function RegionHeader({
             </span>
           )}
         </span>
+      </td>
+    </tr>
+  );
+}
+
+/** Bare-text control used across the board's EDIT mode (house rule: no frame). */
+function TickEditButton({
+  label,
+  title,
+  onClick,
+  color,
+  disabled,
+  pressed,
+}: {
+  label: string;
+  title: string;
+  onClick: () => void;
+  color: string;
+  disabled?: boolean;
+  pressed?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className="text-[9px] font-bold leading-[15px] hover:opacity-70 disabled:opacity-25"
+      style={{ color }}
+      title={title}
+      aria-label={title}
+      aria-pressed={pressed}
+      disabled={disabled}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+/** One row while the board is in EDIT mode: its name and what can be done to
+ *  it. Prices are left out — nobody reads a quote while rearranging. */
+function TickEditRow({
+  label,
+  sub,
+  dim,
+  colors,
+  children,
+}: {
+  label: string;
+  /** the quote symbol, when it differs from the label */
+  sub?: string;
+  dim?: boolean;
+  colors: typeof bloombergColors.dark;
+  children: React.ReactNode;
+}) {
+  return (
+    <tr style={{ borderBottom: "1px solid #111" }}>
+      <td colSpan={TICK_COLS} className="px-1 py-0">
+        <span className="flex items-center gap-1 min-w-0">
+          <span
+            className="truncate font-bold"
+            style={{
+              color: dim ? colors.textSecondary : colors.accent,
+              opacity: dim ? 0.45 : 1,
+              textDecoration: dim ? "line-through" : undefined,
+            }}
+          >
+            {label}
+          </span>
+          {sub && (
+            <span className="truncate text-[8px]" style={{ color: colors.textSecondary }}>
+              {sub}
+            </span>
+          )}
+          <span className="ml-auto flex items-center gap-2 shrink-0">{children}</span>
+        </span>
+      </td>
+    </tr>
+  );
+}
+
+/** A one-line text field inside the tick table: Enter commits, Esc clears. */
+function TickInputRow({
+  placeholder,
+  ariaLabel,
+  colors,
+  onSubmit,
+  hint,
+}: {
+  placeholder: string;
+  ariaLabel: string;
+  colors: typeof bloombergColors.dark;
+  /** Return an error to show, or nothing when the value was taken. */
+  onSubmit: (value: string) => Promise<string | undefined> | string | undefined;
+  hint?: string;
+}) {
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    const v = value.trim();
+    if (!v || busy) return;
+    setBusy(true);
+    try {
+      const err = await onSubmit(v);
+      setError(err ?? null);
+      if (!err) setValue("");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <tr>
+      <td colSpan={TICK_COLS} className="px-1 py-0.5">
+        <span className="flex items-center gap-1 min-w-0">
+          <input
+            className="min-w-0 flex-1 text-[9.5px] font-mono font-bold px-1 py-0 border outline-none uppercase"
+            style={{ background: "#000", color: colors.accent, borderColor: colors.border }}
+            placeholder={placeholder}
+            aria-label={ariaLabel}
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value);
+              setError(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void submit();
+              else if (e.key === "Escape") setValue("");
+            }}
+          />
+          <TickEditButton
+            label={busy ? "…" : "ADD"}
+            title={ariaLabel}
+            color={value.trim() ? colors.accent : colors.textSecondary}
+            disabled={!value.trim() || busy}
+            onClick={() => void submit()}
+          />
+        </span>
+        {(error || hint) && (
+          <span
+            className="block text-[8px] leading-[12px]"
+            style={{ color: error ? "#facc15" : colors.textSecondary }}
+          >
+            {error ?? hint}
+          </span>
+        )}
       </td>
     </tr>
   );
@@ -1130,12 +1314,65 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     DEFAULT_COLLAPSED_SECTIONS
   );
   const [tickOrder, setTickOrder] = useState<TickSection[]>(TICK_SECTIONS);
+  // What the user made of the board: their own sections and rows, and the
+  // built-in rows / sections they hid (lib/tick-board.ts).
+  const [tickPrefs, setTickPrefs] = useState<TickBoardPrefs>(DEFAULT_TICK_BOARD);
+  const [tickEdit, setTickEdit] = useState(false);
+  const [tickDeleteAsk, setTickDeleteAsk] = useState<string | null>(null);
   const [sectionsRestored, setSectionsRestored] = useState(false);
   useEffect(() => {
     setCollapsedSections(loadTickSections());
     setTickOrder(loadTickOrder());
+    setTickPrefs(loadTickBoard());
     setSectionsRestored(true);
   }, []);
+  useEffect(() => {
+    if (sectionsRestored) saveTickBoard(tickPrefs);
+  }, [sectionsRestored, tickPrefs]);
+  // Saved order reconciled with the sections that exist now.
+  const sectionOrder = useMemo(
+    () => normalizeSectionOrder(tickOrder, tickPrefs),
+    [tickOrder, tickPrefs]
+  );
+  const sectionOrderRef = useRef(sectionOrder);
+  sectionOrderRef.current = sectionOrder;
+  const moveSection = useCallback((id: TickSection, delta: -1 | 1) => {
+    const order = sectionOrderRef.current;
+    const from = order.indexOf(id);
+    setTickOrder(moveTickOrder(order, from, from + delta));
+  }, []);
+
+  // Quotes for the rows the user added. One request for every custom symbol;
+  // the previous rows stay on screen while a changed set loads.
+  const customSyms = useMemo(() => customSymbols(tickPrefs), [tickPrefs]);
+  const customKey = customSyms.join(",");
+  const { data: customData, isLoading: customLoading } = useQuery<{
+    items?: MarketItem[];
+    missing?: string[];
+    error?: string;
+  }>({
+    queryKey: ["tick-custom", customKey],
+    queryFn: () =>
+      fetch(`/api/tick-custom?symbols=${encodeURIComponent(customKey)}`).then((r) => r.json()),
+    enabled: sectionsRestored && customSyms.length > 0,
+    staleTime: 55_000,
+    refetchInterval: 60_000,
+    placeholderData: (prev) => prev,
+  });
+  const onCustomTicks = useCallback(
+    (ticks: Record<string, QuoteTick>) => {
+      queryClient.setQueryData<Record<string, unknown>>(["tick-custom", customKey], (prev) =>
+        patchRowGroups(prev, ["items"], ticks)
+      );
+    },
+    [queryClient, customKey]
+  );
+  useQuoteStream(customSyms, onCustomTicks);
+  const customBySymbol = useMemo(() => {
+    const m = new Map<string, MarketItem>();
+    for (const it of customData?.items ?? []) if (it.symbol) m.set(it.symbol, it);
+    return m;
+  }, [customData]);
   useEffect(() => {
     if (!sectionsRestored) return;
     try {
@@ -1180,9 +1417,8 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     event.preventDefault();
     const source = draggedTickSection.current;
     if (source && source !== id) {
-      setTickOrder((previous) =>
-        moveTickOrder(previous, previous.indexOf(source), previous.indexOf(id))
-      );
+      const order = sectionOrderRef.current;
+      setTickOrder(moveTickOrder(order, order.indexOf(source), order.indexOf(id)));
     }
     draggedTickSection.current = null;
     setTickDropTarget(null);
@@ -1842,23 +2078,37 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     }
   }, [pins, marketData, selectedSymbol, pendingMarketSymbol, indexToSymbol]);
 
+  // What the board shows of each built-in section: nothing when the section
+  // is hidden, otherwise its rows minus the ones the user hid.
+  const shownRows = <T extends { id: string }>(
+    section: BuiltinTickSection,
+    rows: T[] | undefined
+  ): T[] =>
+    tickPrefs.hiddenSections.includes(section) ? [] : visibleRows(tickPrefs, section, rows ?? []);
   const allMarketItems = [
-    ...(marketData?.americas ?? []),
-    ...(marketData?.emea ?? []),
-    ...(marketData?.asiaPacific ?? []),
+    ...shownRows<MarketItem>("americas", marketData?.americas),
+    ...shownRows<MarketItem>("emea", marketData?.emea),
+    ...shownRows<MarketItem>("asiaPacific", marketData?.asiaPacific),
   ];
+  const shownFx = shownRows("fx", fxPairs);
   // Indices + FX only. Rate rows are deliberately excluded: "yield up" means the
   // bond market fell, so counting them alongside "index up" would make the ▲/▼
   // tally mix two opposite meanings. Volatility rows are out for the same
   // reason — a green VIX is a bad day, not a good one.
+  // Custom rows stay out of the tally too: a user list can hold anything.
   const upCount =
     allMarketItems.filter((m) => m.pctChange > 0).length +
-    fxPairs.filter((p) => (p.pctChange ?? 0) > 0).length;
+    shownFx.filter((p) => (p.pctChange ?? 0) > 0).length;
   const downCount =
     allMarketItems.filter((m) => m.pctChange < 0).length +
-    fxPairs.filter((p) => (p.pctChange ?? 0) < 0).length;
+    shownFx.filter((p) => (p.pctChange ?? 0) < 0).length;
   const tickRowCount =
-    allMarketItems.length + usRates.length + jpRates.length + volItems.length + fxPairs.length;
+    allMarketItems.length +
+    shownRows("ratesUS", usRates).length +
+    shownRows("ratesJP", jpRates).length +
+    shownRows("volatility", volItems).length +
+    shownFx.length +
+    tickPrefs.sections.reduce((n, sec) => n + sec.rows.length, 0);
 
   // ── Panel Renderers ─────────────────────────────────────────────────────────
 
@@ -1993,6 +2243,29 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
           </span>
           <div className="ml-auto flex items-center gap-1">
             <button
+              type="button"
+              title={
+                tickEdit
+                  ? "Done — back to prices"
+                  : "Edit the board: add your own sections and symbols, hide or reorder the rest"
+              }
+              aria-label="Edit TICK DATA board"
+              aria-pressed={tickEdit}
+              className="p-0.5 hover:opacity-70 flex items-center gap-0.5"
+              onClick={() => {
+                setTickEdit((v) => !v);
+                setTickDeleteAsk(null);
+              }}
+            >
+              {tickEdit ? (
+                <span className="text-[8px] font-bold" style={{ color: colors.accent }}>
+                  DONE
+                </span>
+              ) : (
+                <Pencil className="h-2.5 w-2.5" style={{ color: colors.textSecondary }} />
+              )}
+            </button>
+            <button
               title="Refresh"
               className="p-0.5 hover:opacity-70"
               onClick={refreshData}
@@ -2036,9 +2309,42 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 </tr>
               </thead>
               <tbody>
-                {tickOrder.map((id) => {
-                  const collapsed = collapsedSections.includes(id);
-                  const header = (label: string, count: number, note?: string) => (
+                {sectionOrder.map((id, orderIndex) => {
+                  const custom = isCustomSection(id)
+                    ? tickPrefs.sections.find((sec) => sec.id === id)
+                    : undefined;
+                  const builtin = isBuiltinSection(id) ? id : null;
+                  if (!custom && !builtin) return null;
+                  const sectionHidden = builtin
+                    ? tickPrefs.hiddenSections.includes(builtin)
+                    : false;
+                  if (sectionHidden && !tickEdit) return null;
+                  // EDIT shows every section unfolded: a folded one has no rows to act on.
+                  const collapsed = !tickEdit && collapsedSections.includes(id);
+                  const moveButtons = (
+                    <>
+                      <TickEditButton
+                        label="▲"
+                        title="Move section up"
+                        color={colors.textSecondary}
+                        disabled={orderIndex === 0}
+                        onClick={() => moveSection(id, -1)}
+                      />
+                      <TickEditButton
+                        label="▼"
+                        title="Move section down"
+                        color={colors.textSecondary}
+                        disabled={orderIndex === sectionOrder.length - 1}
+                        onClick={() => moveSection(id, 1)}
+                      />
+                    </>
+                  );
+                  const header = (
+                    label: string,
+                    count: number,
+                    note?: string,
+                    edit?: { controls: React.ReactNode; labelNode?: React.ReactNode }
+                  ) => (
                     <RegionHeader
                       id={id}
                       label={label}
@@ -2052,32 +2358,240 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                       onDragOver={handleTickDragOver}
                       onDrop={handleTickDrop}
                       onDragEnd={handleTickDragEnd}
+                      controls={tickEdit ? edit?.controls : undefined}
+                      labelNode={tickEdit ? edit?.labelNode : undefined}
+                      dim={sectionHidden}
                     />
                   );
 
-                  if (id === "ratesUS")
+                  // ── A section the user made ──
+                  if (custom) {
+                    const asking = tickDeleteAsk === id;
+                    const editHead = {
+                      labelNode: (
+                        <input
+                          key={custom.label}
+                          className="min-w-0 w-24 text-[9px] font-mono font-bold px-1 py-0 border outline-none uppercase"
+                          style={{
+                            background: "#000",
+                            color: colors.accent,
+                            borderColor: colors.border,
+                          }}
+                          defaultValue={custom.label}
+                          aria-label={`Rename section ${custom.label}`}
+                          onBlur={(e) =>
+                            setTickPrefs((p) => renameSection(p, id, e.currentTarget.value))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                          }}
+                        />
+                      ),
+                      controls: (
+                        <>
+                          {moveButtons}
+                          <TickEditButton
+                            label={asking ? "DELETE?" : "✕"}
+                            title={
+                              asking
+                                ? `Delete ${custom.label} and its ${custom.rows.length} rows — click again`
+                                : `Delete section ${custom.label}`
+                            }
+                            color={asking ? "#FF4444" : colors.textSecondary}
+                            onClick={() => {
+                              if (!asking) return setTickDeleteAsk(id);
+                              setTickPrefs((p) => removeSection(p, id));
+                              setTickDeleteAsk(null);
+                            }}
+                          />
+                        </>
+                      ),
+                    };
                     return (
                       <Fragment key={id}>
-                        {header(
-                          "RATES · US",
-                          usRates.length,
-                          ratesData?.usError ? "FRED key missing" : undefined
+                        {header(custom.label, custom.rows.length, undefined, editHead)}
+                        {tickEdit ? (
+                          <>
+                            {custom.rows.map((row, i) => (
+                              <TickEditRow
+                                key={row.symbol}
+                                label={row.label ?? displaySymbol({ symbol: row.symbol })}
+                                sub={row.label ? row.symbol : undefined}
+                                colors={colors}
+                              >
+                                <TickEditButton
+                                  label="▲"
+                                  title={`Move ${row.symbol} up`}
+                                  color={colors.textSecondary}
+                                  disabled={i === 0}
+                                  onClick={() =>
+                                    setTickPrefs((p) => moveRow(p, id, row.symbol, -1))
+                                  }
+                                />
+                                <TickEditButton
+                                  label="▼"
+                                  title={`Move ${row.symbol} down`}
+                                  color={colors.textSecondary}
+                                  disabled={i === custom.rows.length - 1}
+                                  onClick={() => setTickPrefs((p) => moveRow(p, id, row.symbol, 1))}
+                                />
+                                <TickEditButton
+                                  label="✕"
+                                  title={`Remove ${row.symbol}`}
+                                  color={colors.textSecondary}
+                                  onClick={() => setTickPrefs((p) => removeRow(p, id, row.symbol))}
+                                />
+                              </TickEditRow>
+                            ))}
+                            <TickInputRow
+                              placeholder="+ SYMBOL"
+                              ariaLabel={`Add a symbol to ${custom.label}`}
+                              colors={colors}
+                              onSubmit={async (typed) => {
+                                // Typed, not picked — CPALL has to become CPALL.BK.
+                                const sym = await resolveSymbol(typed.toUpperCase());
+                                const shown = displaySymbol({ symbol: sym });
+                                const next = addRow(tickPrefs, id, sym, shown);
+                                if (next === tickPrefs)
+                                  return custom.rows.some((r) => r.symbol === sym.toUpperCase())
+                                    ? `${shown} is already here`
+                                    : "not a symbol";
+                                setTickPrefs((p) => addRow(p, id, sym, shown));
+                                return undefined;
+                              }}
+                            />
+                          </>
+                        ) : (
+                          !collapsed && (
+                            <>
+                              {custom.rows.length === 0 && (
+                                <TickNotice colors={colors} error="empty — ✎ to add symbols" />
+                              )}
+                              {custom.rows.map((row) => {
+                                const q = customBySymbol.get(row.symbol);
+                                const label = row.label ?? displaySymbol({ symbol: row.symbol });
+                                if (!q)
+                                  return (
+                                    <TickNotice
+                                      key={row.symbol}
+                                      colors={colors}
+                                      loading={customLoading}
+                                      error={
+                                        customLoading
+                                          ? undefined
+                                          : `${label} — ${customData?.error ?? "no quote"}`
+                                      }
+                                    />
+                                  );
+                                if (row.symbol.endsWith("=X"))
+                                  return (
+                                    <FxRow
+                                      key={row.symbol}
+                                      cot={cotForSymbol(row.symbol)}
+                                      pair={{
+                                        id: label,
+                                        symbol: row.symbol,
+                                        price: q.value,
+                                        change: q.change,
+                                        pctChange: q.pctChange,
+                                        prevClose: null,
+                                      }}
+                                      colors={colors}
+                                      isSelected={selectedTickId === label}
+                                      onSelect={handleFxSelect}
+                                    />
+                                  );
+                                return (
+                                  <TickRow
+                                    key={row.symbol}
+                                    item={q.id === label ? q : { ...q, id: label }}
+                                    cot={cotForSymbol(row.symbol)}
+                                    colors={colors}
+                                    isSelected={selectedTickId === label}
+                                    onSelect={handleTickSelect}
+                                  />
+                                );
+                              })}
+                            </>
+                          )
                         )}
-                        {!collapsed && (
+                      </Fragment>
+                    );
+                  }
+                  if (!builtin) return null;
+
+                  // ── Built-in sections ──
+                  const sectionControls = {
+                    controls: (
+                      <>
+                        {moveButtons}
+                        <TickEditButton
+                          label={sectionHidden ? "SHOW" : "HIDE"}
+                          title={`${sectionHidden ? "Show" : "Hide"} the ${BUILTIN_LABEL[builtin]} section`}
+                          color={sectionHidden ? colors.accent : colors.textSecondary}
+                          pressed={!sectionHidden}
+                          onClick={() => setTickPrefs((p) => toggleHiddenSection(p, builtin))}
+                        />
+                      </>
+                    ),
+                  };
+                  /** EDIT: every row of the section with a HIDE / SHOW switch. */
+                  const editRows = (rows: { id: string; name?: string }[]) =>
+                    sectionHidden
+                      ? null
+                      : rows.map((row) => {
+                          const hidden = tickPrefs.hiddenRows.includes(hiddenKey(builtin, row.id));
+                          return (
+                            <TickEditRow
+                              key={row.id}
+                              label={row.name ?? row.id}
+                              dim={hidden}
+                              colors={colors}
+                            >
+                              <TickEditButton
+                                label={hidden ? "SHOW" : "HIDE"}
+                                title={`${hidden ? "Show" : "Hide"} ${row.id}`}
+                                color={hidden ? colors.accent : colors.textSecondary}
+                                pressed={!hidden}
+                                onClick={() =>
+                                  setTickPrefs((p) => toggleHiddenRow(p, builtin, row.id))
+                                }
+                              />
+                            </TickEditRow>
+                          );
+                        });
+
+                  if (builtin === "ratesUS" || builtin === "ratesJP") {
+                    const isUS = builtin === "ratesUS";
+                    const all = isUS ? usRates : jpRates;
+                    const rows = visibleRows(tickPrefs, builtin, all);
+                    const note = isUS
+                      ? ratesData?.usError
+                        ? "FRED key missing"
+                        : undefined
+                      : ratesData?.jpStale
+                        ? "MOF down — OECD monthly"
+                        : undefined;
+                    return (
+                      <Fragment key={id}>
+                        {header(BUILTIN_LABEL[builtin], rows.length, note, sectionControls)}
+                        {tickEdit && editRows(all.map((r) => ({ id: r.id, name: r.tenor })))}
+                        {!tickEdit && !collapsed && (
                           <TickNotice
                             colors={colors}
                             loading={ratesLoading}
-                            error={ratesData?.usError}
-                            empty={usRates.length === 0}
+                            error={isUS ? ratesData?.usError : undefined}
+                            empty={all.length === 0}
                           />
                         )}
-                        {!collapsed &&
-                          usRates.map((row) => (
+                        {!tickEdit &&
+                          !collapsed &&
+                          rows.map((row) => (
                             <RateRow
                               key={row.id}
                               row={row}
                               cot={
-                                COT_KEY_BY_RATE_ID[row.id]
+                                isUS && COT_KEY_BY_RATE_ID[row.id]
                                   ? cotFlags.get(COT_KEY_BY_RATE_ID[row.id])
                                   : undefined
                               }
@@ -2088,46 +2602,17 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                           ))}
                       </Fragment>
                     );
+                  }
 
-                  if (id === "ratesJP")
+                  if (builtin === "americas" || builtin === "emea" || builtin === "asiaPacific") {
+                    const all: MarketItem[] = marketData?.[builtin] ?? [];
+                    const items = visibleRows(tickPrefs, builtin, all);
                     return (
                       <Fragment key={id}>
-                        {header(
-                          "RATES · JP",
-                          jpRates.length,
-                          ratesData?.jpStale ? "MOF down — OECD monthly" : undefined
-                        )}
-                        {!collapsed && (
-                          <TickNotice
-                            colors={colors}
-                            loading={ratesLoading}
-                            empty={jpRates.length === 0}
-                          />
-                        )}
-                        {!collapsed &&
-                          jpRates.map((row) => (
-                            <RateRow
-                              key={row.id}
-                              row={row}
-                              colors={colors}
-                              isSelected={selectedTickId === row.id}
-                              onSelect={handleRateSelect}
-                            />
-                          ))}
-                      </Fragment>
-                    );
-
-                  if (id === "americas" || id === "emea" || id === "asiaPacific") {
-                    const label = {
-                      americas: "AMERICAS",
-                      emea: "EMEA",
-                      asiaPacific: "ASIA PACIFIC",
-                    }[id];
-                    const items = marketData?.[id] ?? [];
-                    return (
-                      <Fragment key={id}>
-                        {header(label, items.length)}
-                        {!collapsed &&
+                        {header(BUILTIN_LABEL[builtin], items.length, undefined, sectionControls)}
+                        {tickEdit && editRows(all)}
+                        {!tickEdit &&
+                          !collapsed &&
                           items.map((item: MarketItem) => (
                             <TickRow
                               key={item.id}
@@ -2142,15 +2627,18 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                     );
                   }
 
-                  if (id === "volatility")
+                  if (builtin === "volatility") {
+                    const items = visibleRows(tickPrefs, builtin, volItems);
                     return (
                       <Fragment key={id}>
                         {header(
-                          "VOLATILITY",
-                          volItems.length,
-                          volData?.error ? "feed unavailable" : undefined
+                          BUILTIN_LABEL[builtin],
+                          items.length,
+                          volData?.error ? "feed unavailable" : undefined,
+                          sectionControls
                         )}
-                        {!collapsed && (
+                        {tickEdit && editRows(volItems)}
+                        {!tickEdit && !collapsed && (
                           <TickNotice
                             colors={colors}
                             loading={volLoading}
@@ -2158,10 +2646,11 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                             empty={volItems.length === 0}
                           />
                         )}
-                        {!collapsed &&
-                          volItems.map((item, itemIndex) => (
+                        {!tickEdit &&
+                          !collapsed &&
+                          items.map((item, itemIndex) => (
                             <Fragment key={item.id}>
-                              {item.group && item.group !== volItems[itemIndex - 1]?.group && (
+                              {item.group && item.group !== items[itemIndex - 1]?.group && (
                                 <SubGroupHeader label={item.group} colors={colors} />
                               )}
                               <TickRow
@@ -2175,12 +2664,16 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                           ))}
                       </Fragment>
                     );
+                  }
 
+                  const pairs = visibleRows(tickPrefs, "fx", fxPairs);
                   return (
                     <Fragment key={id}>
-                      {header("FX", fxPairs.length)}
-                      {!collapsed &&
-                        fxPairs.map((pair) => (
+                      {header(BUILTIN_LABEL.fx, pairs.length, undefined, sectionControls)}
+                      {tickEdit && editRows(fxPairs)}
+                      {!tickEdit &&
+                        !collapsed &&
+                        pairs.map((pair) => (
                           <FxRow
                             key={pair.symbol}
                             cot={cotForSymbol(pair.symbol)}
@@ -2193,6 +2686,36 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                     </Fragment>
                   );
                 })}
+                {tickEdit && (
+                  <>
+                    <TickInputRow
+                      placeholder="+ NEW SECTION"
+                      ariaLabel="Add a section of your own"
+                      colors={colors}
+                      hint="▲▼ reorder · HIDE / SHOW built-in rows · your own sections take any symbol"
+                      onSubmit={(name) => {
+                        const next = addSection(tickPrefs, name);
+                        if (next === tickPrefs) return "section limit reached";
+                        setTickPrefs(next);
+                        return undefined;
+                      }}
+                    />
+                    {(tickPrefs.hiddenRows.length > 0 || tickPrefs.hiddenSections.length > 0) && (
+                      <tr>
+                        <td colSpan={TICK_COLS} className="px-1 py-0.5">
+                          <TickEditButton
+                            label={`SHOW ALL HIDDEN (${tickPrefs.hiddenRows.length + tickPrefs.hiddenSections.length})`}
+                            title="Bring back every hidden built-in row and section"
+                            color={colors.accent}
+                            onClick={() =>
+                              setTickPrefs((p) => ({ ...p, hiddenRows: [], hiddenSections: [] }))
+                            }
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                )}
               </tbody>
             </table>
           }

@@ -65,7 +65,7 @@ PAGES: dict[str, dict[str, tuple[str, dict, str]]] = {
     },
     "market": {
         "indices": ("/api/market-data", {}, "TICK DATA board: equity indices by region, last and change"),
-        "volatility": ("/api/volatility", {}, "19 VIX-family indices: S&P term structure, vol of vol, equity, global, commodity and rates vol"),
+        "volatility": ("/api/volatility", {}, "VIX-family indices: S&P term structure, vol of vol, equity, global, commodity and rates vol (incl. MOVE, Treasury implied vol)"),
         "fx": ("/api/fx", {"type": "overview"}, "20 currency pairs, last and change"),
         "positioning": ("/api/cot/snapshot", {"window": 156},
                         "CFTC COT by contract: net positions, z-scores and crowding flags, weekly"),
