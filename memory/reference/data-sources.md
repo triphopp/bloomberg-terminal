@@ -1,6 +1,6 @@
 # Data Sources — หาข้อมูลที่นี่ก่อนออกไปข้างนอก
 
-**อัปเดตล่าสุด:** 2026-10-06 (เพิ่ม §3.2 inference benchmark และ methodology; §3.3 earnings-call transcript)
+**อัปเดตล่าสุด:** 2026-10-07 (เพิ่ม §3.4 งบและคอนเซนซัสของผู้ผลิตหน่วยความจำเกาหลี–ญี่ปุ่น; §3.5 หุ้นไทย: บทวิเคราะห์ ผู้ถือหุ้น งบประมาณรัฐ; §6 Kabutan / invezz / barchart)
 **ใช้เมื่อ:** ต้องหาข้อมูลอะไรก็ตาม — ตัวเลขมหภาค ประเทศ ดอกเบี้ย บริษัท ข่าว — ก่อนค้นเว็บ
 **ใช้กับ:** ทุก agent (Claude, Codex, DeepSeek, …) ทั้งใน repo และผ่าน MCP
 **ส่งผ่าน MCP:** ไฟล์นี้คือแหล่งเดียว — MCP `bloomberg-terminal` อ่านไฟล์นี้ตอนเรียก ให้บริการเป็น tool `get_data_sources` และ resource `spec://data-sources` (แก้ไฟล์แล้วมีผลทันที)
@@ -51,6 +51,7 @@
 | `/api/bonds/decomposition` | 10Y = expected real + breakeven + term premium (ACM) | NY Fed ACM | เร็ว |
 | `/api/bonds/overview` · `/supply` · `/issuance` | credit leg, auctions, corporate issuance | FRED, fiscaldata, SEC EFTS | |
 | `/api/crisis` | crisis level L0–3, STL FSI/NFCI, IG/HY OAS, breakeven, delinquency | FRED | ~6s |
+| `/api/cycle` | วัฏจักรเศรษฐกิจสหรัฐตามนิยามทางการ: NBER, Sahm rule, recession probability, CFNAI, yield-curve probit, OECD CLI, output / unemployment gap (CBO), PCE เทียบเป้า 2%, policy rate เทียบ SEP longer-run + Taylor 1993, NFCI — พร้อมกฎ แหล่ง และสถิติย้อนหลังของแต่ละตัว | FRED + Yahoo | ~6s (cold) |
 | `/api/tail-risk/signals` · `/macro-context` · `/vix-term` | risk composite, market events, VIX term | FRED / CBOE | |
 | `/api/cot/snapshot` · `/history` · `/basis` | CFTC positioning (weekly, as-of Tue) | CFTC | เร็ว |
 | `/api/fear-greed/history` | CNN Fear & Greed | CNN | เร็ว |
@@ -133,6 +134,8 @@ board/forum ทุกแหล่ง **ต้องตรวจ ToS ก่อน
 | **SK hynix บน EDGAR** | CIK `0002120882` (SKHY) · F-1 `000119312526280172/d32785df1.htm` | งบ IFRS (inventory, cost of sales รายปี + Q1/26) · 6-K รายเหตุการณ์ | ⚠️ XBRL มีแค่ namespace `ffd` ไม่มี `us-gaap` — ต้อง grep HTML · 6-K ส่วนใหญ่เป็นประกาศย่อย ไม่ใช่งบ |
 | **NVIDIA หน้าสเปกผลิตภัณฑ์** | `nvidia.com/en-us/data-center/vera-rubin-nvl72/` · `/gb300-nvl72/` | HBM/LPDDR ต่อ GPU/ชั้นวาง · โรงงาน 100 MW = 40K GPU = fast memory 42 PB | ✅ WebFetch อ่านได้ · ตัวเลขเป็น "up to" (เพดาน) |
 | **Micron prepared remarks (PDF)** | `s25.q4cdn.com/621799436/files/doc_financials/2026/q4/Q4-FY26-Prepared-Remarks.pdf` | ไทม์ไลน์โรงงาน, bit growth อุตสาหกรรม | WebFetch คืน binary → บันทึกไฟล์แล้วใช้ `pypdf` แยกข้อความ |
+| **arXiv (งานวิชาการ HBF / KV cache)** | `arxiv.org/abs/<id>` (บทคัดย่อ) · `arxiv.org/html/<id>` (เนื้อเต็ม พารามิเตอร์อุปกรณ์) — เช่น `2609.25782`, `2608.11668`, `2609.39131`, `2607.10186` | แบบจำลอง HBF: bandwidth, latency, อายุ, ความร้อน, ผลต่องาน agent | ✅ WebFetch (ตรวจ 2026-10-07) · ตัวเลขเปลี่ยนระหว่าง v1/v2 — ระบุฉบับ · เป็นแบบจำลอง ยังไม่มีชิปจริง |
+| **Tom's Hardware ผ่าน Jina Reader** | `https://r.jina.ai/https://www.tomshardware.com/...` | เนื้อบทความ (สเปก HBF สามเกรด, Hot Chips) | ✅ ตรวจ 2026-10-07 · WebFetch ตรงได้แค่เมนู เนื้อถูกตัด |
 | **Yahoo estimates = S&P Global MI** | `help.yahoo.com/kb/finance-for-web/SLN2310.html` | ยืนยันว่าคอนเซนซัสใน `get_stock_data(estimates/analyst)` มาจาก S&P Global Market Intelligence | ใช้ตอบว่า "คอนเซนซัสมาจากใคร" |
 
 ### 3.3 อ่านเนื้อหน้าเว็บ (ทดสอบ 2026-10-05)
@@ -143,6 +146,33 @@ board/forum ทุกแหล่ง **ต้องตรวจ ToS ก่อน
 | Jina Reader | `https://r.jina.ai/<url>` (header `Accept: text/plain`) | เนื้อหน้าเว็บเป็น markdown — หน้า JavaScript และ PDF ด้วย | ✅ ไม่ต้องมี key · ❌ บล็อก `news.google.com` · paywall (WSJ, Barron's) ไม่ผ่าน · ใช้ผ่าน `backend/web_reader.py::read_page` (ลองดึงตรงก่อน แล้วค่อย fallback) |
 | Google News link → URL จริง | `web_reader.resolve_news_link(url)` | URL ของสำนักข่าวจากลิงก์ `news.google.com/rss/articles/<id>` | ✅ ~1 วินาที/ลิงก์ |
 | ค้นเว็บทั่วไปแบบไม่มี key | DuckDuckGo / Brave / Yahoo HTML, Bing RSS | — | ❌ ทุกเจ้าบล็อก script หรือคืนผลไม่ตรง — ใช้ §4 Tavily/Brave |
+
+### 3.4 ผู้ผลิตหน่วยความจำเกาหลี–ญี่ปุ่น: งบ คอนเซนซัส ส่งออก (ทดสอบ 2026-10-07)
+
+thesis `MEM-KRJP` (Samsung · SK hynix · Kioxia) ใช้แหล่งชุดนี้ — ตัวเลขที่จับตาอยู่ใน TRACK K-0035 ถึง K-0039
+
+| แหล่ง | URL / ตัวอย่าง | ได้อะไร | หมายเหตุ |
+|---|---|---|---|
+| **คอนเซนซัสเกาหลี (FnGuide) ผ่านข่าว** | `koreajoongangdaily.com` (EN) · `biz.heraldcorp.com/article/<id>` (KR) · `en.fnnews.com/news/<id>` | คอนเซนซัสกำไรดำเนินงาน/รายได้ของ Samsung และ SK hynix + ประมาณการรายโบรกเกอร์ (Citi, IBK, Goldman) | ✅ WebFetch อ่านได้ทั้งสามเว็บ · ค้นด้วยคำเกาหลี `3분기 영업이익 컨센서스` ได้ตัวเลขตรงกว่าคำอังกฤษ · สื่อเกาหลีตัดสิน beat/miss ด้วย FnGuide ไม่ใช่ S&P ที่ Yahoo ใช้ |
+| **Samsung งบเบื้องต้น** | `news.samsung.com/global/samsung-electronics-announces-earnings-guidance-for-<first\|second\|third\|fourth>-quarter-<ปี>` | รายได้รวม + กำไรดำเนินงานรวม (ไม่มีรายส่วน) | ออกราววันที่ 7–8 หลังสิ้นไตรมาส ก่อนตลาดเกาหลีเปิด (7 เม.ย. · 7 ก.ค. · 8 ต.ค. 2026) · บริษัทไม่ประกาศวันล่วงหน้า · URL เห็นจากผลค้น ยังไม่ได้ WebFetch เอง |
+| **ส่งออกเกาหลีรายเดือน** | `koreatimes.co.kr/economy/<yyyymmdd>/…` · KED Global | ส่งออกรวม + เซมิคอนดักเตอร์ ($, % YoY) จากกระทรวงการค้า อุตสาหกรรมและทรัพยากร | ✅ ออกวันที่ 1 ของเดือนถัดไป · ตัวเลข 10 วัน / 20 วันแรกจากศุลกากรราววันที่ 11 และ 21 · เป็นดอลลาร์ จึงไม่ถูกรบกวนด้วยค่าเงินวอน |
+| **Kioxia IR calendar** | `kioxia-holdings.com/en-jp/ir/calendar.html` · `/ja-jp/ir/calendar.html` | วันประกาศงบที่บริษัทยืนยัน | ✅ WebFetch · ⚠️ ลงวันล่วงหน้าไม่นาน (7 ต.ค. 2026 ยังไม่มีวันงบไตรมาส 2 ปีงบ 2026) — ระหว่างรอใช้ `get_stock_data(285A.T, earnings-calendar)` เป็นค่าประมาณ |
+| **ราคาหุ้น .KS / .T และ KRW=X** | `/api/stock/history/{sym}?period=1y&interval=1d` (backend) | ราคาปิดรายวัน — ใช้คำนวณ lead-lag เอเชีย→สหรัฐ และค่าเฉลี่ยค่าเงินรายไตรมาส | ✅ · ⚠️ history ของหุ้น .KS ช้ากว่า quote 1–2 วันทำการ (6 ต.ค. มีใน `/api/stock/quote` แต่ history ถึง 2 ต.ค.) |
+| **ปฏิทินงบของหุ้นเกาหลี (Yahoo)** | MCP `get_stock_data(<sym>.KS, earnings-calendar)` | วันงบโดยประมาณ + ประวัติ EPS surprise | ⚠️ เวลาเป็นเวลาสหรัฐ = วันถัดไปในเกาหลี (`2026-07-29 16:00` ของ Samsung = 30 ก.ค. เวลาเกาหลี) · ไม่มีวันงบเบื้องต้นของ Samsung · EPS ของ SK hynix มีรายการนอกการดำเนินงานปน ใช้กำไรดำเนินงานแทน |
+
+### 3.5 หุ้นไทย: บทวิเคราะห์ ผู้ถือหุ้น งบประมาณรัฐ (ทดสอบ 2026-10-07)
+
+ใช้ครั้งแรกกับ `TASCO.BK` — MCP `get_news` คืนข่าวหุ้น .BK แทบไม่ได้ (1 รายการ ปี 2023) และ `ownership` ไม่มีรายชื่อผู้ถือ ต้องออกมาที่แหล่งชุดนี้
+
+| แหล่ง | URL / ตัวอย่าง | ได้อะไร | หมายเหตุ |
+|---|---|---|---|
+| **Globlex research (PDF)** | `globlex.co.th/research/research_<id>_1_<yyyymmdd> <SYM>_U_EN.pdf` | บทวิเคราะห์เต็ม: ประมาณการ 3 ปี, งบย่อ, ราคาเป้าหมาย, ผู้ถือหุ้นใหญ่ | ✅ WebFetch คืน binary แต่บันทึกไฟล์ให้ → เปิดด้วย Read (`pages`) อ่านได้ทั้งตารางและกราฟ |
+| **Kasikorn Securities** | `kasikornsecurities.com/th/research/thai-stocks/company-analysis/research-<yyyymmdd>-<id>` | สรุปบทวิเคราะห์ (คำแนะนำ, ราคาเป้าหมาย, เหตุผล) | ✅ WebFetch |
+| **หน้า IR ของบริษัท (ผู้ถือหุ้น)** | `tipcoasphalt.com/investor-relations/shareholder-information/major-shareholder/?lang=en` | ผู้ถือหุ้น 10 อันดับ + วันปิดสมุด | ✅ WebFetch · หน้า board ของเว็บเดียวกัน → 404 |
+| **InfoQuest / RYT9** | `infoquest.co.th/<ปี>/<id>` · `ryt9.com/tag/<SYM>` | ข่าวงบรายไตรมาส + คำอธิบายของบริษัท | ✅ WebFetch |
+| **ข่าวหุ้นธุรกิจ (kaohoon)** | `r.jina.ai/https://www.kaohoon.com/news/<id>` | ข่าวกลุ่มหุ้น + มุมมองโบรกเกอร์ | ⚠️ WebFetch ตรง → 403; ผ่าน Jina Reader อ่านได้ · ฉบับอังกฤษ `kaohooninternational.com` เปิดตรงได้ |
+| **งบประมาณรัฐ / คมนาคม** | `thansettakij.com/economy/megaproject/<id>` · `thairath.co.th/news/governmentpolicy/<id>` | วงเงินกระทรวง, งบผูกพันรายกรม, รายการโครงการ | ✅ WebFetch · ตัวเลขรายกรมต่างกันตามขั้นของงบ (คำขอ / ร่าง / พ.ร.บ.) — ระบุขั้นทุกครั้ง |
+| **OFAC recent actions** | `ofac.treasury.gov/recent-actions/<yyyymmdd>` | ชื่อและวันที่ของ general license ที่ออก/แก้ | ✅ WebFetch ได้แค่ชื่อ — เงื่อนไขอยู่ใน PDF ที่ลิงก์ |
 
 ## 4. ฟรีแต่ต้องมี key
 
@@ -197,6 +227,9 @@ board/forum ทุกแหล่ง **ต้องตรวจ ToS ก่อน
 - **Northbound Stock Connect** ไม่มีตัวเลขซื้อ/ขายสุทธิรายวันแล้ว (HKEX ให้แค่ turnover) — อย่าหาต่อ
 - **Eastmoney 股吧 `gbapi`** ตอบ 200 แต่ list ว่างด้วย parameter แบบง่าย — ยังไม่ได้หา parameter ที่ถูก
 - **Baidu Index** (ความสนใจการค้นหาในจีน) ต้อง login — ไม่มีตัวแทนฟรีของ Google Trends สำหรับจีนแผ่นดินใหญ่
+- **Kabutan หน้า信用残** (`kabutan.jp/stock/kabuka?code=285A&ashi=shin`) → WebFetch ได้ 403 (ตรวจ 2026-10-07) — ยอด margin รายหุ้นของญี่ปุ่นยังไม่มีแหล่งที่ดึงเองได้ ตัวเลขที่ใช้มาจากข่าว (Nikkei / Seoul Economic Daily)
+- **forbes.com → 403** และ **investor.sandisk.com ข่าวแจก → timeout 60s** กับ WebFetch (ตรวจ 2026-10-07) — ใช้ TrendForce News / EE Times ที่รายงานต่อแทน และติดป้ายแหล่งรอง
+- **invezz.com → 403** และ **barchart.com/story/news/… คืนหน้าว่าง** กับ WebFetch (ตรวจ 2026-10-07)
 
 ---
 

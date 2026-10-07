@@ -896,6 +896,41 @@ Flags: `TREND_UP`/`TREND_DOWN`, `GOLDEN_CROSS`/`DEATH_CROSS`, `RSI_OVERBOUGHT`/`
 
 ---
 
+## Business Cycle (`GET /api/cycle`) — 2026-10-07
+
+TypeScript: `CycleData` in `components/bloomberg/views/tail/cycle.tsx`.
+
+```jsonc
+{
+  "ok": true, "ts": "…Z", "stale_hours": null, "market_ok": true, "missing": [], "composite": null, "note": "…",
+  "headline": { "nber": "NO RECESSION DECLARED" | "RECESSION", "months_in_expansion": 77,
+                "recession_rules_on": 0, "recession_rules_known": 4,
+                "recession_rules": [{ "id": "sahm", "label": "SAHM RULE", "on": false }],
+                "curve": "NOT INVERTED" | "INVERTED", "probability_12m": 9.5,
+                "cli_phase": "EXPANSION" | "DOWNTURN" | "SLOWDOWN" | "RECOVERY",
+                "output_gap": 1.40, "inflation_gap": 1.42, "policy": "ABOVE LONGER-RUN", "financial": "LOOSER THAN AVERAGE" },
+  "groups": [{ "id": "recession_now", "label": "RECESSION NOW", "question": "…", "indicators": [{
+      "id": "sahm", "label": "SAHM RULE", "series": "SAHMREALTIME", "url": "https://fred…",
+      "value": 0.03, "unit": "pp", "as_of": "2026-09",          // month, quarter ("2026Q2") or date
+      "state": "NO SIGNAL", "on": false, "tone": "good" | "watch" | "bad" | "neutral" | "unknown",
+      "since": "2024-10", "line": "≥ 0.50", "detail": "…",
+      "rule": "<the definition as worded at the source>", "source": "Sahm (2019) · FRED real-time series",
+      "revised": false, "published_after_months": 1, "caveat": "…",
+      "track": { "from": "1959-12", "window": 6, "signals": 13, "false": 2, "false_dates": ["1976-11"], "undecided": 0,
+                 "recessions": 8, "caught": 8, "missed": 0, "missed_dates": [], "median_lead": -2.5, "leads": [3, -3] },
+      "market": { "n": 13, "horizon": 12, "published_after": 1, "median_return": 0.144, "worst_return": -0.344,
+                  "best_return": 0.381, "up_share": 0.615, "median_low": -0.126, "worst_low": -0.475,
+                  "all_months_median_return": 0.106, "all_months_median_low": -0.03 },
+      "history": [{ "date": "2026-09", "value": 0.03 }]         // last 36 readings
+  }]}],
+  "implications": [{ "kind": "know" | "do" | "dont", "text": "…", "basis": "definition" | "track record" | "backtest" }]
+}
+```
+
+- `state: null` + `detail: "NO DATA"` = that series did not arrive; the row stays, the id is in `missing`.
+- `lead` > 0 = the rule fired before the recession started. `market` returns are fractions, counted from the month the reading could first be read (`published_after`).
+- Only `yield_curve` has `probability_12m`; only `cfnai_ma3` has `companion` (Diffusion); `trend_10m` has `verdict` and `official: false`.
+
 ## Tail Macro Context (`GET /api/tail-risk/macro-context`)
 
 ```json
@@ -1750,6 +1785,77 @@ Every `*_pct` is % of NAV (loss lines are POSITIVE = a loss); `bands` / `sample_
              "sell_shares": 3300, "sell_value": 11022.0, "est_realized": 5346.0, "new_weight_pct": 1.67 }] }
 ```
 Rows keyed by SYMBOL (allocation-detail folds accounts); `trades` is symbol-level — WHAT-IF spreads `delta_shares` over the accounts holding it pro rata to shares. Rows sorted TRIM → WAIT → SMALL → WATCH → OK → SKIP, then by `over_pp`. `rebalance_rules` table: `id=1, rules_json, updated_at` (machine-local).
+
+**2026-10-07 — HOLD.** `status` may be `"HOLD"`, `counts` has a `HOLD` key (sort order TRIM → HOLD → WAIT → …), and every row carries `hold` / `hold_ended`: `null | {"id": "<risk_decisions id>", "reason": "…", "review_on": "YYYY-MM-DD", "created_at": "…"}`. `hold` set ⇔ status HOLD; `hold_ended` set on a TRIM whose hold passed its review date.
+
+## Risk metrics — additions 2026-10-07 (`GET /api/v2/portfolio/risk/metrics`)
+- `today_return_pct` is NOT the live day: it is the last COMPLETED daily bar of the model's history (today's basket at today's weights, close to close, base currency). `last_return_date` (`"YYYY-MM-DD"`) says which day. The live day is `day_pnl_pct` of `GET /risk/guard`.
+- `var_backtest_series`: `[{"d": "2026-10-06", "r": -1.261, "v": -6.155, "x": false}]` — the days behind `var_backtest_exceptions` / `var_backtest_obs`: `r` that day's return %, `v` the VaR line of that day % (negative, from the window BEFORE it), `x` crossed. `[]` when the history is too short to judge.
+
+## Down-tilted paths (`GET /api/v2/portfolio/risk/bear-paths`, 2026-10-07)
+```json
+{ "p_down": 0.6, "n_paths": 10000, "model": "FHS, down-tilted", "vol": "current",
+  "account_id": "all", "base_currency": "THB", "nav": 2144015.58, "cash": 6472.92,
+  "window_days": 750, "window_from": "2023-11-17", "as_of": "2026-10-06",
+  "down_days_in_window": 399, "up_days_in_window": 351, "avg_down_day_pct": -1.08, "avg_up_day_pct": 1.23,
+  "horizons": [{ "days": 3,
+      "p5": -4.4, "p25": -2.6, "p50": -1.38, "p75": -0.3, "p95": 1.13, "mean": -1.5,
+      "p_loss": 82.9, "p_end_up": 17.1,
+      "loss_prob": [{"worse_than_pct": 5, "prob_pct": 3.1}, {"worse_than_pct": 10, "prob_pct": 0.1}, {"worse_than_pct": 20, "prob_pct": 0}],
+      "max_dd_p50": -1.82, "max_dd_p95": -4.5, "amount_p50": -29295.31, "amount_p5": -94408.02,
+      "base": {"p5": -3.51, "p50": -0.1, "p95": 3.93, "p_loss": 52.1, "max_dd_p50": -1.14},
+      "holdings": [{"symbol": "SNDK", "contrib_pct": -0.58, "ret_p50": -3.9}] }],
+  "fan": { "days": [0, 1, "…", 42], "p5": [], "p50": [], "p95": [], "base_p5": [], "base_p50": [], "sample_paths": [[]] },
+  "excluded": [], "elapsed_ms": 275.8 }
+```
+`horizons` = 3, 5, 7, 21, 42 trading days, each an independent run. Every % is of NAV; `amount_*` = % × `nav` in `base_currency`. `base` = the neutral run (no tilt, no condition). `holdings` = up to 6 names with the most negative mean contribution (pp of NAV), most negative first. `fan` = NAV index (100 = today) of the 42-day run. No positions / no history / all cash → `{"horizons": [], "note": "…"}`.
+
+## Risk decision journal (`GET /api/v2/portfolio/risk/decisions`, 2026-10-07)
+```json
+{ "decisions": [{ "id": "uuid", "kind": "STOP"|"REBALANCE"|"BUDGET"|"OTHER",
+      "decision": "HOLD"|"FOLLOW"|"CHANGE"|"NOTE",
+      "account_id": "dime" | null, "symbol": "AJ" | null, "yf_symbol": "AJ.BK" | null,
+      "reason": "รองบ Q3", "snapshot": {"weight_pct": 2.1, "target_pct": 1.1, "growth_pct": 87.2, "sell_value": 10304.0, "price": 3.22},
+      "review_on": "2026-10-21" | null, "ref_id": "<guard_overrides id | trade id>" | null,
+      "source": "user"|"guard"|"trade_edit", "cleared_at": null | "ISO", "created_at": "ISO", "active": true }],
+  "counts": {"REBALANCE": 1, "STOP": 2}, "active_holds": 1,
+  "kinds": ["STOP","REBALANCE","BUDGET","OTHER"], "decision_types": ["HOLD","FOLLOW","CHANGE","NOTE"] }
+```
+`snapshot` keys by writer: REBALANCE HOLD → `weight_pct target_pct growth_pct sell_shares sell_value est_realized price`; guard HOLD → `codes floor_price first_entry`; stop edit → `stop_from stop_to price_entry trade_id`. Table `risk_decisions (id PK, kind, decision, account_id, symbol, yf_symbol, reason NOT NULL, snapshot JSON, review_on, ref_id, source, cleared_at, created_at)` — append-only except `cleared_at`; machine-local, NOT synced.
+
+## TICK DATA custom rows (`GET /api/tick-custom`, 2026-10-07)
+`{ "items": [<market-data row, "id" = symbol>], "missing": ["BADSYM"], "lastUpdated": "…Z", "dataSource": "yfinance" }`. Board layout is browser-side: `localStorage["bloomberg_tickdata_custom"]` = `{ "sections": [{"id": "c:mylist", "label": "MY LIST", "rows": [{"symbol": "IXG", "label"?: "…"}]}], "hiddenRows": ["volatility|VIX 1D"], "hiddenSections": ["ratesJP"] }` (`TickBoardPrefs`, `components/bloomberg/lib/tick-board.ts`).
+
+## Factor exposure (`GET /api/v2/portfolio/risk/factors`, 2026-10-07)
+```json
+{ "account_id": "all", "base_currency": "THB", "as_of": "2026-10-07", "lookback_days": 252, "nav": 2129717.84,
+  "excluded": [{"symbol": "XYZ.BK", "reason": "insufficient history", "bars": 40}], "missing_factors": ["MKT_TH"],
+  "n_obs": 248, "horizon_days": 5, "r_squared": 0.613, "specific_pct": 38.7,
+  "factors": [{ "key": "MOM", "label": "Momentum", "proxy": "MTUM − SPY", "reads": "บวก = ถือตัวที่วิ่งมาแล้ว",
+                "beta": 1.011, "t_stat": 7.5, "significant": true, "risk_share_pct": 39.3, "corr": 0.61,
+                "vif": 1.6, "collinear": false, "sd_1m_pct": 5.36, "impact_1sd_pct": 5.43, "impact_1sd_amount": 115538.45,
+                "top": [{"symbol": "SNDK", "beta": 4.01, "contribution": 0.529}] }],
+  "assets": [{ "symbol": "INTC", "yf_symbol": "INTC", "weight_pct": 18.23, "r_squared": 0.52,
+               "betas": {"MOM": 2.31, "MKT_US": 2.63} }],
+  "error": "not enough history" }
+```
+`factors` sorted by |`risk_share_pct`| (may be negative = lowers risk); Σ `risk_share_pct` = `r_squared` × 100; `top[].contribution` = NAV weight × holding beta, and Σ over ALL holdings = the factor's `beta`. `assets` sorted by weight. `error` only when there is nothing to fit (then `factors: []`).
+
+## Risk budget (`GET /api/v2/portfolio/risk/budget`, 2026-10-07)
+```json
+{ "account_id": "all", "base_currency": "THB", "as_of": "2026-10-07", "scope": "symbol"|"sector"|"thesis",
+  "nav": 2129717.84, "lookback_days": 252, "band_pp": 2.0, "excluded": [],
+  "budget": {"vol_cap_pct": null, "band_pp": 2.0, "symbol": {}, "sector": {}, "thesis": {"<thesis id>": 25.0}},
+  "vol": {"used_pct": 27.61, "cap_pct": null, "status": "OVER"|"OK"|"UNSET", "derisk_pct": null, "derisk_value": null},
+  "budget_total_pct": 100.0, "unallocated_pct": 0.0,
+  "counts": {"OVER": 2, "UNDER": 2, "OK": 0, "UNSET": 0, "EMPTY": 0},
+  "rows": [{ "key": "<yf symbol | sector | thesis id | _none>", "label": "NAND Flash", "conviction": 4,
+             "n": 1, "weight_pct": 13.18, "value": 280700.0, "risk_pct": 43.26, "risk_vol_pp": 11.94,
+             "budget_pct": 25.0, "over_pp": 18.26, "status": "OVER"|"UNDER"|"OK"|"UNSET"|"EMPTY",
+             "trim_pct": 46.6, "trim_value": 130644.45, "add_value": null,
+             "members": [{"symbol": "SNDK", "weight_pct": 13.18, "risk_pct": 43.26, "value": 280700.0}] }] }
+```
+`conviction` only with `scope=thesis`. Σ `risk_pct` = 100 (a hedge is negative); `risk_vol_pp` = the bucket's points of annual volatility (Σ = `vol.used_pct`). `budget` = the saved object for this book view (all scopes), `rows[].budget_pct` = this scope's. Rows sorted OVER → UNDER → OK → UNSET → EMPTY, then by `over_pp`. `risk_budgets` table: `account_id PK ('all' | account id), budget_json, updated_at` (machine-local, not synced).
 
 ## VaR forecast log (`var_forecasts`, `GET /risk/var-backtest`)
 Row: `forecast_date, account_id, confidence, var_hist_pct, cvar_pct, var_cf_pct, cvar_mc_pct, ensemble_pct, portfolio_value,
