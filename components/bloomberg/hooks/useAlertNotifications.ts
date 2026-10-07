@@ -39,8 +39,11 @@ import {
   headlineOf,
   isGuardEvent,
   isModalEvent,
+  riskLinkLabel,
+  riskTargetOf,
   severityOf,
 } from "../alerts/guard-alert";
+import { useOpenRisk } from "../alerts/useOpenRisk";
 import { type AlertEvent, ruleDisplayName, useAlertEvents } from "./useAlertRules";
 
 const WATERMARK_KEY = "bt.alerts.lastAnnouncedEventId";
@@ -116,6 +119,7 @@ export function useAlertNotifications(): UseAlertNotificationsResult {
   const announcedRef = useRef<number | null>(null);
 
   const enqueueModal = useSetAtom(guardModalQueueAtom);
+  const openRisk = useOpenRisk();
 
   const announce = useCallback(
     (event: AlertEvent) => {
@@ -124,9 +128,13 @@ export function useAlertNotifications(): UseAlertNotificationsResult {
           enqueueModal((q) => (q.some((e) => e.id === event.id) ? q : [...q, event]));
         } else if (isGuardEvent(event)) {
           // The left rule carries the severity (see .bb-toast in globals.css).
+          // The action is the way to the page where the event is acted on —
+          // a rebalance alert lands on PORT → RISK → REBALANCE, not the summary.
+          const target = riskTargetOf(event) ?? "summary";
           toast(`${event.symbol} · ${headlineOf(event)}`, {
             description: describeGuard(event),
             style: { "--bb-toast-rule": SEVERITY_COLOR[severityOf(event)] } as CSSProperties,
+            action: { label: `${riskLinkLabel(target)} →`, onClick: () => openRisk(target) },
           });
         } else {
           toast(`${event.symbol} · ${ruleDisplayName(event.ruleName, event.symbol)}`, {
@@ -138,7 +146,7 @@ export function useAlertNotifications(): UseAlertNotificationsResult {
         playBeep();
       }
     },
-    [enqueueModal]
+    [enqueueModal, openRisk]
   );
 
   useEffect(() => {

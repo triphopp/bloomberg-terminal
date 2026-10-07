@@ -3,7 +3,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
 import { useEffect, useMemo, useRef } from "react";
-import { tickerEnabledAtom } from "../atoms";
+import { riskLinkLabel, riskTargetOf } from "../alerts/guard-alert";
+import { useOpenRisk } from "../alerts/useOpenRisk";
+import { type RiskSubTabRequest, tickerEnabledAtom } from "../atoms";
 import { useAlertNotifications } from "../hooks/useAlertNotifications";
 import { type AlertEvent, ruleDisplayName } from "../hooks/useAlertRules";
 import { fmtPriceStd } from "../lib/number-format";
@@ -191,6 +193,8 @@ interface RuleCondition {
    *  re-fire every bar, so the count is the only thing that was changing. */
   count: number;
   latestId: number;
+  /** PORT → RISK page this condition is acted on (TRADE GUARD / MARGIN only). */
+  risk: RiskSubTabRequest | null;
 }
 
 interface SymbolAlertGroup {
@@ -241,6 +245,7 @@ function groupRuleEvents(events: AlertEvent[]): SymbolAlertGroup[] {
       values: snapshotValues(event),
       count: (prev?.count ?? 0) + 1,
       latestId: event.id,
+      risk: riskTargetOf(event),
     });
   }
 
@@ -292,6 +297,7 @@ export function AlertTicker() {
   // is always mounted, so the hook doesn't need a component of its own.
   const { tickerEvents } = useAlertNotifications();
   const ruleGroups = useMemo(() => groupRuleEvents(tickerEvents), [tickerEvents]);
+  const openRisk = useOpenRisk();
 
   if (!enabled) return null;
 
@@ -342,6 +348,10 @@ export function AlertTicker() {
   const durationSec = Math.max(30, items.length * 4);
   const firstRule = ruleGroups[0];
   const firstAlert = alerts[0];
+  // The chip names one alert; when that alert is a TRADE GUARD / MARGIN one it
+  // is also the way to the page that handles it. Rebalance wins when several
+  // guard conditions are waiting on that symbol only if it is the one named.
+  const chipRisk = firstRule?.conditions[0]?.risk ?? null;
   const alertCount = ruleGroups.length + alerts.length;
   const alertTitle = [
     ...ruleGroups.map(
@@ -371,26 +381,52 @@ export function AlertTicker() {
         {hasCritical ? "ALERT" : isStale ? "STALE" : "LIVE"}
       </span>
 
-      {alertCount > 0 && (
-        <span
-          className="flex min-w-0 max-w-[42%] shrink-0 items-center gap-1.5 overflow-hidden border-r px-2 font-bold"
-          style={{
+      {alertCount > 0 &&
+        (() => {
+          const chipClass =
+            "flex min-w-0 max-w-[42%] shrink-0 items-center gap-1.5 overflow-hidden border-r px-2 font-bold h-full";
+          const chipStyle = {
             borderColor: "#3a2922",
             color: hasCritical ? "#FF6565" : "#FFB13B",
             fontSize: 9,
-          }}
-          title={alertTitle}
-          aria-label={`${alertCount} active alerts: ${alertTitle}`}
-        >
-          <span className="shrink-0">●</span>
-          <span className="truncate">
-            {firstRule
-              ? `${firstRule.symbol} ${firstRule.conditions[0]?.label ?? "ALERT"}`
-              : firstAlert?.message}
-          </span>
-          {alertCount > 1 && <span className="shrink-0">+{alertCount - 1}</span>}
-        </span>
-      )}
+          };
+          const body = (
+            <>
+              <span className="shrink-0">●</span>
+              <span className="truncate">
+                {firstRule
+                  ? `${firstRule.symbol} ${firstRule.conditions[0]?.label ?? "ALERT"}`
+                  : firstAlert?.message}
+              </span>
+              {alertCount > 1 && <span className="shrink-0">+{alertCount - 1}</span>}
+              {chipRisk && <span className="shrink-0">→</span>}
+            </>
+          );
+          return chipRisk ? (
+            <button
+              type="button"
+              data-frame
+              className={`${chipClass} select-none hover:opacity-80`}
+              style={chipStyle}
+              title={`${alertTitle}
+
+${riskLinkLabel(chipRisk)} →`}
+              aria-label={`${alertCount} active alerts: ${alertTitle} — ${riskLinkLabel(chipRisk)}`}
+              onClick={() => openRisk(chipRisk)}
+            >
+              {body}
+            </button>
+          ) : (
+            <span
+              className={chipClass}
+              style={chipStyle}
+              title={alertTitle}
+              aria-label={`${alertCount} active alerts: ${alertTitle}`}
+            >
+              {body}
+            </span>
+          );
+        })()}
 
       {/* Scrolling content — content duplicated for seamless loop via translateX(-50%) */}
       <div

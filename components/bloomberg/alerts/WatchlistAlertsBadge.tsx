@@ -21,6 +21,8 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ruleDisplayName, useAlertEvents } from "../hooks/useAlertRules";
 import type { bloombergColors } from "../lib/theme-config";
+import { riskLinkLabel, riskTargetOf } from "./guard-alert";
+import { useOpenRisk } from "./useOpenRisk";
 
 const ALERT_CYAN = "#33DDFF";
 
@@ -33,6 +35,7 @@ export function WatchlistAlertsBadge({ colors }: { colors: typeof bloombergColor
   const events = allEvents.filter((e) => e.ruleName != null);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const openRisk = useOpenRisk();
 
   useEffect(() => {
     if (!open) return;
@@ -134,6 +137,24 @@ export function WatchlistAlertsBadge({ colors }: { colors: typeof bloombergColor
                 <span className="opacity-50" style={{ color: colors.textSecondary }}>
                   bar {e.barTime}
                 </span>
+                {(() => {
+                  // TRADE GUARD / MARGIN: the way to the page that handles it.
+                  const target = riskTargetOf(e);
+                  if (!target) return null;
+                  return (
+                    <button
+                      type="button"
+                      className="ml-2 font-bold hover:opacity-70"
+                      style={{ color: ALERT_CYAN }}
+                      onClick={() => {
+                        setOpen(false);
+                        openRisk(target);
+                      }}
+                    >
+                      {riskLinkLabel(target)} →
+                    </button>
+                  );
+                })()}
               </div>
               {!e.acked && (
                 <button
