@@ -56,6 +56,12 @@ PAGES: dict[str, dict[str, tuple[str, dict, str]]] = {
                     "composite risk level and its six dimensions, named market events and their inputs, event log"),
         "macro": ("/api/macro", {},
                   "MACRO CONTEXT: Fed funds and stance, curve, regime, latest inflation / labour / growth prints"),
+        "cycle": ("/api/cycle", {},
+                  "BUSINESS CYCLE: official indicators by their published definitions — NBER, Sahm rule, recession "
+                  "probability, CFNAI, GDP-based index, yield-curve probit, OECD CLI phase, output and unemployment gap, "
+                  "PCE against the 2% goal, policy rate against the SEP longer-run median and Taylor (1993), NFCI; each "
+                  "with its rule, source, track record against NBER recessions and the S&P 500 after past signals; "
+                  "WHAT FOLLOWS lines (know / do / don't)"),
     },
     "market": {
         "indices": ("/api/market-data", {}, "TICK DATA board: equity indices by region, last and change"),
