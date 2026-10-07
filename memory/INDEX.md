@@ -57,8 +57,10 @@ memory/
 | [IV snapshot session date](reports/iv-snapshot-sync-conflicts-risk-report.md) | ✅ fixed 2026-10-06 (PR #93) — `us_session.py`; 61 sync conflicts resolved; re-dating old rows still open |
 | Same-origin write guard · backend `dev_server.py` reload | ✅ merged 2026-10-06 (PRs #89, #87) |
 | [NEWS performance](sessions/2026-10-05-news-performance.md) | ✅ done 2026-10-05, merged PR #88 — watchlist news as stored pulls per (symbol, source) with partial answers, fast RSS parser, Polymarket pool refresh behind callers, ladder 3.5 s → 0.5 s, ASK render batching; found on the way: [`test_db_pool` on Windows](reports/db-pool-test-windows-unlink-risk-report.md) |
+| [Sector Allocation System](plans/sector-allocation-system.md) | 🔄 code done 2026-10-07 — backtest (`research/sector_allocation/RESULTS.md`): no rule VALID, cycle → sector DEAD → built as an awareness block instead: TAIL → BUSINESS CYCLE (`/api/cycle`), official indicators by their published definitions; waiting on user check + decision on the old sector / allocation engines |
 | [Investment Policy System](plans/investment-policy-system.md) | 📝 design 2026-10-01 — sleeves + plan ticket + stress/theme cap + rebalance bands; waiting on user parameters (§8) |
 | [MCP thesis JSON truncation](reports/mcp-thesis-output-truncation-risk-report.md) | 📋 report 2026-10-02 — `get_thesis` with many events can return invalid truncated JSON; `event_limit=0` workaround |
+| [RISK factor exposure + risk budget](sessions/2026-10-07-risk-factor-budget.md) | ✅ done 2026-10-07 — PORT → RISK tabs FACTOR (`factor_exposure.py`) + BUDGET (`risk_budget.py`, `risk_budgets` machine-local); 23 new tests, typecheck/Biome, browser on the live book |
 | [RISK rebalance + UI](plans/risk-rebalance.md) | 🔄 code done 2026-10-02 — RISK 5 tabs, take-profit rebalance 5/25 + timing, WHAT-IF random market + plan hand-off, guard:REBALANCE alert; waiting on user check |
 | [Thesis Navigator Redesign](plans/thesis-navigator-redesign.md) | 🔄 code done 2026-10-02 — navigator ค้นหา/กรอง ใช้ร่วม THESES · QUESTIONS · TRACK, `kind` / `sector` / `tags`, อ่านแล้ว (`read_marks`), ตัวอักษร `.reading`, GRAPHS → RESEARCH; เหลือ pull + restart ทุกเครื่อง + ผู้ใช้ตรวจ |
 | [Thesis Tracking](plans/thesis-tracking.md) | 🔄 code done 2026-10-02 — ตัวเลขที่จับตา / killer: แหล่งอ่าน, ค่าคาดการณ์ + วันประกาศ, ค่าจริง, ผลเทียบ, ไม่ตรงเปิดคำถาม; เหลือ pull + restart ทุกเครื่องแล้วเพิ่มตัวเลขชุดแรก |
@@ -164,6 +166,7 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 | ต้องการ | ไฟล์ |
 |---------|------|
 | **PORT Monte Carlo** — โมเดล (FHS), จำนวน path, ความเร็ว, ผล backtest ที่วัดจริง (2026-10-02) | `backend/port_mc.py` (docstring) · `sessions/2026-10-02-port-monte-carlo.md` |
+| **RISK tab: THB amounts under "$" in USD view** — `/risk/metrics` เรียกโดยไม่ส่ง `base_currency` (📋 report 2026-10-07, ยังไม่แก้) | `reports/risk-tab-usd-symbol-risk-report.md` |
 | **Risk close frame loses one symbol** — joint Yahoo download ทำ holding หายจาก /risk/metrics เงียบๆ | `reports/risk-close-frame-lost-symbol-risk-report.md` |
 | **SNDK financial review + NAND cycle** — MCP/SEC reconciliation, thesis questions and watch conditions (2026-09-18) | `sessions/reports/sndk-financial-cycle-2026-09-18-report.md` |
 | **SNDK financial field mapping risks** — AP/accruals, fiscal dates, margin periods and FCF definitions | `reports/sndk-financial-field-mapping-risk-report.md` |
@@ -235,7 +238,7 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 | **VP Indicator Upgrade** (session timezone fix B1 🔴, visible-range VP, delta profile, naked POC, HVN/LVN, config UI) | 🔄 code-complete, browser verify pending — `plans/vp-indicator-upgrade.md`; audit: `reports/vp-indicator-risk-report.md` |
 | **P/E History Pane + EPS Surprise Labels** (`/api/stock/pe-history`, PEPane recharts sub-pane + valuation bands, earnings beat/miss color) | 🔄 code-complete, backend HTTP verified, frontend visual pending — `plans/pe-earnings-visualization.md` |
 | **US/JP bond curves** (`/api/rates/curve`, UST 11 tenor FRED + JGB 15 tenor MOF, ทำไม yfinance ใช้ไม่ได้) | `reference/api-endpoints.md` → Rates; shape ใน `reference/data-shapes.md` |
-| **TICK DATA board** (7 sections, ยุบและจัดลำดับเองได้, จำลำดับ, bp vs %chg) | `reference/frontend-structure.md` → "MKT — TICK DATA board" |
+| **TICK DATA board** (7 sections built-in + section ของผู้ใช้เอง, ✎ EDIT เพิ่ม/ซ่อน/จัดลำดับ, จำลำดับ, bp vs %chg) | `reference/frontend-structure.md` → "MKT — TICK DATA board" |
 | **Ctrl+C แล้ว dev:all ขึ้น traceback** | `reference/gotchas.md` → "npm run dev:all dumps a scary traceback" |
 | Data catalog — ข้อมูลทั้งหมดที่ดึงได้ 17 หมวด | `reference/data-catalog.md` |
 | **หาข้อมูล (มหภาค/ประเทศ/ดอกเบี้ย/บริษัท) — เปิดที่นี่ก่อนค้นเว็บ** — ลำดับ MCP → backend → free API (IMF, WB, BIS, OECD, BOT) | `reference/data-sources.md` |

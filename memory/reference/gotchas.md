@@ -7,6 +7,30 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### Yahoo's name for a symbol is not evidence of what it is — `^MOVE` (2026-10-07)
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| MOVE was left out of TICK DATA for months with the note "`^MOVE` resolves to a Northern Trust ETF" while TAIL was already reading the same ticker as the MOVE index | Yahoo's `shortName` for `^MOVE` is "Northern Trust iBoxx 5-Year Tar…" (a mislabel); the series itself is the ICE BofA MOVE index — 65–114 over 6 months, ~4% average daily move, which no bond fund does | Judge a ticker by its series (level, daily range), not its label. `config.VOL_INDICES` now carries `MOVE UST` (`^MOVE`); `sync_symbol_lists` adds it to an existing install on start-up. |
+
+### ERC / risk-parity weights were not equal-risk (fixed 2026-10-07)
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| `/risk/risk-parity` "optimal" weights, re-measured, gave risk shares of 13–30% on five holdings instead of 20% each (25 / 35 / 18 / 21% on the 4-name DIME book) | `_risk_parity_weights` (cyclical coordinate descent) solved `w_i·(Σw)_i = budget_i` and then re-normalised `w` to sum 1 inside every sweep — the fixed point of that loop is not the ERC point | `risk_balance.erc_weights`: the convex form `min ½y'Σy − Σ b_i ln y_i` in volatility units (L-BFGS-B), exact and unique; `_risk_parity_weights` delegates to it. Test: `tests/test_risk_balance.py`. **When a solver claims a property, assert the property on its output** — nothing checked the shares |
+
+### RISK "วันนี้ −x%" on a day the book is up (fixed 2026-10-07)
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| The RISK summary said "วันนี้ −0.61%" while TRADE GUARD's TODAY said +1.07% | `/risk/metrics` `today_return_pct` is the LAST ROW of the daily-return history the VaR model is fitted on (today's basket, close to close) — while a session is open that is yesterday's bar. It was labelled "today" in three places | The payload now carries `last_return_date`; the card shows the live day from `/risk/guard` (`day_pnl_pct`) and labels the model's number "วันปิดล่าสุด <date>". Never label a history bar "today" |
+
+### A decision made on one machine does not quiet the alert on the other — `risk_decisions` (2026-10-07)
+
+| Symptom | Root cause | Fix / status |
+|---|---|---|
+| "ยังไม่ขาย" recorded on Windows; the Mac still raises `guard:REBALANCE` for that holding, and the journal there is empty | `risk_decisions` is machine-local on purpose (like `rebalance_rules`, `risk_budgets`): a peer on older code drops op-log ops for a table it does not know. TRADE GUARD stop HOLDs do travel (`guard_overrides` is synced) but their journal mirror row does not | By design until every machine runs this code; then add the table to `sync.config.SYNC_TABLES` (rows are append-only + `cleared_at`, key `id`). |
+
 ### MCP `get_thesis` ส่ง JSON ไม่สมบูรณ์เมื่อ thesis มี events/notes มาก (2026-10-02)
 
 | Symptom | Root cause | Fix / workaround |
@@ -283,6 +307,8 @@ HTTP 200 / `status: ok`; live SNDK 2026-10-16 SVI returned `ok` for 56 call and
 | Gamma API search returns wrong markets | `tag_slug`/`q`/`search`/`order` params silently ignored | All filtering must be client-side on 3,000-market pool fetched upfront |
 | Polymarket Δ24h is null | Backend hasn't run ≥24h — no history row in `pm_signals` table yet | Expected on first run. Wait ≥24h |
 | yfinance data not updating | In-memory cache still warm | DELETE `/api/stock/cache` or restart backend |
+| Backtest / calibration บน HY OAS ได้ข้อมูลแค่ ~3 ปี (เจอ 2026-10-07: `bc_thresholds.json` calibrate 675 วัน ไม่มี recession เลย) | FRED คืน `BAMLH0A0HYM2` ย้อนหลังแค่ 3 ปี — เริ่ม 2023-10 | ใช้ `BAA10Y` (Moody's Baa − 10Y, 1986+) เมื่อต้องการประวัติยาว. **กฎ:** ก่อน calibrate เช็กจำนวน event ใน sample (recall 0 = ไม่มี event) |
+| สถิติ S&P 500 ย้อนหลังเริ่มแค่ 1985 | Yahoo `^GSPC` interval `1mo` เริ่ม 1985; `1d` ย้อนถึง 1927 | ดึงรายวันแล้วตัด month-end เอง (`routers/cycle.py` `_fetch_market`) |
 | Macro/Crisis view shows nothing | `FRED_API_KEY` not set | Set env var — without it FRED calls fail silently |
 | Backend startup error: missing module | numpy/scipy not installed (required for greeks.py) | `pip install numpy>=1.26 scipy>=1.12` |
 | NAV chart empty / `portfolio_nav_snapshots` 0 rows | `_batch_fetch_prices` return shape changed float→dict (aeb4ee4) but `_maybe_capture_nav` still does `(price - entry)` → TypeError swallowed by `except Exception: pass` | **FIXED 2026-07-03** — unpacked `quote.get("price")`, `except` now `logger.exception`. Pattern stays: never `except: pass` around DB writes. ⚠️ Synthetic backfill (`backend/scripts/backfill_nav.py`) was tried and **reverted same day** — `trades.date_exit`/`date_entry` contain placeholders (21 exits on Sat 2026-06-06, 22 entries 2025-01-01) so reconstruction inflates NAV with long-sold positions. NAV history accrues from live capture-on-view only, starting 2026-07-03. See `memory/reports/analytics-db-nav-risk-report.md` |

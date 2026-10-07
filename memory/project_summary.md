@@ -1,7 +1,7 @@
 # Bloomberg Terminal — Project Summary
 
 **Repo:** `bloomberg-terminal` — macOS `~/bloomberg-terminal`, Windows `D:\Agents\Claude\bloomberg-terminal-main`
-**Last updated:** 2026-10-06 — refreshed after PRs #87–#94 (ASK chat on every view + saved conversations, NEWS cold-path work, same-origin write guard, `dev_server.py` reload, `aria-pressed` sweep, IV snapshots dated by the US session). Previous full rewrite 2026-09-26.
+**Last updated:** 2026-10-07 — TICK DATA board the user arranges (own sections, hide/show, MOVE), PORT → RISK as 6 pages with everything on สรุป, down-tilted paths, REBALANCE "not yet" + risk decision journal (`risk_decisions`), alert → RISK → REBALANCE link. Before that 2026-10-06 — refreshed after PRs #87–#94 (ASK chat on every view + saved conversations, NEWS cold-path work, same-origin write guard, `dev_server.py` reload, `aria-pressed` sweep, IV snapshots dated by the US session). Previous full rewrite 2026-09-26.
 
 > Slim core reference. Navigate via [memory/INDEX.md](INDEX.md).
 > - [reference/architecture.md](reference/architecture.md) — data flow, routers, key files, accounting layer
@@ -32,10 +32,10 @@
 ## Tests (verified 2026-10-06)
 
 ```bash
-cd backend && python -m pytest -q -p no:cacheprovider --basetemp=<scratch dir>   # backend/pytest.ini: tests/ + slip_ocr/tests/ — 1661 collected
+cd backend && python -m pytest -q -p no:cacheprovider --basetemp=<scratch dir>   # backend/pytest.ini: tests/ + slip_ocr/tests/ — 1767 collected (2026-10-07: 1766 pass, known issue 17 aside)
 npm run typecheck      # tsc --noEmit — clean (also run by the pre-commit hook and CI)
 npm run test:chart     # 317 pass
-npm run test:session   # 111 pass
+npm run test:session   # 121 pass (incl. tick-board, 2026-10-07)
 npm run test:views     # 40 pass
 npm run test:alerts    # 44 pass
 npm run test:watchlist # 24 pass
@@ -58,7 +58,7 @@ This Windows box denies the system temp dir to pytest — pass `--basetemp` to a
 | State | Jotai (atoms) + TanStack React Query |
 | Charts | lightweight-charts v5 via our `chartkit/` + `chart/` (ModularChart, panes, event rail, regression channels), Recharts for dashboards |
 | Styling | Tailwind CSS, `bloombergColors` theme; text-only controls (`styles/globals.css`) |
-| Backend | Python FastAPI (port 9317) — 73 routers, `main.py` mounts them; `dev_server.py` = auto-reload runner |
+| Backend | Python FastAPI (port 9317) — 74 routers, `main.py` mounts them; `dev_server.py` = auto-reload runner |
 | Data | yfinance through a provider registry (`sources/`) + app-wide Yahoo gate (`yahoo_gate.py`, 6 concurrent) + shared request coordinator (`market_requests.py`) |
 | Macro / rates | FRED (+ Alpha Vantage fallback), Japan MOF JGB CSV, CBOE vol CSVs, Treasury fiscaldata |
 | Filings / positioning | SEC EDGAR (submissions, 8-K EX-99.1, XBRL, EFTS 424B2/424B5), CFTC Socrata (TFF + Disaggregated) |
@@ -120,14 +120,14 @@ DEV_ORIGINS=                           — optional, comma-separated extra host 
 
 ## Backend Architecture — Modular Routers
 
-`main.py` = app init + CORS + schema init + router mounting (73 routers). All logic in `backend/routers/`.
+`main.py` = app init + CORS + schema init + router mounting (74 routers). All logic in `backend/routers/`.
 Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo_gate` load before any router.
 
 | Router file | Prefix | Source |
 |-------------|--------|--------|
 | `dev.py` | `/api/dev/{status,restart}` — dev-only stale-backend check | `dev_status.py` mtimes + launcher supervisor |
 | `health.py` | `/api/health/upstream` — live upstream state (no outbound call) | `upstream_health.py` |
-| `market.py` | `/api/market-data`, `/api/heatmap*` (no UI consumer since GMOV removal) | yfinance |
+| `market.py` | `/api/market-data`, `/api/volatility` (20 vol indices incl. MOVE), `/api/tick-custom?symbols=` (rows the user added to the TICK DATA board, 2026-10-07), `/api/heatmap*` (no UI consumer since GMOV removal) | yfinance |
 | `stock.py` | `/api/stock/*` — quote, history, financials, earnings (+ `Ticker.calendar`, SET filing deadlines via `earnings_deadlines.py`) | yfinance |
 | `dcf.py` | `/api/dcf/*` (adaptive valuation + sensitivity + audit lineage) | yfinance + `analytics/dcf.py` |
 | `ir_stress.py` | `/api/ir-stress/{curve,scenarios,{symbol}/exposure|duration|scenario,screen/rank}` (CIRST, stock RATE STRESS tab) | XBRL + FRED |
@@ -142,6 +142,7 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `crisis.py` | `/api/crisis`, `/api/crisis/composite` (BOND → CONDITIONS, TAIL) | FRED |
 | `macro.py` | `/api/macro`, `/api/macro/calendar` (FOMC/CPI/NFP/PCE/GDP + PPI/RETAIL/JOLTS/CLAIMS from FRED + rule dates OPEX/VIXEXP/ISM/MINUTES/EIA, back 3y; chart rail uses FOMC/CPI/NFP) | FRED + AV; `event_calendar.py` |
 | `global_yields.py` | `/api/macro/global-yields` (no UI consumer) | FRED |
+| `cycle.py` | `/api/cycle` — business-cycle readings from official indicators by their published definitions (NBER, Sahm, Chauvet–Piger, CFNAI, GDP-based index, yield-curve probit, OECD CLI, CBO gaps, PCE vs 2%, SEP longer-run + Taylor 1993, NFCI), each with rule, source, track record vs NBER and S&P 500 after past signals; no composite. Logic `backend/cycle.py` (2026-10-07) | FRED (21 series) + yfinance ^GSPC / SPY; 6 h, last-good 36 h |
 | `tail_risk.py` | `/api/tail-risk/*` — events, 6 dimensions, macro context (incl. `oil` + ENERGY → CPI axis, `/oil`), rotation, `cot_crowding` (context only) | CBOE CSV + yfinance + in-process crisis/fear_greed/ticker/cot + EIA weekly (`oil_inventory.py`) |
 | `options.py` | `/api/options/*` — chains, positions + Greeks, `POST smile-fit`, `POST payoff`, IV snapshots / SD bands | yfinance + greeks.py + SciPy SVI |
 | `pins.py` | `/api/pins/*` (watchlist groups, assets, tags) | SQLite |
@@ -155,7 +156,7 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `ledger.py` | `/api/v2/ledger/*` — append-only journal v2: accounts/mode (LEGACY·SHADOW), wallets, events (trade, position, cash, dividend, transfer, fx-convert, opening, adjust, reverse, fee-trueup), balances, positions, close/reopen, closes, check (L1–L9), pilot, project. Core in `backend/ledger.py`; errors `{code, detail, evidence}` 409/422 | SQLite |
 | `portfolio_v2.py` | `/api/v2/portfolio/*` — accounts, trades, sell (AVCO), cash/transfer/reconcile, dividends, fees, open-positions, summary, returns, nav-history, **nav-index** (TWR, start-of-day for capital dated before the snapshot day), **takeover**, **history-review**, ledger check/stock-card/statements/evidence, import | SQLite |
 | `slip_ocr.py` | `/api/v2/portfolio/slip/{read,status}` — broker slip screenshot → ENTRY fields (engine `backend/slip_ocr/`, easyocr in a spawned worker); read-only | — |
-| `risk.py` | `/api/v2/portfolio/risk/*` (VaR/CVaR/Parity/Stress/Sizing + `/guard`, `/guard/override`, `/guard/size`, `/guard/report` TRADE GUARD via `trade_guard.py`, `/stop-sim` + `/what-if-sim` via `stop_sim.py`, `/monte-carlo` via `port_mc.py`, `/var-backtest`) | Ledoit-Wolf |
+| `risk.py` | `/api/v2/portfolio/risk/*` (VaR/CVaR/Parity/Stress/Sizing + `/guard`, `/guard/override`, `/guard/size`, `/guard/report` TRADE GUARD via `trade_guard.py`, `/stop-sim` + `/what-if-sim` via `stop_sim.py`, `/monte-carlo` via `port_mc.py`, `/var-backtest`, `/factors` via `factor_exposure.py`, `/budget` via `risk_budget.py`, `/bear-paths` via `bear_paths.py` — down-tilted paths 3/5/7/21/42 days, `/decisions` via `risk_journal.py` — journal of stop / rebalance decisions + REBALANCE HOLD, 2026-10-07) | Ledoit-Wolf |
 | `margin.py` | `/api/v2/portfolio/margin/{status,overview,settings}` — IBKR Reg T per account (PORT + PAPER): NLV/ELV/IM/MM/EL/AF/cushion, level SAFE→LIQUIDATION, drop-to-call per account + per underlying; model `backend/margin.py`, PAPER order checks | in-process portfolio_v2 / paper_trading valuation |
 | `backtest_v2.py` | `/api/v2/portfolio/backtest/*` (no UI / proxy since 2026-10-02) | SQLite trades + yfinance |
 | `portfolio.py` | `/api/portfolio/*` (legacy research: thesis files, transactions, backtest) | filesystem + SQLite |
@@ -233,6 +234,11 @@ margin_state        -- margin_scheduler last level per account (local, not synce
 guard_state         -- notifier cursor: last flags per holding (machine-local, not synced)
 var_forecasts       -- one VaR forecast per day per book (forecast_date, account_id) → /risk/var-backtest; machine-local
 rebalance_rules     -- take-profit rebalance rules JSON (id=1) → /risk/rebalance + guard:REBALANCE alerts; machine-local, not synced (2026-10-02)
+risk_budgets        -- risk budgets JSON per book view (account_id PK: 'all' | account id) → /risk/budget; machine-local, not synced (2026-10-07)
+risk_decisions      -- risk decision journal (id, kind STOP|REBALANCE|BUDGET|OTHER, decision HOLD|FOLLOW|CHANGE|NOTE, account_id, symbol, yf_symbol,
+                    --   reason NOT NULL, snapshot JSON, review_on, ref_id, source user|guard|trade_edit, cleared_at, created_at) → /risk/decisions.
+                    --   Append-only except cleared_at; a live REBALANCE HOLD takes the symbol off the TRIM list. Machine-local, NOT synced —
+                    --   add to SYNC_TABLES only when every machine runs this code (2026-10-07)
 pm_slug_registry    -- Polymarket slug cache
 paper_option_positions -- paper trading options
 symbol_lists        -- indices / FX / crypto lists seeded from config.py
@@ -461,14 +467,14 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 
 | Key | Button | View | Component |
 |-----|--------|------|-----------|
-| `1` | MKT | Market (default, eager-loaded) | `market-view.tsx` — left panel WATCH / FREQ / ACTIVE (`discover-lists.tsx`, watchlist `pinned-assets.tsx` compact/table/cards) · main chart (`chart/ModularChart`, indicators, multiple regression channels, event rail: dividends/earnings/SET deadlines/FOMC/CPI/NFP/PCE/GDP) · REGIME panel CORR / GEOM / ROT (table + RRG map) / IV (smile, SVI, OI, 25Δ) / COT (PC1 + extremes) · TICK DATA board — 7 foldable, drag-reorderable sections (AMERICAS / EMEA / ASIA PACIFIC / RATES·US / RATES·JP / VOLATILITY / FX) in 4 columns NAME · LAST · CHG · YTD, ▼p/▲p CFTC crowding marks, `UsMarketClock` on top |
+| `1` | MKT | Market (default, eager-loaded) | `market-view.tsx` — left panel WATCH / FREQ / ACTIVE (`discover-lists.tsx`, watchlist `pinned-assets.tsx` compact/table/cards) · main chart (`chart/ModularChart`, indicators, multiple regression channels, event rail: dividends/earnings/SET deadlines/FOMC/CPI/NFP/PCE/GDP) · REGIME panel CORR / GEOM / ROT (table + RRG map) / IV (smile, SVI, OI, 25Δ) / COT (PC1 + extremes) · TICK DATA board — ✎ EDIT adds the user's own sections / symbols and hides built-in rows (`lib/tick-board.ts`, `/api/tick-custom`, 2026-10-07) on top of 7 foldable, drag-reorderable sections (AMERICAS / EMEA / ASIA PACIFIC / RATES·US / RATES·JP / VOLATILITY / FX) in 4 columns NAME · LAST · CHG · YTD, ▼p/▲p CFTC crowding marks, `UsMarketClock` on top |
 | `2` | NEWS | News | `views/news/` — ASK bar + column (`<AskBar />` / `<AskColumn />`, takes the Polymarket column's place while open) · WATCHLIST (per-ticker, 7 sources, by sector; answers from what has arrived, `UPDATING` while slow sources settle) · NEWSFEED · SOCIAL · DATA (indicator series board) + Polymarket column |
 | `3` / `b` | BOND | Bond Monitor | `views/bonds/` — MARKET: KPI strip, 10Y YIELD DECOMPOSITION (ACM: expected real + BE + TP, 20D driver, tripwires), TREASURY LEG, CREDIT LEG (IG/HY trigger lines 2%/5%), CORPORATE ISSUANCE/WEEK (SEC 424B2/424B5 ex-bank) + EVENT STUDY + RECENT DEALS, TREASURY AUCTIONS, DEBT STOCK, CFTC Treasury futures + basis trade · CONDITIONS (ex-CRDT, `useCreditData(isActive)` → `/api/crisis`): crisis level L0–3 (also in the status bar), STL FSI / NFCI, breakevens, 30Y mortgage, delinquencies, dealer balance sheet. `Alt+1/2` tabs |
-| `4` / `p` | PORT | Portfolio | `portfolio-view.tsx` → `views/portfolio/` — PORTFOLIO (POSITIONS incl. TAKEOVER strip · OPTIONS · TRADES · CASH · ENTRY) · ANALYTICS (P&L dashboard: KPI strip, flagged XIRR, period returns, PORTFOLIO GROWTH (TWR, deposit ▲ / withdrawal ▼ / EDIT ◆, estimated span shaded, monthly table) · ROTATION) · RISK (VaR/CVaR/stress/parity/sizing + FUTURES POSITIONING vs BOOK) · TOOLS (one thesis navigator shared by THESES · QUESTIONS · TRACK — search, kind / sector / status / owed-work / unread filters, selection kept across the three; THESES: THESIS / NOTES / KB Zettelkasten / RESEARCH (ex-GRAPHS, internals still `graph*`) / HISTORY / TRADES / AI · QUESTIONS: tree (foldable) + cross-thesis search + calendar · TRACK: tracked numbers, forecast vs actual; read marks on all of it · IMPORT · AUDIT incl. ACCOUNTING CHECK). PAPER tab + ANALYTICS → BACKTEST removed 2026-10-02 (backend routers stay) |
-| `5` / `t` | TAIL | Tail Risk Monitor | `tail-risk-view.tsx` + `views/tail/` — MARKET EVENTS (named cross-asset shocks; SEVERE raises the composite) · 6 risk dimensions → composite · MACRO CONTEXT (not in composite: event strip, Fed, curve, regime, latest prints, MACRO READ) · SECTOR ROTATION (turnover tilt + self-recorded ETF AUM) · POSITIONING (CFTC crowding flags; `cot_crowding` shown with CTX tag, `counted: False`) |
+| `4` / `p` | PORT | Portfolio | `portfolio-view.tsx` → `views/portfolio/` — PORTFOLIO (POSITIONS incl. TAKEOVER strip · OPTIONS · TRADES · CASH · ENTRY) · ANALYTICS (P&L dashboard: KPI strip, flagged XIRR, period returns, PORTFOLIO GROWTH (TWR, deposit ▲ / withdrawal ▼ / EDIT ◆, estimated span shaded, monthly table) · ROTATION) · RISK (6 pages since 2026-10-07: สรุป = plain-words risk + down-tilted paths 3/5/7/21/42 days + margin + TRADE GUARD + decision journal + the methods (VaR/CVaR/ERC/EWS, FUTURES POSITIONING vs BOOK) · REBALANCE with "ยังไม่ขาย" + reason · BUDGET · FACTOR · WHAT-IF · MONTE CARLO · ขาลง · OPTIONS) · TOOLS (one thesis navigator shared by THESES · QUESTIONS · TRACK — search, kind / sector / status / owed-work / unread filters, selection kept across the three; THESES: THESIS / NOTES / KB Zettelkasten / RESEARCH (ex-GRAPHS, internals still `graph*`) / HISTORY / TRADES / AI · QUESTIONS: tree (foldable) + cross-thesis search + calendar · TRACK: tracked numbers, forecast vs actual; read marks on all of it · IMPORT · AUDIT incl. ACCOUNTING CHECK). PAPER tab + ANALYTICS → BACKTEST removed 2026-10-02 (backend routers stay) |
+| `5` / `t` | TAIL | Tail Risk Monitor | `tail-risk-view.tsx` + `views/tail/` — MARKET EVENTS (named cross-asset shocks; SEVERE raises the composite) · 6 risk dimensions → composite · MACRO CONTEXT (not in composite: event strip, Fed, curve, regime, latest prints, MACRO READ) · SECTOR ROTATION (turnover tilt + self-recorded ETF AUM) · POSITIONING (CFTC crowding flags; `cot_crowding` shown with CTX tag, `counted: False`) · BUSINESS CYCLE (official indicators by their published definitions + track record; context, `views/tail/cycle.tsx`) |
 | `h` | — | HMAP (no nav button) | `heatmap-view.tsx` — one market as a sector treemap (~275 names); command `heatmap(TH)`, `heatmap(US, 52w)`; metrics 1D · 52W · 50D · 200D · HIGH · RVOL switch without a request; click → stock view, shift-click → floating chart |
 
-- **ASK** (`c` or the header icon, every view): drawer over the right edge (`<AskDock />` in the shell); CHAT · HISTORY tabs, MODEL ▸ panel; an empty chat lists RECENT CHATS. Pages add context with `useAskContext` (MKT, stock view, HMAP). Toggle buttons carry `aria-pressed` so `read_screen` sees them (154 in `components/`).
+- **ASK** (`c` or the header icon, every view): drawer over the right edge (`<AskDock />` in the shell); CHAT · HISTORY tabs, MODEL ▸ panel; an empty chat lists RECENT CHATS. Header and composer are icons (chat · history · temporary · model · new · hide; send/stop · attach), names in tooltips + `aria-label`; temporary chat (`askTemporaryAtom`, 2026-10-07) is saved nowhere; the question box grows upward with its text (cap 40% of the window). Pages add context with `useAskContext` (MKT, stock view, HMAP). Toggle buttons carry `aria-pressed` so `read_screen` sees them (154 in `components/`).
 - **Stock view** (not a nav button): global search `/` / `Ctrl+K`, heatmap or watchlist click → `stock-view.tsx`, 15 tabs (FINANCIALS, OUTLOOK, KEY METRICS, ANALYST, ESTIMATES, OWNERSHIP, CALENDAR, QUANTITATIVE, OPTIONS, EARNINGS QUALITY, GRID TRADING, STRATEGY FIT, DCF, RATE STRESS, REGIME) + COT when the symbol maps to a CFTC contract.
 - **Floating chart windows** (`chart/ChartWindowLayer`) float over every view, cap 10, persisted.
 - **URL = view**: header and mobile nav are `<a href="?view=…">` (`layout/view-navigation.ts`); new tab and Back/Forward restore the view. Shortcuts match the physical key (`core/shortcut-key-match.ts`), so they work on a Thai layout; IME composition, dead keys and Meta combos are ignored.
@@ -525,6 +531,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 
 Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished plan becomes `- [x] … done YYYY-MM-DD` only with a Completion Evidence section.
 
+- [ ] **Sector Allocation System** — sector ตาม cycle / สัดส่วนเงินสด ที่มีหลักฐานรองรับ; backtest 2026-10-07 (`backend/analytics/alloc_rules.py` + `alloc_backtest.py`, `research/sector_allocation/`): ไม่มีกฎไหน VALID — trend WEAK, cycle → sector DEAD, tilt ที่ข้อมูลรองรับ 0pp → ผู้ใช้เลือกทำเป็นระบบเตือน: TAIL → BUSINESS CYCLE (`/api/cycle`, `backend/cycle.py`, `views/tail/cycle.tsx`) ตัวชี้วัดทางการตามนิยามต้นทาง โค้ดเสร็จ 2026-10-07; เหลือผู้ใช้ตรวจหน้าจอ + ตัดสิน engine เดิม (`/api/sector/signal`, `/api/allocation/signal`) (`plans/sector-allocation-system.md`)
 - [ ] **Thesis Navigator Redesign** — THESES / QUESTIONS / TRACK: navigator ตัวเดียว (ค้นหา + กรอง kind / sector / สถานะ / งานค้าง / ยังไม่อ่าน), `theses` += `kind` `sector` `tags`, ค้นคำถามข้าม thesis + พับกิ่ง, เครื่องหมายอ่านแล้ว (`read_marks`), ตัวอักษรอ่าน IBM Plex (`.reading`), GRAPHS → RESEARCH; โค้ดเสร็จ 2026-10-02 เหลือ pull + restart ทุกเครื่องก่อนใส่ kind / tags / อ่านแล้ว และผู้ใช้ตรวจหน้าจอ (`plans/thesis-navigator-redesign.md`)
 - [ ] **Thesis Tracking** — killer condition / ตัวเลขที่จับตาเป็นแถว: แหล่งอ่าน → ค่าคาดการณ์ + วันประกาศ (ปฏิทิน QUESTIONS) → ค่าจริง → ผลเทียบ → ไม่ตรงเปิดคำถาม "ทำไม" เข้าคิว; แท็บ TRACK + ป้าย, MCP `track_*`; โค้ดเสร็จ 2026-10-02 เหลือ pull + restart ทุกเครื่องแล้วเพิ่มตัวเลขชุดแรก (`plans/thesis-tracking.md`)
 - [x] **PORT Margin Maintenance (IBKR Reg T)** — done 2026-09-29: NLV/ELV/IM/MM/EL/AF/cushion per account (PORT + PAPER), level colours per account + per underlying, drop-to-liquidation, `margin:<LEVEL>` alerts, MGN ribbon + POSITIONS column, PAPER Reg T order checks (`plans/completed/port-margin-maintenance.md`)
@@ -533,6 +540,7 @@ Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished pl
 - [ ] **Thesis Questions** — คำถามที่ยังไม่มีตัวเลขชัดเก็บเป็นสาย, คำตอบต้องมีหลักฐาน (422), สัญญาณ + สมมติฐานที่ตรวจได้, ป้ายค้าง/เฝ้าดู, MCP `question_*`; โค้ดเสร็จ 2026-10-01 เหลือ pull + restart เครื่อง Windows แล้วนำเข้าสายคำถามแรกผ่าน `question_import` (`plans/thesis-questions.md`)
 - [ ] **PORT sub-port split** — Finansia sub-ports แยก AVCO/sell/stock card/check + section ต่อ sub-port ใน POSITIONS + filter; เหลือ apply repair + เงินสดต่อ sub-port (`plans/port-subport-split.md`)
 - [ ] **PORT Ledger v2** — append-only ledger ที่ใช้ได้จริง: wallet ต่อสกุลเงิน, ปิดงวดกับ statement, FX convert 2 ขา, Decimal, sync append-only, SHADOW projection จาก ENTRY (`plans/port-ledger-v2.md`)
+- [x] **RISK factor exposure + risk budget** — done 2026-10-07: PORT → RISK แท็บ FACTOR (beta ต่อ 11 ปัจจัยตลาดจาก ETF, ผลตอบแทน 5 วัน + Newey-West, สัดส่วนความเสี่ยงต่อปัจจัย, ใครพาเข้าพอร์ต) + แท็บ BUDGET (ความเสี่ยงที่ใช้เทียบงบ รายหุ้น/sector/thesis, ลดเท่าไรถึงกลับเข้างบแก้สมการจริง, เพดานความผันผวน), ตาราง `risk_budgets` เก็บในเครื่อง, ASK อ่านได้ 2 section (`sessions/2026-10-07-risk-factor-budget.md`)
 - [x] **RISK OVERVIEW redesign + WHAT-IF SIM** — done 2026-09-29: STOP SIM → WHAT-IF SIM ทำ vs ไม่ทำ บนหุ้นจริง (guard/ERC suggestions หรือแก้ qty เอง, toggle ทำตาม stop) รวมใน OVERVIEW; ตัด trim chips/ERC table/Backtest block ซ้ำ (`plans/completed/risk-overview-whatif-sim.md`)
 - [x] **PORT Risk validity + stop simulator** — done 2026-09-29: STOP SIM (±SD, follow stop vs hold), rolling OOS VaR + daily forecast log, GICS sector cap, MAE/MFE replay + stop sweep, NAV-basis VaR (cash/short/option Δ) (`plans/completed/port-risk-validity.md`)
 - [x] **PORT Trade Guard** — done 2026-09-28: auto stop (2×ATR) + traffic light in RISK, S/M/L sizing in ENTRY, ticker/toast on new flags, HOLD override + R-multiple report, NAV DD / streak breakers (`plans/completed/port-trade-guard.md`)
