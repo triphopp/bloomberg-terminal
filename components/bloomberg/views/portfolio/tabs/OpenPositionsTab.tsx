@@ -32,6 +32,7 @@ import { StockCardModal } from "../modals/StockCardModal";
 import { TradeEditModal } from "../modals/TradeEditModal";
 import { type OpenPositionsPayload, portfolioQueries } from "../queries";
 import { subPortOf, subPortSections, subPortsIn } from "../sub-ports";
+import { TRANSFER_PX, transferCostHint } from "../takeover-hint";
 import type { Trade } from "../types";
 import { AccBadge } from "../ui/AccBadge";
 import { LEVEL_COLOR, LEVEL_TEXT, pct1, useMarginAssetLevels } from "../ui/margin";
@@ -1395,6 +1396,8 @@ export function OpenPositionsTab({
                                 const lotKey = p.rowKey;
                                 const lotsExpanded = !!expandedLots[lotKey];
                                 const thesis = theses[p.symbol.toUpperCase()];
+                                const pxText = (n: number) => `${sym}${fmtPx(toBase(n, acc))}`;
+                                const transferHint = transferCostHint(p.lots, pxText, fmtQty);
 
                                 const cellMap: Record<DisplayCol, React.ReactNode> = {
                                   SYMBOL: (
@@ -1473,12 +1476,18 @@ export function OpenPositionsTab({
                                   ),
                                   ENTRY: (
                                     <span
+                                      className={transferHint ? TRANSFER_PX : undefined}
                                       title={
-                                        overrideNative
-                                          ? "Manual cost override"
-                                          : hasMultiLots
-                                            ? "Volume-weighted average of the lots"
-                                            : undefined
+                                        [
+                                          overrideNative
+                                            ? "Manual cost override"
+                                            : hasMultiLots
+                                              ? "Volume-weighted average of the lots"
+                                              : null,
+                                          transferHint,
+                                        ]
+                                          .filter(Boolean)
+                                          .join("\n") || undefined
                                       }
                                     >
                                       {sym}
@@ -1806,6 +1815,7 @@ export function OpenPositionsTab({
                                       lotsExpanded &&
                                       p.lots.map((lot, li) => {
                                         const lotEntry = toBase(lot.price_entry, acc);
+                                        const lotHint = transferCostHint([lot], pxText, fmtQty);
                                         const lotPnl =
                                           lot.unrealized_pnl_base != null
                                             ? lot.unrealized_pnl_base
@@ -1830,7 +1840,10 @@ export function OpenPositionsTab({
                                                 <span style={{ color: colors.textSecondary }}>
                                                   {lot.date_entry}
                                                 </span>
-                                                <span>
+                                                <span
+                                                  className={lotHint ? TRANSFER_PX : undefined}
+                                                  title={lotHint ?? undefined}
+                                                >
                                                   {sym}
                                                   {fmtPx(lotEntry)} × {fmtQty(lot.volume)}
                                                 </span>
