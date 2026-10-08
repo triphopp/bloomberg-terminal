@@ -71,6 +71,7 @@ Added 2026-10-08: `trade_history.py` (`/api/v2/trade-history/*`) — the read si
 
 Added 2026-09-28: `google_trends.py` (`/api/trends/{daily,interest}`, free public Google Trends; MCP-only consumer) and `fiscal_ai.py` (`/api/fiscal/*`, Fiscal.ai free trial; MCP-only consumer).
 Added 2026-10-08: `webull.py` (`/api/webull/*`) + `webull_client.py` — Webull OpenAPI order-book depth for the MKT STRUCTURE → DEPTH mode. First source with a signed request and a run-time access token (2FA in the Webull app); the token lives in app-data, never in the repo or an env var.
+Added 2026-10-08: `webull_stream.py` + `webull_wire.py` — the live book. One on-demand MQTT session (thread `webull-depth-stream`) fans out to SSE listeners of `/api/webull/depth/stream`; the browser writes each pushed book into the same React Query entry the HTTP poll fills, so the panel has one source of truth. Separate from `quote_stream.py` (Yahoo last-price ticks for the watchlist), which it does not replace.
 
 ## Frontend Views (6, since 2026-09-26)
 
