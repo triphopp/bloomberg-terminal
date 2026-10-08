@@ -359,6 +359,8 @@ WEBULL_APP_KEY = os.getenv("WEBULL_APP_KEY", "").strip()
 WEBULL_APP_SECRET = os.getenv("WEBULL_APP_SECRET", "").strip()
 WEBULL_API_HOST = (os.getenv("WEBULL_API_HOST", "").strip().removeprefix("https://").strip("/")
                    or "api.webull.co.th")
+# Live book (MQTT in TLS, port 1883). Empty = the stream host that goes with the API host.
+WEBULL_STREAM_HOST = os.getenv("WEBULL_STREAM_HOST", "").strip()
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 
 BOT_API_TOKEN   = os.getenv("BOT_API_TOKEN", "")     # Bond Auction

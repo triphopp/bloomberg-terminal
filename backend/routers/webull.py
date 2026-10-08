@@ -4,6 +4,16 @@
   POST /api/webull/token           ask for an access token (production: texts a code to the owner)
   POST /api/webull/token/check     re-read the token's status from Webull
   GET  /api/webull/depth?symbol=AAPL&depth=10&overnight=false
+  GET  /api/webull/depth/stream?symbol=AAPL&depth=10&overnight=false   text/event-stream
+       the same book, pushed as it changes (webull_stream.py — MQTT, ≤3 a second).
+       `data:` = a depth answer · `event: state` = {live, state, error} when it changes.
+       `event: trades` = [{t, price, size, side, session}, ...] — time and sales, oldest first.
+       The panel still asks /depth first: that call is where a refusal is explained,
+       and the stream only ever carries books and trades.
+  GET  /api/webull/ticks?symbol=AAPL&count=100
+       the last trades (≤1000 — about a minute and a half of a busy stock; Webull
+       takes no start time, so there is no going further back), newest first.
+       What the tape shows before the stream has printed anything.
 
 Depth is what the account is entitled to: with "Nasdaq Basic - Non Display"
 (free) that is one level, and asking for more is refused ("depth not more than
@@ -24,14 +34,20 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+import asyncio
+import json
+
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 
 import webull_client as wb
+import webull_stream
 from cache import TTLCache
 
 router = APIRouter()
 
 _DEPTH_PATH = "/market-data/stocks/depths/list"
+_TICKS_PATH = "/market-data/stocks/ticks/list"
 _CATEGORIES = ("US_STOCK", "US_ETF")
 # US tickers only: AAPL · BRK.B · BF-B. An index (^DJI), a future (ES=F), FX
 # (JPY=X), crypto (BTC-USD) or a foreign listing (PTT.BK, VOD.L) is not in this
@@ -77,7 +93,8 @@ def _side(levels) -> list[dict]:
     return out
 
 
-def _shape(symbol: str, data, asked: int, category: str, overnight: bool) -> dict:
+def _shape(symbol: str, data, asked: int, category: str, overnight: bool,
+           endpoint: str = _DEPTH_PATH) -> dict:
     if isinstance(data, list):
         data = next((d for d in data if isinstance(d, dict) and d.get("symbol") == symbol),
                     data[0] if data and isinstance(data[0], dict) else {})
@@ -100,11 +117,60 @@ def _shape(symbol: str, data, asked: int, category: str, overnight: bool) -> dic
                        if quote_ms else None),
         "source": {
             "name": "Webull OpenAPI",
-            "endpoint": _DEPTH_PATH,
+            "endpoint": endpoint,
             "environment": wb.environment(),
             "retrieved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         },
     }
+
+
+def _trade(raw: dict) -> dict | None:
+    """One print, typed. side: B = buyer lifted the offer, S = seller hit the bid,
+    N = neither (inside the spread, or reported off the book)."""
+    t, price, size = _num(raw.get("time")), _num(raw.get("price")), _num(raw.get("volume"))
+    if t is None or price is None or size is None:
+        return None
+    side = str(raw.get("side") or "N").upper()[:1]
+    return {"t": int(t), "price": price, "size": size, "side": side if side in "BS" else "N",
+            "session": raw.get("trading_session")}
+
+
+_ticks_cache = TTLCache(ttl=2, maxsize=64)
+
+
+@router.get("/api/webull/ticks")
+def webull_ticks(symbol: str = Query(..., max_length=12), count: int = Query(100, ge=1, le=1000)):
+    sym = symbol.strip().upper()
+    if not _SYMBOL.match(sym):
+        raise HTTPException(422, {"message": f"{sym or symbol!r}: US stocks and ETFs only",
+                                  "code": "unsupported"})
+    key = f"ticks|{sym}|{count}"
+    if (hit := _ticks_cache.get(key)) is not None:
+        return hit
+    if (bad := _fail.get(key)) is not None:
+        raise HTTPException(bad["status"], bad["detail"])
+    try:
+        r = wb.call("GET", _TICKS_PATH, token=wb.active_token(), query={
+            "symbol": sym, "category": _category.get(sym) or "US_STOCK", "count": str(count)})
+    except wb.WebullError as err:
+        _raise(err)
+    if not r.ok:
+        status = r.status_code if r.status_code < 500 else 424
+        detail = {"message": f"Webull {r.status_code}: {wb.explain(r)}",
+                  "code": "subscription" if r.status_code == 403 else "upstream"}
+        _fail.set(key, {"status": status, "detail": detail})
+        raise HTTPException(status, detail)
+    try:
+        rows = r.json().get("result") or []
+    except (ValueError, AttributeError):
+        rows = []
+    trades = sorted((t for t in map(_trade, rows) if t), key=lambda t: -t["t"])
+    out = {"symbol": sym, "trades": trades,
+           "source": {"name": "Webull OpenAPI", "endpoint": _TICKS_PATH,
+                      "environment": wb.environment(),
+                      "retrieved_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}}
+    _ticks_cache.set(key, out)
+    return out
 
 
 @router.get("/api/webull/status")
@@ -114,7 +180,7 @@ def webull_status():
     except wb.WebullError:
         token = None
     return {"configured": wb.configured(), "host": wb.host(), "environment": wb.environment(),
-            "token": token}
+            "token": token, "stream": webull_stream.hub.status()}
 
 
 @router.post("/api/webull/token")
@@ -213,3 +279,70 @@ def webull_depth(symbol: str = Query(..., max_length=12),
     if code != "token_missing":           # a new token must work at once, not after the cache
         _fail.set(key, {"status": status, "detail": detail})
     raise HTTPException(status, detail)
+
+
+# ── Live book ────────────────────────────────────────────────────────────────
+
+_STREAM_TICK_S = 0.2
+_STREAM_PING_S = 15.0
+
+
+def _sse(event: str | None, payload: object) -> str:
+    head = f"event: {event}\n" if event else ""
+    return f"{head}data: {json.dumps(payload, separators=(',', ':'))}\n\n"
+
+
+@router.get("/api/webull/depth/stream")
+async def webull_depth_stream(request: Request,
+                              symbol: str = Query(..., max_length=12),
+                              depth: int = Query(10, ge=1, le=50),
+                              overnight: bool = False):
+    sym = symbol.strip().upper()
+    if not _SYMBOL.match(sym):
+        raise HTTPException(422, {"message": f"{sym or symbol!r}: depth covers US stocks and ETFs only",
+                                  "code": "unsupported"})
+    hub = webull_stream.hub
+    session = "overnight" if overnight else "regular"
+    asked = max(1, min(depth, _entitled.get(session) or depth))
+
+    async def gen():
+        # Acquire inside the generator: a response that is never iterated never
+        # runs `finally`, and would hold the subscription for good.
+        try:
+            hub.acquire(sym, asked, overnight)
+        except wb.WebullError as err:
+            yield _sse("state", {"live": False, "state": "error",
+                                 "error": {"message": str(err), "code": err.code}})
+            return
+        try:
+            since, since_trade, idle, sent = 0, 0, 0.0, None
+            yield "retry: 5000\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                since_new, quote = hub.latest(sym, since)
+                status = hub.status()
+                state = {"live": hub.is_live(sym), "state": status["state"],
+                         "error": hub.refusal(sym) or status["error"]}
+                if state != sent:
+                    sent = state
+                    yield _sse("state", state)
+                since_trade, printed = hub.trades(sym, since_trade)
+                if printed:
+                    idle = 0.0
+                    yield _sse("trades", [t for t in map(_trade, printed) if t])
+                if quote is not None:
+                    since, idle = since_new, 0.0
+                    yield _sse(None, _shape(sym, quote, depth, _category.get(sym) or "US_STOCK",
+                                            overnight, endpoint="stream: quote"))
+                else:
+                    idle += _STREAM_TICK_S
+                    if idle >= _STREAM_PING_S:
+                        idle = 0.0
+                        yield ": ping\n\n"
+                await asyncio.sleep(_STREAM_TICK_S)
+        finally:
+            hub.release(sym)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
