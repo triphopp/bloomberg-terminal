@@ -413,9 +413,13 @@ HTTP 200 / `status: ok`; live SNDK 2026-10-16 SVI returned `ok` for 56 call and
 | `FISCAL_AI_API_KEY` | `/api/fiscal/*` + MCP `get_fiscal_data` → 424 "not set". Free trial covers only 100 fixed companies (list: docs.fiscal.ai free-trial) — others will 4xx. Key rides in the `apiKey` query param: never log request URLs |
 | `EIA_API_KEY` | optional — TAIL OIL · EIA WEEKLY + ENERGY → CPI axis. Unset → public `DEMO_KEY` (10 calls/h per address; the panel says so). Sent as `X-Api-Key` header, never in the URL |
 | `FISCAL_AI_DAILY_LIMIT` (optional, default 250) | Local call budget for Fiscal.ai; above the plan limit → upstream 429s |
+| `WEBULL_APP_KEY` + `WEBULL_APP_SECRET` | MKT STRUCTURE → DEPTH → "WEBULL KEYS NOT SET" (`/api/webull/*` 424). Keys alone are not enough: the panel then asks for an access token (SMS code confirmed in the Webull app, 5 min). 1 level only = no OpenAPI TotalView subscription (the in-app subscription does not carry over). Restart the backend after editing |
+| `WEBULL_API_HOST` (optional) | default `api.webull.co.th`. `th-api.uat.webullbroker.com` = test host (token needs no SMS). A token is stored per host + key, so switching hosts asks again |
+| `WEBULL_TOKEN_DIR` (optional) | where the access token file goes; default app-data. Inside the repo → refused |
 | `FACEBOOK_ACCESS_TOKEN` | FB social feed falls back to RSSHub (may be rate-limited) |
 | `CLIPPINGS_DIR` | Clippings view empty (default: `./data/clippings`) |
 | `SYNC_DIR` (unset/unreachable) | Cloud sync silent no-op — app runs local-only (fail-soft, never blocks startup); SYNC chip shows OFFLINE |
+| `CALENDAR_SCAN_INTERVAL=0` | CALENDAR reminders off (default 1800 s) — the CAL view still works; no `cal:<KIND>` rows reach the alert strip |
 | `IV_SNAPSHOT_INTERVAL=0` | ATM IV recorder off → SD heatmap stops gaining columns. **The gap is permanent**: the provider exposes only the CURRENT IV of a chain, so a day nobody recorded can never be back-filled |
 
 ## Anti-pattern: SQLite `.db` on a cloud drive
@@ -2197,6 +2201,27 @@ OPLOG_ENABLED=false … --port 9327`); a second `next dev` in this folder is ref
 proxy in front of the running 9318 that sends `/api/v2/{tracking,questions,theses,zettel}` to 9327 and passes the
 `/_next/webpack-hmr` websocket through (without it the dev client never mounts).
 
+## Anti-thesis status is derived too — and a claim under attack is never reworded (2026-10-08)
+`anti_claims` has no status and `anti_objections` has no "resolved" flag. UNTESTED / CONTESTED / STANDS / BROKEN / FALLEN
+comes from `routers/antithesis._derive`: the verdict that counts on an objection is the NEWEST `anti_verdicts` row the
+user stands behind (their own, or an agent's with a REVIEW row ACCEPTED); a newer unreviewed agent verdict = PENDING.
+A verdict and a review are INSERTs, never an UPDATE. A claim that has any objection row is not reworded (PATCH → 409):
+the new wording is a NEW claim with `revises_id`, written by `_replace` when a CONCEDED + REVISE verdict is accepted —
+editing the sentence in place would move the goalposts the objections were aimed at, and would be a long text field two
+devices can edit at once. An objection is never deleted: the user withdraws it (`withdrawn_at`, reason required).
+The three `anti_*` tables were added to `SYNC_TABLES` on 2026-10-08 — same rule as `question*` / `track_*`: **every
+machine runs this code before the first claim is written** (a peer on old code keeps the ops and never applies them).
+UI check without touching the real DB: the copy-backend recipe above, with `/api/v2/antithesis` added to the proxied paths.
+
+## `_now_sync()` in zettel / questions writes no seconds (found 2026-10-08, NOT fixed)
+`routers/zettel.py:63` and `routers/questions.py:66` use `strftime("%Y-%m-%d %H:%M:%f")[:-3]` — Python's `%f` is
+microseconds only (SQLite's is `SS.SSS`), so the stamp is `2026-10-08 04:36:503` (minute : millis), not
+`04:36:12.503`. Within one minute a later row can sort BEFORE an earlier one, and "newest row stands"
+(`questions._derive`, `tracking._periods`) picks the wrong one — the likely cause of known issue 20 (flaky
+`test_a_revised_forecast_stands_and_the_old_one_is_kept`). `routers/theses._now_sync` is right
+(`%H:%M:%S.%f`); new routers import it from there (`routers/antithesis.py` does).
+[risk report](../reports/now-sync-missing-seconds-risk-report.md)
+
 ## `fast_info` = 3–5 Yahoo calls per symbol — ~150 calls/min with the MKT view open (fixed 2026-09-28)
 **Symptom:** `logs/upstream.jsonl` summaries showed Yahoo at exactly `2000` calls every 10 min (the `calls`
 deque was capped at 2000 — the real number was higher); `/api/volatility` pending for seconds in DevTools.
@@ -2451,3 +2476,24 @@ hand then. The local `research/graphs/`, the `graphs` table and `/api/v2/graphs`
 
 ## A US-market fact filed under the machine's local date (found 2026-10-06)
 `backend/iv_scheduler.py` keys the daily IV snapshot on `date.today()` — the Thai date, which turns at 13:00 ET, mid-session. Friday's session read after 13:00 ET and a stale Saturday-morning chain were both filed as Saturday 2026-10-03, on two machines, with different values → 61 `iv_snapshots` sync conflicts and a DIVERGED peer (`sync/config.py` assumes two devices recording the same day agree — they read at different times, so they never do). Rule: a row keyed by a market day takes the **exchange's** trading date (ET for US), never `date.today()`; and a synced "daily fact" table needs a merge rule for same-key-different-reading. **Fixed 2026-10-06:** `backend/us_session.py` (`session_date`: ET day, before 09:30 ET / weekend → previous weekday; `written_after_close`) is used by `iv_scheduler.py`, `routers/options.py` (`_record_iv_snapshot`, `_dte`) and the op-log merge — `sync/oplog.py` `_READING_RANK`: two readings of one `iv_snapshots` key keep the one taken after that session's close, then the later one, on every device, with no conflict. The 61 open conflicts were resolved to the other machine's (in-session) values. Rows written before the fix keep their old dates (1,787 of 2,190 map to another session). Details: `reports/iv-snapshot-sync-conflicts-risk-report.md`.
+
+## Next dev 404s every `/api/**` route 6+ segments deep — PORT ENTRY "SIZE unavailable — Error: HTTP 404" (seen 2026-10-08)
+**Symptom:** `risk/guard/size`, `guard/report`, `guard/apply-stops`, `history/export`, `rebalance/rules`, `ledger/evidence/image` return Next's HTML not-found page; routes up to 5 segments (`risk/guard`) answer 200. The route files exist and are compiled, the backend answers 200 directly on 9317, and the RUNNING OLD CODE strip says `ok`.
+**Cause:** state of that one `next dev` (Turbopack) run, not code — the same routes were 200 before the 10:10 start and 56/56 were 404 after it. Why that start went wrong is not known.
+**Fix:** restart the frontend (tray, or kill the `next dev` node process — the launcher respawns it in ~4 s). `.next` did not need deleting.
+**Check first:** `curl -s -o NUL -w "%{http_code}" "http://localhost:9318/api/v2/portfolio/risk/guard/size?symbol=AAPL&account_id=x"` vs the same path on 9317 — 404 HTML on one and 200 on the other = this.
+
+## Start-up acknowledges every alert that has no rule row (2026-10-08)
+`alerts/schema.py::create_alert_tables` runs at every backend start and acks `alert_events` whose `rule_id` is not in
+`alert_rules` — meant for events of deleted rules. Scheduler-written events have no rule by design, so they are swept
+too: under auto-reload that is every saved `.py` file. Symptom: an alert chip is in the ticker, you save a file, it is
+gone and the bell says "all read" — nobody clicked anything. `cal:%` (CALENDAR reminders) is exempt since 2026-10-08
+(`test_calendar_feed.py::test_a_reminder_outlives_a_restart`); **`guard:%` and `margin:%` are still swept** —
+`reports/alert-orphan-sweep-risk-report.md`. A new scheduler that writes ruleless events must add its prefix there, to
+`alert_rules._guard_name` / `_ruleless_notify`, and clear its own rows when they stop being true.
+
+Checking alerts in the Browser pane: the pane reports `document.visibilityState = "hidden"` until it is looked at, so
+React Query does not poll and nothing arrives until a screenshot fronts it; `javascript_tool` runs in an isolated world
+(a `window.fetch` override does not reach the page). For toasts, the "+N" list and the calendar form use the
+copy-backend recipe above with `/api/calendar` and `/api/alerts/` added to the proxied paths, and un-ack the copy's rows
+AFTER the copy backend has started.

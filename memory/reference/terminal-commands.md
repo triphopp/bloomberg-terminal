@@ -23,11 +23,12 @@
 | `NEWS` | News — watchlist news, feed, social, data board + Polymarket column |
 | `BOND` | Bond Monitor — MARKET (price vs supply) · CONDITIONS (ex-CRDT) |
 | `PORT` | Portfolio — PORTFOLIO · ANALYTICS · RISK · TOOLS · PAPER |
+| `CAL` | Calendar — macro, company, thesis and book dates on one grid (2026-10-08) |
 | `HEATMAP(market?, period?)` | HMAP sector treemap, e.g. `heatmap(TH)`, `heatmap(US, 52w)` |
 
 Removed 2026-09-25: `GMOV` (→ HMAP), `CLIP`, `CRDT` (→ BOND → CONDITIONS); earlier `MACRO`, `CRYP`, `FX`. TAIL has no command — use `5` or `t`.
 
-Keyboard equivalents: `1` MKT · `2` NEWS · `3`/`b` BOND · `4`/`p` PORT · `5`/`t` TAIL · `h` HMAP (no overlay needed).
+Keyboard equivalents: `1` MKT · `2` NEWS · `3`/`b` BOND · `4`/`p` PORT · `5`/`t` TAIL · `6` CAL · `h` HMAP (no overlay needed).
 
 ---
 

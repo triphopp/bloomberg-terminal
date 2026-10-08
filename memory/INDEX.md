@@ -28,7 +28,8 @@ memory/
 │   ├── data-sources.md        where to look for data — in-house first, then free APIs
 │   ├── fundamental-analysis.md  "วิเคราะห์พื้นฐาน [ticker]" — data to pull + 12-section report
 │   ├── question-research.md   how to answer an open question (signals, answer levels, assumptions)
-│   └── thesis-tracking.md     tracked numbers: source, forecast vs actual, kill lines (PORT → TOOLS → TRACK)
+│   ├── thesis-tracking.md     tracked numbers: source, forecast vs actual, kill lines (PORT → TOOLS → TRACK)
+│   └── anti-thesis.md         step back: claims + negation, objections by angle, evidence-gated verdicts (THESES → ANTI-THESIS)
 ├── plans/                ← ⚠️ gitignored — machine-local (completed/ inside)
 ├── sessions/             ← ⚠️ gitignored — machine-local (INDEX.md + reports/)
 └── reports/              ← ⚠️ gitignored — machine-local risk reports
@@ -53,6 +54,7 @@ memory/
 
 | Plan | สถานะ |
 |------|--------|
+| [Unified calendar](plans/completed/unified-calendar.md) | ✅ done 2026-10-08 — the CAL view (`6`): macro, company, thesis and book dates on one grid (`calendar_feed.py`, no new table), reminders `cal:<KIND>` → thesis; found on the way: [start-up sweep acks TRADE GUARD / MARGIN alerts](reports/alert-orphan-sweep-risk-report.md) |
 | [ASK — chat on every view](../components/bloomberg/ask/index.ts) | ✅ merged 2026-10-06 (PRs #90, #91) — providers, read-only tools, HISTORY files on Drive / app-data with pin · trash · restore, resumed-conversation dating, `search_sessions` / `read_session`; [LAN trust report](reports/ask-lan-trust-risk-report.md) |
 | [IV snapshot session date](reports/iv-snapshot-sync-conflicts-risk-report.md) | ✅ fixed 2026-10-06 (PR #93) — `us_session.py`; 61 sync conflicts resolved; re-dating old rows still open |
 | Same-origin write guard · backend `dev_server.py` reload | ✅ merged 2026-10-06 (PRs #89, #87) |
