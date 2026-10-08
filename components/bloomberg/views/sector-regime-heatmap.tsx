@@ -3,8 +3,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Maximize2, X } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
+import { useDepth } from "../hooks/useDepth";
 import { useIvSmile } from "../hooks/useIvSmile";
 import type { bloombergColors } from "../lib/theme-config";
+import { DepthPanel } from "./depth-panel";
 import { IvSmilePanel } from "./iv-smile-panel";
 import { RotationTable } from "./rotation-table";
 
@@ -13,6 +15,11 @@ import { RotationTable } from "./rotation-table";
 const LS_DEFAULTS = "bloomberg_regime_defaults";
 const PERIODS = ["1m", "3m", "6m", "1y"] as const;
 const MODES = [
+  {
+    key: "depth",
+    label: "DEPTH",
+    desc: "Order book (bid/offer levels) for the symbol on the MKT chart — Webull, US stocks + ETFs",
+  },
   { key: "corr", label: "CORR", desc: "Pearson Correlation Matrix" },
   { key: "geom", label: "GEOM", desc: "Geometric: Wedge Product / Gram Determinant" },
   { key: "rot", label: "ROT", desc: "Theme/Sector rotation table vs SPY (RRG quadrants)" },
@@ -20,7 +27,7 @@ const MODES = [
 ] as const;
 
 type Period = (typeof PERIODS)[number];
-type Mode = "corr" | "geom" | "rot" | "iv";
+type Mode = "depth" | "corr" | "geom" | "rot" | "iv";
 type GeomView = "matrix" | "space";
 
 // One distinct vivid colour per sector (dark-background safe)
@@ -721,7 +728,9 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
   const isRot = mode === "rot";
   const isSmile = mode === "iv";
   const isMatrix = mode === "corr" || mode === "geom";
+  const isDepth = mode === "depth";
   const smile = useIvSmile(symbol, isSmile);
+  const depth = useDepth(symbol, isDepth);
 
   useEffect(() => {
     if (!isMatrix) return;
@@ -796,7 +805,7 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
                 style={{
                   background: mode === key ? "#FF980020" : "transparent",
                   color: mode === key ? "#FF9800" : colors.textSecondary,
-                  borderRight: key === "corr" ? `1px solid ${colors.border}` : undefined,
+                  borderRight: key === "depth" ? `1px solid ${colors.border}` : undefined,
                 }}
                 onClick={() => setMode(key as Mode)}
               >
@@ -943,7 +952,11 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
         )}
 
         {/* Visualisation area */}
-        {isSmile ? (
+        {isDepth ? (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <DepthPanel model={depth} colors={colors} compact />
+          </div>
+        ) : isSmile ? (
           <div className="flex-1 min-h-0 overflow-hidden">
             <IvSmilePanel model={smile} colors={colors} compact />
           </div>
@@ -1040,7 +1053,13 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
               style={{ borderBottom: `1px solid ${colors.border}`, background: "#0c0c0c" }}
             >
               <span className="text-[10px] font-bold tracking-widest" style={{ color: "#FF9800" }}>
-                {isSmile ? "IV SMILE" : isRot ? "SECTOR ROTATION" : "US SECTOR REGIME DETECTION"}
+                {isDepth
+                  ? "ORDER BOOK DEPTH"
+                  : isSmile
+                    ? "IV SMILE"
+                    : isRot
+                      ? "SECTOR ROTATION"
+                      : "US SECTOR REGIME DETECTION"}
               </span>
 
               <div
@@ -1057,7 +1076,7 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
                     style={{
                       background: mode === key ? "#FF980020" : "transparent",
                       color: mode === key ? "#FF9800" : colors.textSecondary,
-                      borderRight: key === "corr" ? `1px solid ${colors.border}` : undefined,
+                      borderRight: key === "depth" ? `1px solid ${colors.border}` : undefined,
                     }}
                     onClick={() => setMode(key as Mode)}
                   >
@@ -1178,7 +1197,9 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
                   <Loader2 className="h-6 w-6 animate-spin" style={{ color: "#FF9800" }} />
                 </div>
               )}
-              {isSmile ? (
+              {isDepth ? (
+                <DepthPanel model={depth} colors={colors} />
+              ) : isSmile ? (
                 <IvSmilePanel model={smile} colors={colors} />
               ) : isRot ? (
                 <RotationTable colors={colors} compact={false} />
