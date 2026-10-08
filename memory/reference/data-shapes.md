@@ -60,6 +60,8 @@ The first preparation phase added no persisted schema. Existing `ledger_events` 
 Basis (`/api/cot/basis`): `{window, as_of, released, unit, stats:{am|lev|dealer:{net,d_net,z,pct,n}}, series:[{date,released,am,lev,dealer,oi}] (10Y-eq, oldest first), tenors:[snapshot contract + dv01_net{grp:number}], status}`
 Webull depth (`/api/webull/depth`): `{symbol, category: US_STOCK|US_ETF, overnight, bids:[{price, size, count|null}] (high→low), asks:[…] (low→high), levels, depth_requested, has_counts, quote_time (ISO UTC)|null, source:{name, endpoint, environment, retrieved_at}}`. `count` = entries in the upstream level's `order[]` (per market participant), null when absent. Errors `{detail:{message, code}}`. TS: `DepthBook` in `components/bloomberg/lib/depth-book.ts`.
 
+Webull trades (`/api/webull/ticks`, SSE `event: trades`): `{t: ms, price, size, side: "B"|"S"|"N", session}`. TS: `Trade`, `TapeTotals` in `components/bloomberg/lib/trade-tape.ts`.
+
 Factor (`/api/cot/factor`): `{series:[{date,value}], loadings:{KEY:number}, explained, weeks, window, group, as_of, status}`
 Portfolio (`/api/cot/portfolio`): `{as_of, released, base_currency, rows:[{key,label,side,exposure,weight_pct,symbols[],proxy,focus,focus_z,focus_pct,flags:[flag + relation "WITH_CROWD"|"AGAINST_CROWD"]}], with_crowd_weight_pct, mapped_weight_pct, unmapped_weight_pct, unpriced[], status}`
 TAIL `/api/tail-risk/signals` → each signal gains `counted: boolean` (false = shown, not counted; only `cot_crowding` today).

@@ -416,6 +416,7 @@ HTTP 200 / `status: ok`; live SNDK 2026-10-16 SVI returned `ok` for 56 call and
 | `WEBULL_APP_KEY` + `WEBULL_APP_SECRET` | MKT STRUCTURE → DEPTH → "WEBULL KEYS NOT SET" (`/api/webull/*` 424). Keys alone are not enough: the panel then asks for an access token (SMS code confirmed in the Webull app, 5 min). 1 level only = no OpenAPI TotalView subscription (the in-app subscription does not carry over). Restart the backend after editing |
 | `WEBULL_API_HOST` (optional) | default `api.webull.co.th`. `th-api.uat.webullbroker.com` = test host (token needs no SMS). A token is stored per host + key, so switching hosts asks again |
 | `WEBULL_TOKEN_DIR` (optional) | where the access token file goes; default app-data. Inside the repo → refused |
+| `WEBULL_STREAM_HOST` (optional) | MQTT host of the live book; default follows `WEBULL_API_HOST` (`data-api.webull.co.th` / `data-api.uat.webullbroker.com`). A custom API host with no stream host → the panel stays on `○ 2s` (poll) and `/api/webull/status` → `stream.error` says so |
 | `FACEBOOK_ACCESS_TOKEN` | FB social feed falls back to RSSHub (may be rate-limited) |
 | `CLIPPINGS_DIR` | Clippings view empty (default: `./data/clippings`) |
 | `SYNC_DIR` (unset/unreachable) | Cloud sync silent no-op — app runs local-only (fail-soft, never blocks startup); SYNC chip shows OFFLINE |
@@ -2497,3 +2498,38 @@ React Query does not poll and nothing arrives until a screenshot fronts it; `jav
 (a `window.fetch` override does not reach the page). For toasts, the "+N" list and the calendar form use the
 copy-backend recipe above with `/api/calendar` and `/api/alerts/` added to the proxied paths, and un-ack the copy's rows
 AFTER the copy backend has started.
+
+## A live list keyed by position rebuilds every row on every tick — browser memory climbs (2026-10-08)
+
+STRUCTURE → DEPTH → TIME & SALES was first drawn with `key={`${t.t}-${i}`}`: a new print at the top shifts every
+index, so React unmounted and rebuilt all 300 rows on each print. Measured with a MutationObserver on INTC, market
+open: **~1,700 DOM nodes created and destroyed a second**; the tab's process sat at 800 MB+ while the JS heap stayed
+flat at 60–80 MB (the churn is in the DOM, so `performance.memory` does not show it).
+**Fix:** the row's identity comes from the data (`Trade.id`, given once by `mergeTape`), rows are `memo`, the list
+draws 120 of the 300 it holds, and `Tape` / `VolumeByPrice` are `memo` so the book's 3 updates a second do not
+re-render them. After: ~17 nodes a second, panel 1,631 → 716 elements.
+**Rule:** a list that grows at the top (tape, log, feed, alert strip) never uses the index in its key. No natural id →
+assign one when the item enters the list. To check: MutationObserver `childList` + `subtree` for 10 s, count added nodes.
+
+## Webull: what ends, and where each ending shows (2026-10-08)
+
+- **Access token — 15 days, fixed.** `expires_at` is set when the token is made and did not move after 80 minutes of
+  calls (the docs' "15 days without a call" reads as rolling; the number says otherwise). There is no early renewal:
+  `/auth/tokens/create` handed a working token answers "still good". So about every two weeks the owner confirms an SMS
+  code. An ended token is `401 INVALID_TOKEN` on every endpoint, HTTP and stream-subscribe alike.
+- **Shown as:** `TOKEN ENDS IN 2d 4h` in the DEPTH bar from 3 days out (red in the last day) → `ACCESS TOKEN EXPIRED` +
+  REQUEST TOKEN in place of the book. `webull_client.active_token()` stops sending a token past its date;
+  `mark_token()` logs it and records `auth` / target `token` in `logs/upstream.jsonl`; `/api/webull/status` re-reads a
+  status older than 6 h from Webull.
+- **Subscription lapsed** → `403 MARKET_DATA_NOT_SUBSCRIBED` → `NOT SUBSCRIBED` with where to renew.
+  The API never says when an entitlement ends — the date is on the Webull website only (Advanced Quotes → OpenAPI:
+  "Nasdaq Basic - Non Display … free … expires 10/08/2027", read 2026-10-08, taken as 8 Oct 2027 = one year). It is
+  written by hand in `WEBULL_SUBSCRIPTION_ENDS` (YYYY-MM-DD, `backend/.env`); `/api/webull/status` → `subscription`
+  `{ends, days_left, error}`; DEPTH shows `FEED ENDS IN 12d` from 14 days out. After renewing, update the date.
+- **Stream down but the request works** — the panel keeps working, which is how a fault hides: the tag reads `⚠ 2s`
+  (hover = the reason) instead of `● LIVE`; `/api/webull/status` → `stream.state` / `stream.error`.
+- **Tape / volume by price not filling** — the refusal is printed in their place, `⚠ STOPPED` once they had rows.
+- **Market closed / halted** — not an error: `AS OF hh:mm:ss` beside the tag when the newest quote is over a minute old.
+- **Request failing for 20 s+** — the last book is replaced by the error rather than left on screen as if current.
+- Every refusal goes through `_refusal()` in `routers/webull.py`: a new Webull endpoint must use it, or an ended token
+  comes back as a vague `WEBULL ERROR` with no button.
