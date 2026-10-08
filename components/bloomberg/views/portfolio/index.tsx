@@ -3,8 +3,8 @@ import { installLedgerCorrectionRetry } from "@/lib/ledger-correction";
 import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
 import { Loader2, RefreshCw } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { isDarkModeAtom, portfolioTabRequestAtom } from "../../atoms";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isDarkModeAtom, portfolioTabRequestAtom, toolsRequestAtom } from "../../atoms";
 import { useLiveQuery } from "../../hooks/useLiveQuery";
 import { useTabShortcuts } from "../../hooks/useTabShortcuts";
 import { bloombergColors } from "../../lib/theme-config";
@@ -116,6 +116,10 @@ export function PortfolioView() {
     setTopTab(tabRequest);
     setTabRequest(null);
   }, [tabRequest, setTabRequest]);
+  // A place in TOOLS another screen asked for: a date on the calendar or a
+  // CALENDAR alert → the thesis it belongs to, or the question waiting on it.
+  // Read into the initial state for the same reason as the tab request above.
+  const [toolsRequest, setToolsRequest] = useAtom(toolsRequestAtom);
   const [portfolioSub, setPortfolioSub] = useState<PortfolioSub>("positions");
   // OPTIONS → ADD / CLOSE hand the contract to ENTRY; seq makes a repeat click refill.
   const [optionPrefill, setOptionPrefill] = useState<(OptionEntryPrefill & { seq: number }) | null>(
@@ -125,7 +129,7 @@ export function PortfolioView() {
     setOptionPrefill({ ...p, seq: Date.now() });
     setPortfolioSub("entry");
   };
-  const [toolsSub, setToolsSub] = useState<ToolsSub>("theses");
+  const [toolsSub, setToolsSub] = useState<ToolsSub>(() => toolsRequest?.sub ?? "theses");
   // Open questions across every thesis — the badge on TOOLS and on QUESTIONS.
   const { data: qCounts } = useQuestionCounts();
   // Tracked numbers that came due, missed, or crossed a kill line — same two places.
@@ -134,7 +138,51 @@ export function PortfolioView() {
   const [openQuestion, setOpenQuestion] = useState<{
     thesisId: string | null;
     questionId: string;
-  } | null>(null);
+  } | null>(() =>
+    toolsRequest?.sub === "questions"
+      ? { thesisId: toolsRequest.thesisId, questionId: toolsRequest.questionId }
+      : null
+  );
+  // QUESTIONS takes a hand-over once, on mount: a new one while it is open remounts it.
+  const [questionsKey, setQuestionsKey] = useState(0);
+  // A thesis to land on (and its NOTES, at one note), from the calendar or an alert.
+  const [openThesisAt, setOpenThesisAt] = useState<{
+    thesisId: string;
+    sub: "thesis" | "notes";
+    noteId?: string;
+  } | null>(() =>
+    toolsRequest?.sub === "theses"
+      ? {
+          thesisId: toolsRequest.thesisId,
+          sub: toolsRequest.thesisSub ?? "thesis",
+          noteId: toolsRequest.noteId,
+        }
+      : null
+  );
+  const showQuestion = useCallback((thesisId: string | null, questionId: string) => {
+    setOpenQuestion({ thesisId, questionId });
+    setQuestionsKey((k) => k + 1);
+    setToolsSub("questions");
+  }, []);
+  const showThesis = useCallback((thesisId: string, sub: "thesis" | "notes", noteId?: string) => {
+    setOpenThesisAt({ thesisId, sub, noteId });
+    setToolsSub("theses");
+  }, []);
+  // The request this view was opened with is already in the state above.
+  const takenAtMount = useRef(toolsRequest);
+  useEffect(() => {
+    if (!toolsRequest) return;
+    if (takenAtMount.current === toolsRequest) {
+      takenAtMount.current = null;
+      setToolsRequest(null);
+      return;
+    }
+    setTopTab("tools");
+    if (toolsRequest.sub === "questions")
+      showQuestion(toolsRequest.thesisId, toolsRequest.questionId);
+    else showThesis(toolsRequest.thesisId, toolsRequest.thesisSub ?? "thesis", toolsRequest.noteId);
+    setToolsRequest(null);
+  }, [toolsRequest, setToolsRequest, showQuestion, showThesis]);
   // Symbol handed over when the positions table jumps to TOOLS → THESES, so the
   // rail can preselect (or pre-fill a new thesis for) that holding.
   const [thesisSymbol, setThesisSymbol] = useState<string | null>(null);
@@ -582,23 +630,20 @@ export function PortfolioView() {
                 accountId={activeAccount}
                 initialSymbol={thesisSymbol}
                 onConsumeInitialSymbol={() => setThesisSymbol(null)}
+                initialOpen={openThesisAt}
+                onConsumeInitialOpen={() => setOpenThesisAt(null)}
               />
             )}
             {topTab === "tools" && toolsSub === "questions" && (
               <QuestionsTab
+                key={questionsKey}
                 colors={colors}
                 initialQuestion={openQuestion}
                 onConsumeInitialQuestion={() => setOpenQuestion(null)}
               />
             )}
             {topTab === "tools" && toolsSub === "track" && (
-              <TrackingTab
-                colors={colors}
-                onOpenQuestion={(thesisId, questionId) => {
-                  setOpenQuestion({ thesisId, questionId });
-                  setToolsSub("questions");
-                }}
-              />
+              <TrackingTab colors={colors} onOpenQuestion={showQuestion} />
             )}
             {topTab === "tools" && toolsSub === "import" && (
               <ImportTab colors={colors} variant="excel" />

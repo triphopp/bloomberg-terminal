@@ -9,7 +9,8 @@
  *
  *   toast   → sonner popup, once per event — except RED TRADE GUARD /
  *             MARGIN events (stop hit, day-loss cap, liquidation), which go
- *             to <GuardAlertModal/> and stay until acknowledged
+ *             to <GuardAlertModal/> and stay until acknowledged. A CALENDAR
+ *             reminder's toast carries the way to the thesis it belongs to
  *   sound   → short WebAudio beep, no asset to ship or fail to load
  *   ticker  → handed to <AlertTicker/> to render inline (see `tickerEvents`)
  *
@@ -32,6 +33,7 @@
 import { useSetAtom } from "jotai";
 import { type CSSProperties, useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
+import { calendarLinkLabel, calendarToasts, isCalendarEvent } from "../alerts/calendar-alert";
 import {
   SEVERITY_COLOR,
   describeGuard,
@@ -44,6 +46,7 @@ import {
   severityOf,
 } from "../alerts/guard-alert";
 import { useOpenRisk } from "../alerts/useOpenRisk";
+import { useOpenCalendarTarget } from "../alerts/useOpenTools";
 import { type AlertEvent, ruleDisplayName, useAlertEvents } from "./useAlertRules";
 
 const WATERMARK_KEY = "bt.alerts.lastAnnouncedEventId";
@@ -120,6 +123,7 @@ export function useAlertNotifications(): UseAlertNotificationsResult {
 
   const enqueueModal = useSetAtom(guardModalQueueAtom);
   const openRisk = useOpenRisk();
+  const openCalendarTarget = useOpenCalendarTarget();
 
   const announce = useCallback(
     (event: AlertEvent) => {
@@ -169,13 +173,27 @@ export function useAlertNotifications(): UseAlertNotificationsResult {
     if (!fresh.length) return;
 
     // Oldest first, so a burst reads in the order it happened.
-    for (const event of [...fresh].sort((a, b) => a.id - b.id)) {
-      announce(event);
+    const ordered = [...fresh].sort((a, b) => a.id - b.id);
+    // CALENDAR reminders are a date coming up, not a breach: one toast per
+    // thesis for the batch, and the action is the thesis the dates belong to.
+    const isReminder = (e: AlertEvent) => isCalendarEvent(e) && e.notify.includes("toast");
+    for (const event of ordered) {
+      if (!isReminder(event)) announce(event);
+    }
+    for (const t of calendarToasts(ordered.filter(isReminder))) {
+      toast(t.title, {
+        description: t.description,
+        style: { "--bb-toast-rule": "#4ade80" } as CSSProperties,
+        action: {
+          label: `${calendarLinkLabel(t.target)} →`,
+          onClick: () => openCalendarTarget(t.target),
+        },
+      });
     }
 
     announcedRef.current = maxId;
     writeWatermark(maxId);
-  }, [events, announce]);
+  }, [events, announce, openCalendarTarget]);
 
   return {
     tickerEvents: events.filter((e) => e.notify.includes("ticker")),

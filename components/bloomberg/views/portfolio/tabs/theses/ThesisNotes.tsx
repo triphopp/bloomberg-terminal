@@ -1,6 +1,6 @@
 "use client";
 import { Pin, Plus, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Colors } from "../../helpers";
 import {
   NOTE_IMPACT_COLOR,
@@ -263,12 +263,16 @@ export function ThesisNotes({
   onPatch,
   onDelete,
   colors,
+  focusId,
 }: {
   notes: ThesisNote[];
   onCreate: (d: NoteDraft) => Promise<void>;
   onPatch: (id: string, patch: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   colors: Colors;
+  /** The note a calendar date or alert led here for: shown even when resolved,
+   *  scrolled to and marked. */
+  focusId?: string | null;
 }) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -281,11 +285,17 @@ export function ThesisNotes({
     () =>
       notes.filter(
         (n) =>
-          (kindFilter === "ALL" || n.kind === kindFilter) &&
-          (showResolved || n.status === "open" || n.status === "watching")
+          n.id === focusId ||
+          ((kindFilter === "ALL" || n.kind === kindFilter) &&
+            (showResolved || n.status === "open" || n.status === "watching"))
       ),
-    [notes, kindFilter, showResolved]
+    [notes, kindFilter, showResolved, focusId]
   );
+  // Once per hand-over, after the thesis's notes have arrived.
+  const focused = notes.some((n) => n.id === focusId) ? focusId : null;
+  useEffect(() => {
+    if (focused) document.getElementById(`note-${focused}`)?.scrollIntoView({ block: "start" });
+  }, [focused]);
 
   const openCount = notes.filter((n) => n.status === "open" || n.status === "watching").length;
   const resolvedCount = notes.length - openCount;
@@ -414,6 +424,7 @@ export function ThesisNotes({
             <NoteCard
               key={n.id}
               note={n}
+              focused={n.id === focusId}
               colors={colors}
               onEdit={() => startEdit(n)}
               onPatch={onPatch}
@@ -436,12 +447,14 @@ export function ThesisNotes({
 
 function NoteCard({
   note,
+  focused,
   colors,
   onEdit,
   onPatch,
   onDelete,
 }: {
   note: ThesisNote;
+  focused?: boolean;
   colors: Colors;
   onEdit: () => void;
   onPatch: (id: string, patch: Record<string, unknown>) => Promise<void>;
@@ -455,8 +468,13 @@ function NoteCard({
 
   return (
     <div
+      id={`note-${note.id}`}
       className="border-l-2 pl-2 py-1"
-      style={{ borderColor: kindColor, opacity: resolved ? 0.55 : 1 }}
+      style={{
+        borderColor: kindColor,
+        opacity: resolved && !focused ? 0.55 : 1,
+        background: focused ? colors.bgSelected : undefined,
+      }}
     >
       <div className="flex items-center gap-1.5 flex-wrap">
         <ReadDot type="note" id={note.id} colors={colors} reads={reads} />

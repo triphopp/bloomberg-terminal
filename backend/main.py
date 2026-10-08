@@ -86,6 +86,7 @@ from change_feed import init_change_feed
 from routers.chart_drawings import init_chart_drawings_schema
 from routers import dev as dev_router
 from routers import margin as margin_router
+from routers import calendar_feed as calendar_router
 from routers import ledger as ledger_router
 import ledger as ledger_core
 import sync
@@ -95,6 +96,7 @@ from sync.gate import is_synced_write, should_gate
 from alerts import scheduler as alert_scheduler
 import guard_scheduler
 import margin_scheduler
+import calendar_scheduler
 import iv_scheduler
 import series_scheduler
 
@@ -177,6 +179,9 @@ guard_scheduler.start_background_scan()
 # ── MARGIN: account level worsens → alert feed (backend/margin_scheduler.py) ──
 margin_scheduler.start_background_scan()
 
+# ── CALENDAR: a date that has come up → alert feed (backend/calendar_scheduler.py) ──
+calendar_scheduler.start_background_scan()
+
 # ── ATM IV snapshots: daily recorder (no-ops once the day is covered) ─────────
 # The provider exposes no IV history, so a day nobody records is a permanent hole
 # in the SD-band series — this is the only writer that does not depend on the user
@@ -254,6 +259,7 @@ app.include_router(analytics.router)
 app.include_router(fear_greed.router)
 app.include_router(tail_risk.router)
 app.include_router(cycle_router.router)
+app.include_router(calendar_router.router, tags=["Calendar"])
 app.include_router(upstream_health_router.router)
 app.include_router(paper_trading.router, tags=["Paper Trading"])
 app.include_router(providers.router, tags=["Providers"])

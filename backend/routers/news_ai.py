@@ -891,6 +891,7 @@ _PAGES = {
     "portfolio": "PORT (portfolio)",
     "tail": "TAIL (tail-risk monitor)",
     "bonds": "BOND (bond monitor)",
+    "calendar": "CAL (calendar: macro, company and thesis dates)",
 }
 
 

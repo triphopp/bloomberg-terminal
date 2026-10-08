@@ -169,6 +169,15 @@ const NAV: CommandDef[] = [
       return { kind: "navigate", view: "portfolio" };
     },
   },
+  {
+    name: "CAL",
+    group: "nav",
+    description: "Go to Calendar (macro, company and thesis dates)",
+    handler: (_, ctx) => {
+      ctx.setView("calendar");
+      return { kind: "navigate", view: "calendar" };
+    },
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

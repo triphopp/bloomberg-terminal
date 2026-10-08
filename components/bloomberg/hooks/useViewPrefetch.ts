@@ -18,6 +18,9 @@ const prefetchLoaders: Record<string, () => void> = {
   portfolio: () => {
     import("../views/portfolio-view");
   },
+  calendar: () => {
+    import("../views/calendar");
+  },
 };
 
 export function useViewPrefetch() {

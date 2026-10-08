@@ -585,8 +585,11 @@ def run_scan(body: ScanRequest = ScanRequest()):
 
 
 def _guard_name(rule_id: str) -> str | None:
-    """Display name for TRADE GUARD events (rule_id "guard:<CODE>") and MARGIN
-    events (rule_id "margin:<LEVEL>", margin_scheduler.py)."""
+    """Display name for TRADE GUARD events (rule_id "guard:<CODE>"), MARGIN
+    events (rule_id "margin:<LEVEL>", margin_scheduler.py) and CALENDAR
+    reminders (rule_id "cal:<KIND>", calendar_scheduler.py)."""
+    if str(rule_id).startswith("cal:"):
+        return f"CALENDAR · {str(rule_id).split(':', 1)[1]}"
     if str(rule_id).startswith("margin:"):
         from margin_scheduler import LABELS
         level = str(rule_id).split(":", 1)[1]
@@ -596,6 +599,20 @@ def _guard_name(rule_id: str) -> str | None:
     from trade_guard import GUARD_EVENT_LABELS
     code = str(rule_id).split(":", 1)[1]
     return f"TRADE GUARD · {GUARD_EVENT_LABELS.get(code, code)}"
+
+
+def _ruleless_notify(rule_id: str, snapshot: dict) -> list[str]:
+    """Channels for an event with no rule row to ask. An orphan (its rule was
+    deleted) falls back to the ticker, the passive channel, rather than being
+    dropped or re-toasting history. TRADE GUARD / MARGIN events have no rule by
+    design and ask for a toast too. A CALENDAR reminder toasts only when it
+    belongs to a thesis — the day's macro prints stay on the strip."""
+    rid = str(rule_id)
+    if rid.startswith(("guard:", "margin:")):
+        return ["ticker", "toast"]
+    if rid.startswith("cal:") and snapshot.get("thesis_id"):
+        return ["ticker", "toast"]
+    return ["ticker"]
 
 
 @router.get("/events")
@@ -627,24 +644,20 @@ def list_events(limit: int = 100, acked: bool | None = None, rule_id: str | None
 
     with get_db() as conn:
         rows = conn.execute(query, params).fetchall()
-    return [
-        {
+    out = []
+    for r in rows:
+        snapshot = json.loads(r["snapshot_json"])
+        out.append({
             "id": r["id"], "ruleId": r["rule_id"], "symbol": r["symbol"],
             "firedAt": r["fired_at"], "barTime": r["bar_time"],
-            "snapshot": json.loads(r["snapshot_json"]), "acked": bool(r["acked"]),
+            "snapshot": snapshot, "acked": bool(r["acked"]),
             "ruleName": r["rule_name"] or _guard_name(r["rule_id"]),
-            # An orphaned event has no rule to ask, so fall back to the ticker
-            # (the passive channel) rather than silently dropping it or
-            # re-toasting history. TRADE GUARD events (guard_scheduler.py) have
-            # no rule row by design and ask for a toast too.
             "notify": (json.loads(r["rule_notify"]) if r["rule_notify"]
-                       else ["ticker", "toast"] if str(r["rule_id"]).startswith(("guard:", "margin:"))
-                       else ["ticker"]),
+                       else _ruleless_notify(r["rule_id"], snapshot)),
             "notifiedAt": r["notified_at"],
             "notifyError": r["notify_error"],
-        }
-        for r in rows
-    ]
+        })
+    return out
 
 
 class WebhookTestRequest(BaseModel):

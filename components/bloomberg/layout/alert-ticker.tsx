@@ -2,10 +2,20 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
-import { useEffect, useMemo, useRef } from "react";
-import { riskLinkLabel, riskTargetOf } from "../alerts/guard-alert";
-import { useOpenRisk } from "../alerts/useOpenRisk";
-import { type RiskSubTabRequest, tickerEnabledAtom } from "../atoms";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  calendarDateOf,
+  calendarHeadline,
+  isCalendarEvent,
+  whenText,
+} from "../alerts/calendar-alert";
+import {
+  type AlertTarget,
+  alertLinkLabel,
+  alertTargetOf,
+  useOpenAlertTarget,
+} from "../alerts/useOpenAlertTarget";
+import { tickerEnabledAtom } from "../atoms";
 import { useAlertNotifications } from "../hooks/useAlertNotifications";
 import { type AlertEvent, ruleDisplayName } from "../hooks/useAlertRules";
 import { fmtPriceStd } from "../lib/number-format";
@@ -193,8 +203,11 @@ interface RuleCondition {
    *  re-fire every bar, so the count is the only thing that was changing. */
   count: number;
   latestId: number;
-  /** PORT → RISK page this condition is acted on (TRADE GUARD / MARGIN only). */
-  risk: RiskSubTabRequest | null;
+  /** Where this condition is acted on: PORT → RISK (TRADE GUARD / MARGIN), or
+   *  the thesis a CALENDAR reminder belongs to. null = a plain rule alert. */
+  target: AlertTarget | null;
+  /** A CALENDAR reminder — a date coming up, not a condition in breach. */
+  reminder: boolean;
 }
 
 interface SymbolAlertGroup {
@@ -233,7 +246,12 @@ function groupRuleEvents(events: AlertEvent[]): SymbolAlertGroup[] {
     // Key on the *displayed* rule name, not the rule id: a symbol watched by
     // two rules that render the same headline (e.g. the same condition cloned
     // per timeframe) otherwise renders the identical text twice in one pill.
-    const key = ruleDisplayName(event.ruleName, event.symbol) || `#${event.id}`;
+    // A CALENDAR reminder is one event, never a re-fire: two dates of one
+    // symbol are two lines, so it keys on itself.
+    const reminder = isCalendarEvent(event);
+    const key = reminder
+      ? `cal#${event.id}`
+      : ruleDisplayName(event.ruleName, event.symbol) || `#${event.id}`;
     const prev = rules.get(key);
     if (prev && prev.latestId >= event.id) {
       prev.count += 1;
@@ -241,24 +259,130 @@ function groupRuleEvents(events: AlertEvent[]): SymbolAlertGroup[] {
     }
     rules.set(key, {
       ruleId: key,
-      label: ruleDisplayName(event.ruleName, event.symbol),
-      values: snapshotValues(event),
+      label: reminder ? calendarHeadline(event) : ruleDisplayName(event.ruleName, event.symbol),
+      // Worded from the date as it is read: "tomorrow" becomes "today" overnight.
+      values: reminder ? whenText(calendarDateOf(event)) : snapshotValues(event),
       count: (prev?.count ?? 0) + 1,
       latestId: event.id,
-      risk: riskTargetOf(event),
+      target: alertTargetOf(event),
+      reminder,
     });
   }
 
+  // A condition in breach outranks a reminder, in a group and among groups:
+  // the chip names the first one, and a stop that broke must not sit behind
+  // tomorrow's earnings.
+  const urgency = (c: RuleCondition) => (c.reminder ? 0 : 1);
   return [...bySymbol.entries()]
     .map(([symbol, rules]) => {
-      const conditions = [...rules.values()].sort((a, b) => b.latestId - a.latestId);
+      const conditions = [...rules.values()].sort(
+        (a, b) => urgency(b) - urgency(a) || b.latestId - a.latestId
+      );
       return {
         symbol,
         conditions,
         latestId: conditions.reduce((m, c) => Math.max(m, c.latestId), 0),
       };
     })
-    .sort((a, b) => b.latestId - a.latestId);
+    .sort((a, b) => urgency(b.conditions[0]) - urgency(a.conditions[0]) || b.latestId - a.latestId);
+}
+
+/** What one condition says on one line: the reading, or when the date is. */
+const conditionText = (c: RuleCondition) => `${c.label}${c.values ? ` · ${c.values}` : ""}`;
+
+function AlertLine({ symbol, c }: { symbol: string; c: RuleCondition }) {
+  return (
+    <>
+      <span className="font-bold" style={{ color: c.reminder ? "#4ade80" : "#FFB13B" }}>
+        {symbol}
+      </span>{" "}
+      <span style={{ color: "#ddd" }}>{conditionText(c)}</span>
+      {c.target && <span style={{ color: "#33DDFF" }}> — {alertLinkLabel(c.target)} →</span>}
+    </>
+  );
+}
+
+/**
+ * Every active alert, each with the way to the page that handles it. The chip
+ * can name only one; this is where the rest are reached. Fixed, not absolute:
+ * the ticker clips its overflow and sits at the bottom of the window.
+ */
+function AlertList({
+  groups,
+  alerts,
+  anchor,
+  onOpen,
+  onClose,
+}: {
+  groups: SymbolAlertGroup[];
+  alerts: TickerAlert[];
+  anchor: { left: number; bottom: number };
+  onOpen: (t: AlertTarget) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onPointerDown = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={ref}
+      className="fixed z-50 w-[380px] max-w-[92vw] border font-mono"
+      style={{
+        left: anchor.left,
+        bottom: anchor.bottom,
+        maxHeight: "50vh",
+        overflowY: "auto",
+        background: "#0d0d0d",
+        borderColor: "#3a2922",
+        fontSize: 10,
+      }}
+    >
+      {groups.flatMap((g) =>
+        g.conditions.map((c) => {
+          const target = c.target;
+          return target ? (
+            <button
+              type="button"
+              key={`${g.symbol}|${c.ruleId}`}
+              className="block w-full text-left px-2 py-1 hover:opacity-80"
+              onClick={() => {
+                onClose();
+                onOpen(target);
+              }}
+            >
+              <AlertLine symbol={g.symbol} c={c} />
+            </button>
+          ) : (
+            <div key={`${g.symbol}|${c.ruleId}`} className="px-2 py-1">
+              <AlertLine symbol={g.symbol} c={c} />
+            </div>
+          );
+        })
+      )}
+      {alerts.map((a) => (
+        <div
+          key={a.message}
+          className="px-2 py-1"
+          style={{ color: a.severity === "critical" ? "#FF6565" : "#FFB13B" }}
+        >
+          {a.message}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -297,7 +421,9 @@ export function AlertTicker() {
   // is always mounted, so the hook doesn't need a component of its own.
   const { tickerEvents } = useAlertNotifications();
   const ruleGroups = useMemo(() => groupRuleEvents(tickerEvents), [tickerEvents]);
-  const openRisk = useOpenRisk();
+  const openTarget = useOpenAlertTarget();
+  // The list of every alert, opened from "+N" — anchored where that was clicked.
+  const [listAt, setListAt] = useState<{ left: number; bottom: number } | null>(null);
 
   if (!enabled) return null;
 
@@ -348,15 +474,15 @@ export function AlertTicker() {
   const durationSec = Math.max(30, items.length * 4);
   const firstRule = ruleGroups[0];
   const firstAlert = alerts[0];
-  // The chip names one alert; when that alert is a TRADE GUARD / MARGIN one it
-  // is also the way to the page that handles it. Rebalance wins when several
-  // guard conditions are waiting on that symbol only if it is the one named.
-  const chipRisk = firstRule?.conditions[0]?.risk ?? null;
-  const alertCount = ruleGroups.length + alerts.length;
+  // The chip names one alert, and is the way to the page that handles it: PORT
+  // → RISK for a TRADE GUARD / MARGIN one, the thesis a CALENDAR date belongs
+  // to. Rebalance wins when several guard conditions are waiting on that symbol
+  // only if it is the one named. "+N" opens the rest.
+  const chipCondition = firstRule?.conditions[0] ?? null;
+  const chipTarget = chipCondition?.target ?? null;
+  const alertCount = ruleGroups.reduce((n, g) => n + g.conditions.length, 0) + alerts.length;
   const alertTitle = [
-    ...ruleGroups.map(
-      (g) => `${g.symbol}: ${g.conditions.map((c) => `${c.label} ${c.values}`).join(" · ")}`
-    ),
+    ...ruleGroups.map((g) => `${g.symbol}: ${g.conditions.map(conditionText).join(" · ")}`),
     ...alerts.map((a) => a.message),
   ].join("\n");
 
@@ -384,46 +510,91 @@ export function AlertTicker() {
       {alertCount > 0 &&
         (() => {
           const chipClass =
-            "flex min-w-0 max-w-[42%] shrink-0 items-center gap-1.5 overflow-hidden border-r px-2 font-bold h-full";
+            "flex min-w-0 shrink items-center gap-1.5 overflow-hidden px-2 font-bold h-full";
           const chipStyle = {
-            borderColor: "#3a2922",
-            color: hasCritical ? "#FF6565" : "#FFB13B",
+            color: hasCritical ? "#FF6565" : chipCondition?.reminder ? "#4ade80" : "#FFB13B",
             fontSize: 9,
           };
+          const chipText = firstRule
+            ? `${firstRule.symbol} ${
+                chipCondition
+                  ? chipCondition.reminder
+                    ? conditionText(chipCondition)
+                    : chipCondition.label
+                  : "ALERT"
+              }`
+            : firstAlert?.message;
           const body = (
             <>
               <span className="shrink-0">●</span>
-              <span className="truncate">
-                {firstRule
-                  ? `${firstRule.symbol} ${firstRule.conditions[0]?.label ?? "ALERT"}`
-                  : firstAlert?.message}
-              </span>
-              {alertCount > 1 && <span className="shrink-0">+{alertCount - 1}</span>}
-              {chipRisk && <span className="shrink-0">→</span>}
+              <span className="truncate">{chipText}</span>
+              {chipTarget && <span className="shrink-0">→</span>}
             </>
           );
-          return chipRisk ? (
-            <button
-              type="button"
-              data-frame
-              className={`${chipClass} select-none hover:opacity-80`}
-              style={chipStyle}
-              title={`${alertTitle}
-
-${riskLinkLabel(chipRisk)} →`}
-              aria-label={`${alertCount} active alerts: ${alertTitle} — ${riskLinkLabel(chipRisk)}`}
-              onClick={() => openRisk(chipRisk)}
-            >
-              {body}
-            </button>
-          ) : (
+          return (
             <span
-              className={chipClass}
-              style={chipStyle}
-              title={alertTitle}
-              aria-label={`${alertCount} active alerts: ${alertTitle}`}
+              // data-frame: the rule that divides the alert from the crawl is the content
+              data-frame
+              className="flex min-w-0 max-w-[46%] shrink-0 items-center border-r h-full"
+              style={{ borderColor: "#3a2922" }}
             >
-              {body}
+              {chipTarget ? (
+                <button
+                  type="button"
+                  data-frame
+                  className={`${chipClass} select-none hover:opacity-80`}
+                  style={chipStyle}
+                  title={`${alertTitle}
+
+${alertLinkLabel(chipTarget)} →`}
+                  aria-label={`${alertCount} active alerts: ${alertTitle} — ${alertLinkLabel(chipTarget)}`}
+                  onClick={() => openTarget(chipTarget)}
+                >
+                  {body}
+                </button>
+              ) : (
+                <span
+                  className={chipClass}
+                  style={chipStyle}
+                  title={alertTitle}
+                  aria-label={`${alertCount} active alerts: ${alertTitle}`}
+                >
+                  {body}
+                </span>
+              )}
+              {alertCount > 1 && (
+                <button
+                  type="button"
+                  data-frame
+                  aria-pressed={listAt != null}
+                  className="shrink-0 select-none px-1.5 font-bold h-full hover:opacity-80"
+                  style={{ color: "#33DDFF", fontSize: 9 }}
+                  title={`ดูทั้ง ${alertCount} รายการ`}
+                  aria-label={`All ${alertCount} active alerts`}
+                  onClick={(e) => {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setListAt((at) =>
+                      at
+                        ? null
+                        : {
+                            left: Math.max(4, r.left - 120),
+                            bottom: window.innerHeight - r.top + 2,
+                          }
+                    );
+                  }}
+                >
+                  +{alertCount - 1}
+                </button>
+              )}
+              {listAt && (
+                <AlertList
+                  groups={ruleGroups}
+                  alerts={alerts}
+                  anchor={listAt}
+                  onOpen={openTarget}
+                  onClose={() => setListAt(null)}
+                />
+              )}
             </span>
           );
         })()}

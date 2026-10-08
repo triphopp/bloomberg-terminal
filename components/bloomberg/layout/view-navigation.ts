@@ -1,6 +1,14 @@
 import type { MouseEvent } from "react";
 
-export type TerminalView = "market" | "news" | "heatmap" | "stock" | "portfolio" | "tail" | "bonds";
+export type TerminalView =
+  | "market"
+  | "news"
+  | "heatmap"
+  | "stock"
+  | "portfolio"
+  | "tail"
+  | "bonds"
+  | "calendar";
 
 const views = new Set<TerminalView>([
   "market",
@@ -10,6 +18,7 @@ const views = new Set<TerminalView>([
   "portfolio",
   "tail",
   "bonds",
+  "calendar",
 ]);
 
 export function viewFromSearch(search: string): TerminalView | null {
