@@ -80,10 +80,17 @@ def create_alert_tables(conn: sqlite3.Connection) -> None:
     # row with no rule the default notify=["ticker"], so the ticker and the
     # watchlist badge kept warning about conditions the user had already
     # removed. Ack them once, here, where every start-up passes.
+    #
+    # A CALENDAR reminder (rule_id "cal:<KIND>", calendar_scheduler.py) has no
+    # rule row by design and is not an orphan: swept here it would vanish from
+    # the alert strip at every restart — every save, under auto-reload — and
+    # UNIQUE(rule_id, symbol, bar_time) keeps the next scan from writing it
+    # again. calendar_scheduler clears a reminder itself once its day is over.
     conn.execute("""
         UPDATE alert_events
            SET acked = 1
          WHERE acked = 0
+           AND rule_id NOT LIKE 'cal:%'
            AND rule_id NOT IN (SELECT id FROM alert_rules)
     """)
 

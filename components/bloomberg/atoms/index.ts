@@ -79,7 +79,7 @@ export const toolsThesisIdAtom = atomWithStorage<string>("bloomberg_tools_thesis
 
 // View state atoms
 export const currentViewAtom = atom<
-  "market" | "news" | "heatmap" | "stock" | "portfolio" | "tail" | "bonds"
+  "market" | "news" | "heatmap" | "stock" | "portfolio" | "tail" | "bonds" | "calendar"
 >("market");
 
 // PORT top tab another component asks to open (the TRADE GUARD status chip →
@@ -92,6 +92,18 @@ export const portfolioTabRequestAtom = atom<"portfolio" | "analytics" | "risk" |
 // alert → "rebalance"). RiskTab consumes it and resets it to null.
 export type RiskSubTabRequest = "summary" | "rebalance" | "exposure" | "whatif" | "mc" | "options";
 export const riskSubTabRequestAtom = atom<RiskSubTabRequest | null>(null);
+
+// PORT → TOOLS place another component asks to open: a thesis (a calendar
+// date or a CALENDAR alert → the thesis it belongs to, on NOTES at that note)
+// or a question. PortfolioView consumes it and resets it to null.
+export type ToolsRequest =
+  | { sub: "theses"; thesisId: string; thesisSub?: "thesis" | "notes"; noteId?: string }
+  | { sub: "questions"; thesisId: string | null; questionId: string };
+export const toolsRequestAtom = atom<ToolsRequest | null>(null);
+
+// A day (and category) the CAL view is asked to open on — an alert no thesis
+// claims, TAIL's event strip. CalendarView consumes it and resets it to null.
+export const calendarRequestAtom = atom<{ date?: string; category?: string } | null>(null);
 
 // Symbol requested by another view for the main MKT chart. The market view
 // consumes and clears this when it becomes active.

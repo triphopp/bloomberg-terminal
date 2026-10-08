@@ -21,8 +21,8 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ruleDisplayName, useAlertEvents } from "../hooks/useAlertRules";
 import type { bloombergColors } from "../lib/theme-config";
-import { riskLinkLabel, riskTargetOf } from "./guard-alert";
-import { useOpenRisk } from "./useOpenRisk";
+import { calendarHeadline, describeCalendar, isCalendarEvent } from "./calendar-alert";
+import { alertLinkLabel, alertTargetOf, useOpenAlertTarget } from "./useOpenAlertTarget";
 
 const ALERT_CYAN = "#33DDFF";
 
@@ -35,7 +35,7 @@ export function WatchlistAlertsBadge({ colors }: { colors: typeof bloombergColor
   const events = allEvents.filter((e) => e.ruleName != null);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const openRisk = useOpenRisk();
+  const openTarget = useOpenAlertTarget();
 
   useEffect(() => {
     if (!open) return;
@@ -131,15 +131,18 @@ export function WatchlistAlertsBadge({ colors }: { colors: typeof bloombergColor
                     {e.symbol}
                   </span>
                   <span className="opacity-60 truncate" style={{ color: colors.textSecondary }}>
-                    {ruleDisplayName(e.ruleName, e.symbol)}
+                    {isCalendarEvent(e)
+                      ? calendarHeadline(e)
+                      : ruleDisplayName(e.ruleName, e.symbol)}
                   </span>
                 </div>
                 <span className="opacity-50" style={{ color: colors.textSecondary }}>
-                  bar {e.barTime}
+                  {isCalendarEvent(e) ? describeCalendar(e) : `bar ${e.barTime}`}
                 </span>
                 {(() => {
-                  // TRADE GUARD / MARGIN: the way to the page that handles it.
-                  const target = riskTargetOf(e);
+                  // TRADE GUARD / MARGIN: the page that handles it. CALENDAR:
+                  // the thesis the date belongs to.
+                  const target = alertTargetOf(e);
                   if (!target) return null;
                   return (
                     <button
@@ -148,10 +151,10 @@ export function WatchlistAlertsBadge({ colors }: { colors: typeof bloombergColor
                       style={{ color: ALERT_CYAN }}
                       onClick={() => {
                         setOpen(false);
-                        openRisk(target);
+                        openTarget(target);
                       }}
                     >
-                      {riskLinkLabel(target)} →
+                      {alertLinkLabel(target)} →
                     </button>
                   );
                 })()}

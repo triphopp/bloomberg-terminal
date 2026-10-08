@@ -11,6 +11,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { CalendarClock } from "lucide-react";
+import { useOpenCalendar } from "../../alerts/useOpenTools";
 import { fmtPriceStd } from "../../lib/number-format";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -217,6 +218,7 @@ const when = (e: MacroEvent) =>
 // ── Event strip (top of view) ─────────────────────────────────────────────────
 
 export function EventStrip({ ctx }: { ctx: MacroContextData | undefined }) {
+  const openCalendar = useOpenCalendar();
   const cal = ctx?.calendar;
   if (!cal) return null;
   const win = cal.event_window;
@@ -274,6 +276,17 @@ export function EventStrip({ ctx }: { ctx: MacroContextData | undefined }) {
           <span style={{ color: e.days_until <= 2 ? "#FFCC44" : "#888" }}>{when(e)}</span>
         </span>
       ))}
+      {/* The same dates with company and thesis dates beside them, where a
+          release can be tied to a thesis: the CAL view. */}
+      <button
+        type="button"
+        className="shrink-0 font-bold hover:opacity-80"
+        style={{ color: "#FF8800", fontSize: 9.5, letterSpacing: "0.08em" }}
+        title="เปิดปฏิทินรวม (CAL · 6) — มหภาค งบ ปันผล และวันที่ thesis รออยู่ ผูกเหตุการณ์กับ thesis ได้ที่นั่น"
+        onClick={() => openCalendar()}
+      >
+        CALENDAR →
+      </button>
       {(!cal.releases_ok || cal.fomc_calendar_stale || cal.fomc_calendar_expiring) && (
         <span className="ml-auto shrink-0" style={{ color: "#B06000", fontSize: 9 }}>
           {!cal.releases_ok && "FRED releases unavailable — FOMC and rule dates only. "}

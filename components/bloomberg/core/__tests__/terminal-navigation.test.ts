@@ -23,5 +23,6 @@ test("view URLs restore valid views and reject unknown values", () => {
   assert.equal(viewHref("bonds"), "/?view=bonds");
   assert.equal(viewFromSearch("?view=portfolio"), "portfolio");
   assert.equal(viewFromSearch("?view=heatmap"), "heatmap");
+  assert.equal(viewFromSearch("?view=calendar"), "calendar");
   assert.equal(viewFromSearch("?view=unknown"), null);
 });

@@ -65,6 +65,9 @@ const TailRiskView = dynamic(() => import("../views/tail-risk-view").then((m) =>
 const BondView = dynamic(() => import("../views/bonds").then((m) => m.BondView), {
   loading: () => <ViewSkeleton />,
 });
+const CalendarView = dynamic(() => import("../views/calendar").then((m) => m.CalendarView), {
+  loading: () => <ViewSkeleton />,
+});
 
 // Quick ASK drawer — pulls in the answer renderer, so only once it is opened.
 const AskDock = dynamic(() => import("../ask").then((m) => m.AskDock), { ssr: false });
@@ -75,6 +78,7 @@ const MemoStock = memo(StockView);
 const MemoPortfolio = memo(PortfolioView);
 const MemoTailRisk = memo(TailRiskView);
 const MemoBond = memo(BondView);
+const MemoCalendar = memo(CalendarView);
 
 function BloombergTerminal() {
   const {
@@ -89,6 +93,7 @@ function BloombergTerminal() {
     handlePortfolioView,
     handleTailView,
     handleBondView,
+    handleCalendarView,
     handleHelpClick,
   } = useTerminalUI();
   const [urlReady, setUrlReady] = useState(false);
@@ -195,6 +200,13 @@ function BloombergTerminal() {
       onClick: handlePortfolioView,
     },
     { id: "tail", label: "TAIL", shortcut: "5", href: viewHref("tail"), onClick: handleTailView },
+    {
+      id: "calendar",
+      label: "CAL",
+      shortcut: "6",
+      href: viewHref("calendar"),
+      onClick: handleCalendarView,
+    },
   ];
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
@@ -226,6 +238,7 @@ function BloombergTerminal() {
     { key: "3", action: handleBondView, description: "Bond Monitor (price vs supply)" },
     { key: "4", action: handlePortfolioView, description: "Portfolio" },
     { key: "5", action: handleTailView, description: "Tail Risk Monitor" },
+    { key: "6", action: handleCalendarView, description: "Calendar (macro · company · thesis)" },
     { key: "h", action: () => setCurrentView("heatmap"), description: "Heatmap (last market)" },
     { key: "p", action: handlePortfolioView, description: "Portfolio" },
     {
@@ -272,6 +285,7 @@ function BloombergTerminal() {
     stock: "STOCK ANALYSIS",
     tail: "TAIL RISK MONITOR",
     bonds: "BOND MONITOR · PRICE · SUPPLY · CREDIT CONDITIONS",
+    calendar: "CALENDAR · MACRO · COMPANY · THESIS",
   };
 
   // ── Shared header (filter bar + key indicators merged in) ─────────────────
@@ -355,6 +369,8 @@ function BloombergTerminal() {
         return <MemoTailRisk />;
       case "bonds":
         return <MemoBond />;
+      case "calendar":
+        return <MemoCalendar />;
       default:
         return <MarketView isDarkMode={isDarkMode} />;
     }

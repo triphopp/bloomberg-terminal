@@ -37,6 +37,8 @@ export function ThesesTab({
   accountId,
   initialSymbol,
   onConsumeInitialSymbol,
+  initialOpen,
+  onConsumeInitialOpen,
 }: {
   colors: Colors;
   accountId?: string;
@@ -44,6 +46,10 @@ export function ThesesTab({
    *  pre-filled NEW form when the holding has none yet. */
   initialSymbol?: string | null;
   onConsumeInitialSymbol?: () => void;
+  /** A thesis to land on, handed over by the calendar or a CALENDAR alert —
+   *  on NOTES, at one note, when the date is a note of it. */
+  initialOpen?: { thesisId: string; sub: "thesis" | "notes"; noteId?: string } | null;
+  onConsumeInitialOpen?: () => void;
 }) {
   const qc = useQueryClient();
   const { data: listData, isLoading: loadingList } = useThesisList();
@@ -65,7 +71,9 @@ export function ThesesTab({
     notes?: ThesisNote[];
     counts?: { zettel: number; conflicts: number; graphs: number };
   } | null>(null);
-  const [subTab, setSubTab] = useState<SubTab>("thesis");
+  const [subTab, setSubTab] = useState<SubTab>(() => initialOpen?.sub ?? "thesis");
+  // The note a hand-over points at: NOTES scrolls to it and marks it.
+  const [focusNoteId, setFocusNoteId] = useState<string | null>(() => initialOpen?.noteId ?? null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ThesisDraft>(emptyDraft());
   const [isNew, setIsNew] = useState(false);
@@ -83,7 +91,7 @@ export function ThesesTab({
   // Phone: rail and detail can't share 375px (the detail got ~160px), so it is
   // one or the other. A hand-off from the positions table goes straight to detail.
   const isMobile = useIsMobile();
-  const [mobileList, setMobileList] = useState(!initialSymbol);
+  const [mobileList, setMobileList] = useState(!initialSymbol && !initialOpen);
   // READ is a way of looking at the same thesis, not a tab: it stays on while
   // the user moves between theses, which is what "I am reading tonight" means.
   const [reading, setReading] = useState(false);
@@ -143,6 +151,19 @@ export function ThesesTab({
     }
     onConsumeInitialSymbol?.();
   }, [initialSymbol, loadingList, theses, onConsumeInitialSymbol, setSelectedId]);
+
+  // Taken as it arrives, not only on mount: a second alert can land while the
+  // tab is already open on another thesis.
+  useEffect(() => {
+    if (!initialOpen) return;
+    setSelectedId(initialOpen.thesisId);
+    setEditing(false);
+    setReading(false);
+    setMobileList(false);
+    setSubTab(initialOpen.sub);
+    setFocusNoteId(initialOpen.noteId ?? null);
+    onConsumeInitialOpen?.();
+  }, [initialOpen, onConsumeInitialOpen, setSelectedId]);
 
   useEffect(() => {
     if (selectedId) loadDetail(selectedId);
@@ -402,6 +423,7 @@ export function ThesesTab({
   };
 
   const selectThesis = (id: string) => {
+    setFocusNoteId(null);
     setSelectedId(id);
     setMobileList(false);
     setEditing(false);
@@ -713,6 +735,7 @@ export function ThesesTab({
                 onPatch={patchNote}
                 onDelete={removeNote}
                 colors={colors}
+                focusId={focusNoteId}
               />
             )}
 

@@ -94,6 +94,13 @@ PAGES: dict[str, dict[str, tuple[str, dict, str]]] = {
                       "RISK → decision journal: why a stop-loss or a rebalance was held, followed or changed — the "
                       "reason typed, the numbers at that moment, the review date, whether the hold is still live"),
     },
+    "calendar": {
+        "events": ("/api/calendar", {},
+                   "what is coming up, nearest first — macro releases (FOMC, CPI, NFP …), earnings and ex-dividend "
+                   "dates of every thesis symbol and holding, the dated notes, question dates and tracked numbers "
+                   "the theses are waiting on, option expiries; each with its source, whether the date is only "
+                   "estimated, and the theses it belongs to"),
+    },
     "stock": {
         "overview": ("/api/stock/{symbol}", {},
                      "the header: price, change, market cap, 52-week range, P/E — and the daily price series of the chart"),
@@ -288,7 +295,42 @@ def _articles(data: Any, points: int) -> Any:
     return {"as_of": data.get("as_of"), "articles": rows}
 
 
+_EVENT = ("date", "category", "kind", "tag", "title", "symbol", "impact", "detail", "source")
+
+
+def _calendar(data: Any, points: int) -> Any:
+    """~70 dated events → what is still ahead, nearest first. `shrink` reads a
+    dated list as a series and would keep its far end: next month, not this week."""
+    if not isinstance(data, dict):
+        return data
+    events = [e for e in (data.get("events") or []) if isinstance(e, dict)]
+    today = str(data.get("as_of") or "")
+    ahead = [e for e in events if str(e.get("date") or "") >= today or e.get("due")]
+    n = max(points, 10) * 2
+
+    def row(e: dict) -> dict:
+        out = {k: e[k] for k in _EVENT if e.get(k)}
+        if e.get("estimated"):
+            out["date_is_estimated"] = True
+        if e.get("due"):
+            out["due_unread"] = True
+        if e.get("done"):
+            out["done"] = True
+        if e.get("theses"):
+            out["theses"] = [t.get("symbol") for t in e["theses"]]
+        return out
+
+    return {
+        "as_of": today, "window": [data.get("start"), data.get("end")],
+        "events": [row(e) for e in ahead[:n]],
+        "sources": data.get("sources"),
+        "_note": f"the nearest {min(n, len(ahead))} of {len(ahead)} events from today on "
+                 f"({len(events) - len(ahead)} earlier ones left out) — ask for more points for more of them",
+    }
+
+
 _SHAPES: dict[tuple[str, str], Shape] = {
+    ("calendar", "events"): _calendar,
     ("heatmap", "market"): _heatmap,
     ("stock", "options"): _options,
     ("news", "watchlist"): _articles,
