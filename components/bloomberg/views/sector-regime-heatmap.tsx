@@ -1,8 +1,10 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { useAtom } from "jotai";
 import { Loader2, Maximize2, X } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
+import { structureModeRequestAtom } from "../atoms";
 import { useDepth } from "../hooks/useDepth";
 import { useIvSmile } from "../hooks/useIvSmile";
 import type { bloombergColors } from "../lib/theme-config";
@@ -724,6 +726,15 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
     if (!restored) return;
     saveDefaults(mode, period, geomView);
   }, [restored, mode, period, geomView]);
+
+  // A mode another screen asked for (a WEBULL alert → DEPTH). After the stored
+  // view has been restored, or the restore would put the old mode back.
+  const [modeRequest, setModeRequest] = useAtom(structureModeRequestAtom);
+  useEffect(() => {
+    if (!restored || !modeRequest) return;
+    setMode(modeRequest);
+    setModeRequest(null);
+  }, [restored, modeRequest, setModeRequest]);
 
   const isRot = mode === "rot";
   const isSmile = mode === "iv";

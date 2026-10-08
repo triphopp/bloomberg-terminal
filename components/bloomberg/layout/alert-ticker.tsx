@@ -15,6 +15,7 @@ import {
   alertTargetOf,
   useOpenAlertTarget,
 } from "../alerts/useOpenAlertTarget";
+import { isWebullEnded, isWebullEvent, webullHeadline, webullWhen } from "../alerts/webull-alert";
 import { tickerEnabledAtom } from "../atoms";
 import { useAlertNotifications } from "../hooks/useAlertNotifications";
 import { type AlertEvent, ruleDisplayName } from "../hooks/useAlertRules";
@@ -248,10 +249,17 @@ function groupRuleEvents(events: AlertEvent[]): SymbolAlertGroup[] {
     // per timeframe) otherwise renders the identical text twice in one pill.
     // A CALENDAR reminder is one event, never a re-fire: two dates of one
     // symbol are two lines, so it keys on itself.
-    const reminder = isCalendarEvent(event);
-    const key = reminder
+    const calendar = isCalendarEvent(event);
+    const webull = isWebullEvent(event);
+    // A WEBULL notice about a date still ahead is a reminder too; one that has
+    // ended is a thing not working, and ranks with the breaches.
+    const reminder = calendar || (webull && !isWebullEnded(event));
+    // WEBULL: one line per kind — today's "token ends" replaces yesterday's.
+    const key = calendar
       ? `cal#${event.id}`
-      : ruleDisplayName(event.ruleName, event.symbol) || `#${event.id}`;
+      : webull
+        ? event.ruleId
+        : ruleDisplayName(event.ruleName, event.symbol) || `#${event.id}`;
     const prev = rules.get(key);
     if (prev && prev.latestId >= event.id) {
       prev.count += 1;
@@ -259,9 +267,17 @@ function groupRuleEvents(events: AlertEvent[]): SymbolAlertGroup[] {
     }
     rules.set(key, {
       ruleId: key,
-      label: reminder ? calendarHeadline(event) : ruleDisplayName(event.ruleName, event.symbol),
+      label: calendar
+        ? calendarHeadline(event)
+        : webull
+          ? webullHeadline(event)
+          : ruleDisplayName(event.ruleName, event.symbol),
       // Worded from the date as it is read: "tomorrow" becomes "today" overnight.
-      values: reminder ? whenText(calendarDateOf(event)) : snapshotValues(event),
+      values: calendar
+        ? whenText(calendarDateOf(event))
+        : webull
+          ? webullWhen(event)
+          : snapshotValues(event),
       count: (prev?.count ?? 0) + 1,
       latestId: event.id,
       target: alertTargetOf(event),

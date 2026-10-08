@@ -105,6 +105,11 @@ export const toolsRequestAtom = atom<ToolsRequest | null>(null);
 // claims, TAIL's event strip. CalendarView consumes it and resets it to null.
 export const calendarRequestAtom = atom<{ date?: string; category?: string } | null>(null);
 
+// A mode the MKT STRUCTURE panel is asked to open — a WEBULL alert leads to
+// DEPTH, where a token is requested. SectorRegimeHeatmap consumes it and resets
+// it to null.
+export const structureModeRequestAtom = atom<"depth" | null>(null);
+
 // Symbol requested by another view for the main MKT chart. The market view
 // consumes and clears this when it becomes active.
 export const marketSearchSymbolAtom = atom<string>("");
