@@ -61,6 +61,10 @@ TEST_HOST = "th-api.uat.webullbroker.com"
 PROD_HOST = "api.webull.co.th"
 
 _PENDING_CHECK_S = 10       # how often a PENDING token's status is re-read while the panel waits
+# After 5 failed SMS verifications Webull answers 417 VERIFY_FAILURE_EXCEED_LIMIT and
+# says to stop calling (2026-10-08). It does not say for how long, so nothing goes to
+# /auth/tokens/* for this long; a press after it that is refused again starts it over.
+_VERIFY_LOCK_S = 3600
 
 _session = requests.Session()
 _lock = threading.Lock()
@@ -187,6 +191,43 @@ def _token_file() -> Path:
     return token_dir() / f"token-{tag}.json"
 
 
+def _lock_file() -> Path:
+    return _token_file().with_name(_token_file().stem.replace("token-", "verify-lock-") + ".json")
+
+
+def verify_lock() -> dict | None:
+    """Webull's lock on SMS verification, while it is held here — else None."""
+    try:
+        data = json.loads(_lock_file().read_text(encoding="utf-8"))
+        since = float(data["since"])
+    except (OSError, ValueError, KeyError, TypeError, WebullError):
+        return None
+    until = since + _VERIFY_LOCK_S
+    if time.time() >= until:
+        return None
+    return {"since": int(since), "until": int(until), "reason": str(data.get("reason") or "")}
+
+
+def _set_verify_lock(reason: str) -> None:
+    path = _lock_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"since": int(time.time()), "reason": reason}), encoding="utf-8")
+    logger.warning("webull SMS verification locked by Webull: %s", reason)
+
+
+def _clear_verify_lock() -> None:
+    try:
+        _lock_file().unlink()
+    except (OSError, WebullError):
+        pass
+
+
+def _locked_error(lock: dict) -> WebullError:
+    return WebullError(423, "Webull has locked SMS verification after 5 failed codes — nothing is sent "
+                            "to Webull until " + time.strftime("%H:%M", time.localtime(lock["until"])),
+                       "verify_locked")
+
+
 def load_token() -> dict | None:
     try:
         data = json.loads(_token_file().read_text(encoding="utf-8"))
@@ -230,7 +271,13 @@ def public_token(record: dict | None) -> dict | None:
 
 
 def _token_call(path: str, body: dict) -> dict:
+    lock = verify_lock()
+    if lock:
+        raise _locked_error(lock)
     r = call("POST", path, body=body)
+    if r.status_code == 417 and "VERIFY_FAILURE_EXCEED_LIMIT" in explain(r):
+        _set_verify_lock(explain(r))
+        raise _locked_error(verify_lock() or {"until": time.time() + _VERIFY_LOCK_S})
     if not r.ok:
         raise WebullError(r.status_code if r.status_code < 500 else 424,
                           f"Webull {path} → {r.status_code}: {explain(r)}")
@@ -253,6 +300,7 @@ def create_token() -> dict:
         if record.get("status") not in ("PENDING", "NORMAL"):
             raise WebullError(424, f"Webull issued a token that is already {record.get('status')} — "
                                    "wait a few minutes and request again")
+        _clear_verify_lock()
         return record
 
 
@@ -265,7 +313,7 @@ def check_token() -> dict | None:
 def active_token() -> str:
     """The token to send, or a WebullError that says what the owner has to do."""
     record = load_token()
-    if (record and record.get("status") == "PENDING"
+    if (record and record.get("status") == "PENDING" and not verify_lock()
             and time.time() - (record.get("checked_at") or 0) > _PENDING_CHECK_S):
         try:
             record = check_token()      # the owner may have just confirmed in the app
@@ -281,6 +329,9 @@ def active_token() -> str:
         status = "EXPIRED"
     if status == "NORMAL":
         return record["token"]
+    lock = verify_lock()
+    if lock:
+        raise WebullError(409, str(_locked_error(lock)), "verify_locked")
     if status == "PENDING":
         raise WebullError(409, "Token awaiting verification — open the Webull app → Menu → Messages → "
                                "OpenAPI Notifications and enter the SMS code (5 minutes)", "token_pending")

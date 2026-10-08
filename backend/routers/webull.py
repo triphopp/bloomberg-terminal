@@ -3,6 +3,8 @@
   GET  /api/webull/status          keys set? which host? token status — never a secret
   POST /api/webull/token           ask for an access token (production: texts a code to the owner)
   POST /api/webull/token/check     re-read the token's status from Webull
+                                   (both answer 423 verify_locked, with no call out,
+                                   while Webull's lock on SMS verification holds)
   GET  /api/webull/depth?symbol=AAPL&depth=10&overnight=false
   GET  /api/webull/depth/stream?symbol=AAPL&depth=10&overnight=false   text/event-stream
        the same book, pushed as it changes (webull_stream.py — MQTT, ≤3 a second).
@@ -216,7 +218,8 @@ def webull_status():
     except wb.WebullError:
         token = None
     return {"configured": wb.configured(), "host": wb.host(), "environment": wb.environment(),
-            "token": token, "subscription": _subscription(), "stream": webull_stream.hub.status()}
+            "token": token, "verify_lock": wb.verify_lock() if wb.configured() else None,
+            "subscription": _subscription(), "stream": webull_stream.hub.status()}
 
 
 @router.post("/api/webull/token")

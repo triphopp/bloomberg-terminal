@@ -2540,3 +2540,11 @@ assign one when the item enters the list. To check: MutationObserver `childList`
   — a new ruleless alert source needs the same exemption or it vanishes at every reload.
 - Every refusal goes through `_refusal()` in `routers/webull.py`: a new Webull endpoint must use it, or an ended token
   comes back as a vague `WEBULL ERROR` with no button.
+- **SMS verification locked (2026-10-09)** — 5 codes in a row not confirmed (each SEND A NEW CODE that runs out its
+  5 minutes counts) → `/auth/tokens/create` answers `417 VERIFY_FAILURE_EXCEED_LIMIT … please stop your program`.
+  Webull does not say how long the lock lasts. `webull_client` writes `verify-lock-<tag>.json` beside the token file
+  and for `_VERIFY_LOCK_S` (1 h, a guess) sends nothing to `/auth/tokens/*` — not the buttons, not `active_token()`'s
+  10 s re-check of a PENDING token; both token routes answer `423 verify_locked`, depth `409 verify_locked`,
+  `/api/webull/status` → `verify_lock {since, until, reason}`. DEPTH shows `WEBULL HAS LOCKED VERIFICATION` with the
+  button disabled until `until`. A refusal after the hour starts it over; a PENDING/NORMAL token deletes the file.
+  Only that error code counts — other 417s stay `upstream`.

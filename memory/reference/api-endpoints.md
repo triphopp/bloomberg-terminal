@@ -553,6 +553,7 @@ Proxy: `app/api/v2/portfolio/margin/[[...path]]` (GET + PUT, 60 s timeout). No c
 
 ### Webull depth (`routers/webull.py` + `webull_client.py`) — L2 bid/offer, US stocks + ETFs (2026-10-08)
 - `GET /api/webull/status` — `{configured, host, environment: production|test|custom, token: {status, expires_at, checked_at}|null}`. Never a key, secret or token.
+  - `verify_lock: {since, until, reason}|null` (unix s) — Webull locked SMS verification; `POST /api/webull/token` and `/token/check` answer `423 {code: verify_locked}` with no call out until `until`.
 - `POST /api/webull/token` — asks Webull for an access token (`/auth/tokens/create`). Production: comes back `PENDING`, Webull texts a code, the owner enters it in the Webull app (Menu → Messages → OpenAPI Notifications) within 5 min. Test host: `NORMAL` at once. **Only this endpoint requests a token** — a read never does (it would send an SMS).
 - `POST /api/webull/token/check` — re-reads the status (`/auth/tokens/check`).
 - `GET /api/webull/depth?symbol=AAPL&depth=10&overnight=false` — upstream `GET /market-data/stocks/depths/list`. `depth` 1–50. Tries `US_STOCK` then `US_ETF`, remembers which answered (24 h). Symbols outside the feed (index, future, FX, crypto, `.BK`) → 422 without an upstream call.

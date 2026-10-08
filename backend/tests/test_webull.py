@@ -349,3 +349,44 @@ def test_a_refusal_after_the_end_date_says_the_date(wb, monkeypatch):
     wb.replies.append(Reply(403, {"error_code": "MARKET_DATA_NOT_SUBSCRIBED", "message": "no permission"}))
     r = wb.client.get("/api/webull/depth?symbol=AAPL")
     assert r.status_code == 403 and gone in r.json()["detail"]["message"]
+
+
+# ── Verification lock (417 VERIFY_FAILURE_EXCEED_LIMIT) ─────────────────────
+
+_LOCKED = Reply(417, {"error_code": "VERIFY_FAILURE_EXCEED_LIMIT",
+                      "message": "Your verification have failed 5 times in total, please stop "
+                                 "your program and retry login."})
+
+
+def test_a_verification_lock_stops_every_call_to_webull(wb):
+    wb.replies.append(_LOCKED)
+    r = wb.client.post("/api/webull/token")
+    assert r.status_code == 423 and r.json()["detail"]["code"] == "verify_locked"
+    assert len(wb.sent) == 1
+    # Neither button, nor the panel's own polling of a pending token, reaches Webull now.
+    _ready(wb, "PENDING")
+    assert wb.client.post("/api/webull/token").status_code == 423
+    assert wb.client.post("/api/webull/token/check").status_code == 423
+    d = wb.client.get("/api/webull/depth?symbol=AAPL")
+    assert d.status_code == 409 and d.json()["detail"]["code"] == "verify_locked"
+    assert len(wb.sent) == 1
+    lock = wb.client.get("/api/webull/status").json()["verify_lock"]
+    assert lock and lock["until"] - lock["since"] == wb.wb._VERIFY_LOCK_S
+    assert TOKEN not in json.dumps(lock)
+
+
+def test_the_lock_lifts_after_its_time_and_a_good_token_clears_it(wb, monkeypatch):
+    wb.replies.append(_LOCKED)
+    wb.client.post("/api/webull/token")
+    monkeypatch.setattr(wb.wb, "_VERIFY_LOCK_S", 0)          # the hour has passed
+    assert wb.client.get("/api/webull/status").json()["verify_lock"] is None
+    wb.replies.append(Reply(200, {"token": TOKEN, "expires_at": FAR, "status": "PENDING"}))
+    assert wb.client.post("/api/webull/token").status_code == 200
+    assert not wb.wb._lock_file().exists()
+
+
+def test_another_417_is_not_taken_for_the_lock(wb):
+    wb.replies.append(Reply(417, {"error_code": "PARAM_ERROR", "message": "bad"}))
+    r = wb.client.post("/api/webull/token")
+    assert r.status_code == 417 and r.json()["detail"]["code"] == "upstream"
+    assert wb.client.get("/api/webull/status").json()["verify_lock"] is None
