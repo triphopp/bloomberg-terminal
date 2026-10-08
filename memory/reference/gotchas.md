@@ -2531,5 +2531,12 @@ assign one when the item enters the list. To check: MutationObserver `childList`
 - **Tape / volume by price not filling** — the refusal is printed in their place, `⚠ STOPPED` once they had rows.
 - **Market closed / halted** — not an error: `AS OF hh:mm:ss` beside the tag when the newest quote is over a minute old.
 - **Request failing for 20 s+** — the last book is replaced by the error rather than left on screen as if current.
+- **Nobody is looking at DEPTH** — the same two endings are written to the alert feed by `webull_scheduler.py`
+  (every 30 min; `WEBULL_SCAN_INTERVAL`, 0 = off): `webull:TOKEN_SOON` (under 3 days, one line a day),
+  `webull:TOKEN_ENDED`, `webull:FEED_SOON` (at 14 / 7 / 3 / 2 / 1 days), `webull:FEED_ENDED` — symbol `WEBULL`, on the
+  strip of every view, in the alert list, and as a toast for the two ENDED ones. The chip leads to MKT → STRUCTURE →
+  DEPTH (`structureModeRequestAtom`). A notice clears itself when the token is renewed or the date is moved. These
+  rows have no rule by design: `alerts/schema.py` exempts `webull:%` from the start-up orphan sweep, as it does `cal:%`
+  — a new ruleless alert source needs the same exemption or it vanishes at every reload.
 - Every refusal goes through `_refusal()` in `routers/webull.py`: a new Webull endpoint must use it, or an ended token
   comes back as a vague `WEBULL ERROR` with no button.

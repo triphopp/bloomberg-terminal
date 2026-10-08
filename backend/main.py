@@ -97,6 +97,7 @@ from alerts import scheduler as alert_scheduler
 import guard_scheduler
 import margin_scheduler
 import calendar_scheduler
+import webull_scheduler
 import iv_scheduler
 import series_scheduler
 
@@ -181,6 +182,9 @@ margin_scheduler.start_background_scan()
 
 # ── CALENDAR: a date that has come up → alert feed (backend/calendar_scheduler.py) ──
 calendar_scheduler.start_background_scan()
+
+# ── WEBULL: token / entitlement about to end → alert feed (backend/webull_scheduler.py) ──
+webull_scheduler.start_background_scan()
 
 # ── ATM IV snapshots: daily recorder (no-ops once the day is covered) ─────────
 # The provider exposes no IV history, so a day nobody records is a permanent hole

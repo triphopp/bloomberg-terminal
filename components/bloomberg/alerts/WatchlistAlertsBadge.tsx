@@ -23,6 +23,7 @@ import { ruleDisplayName, useAlertEvents } from "../hooks/useAlertRules";
 import type { bloombergColors } from "../lib/theme-config";
 import { calendarHeadline, describeCalendar, isCalendarEvent } from "./calendar-alert";
 import { alertLinkLabel, alertTargetOf, useOpenAlertTarget } from "./useOpenAlertTarget";
+import { describeWebull, isWebullEvent, webullHeadline } from "./webull-alert";
 
 const ALERT_CYAN = "#33DDFF";
 
@@ -133,11 +134,17 @@ export function WatchlistAlertsBadge({ colors }: { colors: typeof bloombergColor
                   <span className="opacity-60 truncate" style={{ color: colors.textSecondary }}>
                     {isCalendarEvent(e)
                       ? calendarHeadline(e)
-                      : ruleDisplayName(e.ruleName, e.symbol)}
+                      : isWebullEvent(e)
+                        ? webullHeadline(e)
+                        : ruleDisplayName(e.ruleName, e.symbol)}
                   </span>
                 </div>
                 <span className="opacity-50" style={{ color: colors.textSecondary }}>
-                  {isCalendarEvent(e) ? describeCalendar(e) : `bar ${e.barTime}`}
+                  {isCalendarEvent(e)
+                    ? describeCalendar(e)
+                    : isWebullEvent(e)
+                      ? describeWebull(e)
+                      : `bar ${e.barTime}`}
                 </span>
                 {(() => {
                   // TRADE GUARD / MARGIN: the page that handles it. CALENDAR:

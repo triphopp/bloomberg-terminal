@@ -86,11 +86,14 @@ def create_alert_tables(conn: sqlite3.Connection) -> None:
     # the alert strip at every restart — every save, under auto-reload — and
     # UNIQUE(rule_id, symbol, bar_time) keeps the next scan from writing it
     # again. calendar_scheduler clears a reminder itself once its day is over.
+    # The same holds for a WEBULL notice (rule_id "webull:<KIND>",
+    # webull_scheduler.py), which is cleared when the token or the date is renewed.
     conn.execute("""
         UPDATE alert_events
            SET acked = 1
          WHERE acked = 0
            AND rule_id NOT LIKE 'cal:%'
+           AND rule_id NOT LIKE 'webull:%'
            AND rule_id NOT IN (SELECT id FROM alert_rules)
     """)
 

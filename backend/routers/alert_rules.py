@@ -586,10 +586,13 @@ def run_scan(body: ScanRequest = ScanRequest()):
 
 def _guard_name(rule_id: str) -> str | None:
     """Display name for TRADE GUARD events (rule_id "guard:<CODE>"), MARGIN
-    events (rule_id "margin:<LEVEL>", margin_scheduler.py) and CALENDAR
-    reminders (rule_id "cal:<KIND>", calendar_scheduler.py)."""
+    events (rule_id "margin:<LEVEL>", margin_scheduler.py), CALENDAR
+    reminders (rule_id "cal:<KIND>", calendar_scheduler.py) and WEBULL notices
+    (rule_id "webull:<KIND>", webull_scheduler.py)."""
     if str(rule_id).startswith("cal:"):
         return f"CALENDAR · {str(rule_id).split(':', 1)[1]}"
+    if str(rule_id).startswith("webull:"):
+        return f"WEBULL · {str(rule_id).split(':', 1)[1].replace('_', ' ')}"
     if str(rule_id).startswith("margin:"):
         from margin_scheduler import LABELS
         level = str(rule_id).split(":", 1)[1]
@@ -611,6 +614,10 @@ def _ruleless_notify(rule_id: str, snapshot: dict) -> list[str]:
     if rid.startswith(("guard:", "margin:")):
         return ["ticker", "toast"]
     if rid.startswith("cal:") and snapshot.get("thesis_id"):
+        return ["ticker", "toast"]
+    # Something that has stopped working is said once aloud; a date coming up
+    # stays on the strip.
+    if rid in ("webull:TOKEN_ENDED", "webull:FEED_ENDED"):
         return ["ticker", "toast"]
     return ["ticker"]
 

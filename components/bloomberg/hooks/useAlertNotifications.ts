@@ -45,8 +45,10 @@ import {
   riskTargetOf,
   severityOf,
 } from "../alerts/guard-alert";
+import { useOpenDepth } from "../alerts/useOpenAlertTarget";
 import { useOpenRisk } from "../alerts/useOpenRisk";
 import { useOpenCalendarTarget } from "../alerts/useOpenTools";
+import { describeWebull, isWebullEvent, webullHeadline } from "../alerts/webull-alert";
 import { type AlertEvent, ruleDisplayName, useAlertEvents } from "./useAlertRules";
 
 const WATERMARK_KEY = "bt.alerts.lastAnnouncedEventId";
@@ -124,6 +126,7 @@ export function useAlertNotifications(): UseAlertNotificationsResult {
   const enqueueModal = useSetAtom(guardModalQueueAtom);
   const openRisk = useOpenRisk();
   const openCalendarTarget = useOpenCalendarTarget();
+  const openDepth = useOpenDepth();
 
   const announce = useCallback(
     (event: AlertEvent) => {
@@ -140,6 +143,13 @@ export function useAlertNotifications(): UseAlertNotificationsResult {
             style: { "--bb-toast-rule": SEVERITY_COLOR[severityOf(event)] } as CSSProperties,
             action: { label: `${riskLinkLabel(target)} →`, onClick: () => openRisk(target) },
           });
+        } else if (isWebullEvent(event)) {
+          // What ended, and the way to where it is put right.
+          toast(`${event.symbol} · ${webullHeadline(event)}`, {
+            description: describeWebull(event),
+            style: { "--bb-toast-rule": "#FF9800" } as CSSProperties,
+            action: { label: "OPEN DEPTH →", onClick: openDepth },
+          });
         } else {
           toast(`${event.symbol} · ${ruleDisplayName(event.ruleName, event.symbol)}`, {
             description: describe(event),
@@ -150,7 +160,7 @@ export function useAlertNotifications(): UseAlertNotificationsResult {
         playBeep();
       }
     },
-    [enqueueModal, openRisk]
+    [enqueueModal, openRisk, openDepth]
   );
 
   useEffect(() => {
