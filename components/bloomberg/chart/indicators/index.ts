@@ -79,6 +79,14 @@ export {
   createCompositeVPOverlay,
 } from "./volume-profile.ts";
 export { createZigZag, calcZigZag } from "./zigzag.ts";
+export {
+  createSdZones,
+  createSdZonesOverlay,
+  createSdTrapsOverlay,
+  calcSdZones,
+  scanSdZones,
+} from "./sd-zones.ts";
+export type { SdZone, SdZoneKind, SdPattern, SdTrap, SdScan } from "./sd-zones";
 export type { ZigZagPivot, ZigZagResult } from "./zigzag";
 export { createFootprintOverlay } from "./order-footprint.ts";
 export type { FootprintData, FootprintCandle, FootprintLevel } from "./order-footprint";
@@ -116,6 +124,7 @@ import {
   SD_SIGMA_BASIS_DEFAULT,
   createSdHeatmap,
 } from "./sd-heatmap.ts";
+import { SD_ZONE_PARAMS, createSdZones } from "./sd-zones.ts";
 import { createSMA } from "./sma.ts";
 import { createStochastic } from "./stochastic.ts";
 import { createVolume } from "./volume.ts";
@@ -188,6 +197,18 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     ],
     // No timeScalableParams: deviation is a percentage, not a bar count.
     factory: createZigZag,
+  },
+  {
+    id: "sd-zones",
+    name: "S/D Zones",
+    category: "trend",
+    type: "overlay",
+    description:
+      "Supply/demand boxes — swing turns (darker per reaction, flips on a break) or base + departure; marks bull traps",
+    defaultParams: SD_ZONE_PARAMS,
+    // baseMax / legBars count bars but describe a pattern's shape, not a
+    // lookback window — a 6-bar base is a 6-bar base on any interval.
+    factory: createSdZones,
   },
 
   // ─── Momentum ───

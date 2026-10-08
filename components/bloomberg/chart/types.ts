@@ -75,7 +75,8 @@ export interface ChartColors {
 export interface IndicatorParam {
   key: string;
   label: string;
-  type: "number" | "boolean" | "select";
+  /** "color" = a #rrggbb string, edited with a colour picker. */
+  type: "number" | "boolean" | "select" | "color";
   default: number | boolean | string;
   min?: number;
   max?: number;
@@ -422,6 +423,14 @@ export interface CanvasOverlay {
    * paint the pane itself rather than read from it, such as the grid mask.
    */
   zOrder?: "bottom" | "top";
+  /**
+   * Candles this overlay marks: bar index → colour of the candle's BORDER
+   * (chart/bar-borders.ts). The body and wick keep their up/down colour — that
+   * is what the bar says about price, and a mark must not overwrite it. Asked
+   * whenever bars are pushed to the candle series. Answer from closed bars
+   * only, so a tick never repaints a bar.
+   */
+  barBorders?(data: OhlcvBar[]): ReadonlyMap<number, string> | null;
   /** Called each frame / range-change to draw on the overlay canvas */
   draw(
     ctx: CanvasRenderingContext2D,
