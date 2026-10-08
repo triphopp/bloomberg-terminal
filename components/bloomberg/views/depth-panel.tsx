@@ -11,12 +11,14 @@
  */
 
 import { Loader2 } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, memo } from "react";
 import type { useDepth } from "../hooks/useDepth";
 import { DEPTH_CHOICES, type DepthLadder, type DepthRow } from "../lib/depth-book";
 import { fmtPriceStd, numberFormat } from "../lib/number-format";
-import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
+import { SCROLLBAR_THIN } from "../lib/style-constants";
 import type { bloombergColors } from "../lib/theme-config";
+import type { TapeTotals, Trade } from "../lib/trade-tape";
+import type { ProfileRow, VolumeProfile } from "../lib/volume-by-price";
 
 export interface DepthPanelProps {
   model: ReturnType<typeof useDepth>;
@@ -117,92 +119,222 @@ function Side({
 
 /**
  * One level is a quote, not a book: drawn as a table it is a single row that
- * reads as a thin market. So Level 1 gets the quote laid out large — the two
- * prices, what rests at each, the gap between them, and which side is heavier.
+ * reads as a thin market. So Level 1 is one line — size × bid | offer × size —
+ * over a hairline showing which side is heavier, and the room goes to what
+ * moves: the tape and the volume by price. Spread is in the strip above.
  */
-function TopOfBook({
-  ladder,
-  quoteTime,
-  colors,
-  compact,
-}: {
-  ladder: DepthLadder;
-  quoteTime: string | null;
-  colors: DepthPanelProps["colors"];
-  compact: boolean;
-}) {
+function TopOfBook({ ladder, compact }: { ladder: DepthLadder; compact: boolean }) {
   const bid = ladder.rows[0]?.bid ?? null;
   const ask = ladder.rows[0]?.ask ?? null;
   const total = ladder.bidSize + ladder.askSize;
   const bidShare = total > 0 ? ladder.bidSize / total : 0.5;
-  const label = `${compact ? "text-[7px]" : "text-[11px]"} font-mono font-bold tracking-widest`;
-  const price = `${compact ? "text-[20px] leading-6" : "text-[56px] leading-[60px]"} font-mono font-bold tabular-nums`;
-  const size = `${compact ? "text-[9px]" : "text-[18px]"} font-mono tabular-nums`;
-  const small = `${compact ? "text-[7px]" : "text-[12px]"} font-mono tabular-nums`;
-  const quote = (side: "bid" | "ask", level: typeof bid) => (
-    <div className={`flex flex-1 min-w-0 flex-col ${side === "bid" ? "items-end" : "items-start"}`}>
-      <span className={label} style={{ color: "#8a8a8a" }}>
-        {side === "bid" ? "BID" : "ASK"}
-      </span>
-      <span
-        className={`${price} truncate max-w-full`}
-        style={{ color: side === "bid" ? BID : ASK }}
-      >
-        {level ? fmtPriceStd(level.price) : "—"}
-      </span>
-      <span className={size} style={{ color: "#e6e6e6" }}>
-        {level ? `× ${fmtSize(level.size)}` : ""}
-      </span>
-    </div>
-  );
+  const price = `${compact ? "text-[13px] leading-[18px]" : "text-[26px] leading-9"} font-mono font-bold tabular-nums`;
+  const size = `${compact ? "text-[8px]" : "text-[13px]"} font-mono tabular-nums`;
   return (
-    <div
-      className={`flex flex-1 min-h-0 flex-col justify-center ${compact ? "gap-2 px-2" : "gap-6 px-10"}`}
-    >
-      <div className={`flex items-start ${compact ? "gap-3" : "gap-10"}`}>
-        {quote("bid", bid)}
-        {quote("ask", ask)}
-      </div>
-
-      <div className={`flex justify-center ${compact ? "gap-3" : "gap-8"} ${small}`}>
-        <span style={{ color: colors.textSecondary }}>
-          SPREAD{" "}
-          <span style={{ color: "#e6e6e6" }}>
-            {ladder.spread != null ? fmtPriceStd(ladder.spread) : "—"}
-          </span>
-          {ladder.spreadBps != null && ` · ${ladder.spreadBps.toFixed(1)}bp`}
+    <div className="shrink-0">
+      <div className={`flex items-baseline ${compact ? "gap-1.5 px-1" : "gap-3 px-3"}`}>
+        <span className={`${size} flex-1 text-right`} style={{ color: "#e6e6e6" }}>
+          {bid ? fmtSize(bid.size) : ""}
         </span>
-        <span style={{ color: colors.textSecondary }}>
-          MID{" "}
-          <span style={{ color: "#e6e6e6" }}>
-            {ladder.mid != null ? numberFormat(2, 4).format(ladder.mid) : "—"}
-          </span>
+        <span className={price} style={{ color: BID }}>
+          {bid ? fmtPriceStd(bid.price) : "—"}
+        </span>
+        <span className={price} style={{ color: ASK }}>
+          {ask ? fmtPriceStd(ask.price) : "—"}
+        </span>
+        <span className={`${size} flex-1`} style={{ color: "#e6e6e6" }}>
+          {ask ? fmtSize(ask.size) : ""}
         </span>
       </div>
-
       {/* Which side is heavier at the touch — size only, one level, so a hint and no more. */}
-      <div className="flex flex-col gap-0.5">
-        <div
-          className={`flex w-full overflow-hidden ${compact ? "h-1.5" : "h-3"}`}
-          title="Bid size against offer size at the best prices"
-          style={{ background: "#1a1a1a" }}
-        >
-          <div style={{ width: `${bidShare * 100}%`, background: BID }} />
-          <div style={{ flex: 1, background: ASK }} />
-        </div>
-        <div className={`flex justify-between ${small}`}>
-          <span style={{ color: BID }}>{total > 0 ? `${(bidShare * 100).toFixed(0)}%` : ""}</span>
-          <span style={{ color: colors.textSecondary }}>
-            {quoteTime ? new Date(quoteTime).toLocaleTimeString("en-GB", { hour12: false }) : "—"}
-          </span>
-          <span style={{ color: ASK }}>
-            {total > 0 ? `${((1 - bidShare) * 100).toFixed(0)}%` : ""}
-          </span>
-        </div>
+      <div
+        className={`flex w-full ${compact ? "h-[2px]" : "h-1"}`}
+        title={`Bid size ${total > 0 ? Math.round(bidShare * 100) : 50}% · offer size ${total > 0 ? Math.round((1 - bidShare) * 100) : 50}% at the best prices`}
+        style={{ background: "#1a1a1a" }}
+      >
+        <div style={{ width: `${bidShare * 100}%`, background: BID }} />
+        <div style={{ flex: 1, background: ASK }} />
       </div>
     </div>
   );
 }
+
+const SIDE_COLOR = { B: BID, S: ASK, N: "#8a8a8a" } as const;
+const clock = (ms: number) => new Date(ms).toLocaleTimeString("en-GB", { hour12: false });
+// A print can be inside the spread, at a fraction of a cent.
+const fmtPrint = (n: number) => numberFormat(2, 4).format(n);
+
+/**
+ * Time and sales under the book: what actually traded, newest first, coloured
+ * by who crossed the spread. The totals are over the prints held — a minute or
+ * two — and say so; they are not the day's.
+ */
+// Rows drawn. The tape holds more (the totals are over all of it), but a panel
+// shows 40-odd and every row drawn is five elements kept alive.
+const TAPE_DRAWN = 120;
+
+/** One print. Memoised and keyed by the print's id: a new print adds one row
+ *  at the top and drops one at the bottom — nothing in between is touched. */
+const TapeRow = memo(function TapeRow({ trade, row }: { trade: Trade; row: string }) {
+  return (
+    <div className={`flex ${row}`} style={{ color: SIDE_COLOR[trade.side] }}>
+      <span className="w-[30%]" style={{ color: "#8a8a8a" }}>
+        {clock(trade.t)}
+      </span>
+      <span className="w-[32%] text-right font-bold">{fmtPrint(trade.price)}</span>
+      <span className="flex-1 text-right">{fmtSize(trade.size)}</span>
+      <span className="w-[10%] text-right">{trade.side === "N" ? "" : trade.side}</span>
+    </div>
+  );
+});
+
+// Memoised: the book changes three times a second, the tape only when somebody trades.
+const Tape = memo(function Tape({
+  trades,
+  totals,
+  colors,
+  compact,
+}: {
+  trades: Trade[];
+  totals: TapeTotals;
+  colors: DepthPanelProps["colors"];
+  compact: boolean;
+}) {
+  const row = `${compact ? "px-1 text-[8px] leading-[13px]" : "px-3 text-[12px] leading-5"} font-mono tabular-nums`;
+  const head = `${compact ? "px-1 text-[6px] leading-3" : "px-3 text-[9px] leading-5"} font-mono font-bold tracking-wide`;
+  const decided = totals.buy + totals.sell;
+  return (
+    <div className="flex min-h-0 min-w-0 flex-col" style={{ flex: "3 1 0" }}>
+      <div
+        className={`flex items-center gap-2 shrink-0 ${head}`}
+        style={{ background: "#0c0c0c", color: "#8a8a8a" }}
+      >
+        <span>TIME &amp; SALES</span>
+        {totals.count > 0 && (
+          <span
+            className="ml-auto font-normal"
+            title={`Buyer-initiated minus seller-initiated volume over the ${totals.count} prints held${totals.since ? `, since ${clock(totals.since)}` : ""}. Not the day's total. Nasdaq prints only.`}
+          >
+            <span style={{ color: BID }}>B {fmtSize(totals.buy)}</span>
+            {" · "}
+            <span style={{ color: ASK }}>S {fmtSize(totals.sell)}</span>
+            {decided > 0 && (
+              <span
+                style={{
+                  color: totals.delta > 0 ? BID : totals.delta < 0 ? ASK : colors.textSecondary,
+                }}
+              >
+                {" · Δ "}
+                {totals.delta > 0 ? "+" : ""}
+                {fmtSize(totals.delta)}
+              </span>
+            )}
+          </span>
+        )}
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto" style={SCROLLBAR_THIN}>
+        {trades.length === 0 ? (
+          <div className={row} style={{ color: colors.textSecondary }}>
+            No prints yet.
+          </div>
+        ) : (
+          trades
+            .slice(0, TAPE_DRAWN)
+            .map((t, i) => <TapeRow key={t.id ?? `${t.t}-${i}`} trade={t} row={row} />)
+        )}
+      </div>
+    </div>
+  );
+});
+
+const PROFILE = "#00A0C8";
+
+/**
+ * Volume by price beside the tape: how much traded at each price since the
+ * panel was opened on this symbol — every print, whatever its side. The widest
+ * bar is the price the market spent most volume at (POC); the brighter rows
+ * hold 70% of it (value area); ◄ is where the mid is now.
+ */
+// Memoised: it changes when a pull lands (every 15 s) or the mid crosses a row.
+const VolumeByPrice = memo(function VolumeByPrice({
+  rows,
+  profile,
+  mid,
+  colors,
+  compact,
+}: {
+  rows: ProfileRow[];
+  profile: VolumeProfile;
+  mid: number | null;
+  colors: DepthPanelProps["colors"];
+  compact: boolean;
+}) {
+  const row = `${compact ? "px-1 text-[8px] leading-[13px]" : "px-3 text-[12px] leading-5"} font-mono tabular-nums`;
+  const head = `${compact ? "px-1 text-[6px] leading-3" : "px-3 text-[9px] leading-5"} font-mono font-bold tracking-wide`;
+  const step = rows.length > 1 ? rows[0].price - rows[1].price : 0.01;
+  return (
+    <div
+      className="flex min-h-0 min-w-0 flex-col"
+      style={{ flex: "2 1 0", borderLeft: `1px solid ${colors.border}` }}
+    >
+      <div
+        className={`flex items-center gap-2 shrink-0 ${head}`}
+        style={{ background: "#0c0c0c", color: "#8a8a8a" }}
+        title={`Volume traded at each price, from ${profile.prints} prints${profile.from ? ` since ${clock(profile.from)}` : ""} — since this panel was opened on the symbol, not the whole day. Nasdaq prints only. Rows are ${fmtPrint(step)} wide.`}
+      >
+        <span>VOL BY PRICE</span>
+        <span className="ml-auto font-normal">
+          {profile.from ? `${clock(profile.from).slice(0, 5)}→ ` : ""}
+          {fmtSize(profile.total)}
+        </span>
+        {profile.gaps > 0 && (
+          <span
+            className="font-normal"
+            title={`${profile.gaps} stretch(es) of trading were not seen (the panel was hidden, or more than 1000 prints came between two pulls). Volume there is missing from the bars.`}
+            style={{ color: ACCENT }}
+          >
+            GAP ×{profile.gaps}
+          </span>
+        )}
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto" style={SCROLLBAR_THIN}>
+        {rows.length === 0 ? (
+          <div className={row} style={{ color: colors.textSecondary }}>
+            Collecting…
+          </div>
+        ) : (
+          rows.map((r) => {
+            const here = mid != null && mid >= r.price && mid < r.price + step;
+            return (
+              <div key={r.price} className={`relative flex ${row}`}>
+                <div
+                  className="absolute inset-y-px left-0"
+                  style={{
+                    width: `${r.bar * 100}%`,
+                    background: r.poc ? ACCENT : PROFILE,
+                    opacity: r.poc ? 0.55 : r.value ? 0.4 : 0.18,
+                  }}
+                />
+                <span
+                  className="relative w-[46%] font-bold"
+                  style={{ color: r.poc ? ACCENT : r.value ? "#e6e6e6" : "#8a8a8a" }}
+                >
+                  {fmtPrint(r.price)}
+                </span>
+                <span className="relative flex-1 text-right" style={{ color: "#e6e6e6" }}>
+                  {r.volume ? fmtSize(r.volume) : ""}
+                </span>
+                <span className="relative w-[9%] text-right" style={{ color: "#e6e6e6" }}>
+                  {here ? "◄" : ""}
+                </span>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+});
 
 export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) {
   const { symbol, supported, status, book, ladder, error } = model;
@@ -216,9 +348,6 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
     </Notice>
   );
   const env = status?.environment === "test" ? " · TEST HOST" : "";
-  // Webull gave fewer levels than were asked for, and only one: the Level 1 feed.
-  const levelOne = !error && !!book && book.levels <= 1 && book.depth_requested > 1;
-
   let body: ReactNode;
   if (!symbol) body = notice("NO SYMBOL", "Pick a symbol on the MKT chart.");
   else if (!supported)
@@ -321,7 +450,7 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
           <span className="font-bold" style={{ color: "#e6e6e6" }}>
             {book.symbol}
           </span>
-          {ladder.spread != null && book.levels > 1 && (
+          {ladder.spread != null && (
             <span title="Best offer − best bid, and that as basis points of the mid">
               SPR {fmtPriceStd(ladder.spread)}
               {ladder.spreadBps != null && ` · ${ladder.spreadBps.toFixed(1)}bp`}
@@ -348,15 +477,20 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
             {book.overnight ? " · OVN" : ""}
             {env}
           </span>
+          <span
+            title={
+              model.live
+                ? "Pushed by Webull as the book changes (up to 3 times a second)"
+                : "Asked for every 2 seconds — the live stream is not connected"
+            }
+            style={{ color: model.live ? BID : colors.textSecondary }}
+          >
+            {model.live ? "● LIVE" : "○ 2s"}
+          </span>
         </div>
 
         {book.levels <= 1 ? (
-          <TopOfBook
-            ladder={ladder}
-            quoteTime={book.quote_time}
-            colors={colors}
-            compact={compact}
-          />
+          <TopOfBook ladder={ladder} compact={compact} />
         ) : (
           <>
             <div className="flex shrink-0" style={{ background: "#0c0c0c", color: "#8a8a8a" }}>
@@ -372,7 +506,7 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
               </div>
             </div>
 
-            <div className={`flex-1 min-h-0 overflow-y-auto ${SCROLLBAR_THIN_LIGHTER}`}>
+            <div className="flex-1 min-h-0 overflow-y-auto" style={SCROLLBAR_THIN}>
               {ladder.rows.map((row, i) => (
                 <div
                   // biome-ignore lint/suspicious/noArrayIndexKey: a ladder row is its rank, prices move through it
@@ -400,6 +534,16 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
             </div>
           </>
         )}
+        <div className="flex flex-1 min-h-0" style={{ borderTop: `1px solid ${colors.border}` }}>
+          <Tape trades={model.trades} totals={model.totals} colors={colors} compact={compact} />
+          <VolumeByPrice
+            rows={model.profileLevels}
+            profile={model.profile}
+            mid={ladder.mid}
+            colors={colors}
+            compact={compact}
+          />
+        </div>
       </div>
     );
   }
