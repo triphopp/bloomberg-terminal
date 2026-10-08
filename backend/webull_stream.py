@@ -299,8 +299,9 @@ class DepthHub:
                     self._refused[symbol] = {"message": f"Webull stream {r.status_code}: {reason}",
                                              "code": code, "at": time.time()}
             if r.status_code == 401:
-                wb.mark_token("INVALID")
-                raise wb.WebullError(409, "Webull refused the access token — request a new one", "token_missing")
+                wb.mark_token("INVALID", reason)
+                raise wb.WebullError(409, "The Webull access token is no longer accepted (a token lasts "
+                                          "15 days) — request a new one", "token_missing")
         return not want and not self._want and idle_for > IDLE_S
 
     @staticmethod

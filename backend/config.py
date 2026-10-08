@@ -361,6 +361,10 @@ WEBULL_API_HOST = (os.getenv("WEBULL_API_HOST", "").strip().removeprefix("https:
                    or "api.webull.co.th")
 # Live book (MQTT in TLS, port 1883). Empty = the stream host that goes with the API host.
 WEBULL_STREAM_HOST = os.getenv("WEBULL_STREAM_HOST", "").strip()
+# The day the market-data entitlement ends (YYYY-MM-DD), copied by hand from the
+# Webull website → Advanced Quotes: the API does not say, so without this the
+# feed would simply stop one day. The DEPTH panel counts down to it.
+WEBULL_SUBSCRIPTION_ENDS = os.getenv("WEBULL_SUBSCRIPTION_ENDS", "").strip()
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 
 BOT_API_TOKEN   = os.getenv("BOT_API_TOKEN", "")     # Bond Auction
