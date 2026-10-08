@@ -597,6 +597,22 @@ export function IndicatorPicker({
                                         </option>
                                       ))}
                                     </select>
+                                  ) : p.type === "color" ? (
+                                    <span className="flex items-center gap-1">
+                                      <span
+                                        className="text-[9px] font-mono opacity-60"
+                                        aria-hidden="true"
+                                      >
+                                        {String(params[p.key] ?? p.default)}
+                                      </span>
+                                      <input
+                                        id={controlId}
+                                        type="color"
+                                        value={String(params[p.key] ?? p.default)}
+                                        onChange={(e) => setParam(entry.id, p.key, e.target.value)}
+                                        className="h-4 w-6 cursor-pointer border-0 bg-transparent p-0"
+                                      />
+                                    </span>
                                   ) : (
                                     <input
                                       id={controlId}

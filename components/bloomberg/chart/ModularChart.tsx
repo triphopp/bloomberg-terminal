@@ -43,6 +43,7 @@ import {
   captureVisibleRange,
   watchLogicalRange,
 } from "../chartkit/adapters/lightweight-charts";
+import { outlineBars } from "./bar-borders";
 import { createEventRailOverlay } from "./event-rail-overlay";
 import { placeEvents } from "./event-reaction";
 import { createHeatmapOverlay } from "./heatmap-overlay";
@@ -527,8 +528,9 @@ export function ModularChart({
         : {}),
       autoscaleInfoProvider: referenceAutoscale,
     });
+    // Outlined on the way in: an overlay may mark bars (S/D traps).
     // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
-    setSeriesData(candleSeries, data as any[]);
+    setSeriesData(candleSeries, outlineBars(data, overlays) as any[]);
     mainSeriesRef.current = candleSeries;
     const initialReference = referencePriceLineRef.current;
     if (initialReference && Number.isFinite(initialReference.price) && initialReference.price > 0) {
@@ -542,7 +544,7 @@ export function ModularChart({
     }
     refills.push((bars) => {
       // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
-      setSeriesData(candleSeries, bars as any[]);
+      setSeriesData(candleSeries, outlineBars(bars, overlays) as any[]);
       return true;
     });
 

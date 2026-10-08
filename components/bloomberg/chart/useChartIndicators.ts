@@ -30,7 +30,13 @@ import { useFootprintData } from "../hooks/useFootprintData";
 import type { ChartClickContext, ChartHoverPoint } from "./ModularChart";
 import type { PeStats } from "./PEPane";
 import { createBbVolumeOverlay } from "./bb-volume-overlay";
-import { INDICATOR_REGISTRY, createCompositeVPOverlay, createSessionVPOverlay } from "./indicators";
+import {
+  INDICATOR_REGISTRY,
+  createCompositeVPOverlay,
+  createSdTrapsOverlay,
+  createSdZonesOverlay,
+  createSessionVPOverlay,
+} from "./indicators";
 import { createFootprintOverlay } from "./indicators/order-footprint";
 import {
   DEFAULT_REGRESSION_OPTIONS,
@@ -506,12 +512,19 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     [indicators]
   );
 
+  // S/D zones: the picker entry carries the settings, the boxes are an overlay.
+  const sdZonesConfig = useMemo(
+    () => indicators.find((ind) => ind.id === "sdz")?.config ?? null,
+    [indicators]
+  );
+
   const overlays: CanvasOverlay[] = useMemo(() => {
     const result: CanvasOverlay[] = [];
     // First, so VP strips, channels and chips all paint over it.
     if (bbVolumeConfig && chartType === "candle") {
       result.push(createBbVolumeOverlay(bbVolumeConfig));
     }
+    if (sdZonesConfig) result.push(createSdZonesOverlay(sdZonesConfig));
     if (showVolumeProfile) {
       result.push(createSessionVPOverlay(intradayData, vpConfig));
       result.push(createCompositeVPOverlay(vpConfig, intradayData));
@@ -519,6 +532,9 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     if (showFootprint && footprintQuery.data) {
       result.push(createFootprintOverlay(footprintQuery.data));
     }
+    // The other half of S/D zones: trap candles + labels, over the candles.
+    const sdTraps = sdZonesConfig ? createSdTrapsOverlay(sdZonesConfig) : null;
+    if (sdTraps) result.push(sdTraps);
     // Last, so the chips paint over the VP strip and the channel rather than
     // under them — a label hidden behind an overlay is worse than no label.
     if (showVolumeEvents) {
@@ -527,6 +543,7 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     return result;
   }, [
     bbVolumeConfig,
+    sdZonesConfig,
     chartType,
     showVolumeProfile,
     intradayData,
