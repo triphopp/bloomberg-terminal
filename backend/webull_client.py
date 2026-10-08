@@ -9,9 +9,15 @@ Three things identify a request, and they are not the same thing:
 The token is not issued on the website. `create_token()` asks for one; in
 production it comes back PENDING and Webull texts a code to the phone bound to
 the account, which the owner enters in the Webull app within 5 minutes
-(Menu → Messages → OpenAPI Notifications). It then reads NORMAL and is reused
-until 15 days pass without a call. The test host hands out NORMAL tokens with
-no verification.
+(Menu → Messages → OpenAPI Notifications). It then reads NORMAL and is reused.
+The test host hands out NORMAL tokens with no verification.
+
+A token ends. Its `expires_at` is 15 days after it was made and did not move
+with use (checked 2026-10-08 after 80 minutes of calls), so about every two
+weeks the owner confirms a new one. Nothing here lets that pass quietly:
+`active_token()` stops sending a token past its date, a refusal from Webull
+(401 INVALID_TOKEN on every endpoint) is written down by `mark_token()` and
+logged, and `public_token()` says how long is left so the panel can warn first.
 
 Signature (docs: authentication/signature; the SDK's
 default_signature_composer.py is the reference — the per-endpoint samples in
@@ -31,6 +37,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import threading
 import time
@@ -43,6 +50,9 @@ import requests
 
 import ask_sessions
 import config
+import upstream_health
+
+logger = logging.getLogger(__name__)
 
 ALGORITHM = "HMAC-SHA256"
 SIGN_VERSION = "1.0"
@@ -200,11 +210,22 @@ def _save_token(data: dict) -> dict:
     return record
 
 
+def expires_in(record: dict | None) -> float | None:
+    """Seconds until the token's own expiry date; None when it carries none."""
+    at = (record or {}).get("expires_at")
+    try:
+        return float(at) / 1000 - time.time() if at else None
+    except (TypeError, ValueError):
+        return None
+
+
 def public_token(record: dict | None) -> dict | None:
     """What may leave this process: never the token itself."""
     if not record:
         return None
+    left = expires_in(record)
     return {"status": record.get("status"), "expires_at": record.get("expires_at"),
+            "expires_in_s": round(left) if left is not None else None,
             "checked_at": record.get("checked_at")}
 
 
@@ -254,17 +275,47 @@ def active_token() -> str:
             with _lock:
                 record = _save_token(record)
     status = (record or {}).get("status")
+    left = expires_in(record)
+    if status == "NORMAL" and left is not None and left <= 0:
+        mark_token("EXPIRED", "past its expiry date")      # do not send a token known to be dead
+        status = "EXPIRED"
     if status == "NORMAL":
         return record["token"]
     if status == "PENDING":
         raise WebullError(409, "Token awaiting verification — open the Webull app → Menu → Messages → "
                                "OpenAPI Notifications and enter the SMS code (5 minutes)", "token_pending")
+    if status in ("EXPIRED", "INVALID"):
+        raise WebullError(409, "The Webull access token has expired (a token lasts 15 days) — request a "
+                               "new one and confirm the SMS code in the Webull app", "token_missing")
     raise WebullError(409, "No active Webull access token — request one", "token_missing")
 
 
-def mark_token(status: str) -> None:
-    """The server refused the token: remember that, so the panel asks for a new one."""
+def refresh_token_status(max_age_s: float = 6 * 3600) -> dict | None:
+    """Re-read a working token's status from Webull when what is stored is old —
+    so a token ended on Webull's side is known before a panel trips over it.
+    Never raises, never requests a token."""
+    record = load_token()
+    if (not record or record.get("status") != "NORMAL"
+            or time.time() - (record.get("checked_at") or 0) < max_age_s):
+        return record
+    try:
+        fresh = check_token()
+    except WebullError:
+        with _lock:
+            return _save_token(record)                     # asked: wait a full interval
+    if fresh and fresh.get("status") != "NORMAL":
+        logger.warning("webull access token is %s on Webull's side", fresh.get("status"))
+        upstream_health.record(host(), "auth", target="token")
+    return fresh
+
+
+def mark_token(status: str, why: str = "refused by Webull") -> None:
+    """The token is dead: remember that, so the panel asks for a new one — and
+    write it where problems are looked for (backend log, logs/upstream.jsonl)."""
     with _lock:
         old = load_token()
-        if old:
-            _save_token({**old, "status": status})
+        if not old or old.get("status") == status:
+            return
+        _save_token({**old, "status": status})
+    logger.warning("webull access token marked %s: %s", status, why)
+    upstream_health.record(host(), "auth", target="token")

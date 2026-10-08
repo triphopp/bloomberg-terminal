@@ -192,11 +192,13 @@ const TapeRow = memo(function TapeRow({ trade, row }: { trade: Trade; row: strin
 const Tape = memo(function Tape({
   trades,
   totals,
+  error,
   colors,
   compact,
 }: {
   trades: Trade[];
   totals: TapeTotals;
+  error: string | null;
   colors: DepthPanelProps["colors"];
   compact: boolean;
 }) {
@@ -234,8 +236,11 @@ const Tape = memo(function Tape({
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto" style={SCROLLBAR_THIN}>
         {trades.length === 0 ? (
-          <div className={row} style={{ color: colors.textSecondary }}>
-            No prints yet.
+          <div
+            className={row}
+            style={{ color: error ? ASK : colors.textSecondary, whiteSpace: "normal" }}
+          >
+            {error ?? "No prints yet."}
           </div>
         ) : (
           trades
@@ -260,9 +265,11 @@ const VolumeByPrice = memo(function VolumeByPrice({
   rows,
   profile,
   mid,
+  error,
   colors,
   compact,
 }: {
+  error: string | null;
   rows: ProfileRow[];
   profile: VolumeProfile;
   mid: number | null;
@@ -287,6 +294,11 @@ const VolumeByPrice = memo(function VolumeByPrice({
           {profile.from ? `${clock(profile.from).slice(0, 5)}→ ` : ""}
           {fmtSize(profile.total)}
         </span>
+        {error && rows.length > 0 && (
+          <span className="font-normal" title={`Not updating: ${error}`} style={{ color: ASK }}>
+            ⚠ STOPPED
+          </span>
+        )}
         {profile.gaps > 0 && (
           <span
             className="font-normal"
@@ -299,8 +311,11 @@ const VolumeByPrice = memo(function VolumeByPrice({
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto" style={SCROLLBAR_THIN}>
         {rows.length === 0 ? (
-          <div className={row} style={{ color: colors.textSecondary }}>
-            Collecting…
+          <div
+            className={row}
+            style={{ color: error ? ASK : colors.textSecondary, whiteSpace: "normal" }}
+          >
+            {error ?? "Collecting…"}
           </div>
         ) : (
           rows.map((r) => {
@@ -348,6 +363,39 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
     </Notice>
   );
   const env = status?.environment === "test" ? " · TEST HOST" : "";
+  // What is about to end, said before it does: the token every 15 days, the
+  // entitlement on the date written in backend/.env.
+  const warnings: { text: string; title: string; urgent: boolean }[] = [];
+  const left = model.tokenLeftS;
+  if (left != null && left < 3 * 86_400)
+    warnings.push({
+      text: `TOKEN ENDS IN ${
+        left < 3_600
+          ? `${Math.max(0, Math.round(left / 60))}m`
+          : left < 86_400
+            ? `${Math.floor(left / 3_600)}h`
+            : `${Math.floor(left / 86_400)}d ${Math.floor((left % 86_400) / 3_600)}h`
+      }`,
+      title:
+        "A Webull access token lasts 15 days and cannot be renewed early. When it ends this panel will ask for a new one: Webull texts a code, to be entered in the Webull app within 5 minutes.",
+      urgent: left < 86_400,
+    });
+  const feed = model.feed;
+  if (feed?.error)
+    warnings.push({
+      text: "FEED END DATE ?",
+      title: `${feed.error} (backend/.env)`,
+      urgent: false,
+    });
+  else if (feed?.days_left != null && feed.days_left <= 14)
+    warnings.push({
+      text: feed.days_left > 0 ? `FEED ENDS IN ${feed.days_left}d` : "FEED END DATE PASSED",
+      title: `The market-data entitlement ends on ${feed.ends} (WEBULL_SUBSCRIPTION_ENDS in backend/.env — the API does not say). Renew on the Webull website → avatar → Advanced Quotes → OpenAPI, then update the date.`,
+      urgent: feed.days_left <= 3,
+    });
+  // Webull gave fewer levels than were asked for, and only one: the Level 1 feed.
+  const levelOne = !error && !!book && book.levels <= 1 && book.depth_requested > 1;
+
   let body: ReactNode;
   if (!symbol) body = notice("NO SYMBOL", "Pick a symbol on the MKT chart.");
   else if (!supported)
@@ -376,7 +424,11 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
     const busy = model.requestToken.isPending || model.checkToken.isPending;
     const failed = model.requestToken.error ?? model.checkToken.error;
     body = notice(
-      pending ? "WAITING FOR YOU IN THE WEBULL APP" : "NO ACCESS TOKEN",
+      pending
+        ? "WAITING FOR YOU IN THE WEBULL APP"
+        : status.token?.status === "EXPIRED" || status.token?.status === "INVALID"
+          ? "ACCESS TOKEN EXPIRED"
+          : "NO ACCESS TOKEN",
       <>
         {pending ? (
           <span>
@@ -385,7 +437,9 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
           </span>
         ) : (
           <span>
-            Webull wants the account owner to approve this app once.
+            {status.token?.status === "EXPIRED" || status.token?.status === "INVALID"
+              ? "A Webull access token lasts 15 days; this one has ended."
+              : "Webull wants the account owner to approve this app once."}
             {status.environment === "production"
               ? " Requesting a token sends an SMS code to the phone on the account, to be entered in the Webull app within 5 minutes."
               : " The test host approves at once — no SMS."}
@@ -439,6 +493,7 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
     );
   else {
     const showCount = book.has_counts;
+    const quoteAge = book.quote_time ? Date.now() - new Date(book.quote_time).getTime() : 0;
     const lean = ladder.imbalance;
     body = (
       <div className="flex flex-col h-full min-h-0">
@@ -481,12 +536,22 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
             title={
               model.live
                 ? "Pushed by Webull as the book changes (up to 3 times a second)"
-                : "Asked for every 2 seconds — the live stream is not connected"
+                : model.streamError
+                  ? `Live stream failed: ${model.streamError} — showing the 2-second request instead`
+                  : "Asked for every 2 seconds — the live stream has nothing to send (market closed?) or is connecting"
             }
-            style={{ color: model.live ? BID : colors.textSecondary }}
+            style={{ color: model.live ? BID : model.streamError ? ACCENT : colors.textSecondary }}
           >
-            {model.live ? "● LIVE" : "○ 2s"}
+            {model.live ? "● LIVE" : model.streamError ? "⚠ 2s" : "○ 2s"}
           </span>
+          {quoteAge > 60_000 && (
+            <span
+              title="The newest quote Webull has for this session. Nothing has changed since — the market is closed, or halted."
+              style={{ color: ACCENT }}
+            >
+              AS OF {new Date(book.quote_time ?? 0).toLocaleTimeString("en-GB", { hour12: false })}
+            </span>
+          )}
         </div>
 
         {book.levels <= 1 ? (
@@ -535,11 +600,18 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
           </>
         )}
         <div className="flex flex-1 min-h-0" style={{ borderTop: `1px solid ${colors.border}` }}>
-          <Tape trades={model.trades} totals={model.totals} colors={colors} compact={compact} />
+          <Tape
+            trades={model.trades}
+            totals={model.totals}
+            error={model.tapeError}
+            colors={colors}
+            compact={compact}
+          />
           <VolumeByPrice
             rows={model.profileLevels}
             profile={model.profile}
             mid={ladder.mid}
+            error={model.tapeError}
             colors={colors}
             compact={compact}
           />
@@ -585,10 +657,21 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
             </button>
           ))
         )}
+        {warnings.length > 0 && (
+          <span
+            className={`${compact ? "text-[6px]" : "text-[9px]"} font-mono font-bold ml-auto flex gap-2`}
+          >
+            {warnings.map((w) => (
+              <span key={w.text} title={w.title} style={{ color: w.urgent ? ASK : ACCENT }}>
+                {w.text}
+              </span>
+            ))}
+          </span>
+        )}
         <button
           aria-pressed={model.overnight}
           type="button"
-          className={`${button} ml-auto`}
+          className={`${button} ${warnings.length ? "ml-2" : "ml-auto"}`}
           title="Include the overnight session (20:00–04:00 ET). Its depth is a separate OpenAPI subscription."
           style={{ color: model.overnight ? ACCENT : colors.textSecondary }}
           onClick={() => model.setOvernight(!model.overnight)}

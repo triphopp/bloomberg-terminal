@@ -32,7 +32,7 @@ refusals 20 s — "no subscription" does not change between two polls.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import asyncio
 import json
@@ -124,6 +124,40 @@ def _shape(symbol: str, data, asked: int, category: str, overnight: bool,
     }
 
 
+def _refusal(r) -> tuple[int, str, str]:
+    """Webull said no → (status to answer with, what to tell the user, code).
+    One place, so every endpoint names an ended token or a lapsed subscription
+    the same way and none of them reports it as a vague upstream error."""
+    reason = wb.explain(r)
+    if r.status_code == 401:                      # INVALID_TOKEN — the same on every endpoint
+        wb.mark_token("INVALID", reason)
+        return (409, "The Webull access token is no longer accepted (a token lasts 15 days) — request "
+                     "a new one and confirm the SMS code in the Webull app", "token_missing")
+    if r.status_code == 403:
+        known = _subscription()
+        ended = (f" The entitlement was due to end on {known['ends']}."
+                 if known and known["days_left"] is not None and known["days_left"] <= 0 else "")
+        return (403, f"Not entitled ({reason}).{ended} Market data over OpenAPI needs its own subscription: "
+                     "Webull → avatar → Advanced Quotes → OpenAPI Advanced Quotes", "subscription")
+    if r.status_code == 429:
+        return 429, "Webull rate limit (300 calls / 60 s) — slowing down", "rate_limit"
+    return r.status_code if r.status_code < 500 else 424, f"Webull {r.status_code}: {reason}", "upstream"
+
+
+def _subscription() -> dict | None:
+    """When the market-data entitlement ends, as the owner wrote it down
+    (WEBULL_SUBSCRIPTION_ENDS) — Webull's API does not say. None = not written down."""
+    raw = wb.config.WEBULL_SUBSCRIPTION_ENDS
+    if not raw:
+        return None
+    try:
+        ends = date.fromisoformat(raw)
+    except ValueError:
+        return {"ends": raw, "days_left": None,
+                "error": "WEBULL_SUBSCRIPTION_ENDS is not a YYYY-MM-DD date"}
+    return {"ends": ends.isoformat(), "days_left": (ends - date.today()).days, "error": None}
+
+
 def _trade(raw: dict) -> dict | None:
     """One print, typed. side: B = buyer lifted the offer, S = seller hit the bid,
     N = neither (inside the spread, or reported off the book)."""
@@ -155,10 +189,10 @@ def webull_ticks(symbol: str = Query(..., max_length=12), count: int = Query(100
     except wb.WebullError as err:
         _raise(err)
     if not r.ok:
-        status = r.status_code if r.status_code < 500 else 424
-        detail = {"message": f"Webull {r.status_code}: {wb.explain(r)}",
-                  "code": "subscription" if r.status_code == 403 else "upstream"}
-        _fail.set(key, {"status": status, "detail": detail})
+        status, message, code = _refusal(r)
+        detail = {"message": message, "code": code}
+        if code != "token_missing":
+            _fail.set(key, {"status": status, "detail": detail})
         raise HTTPException(status, detail)
     try:
         rows = r.json().get("result") or []
@@ -176,11 +210,13 @@ def webull_ticks(symbol: str = Query(..., max_length=12), count: int = Query(100
 @router.get("/api/webull/status")
 def webull_status():
     try:
-        token = wb.public_token(wb.load_token()) if wb.configured() else None
+        # A status older than 6 h is read again from Webull (one call), so an
+        # ended token shows here before a panel trips over it.
+        token = wb.public_token(wb.refresh_token_status()) if wb.configured() else None
     except wb.WebullError:
         token = None
     return {"configured": wb.configured(), "host": wb.host(), "environment": wb.environment(),
-            "token": token, "stream": webull_stream.hub.status()}
+            "token": token, "subscription": _subscription(), "stream": webull_stream.hub.status()}
 
 
 @router.post("/api/webull/token")
@@ -258,21 +294,10 @@ def webull_depth(symbol: str = Query(..., max_length=12),
                 return out
             last = (404, f"{sym}: no bid/ask in the {category} book", "empty")
             continue                      # an ETF asked as a stock answers empty: try the other
-        reason = wb.explain(r)
-        if r.status_code == 401:
-            wb.mark_token("INVALID")
-            last = (409, f"Webull refused the access token ({reason}) — request a new one", "token_missing")
-            break
-        if r.status_code == 403:
-            last = (403, f"Not entitled ({reason}) — market data over OpenAPI needs its own subscription: "
-                         "Webull → avatar → Advanced Quotes → OpenAPI Advanced Quotes", "subscription")
-            break
-        if r.status_code == 429:
-            last = (429, "Webull rate limit (300 calls / 60 s) — slowing down", "rate_limit")
+        last = _refusal(r)
+        if last[2] != "upstream":
             break
         # 417 = business refusal: wrong category for this symbol is one of them.
-        last = (r.status_code if r.status_code < 500 else 424,
-                f"Webull {r.status_code}: {reason}", "upstream")
 
     status, message, code = last or (424, "Webull gave no answer", "upstream")
     detail = {"message": message, "code": code}

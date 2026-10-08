@@ -72,8 +72,11 @@ def _book(n=3, orders=True):
             "asks": [level(100.05 + i * 0.01) for i in range(n)]}
 
 
-def _ready(ctx, status="NORMAL"):
-    ctx.wb._save_token({"token": TOKEN, "expires_at": 1755486723000, "status": status})
+FAR = 4102444800000        # 2100-01-01, in ms: a token nowhere near its end
+
+
+def _ready(ctx, status="NORMAL", expires_at=FAR):
+    ctx.wb._save_token({"token": TOKEN, "expires_at": expires_at, "status": status})
 
 
 # ── Signature ────────────────────────────────────────────────────────────────
@@ -276,3 +279,73 @@ def test_level_one_entitlement_is_learned_not_shown_as_an_error(wb):
     wb.replies.append(Reply(200, _book(5)))
     wb.client.get("/api/webull/depth?symbol=AAPL&depth=5&overnight=true")
     assert wb.sent[-1]["params"]["depth"] == "5"
+
+
+# ── A token ends ─────────────────────────────────────────────────────────────
+
+def test_a_token_past_its_date_is_not_sent_and_the_panel_is_told(wb):
+    import time
+    _ready(wb, expires_at=int(time.time() * 1000) - 1000)
+    r = wb.client.get("/api/webull/depth?symbol=AAPL")
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "token_missing"
+    assert "expired" in r.json()["detail"]["message"]
+    assert wb.sent == []                                     # nothing sent with a dead token
+    assert wb.wb.load_token()["status"] == "EXPIRED"
+    assert wb.client.get("/api/webull/status").json()["token"]["status"] == "EXPIRED"
+
+
+def test_status_says_how_long_the_token_has_left(wb):
+    import time
+    _ready(wb, expires_at=int((time.time() + 2 * 86400) * 1000))
+    left = wb.client.get("/api/webull/status").json()["token"]["expires_in_s"]
+    assert 2 * 86400 - 60 < left <= 2 * 86400
+    assert wb.sent == []                                     # checked a moment ago: no call
+
+
+def test_an_old_status_is_read_again_and_an_ended_token_is_recorded(wb, monkeypatch):
+    _ready(wb)
+    record = wb.wb.load_token()
+    record["checked_at"] -= 7 * 3600
+    wb.wb._token_file().write_text(json.dumps(record))
+    wb.replies.append(Reply(200, {"token": TOKEN, "expires_at": 0, "status": "INVALID"}))
+    assert wb.client.get("/api/webull/status").json()["token"]["status"] == "INVALID"
+    assert wb.sent[0]["url"].endswith("/auth/tokens/check")
+    r = wb.client.get("/api/webull/depth?symbol=AAPL")
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "token_missing" and len(wb.sent) == 1
+
+
+def test_trades_name_an_ended_token_the_same_way(wb):
+    _ready(wb)
+    wb.replies.append(Reply(401, {"error_code": "INVALID_TOKEN", "message": "Header x-access-token is missing or invalid."}))
+    r = wb.client.get("/api/webull/ticks?symbol=AAPL&count=5")
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "token_missing"
+    assert wb.wb.load_token()["status"] == "INVALID"
+    # Not cached: the moment a new token is confirmed the tape must work.
+    _ready(wb)
+    wb.replies.append(Reply(200, {"symbol": "AAPL", "result": [
+        {"time": "1791474273985", "price": "109.17", "volume": "119", "side": "B", "trading_session": "RTH"}]}))
+    r = wb.client.get("/api/webull/ticks?symbol=AAPL&count=5")
+    assert r.status_code == 200 and r.json()["trades"] == [
+        {"t": 1791474273985, "price": 109.17, "size": 119.0, "side": "B", "session": "RTH"}]
+
+
+def test_the_entitlement_end_date_is_counted_down_and_a_bad_one_is_named(wb, monkeypatch):
+    from datetime import date, timedelta
+    monkeypatch.setattr(wb.wb.config, "WEBULL_SUBSCRIPTION_ENDS", "")
+    assert wb.client.get("/api/webull/status").json()["subscription"] is None      # not written down
+    soon = (date.today() + timedelta(days=9)).isoformat()
+    monkeypatch.setattr(wb.wb.config, "WEBULL_SUBSCRIPTION_ENDS", soon)
+    assert wb.client.get("/api/webull/status").json()["subscription"] == {"ends": soon, "days_left": 9, "error": None}
+    monkeypatch.setattr(wb.wb.config, "WEBULL_SUBSCRIPTION_ENDS", "10/08/2027")
+    sub = wb.client.get("/api/webull/status").json()["subscription"]
+    assert sub["days_left"] is None and "YYYY-MM-DD" in sub["error"]                # not guessed at
+
+
+def test_a_refusal_after_the_end_date_says_the_date(wb, monkeypatch):
+    from datetime import date, timedelta
+    gone = (date.today() - timedelta(days=1)).isoformat()
+    monkeypatch.setattr(wb.wb.config, "WEBULL_SUBSCRIPTION_ENDS", gone)
+    _ready(wb)
+    wb.replies.append(Reply(403, {"error_code": "MARKET_DATA_NOT_SUBSCRIBED", "message": "no permission"}))
+    r = wb.client.get("/api/webull/depth?symbol=AAPL")
+    assert r.status_code == 403 and gone in r.json()["detail"]["message"]

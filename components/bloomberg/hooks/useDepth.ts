@@ -30,8 +30,19 @@ export interface WebullStatus {
   configured: boolean;
   host: string;
   environment: "production" | "test" | "custom";
-  token: { status: string; expires_at: number | null; checked_at: number | null } | null;
+  token: {
+    status: string;
+    expires_at: number | null;
+    /** Seconds until the token's own expiry date (a token lasts 15 days). */
+    expires_in_s: number | null;
+    checked_at: number | null;
+  } | null;
+  /** When the market-data entitlement ends, as written in backend/.env — the API does not say. */
+  subscription: { ends: string; days_left: number | null; error: string | null } | null;
 }
+
+/** A book the request can no longer refresh is said to be old after this long. */
+const STALE_MS = 20_000;
 
 async function read<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
@@ -68,6 +79,9 @@ export function useDepth(symbol: string | null, enabled: boolean) {
   const [depth, setDepth] = useState<(typeof DEPTH_CHOICES)[number]>(10);
   const [overnight, setOvernight] = useState(false);
   const [live, setLive] = useState(false);
+  // Why the stream is not delivering, when it said why (the 2 s request then
+  // carries the panel — which works, and is exactly how a fault goes unseen).
+  const [streamError, setStreamError] = useState<string | null>(null);
   // Volume by price since the panel was opened on this symbol.
   const [volume, setVolume] = useState<{ symbol: string | null; profile: VolumeProfile }>({
     symbol: null,
@@ -86,6 +100,8 @@ export function useDepth(symbol: string | null, enabled: boolean) {
     queryFn: ({ signal }) => fetch("/api/webull/status", { signal }).then((r) => read(r)),
     enabled,
     staleTime: 30_000,
+    // The countdown to the token's end, and a token Webull ended on its side.
+    refetchInterval: 10 * 60_000,
   });
 
   const book = useQuery<DepthBook, DepthError>({
@@ -139,7 +155,13 @@ export function useDepth(symbol: string | null, enabled: boolean) {
       });
       source.addEventListener("state", (e) => {
         try {
-          setLive(JSON.parse((e as MessageEvent).data).live === true);
+          const state = JSON.parse((e as MessageEvent).data);
+          setLive(state.live === true);
+          setStreamError(state.error?.message ?? null);
+          // The token ended while streaming: ask at once, so the panel shows
+          // "request a new one" now and not at the next 20 s check.
+          if (state.error?.code === "token_missing")
+            qc.invalidateQueries({ queryKey: ["webull", "depth"] });
         } catch {
           setLive(false);
         }
@@ -150,6 +172,7 @@ export function useDepth(symbol: string | null, enabled: boolean) {
       source?.close();
       source = null;
       setLive(false);
+      setStreamError(null);
     };
     const onVisibility = () => (document.visibilityState === "hidden" ? close() : open());
     open();
@@ -234,8 +257,22 @@ export function useDepth(symbol: string | null, enabled: boolean) {
     /** Volume by price since this symbol was opened, top price first. */
     profile,
     profileLevels,
-    // A refusal replaces the ladder; a blip between two good polls does not.
-    error: book.error && (!data || book.error.code !== "upstream") ? book.error : null,
+    // A refusal replaces the ladder; a blip between two good polls does not —
+    // but a book that has not been refreshed for a while is not shown as current.
+    error:
+      book.error &&
+      (!data || book.error.code !== "upstream" || Date.now() - book.dataUpdatedAt > STALE_MS)
+        ? book.error
+        : null,
+    /** Why the live stream is not delivering (the request is carrying the panel). */
+    streamError: streamOn && !live ? streamError : null,
+    /** Why the tape and the volume by price are not filling. */
+    tapeError: streamOn ? (recent.error?.message ?? null) : null,
+    /** The market-data entitlement's end, when it was written down. */
+    feed: status.data?.subscription ?? null,
+    /** Seconds until the access token ends; null when unknown. */
+    tokenLeftS:
+      status.data?.token?.status === "NORMAL" ? (status.data.token.expires_in_s ?? null) : null,
     depth,
     setDepth,
     overnight,
