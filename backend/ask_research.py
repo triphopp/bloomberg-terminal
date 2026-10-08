@@ -1,10 +1,12 @@
 """What ASK may read of the user's own research and of a company's accounts.
 
-Read-only, like every ASK tool: theses, questions, tracked numbers and zettel
-are the user's writing (PORT → TOOLS → THESES / QUESTIONS / TRACK), served by
-routers/theses.py, questions.py, tracking.py and zettel.py; ASK never writes to
-them — proposing an answer, recording a reading or adding a note is the MCP's
-job (`question_answer`, `track_record`, `zettel_create`), with its evidence rules.
+Read-only, like every ASK tool: theses, questions, tracked numbers, the
+anti-thesis board and zettel are the user's writing (PORT → TOOLS → THESES /
+QUESTIONS / TRACK), served by routers/theses.py, questions.py, tracking.py,
+antithesis.py and zettel.py; ASK never writes to them — proposing an answer,
+recording a reading, raising an objection or adding a note is the MCP's job
+(`question_answer`, `track_record`, `anti_object`, `zettel_create`), with its
+evidence rules.
 
 Same rule as ask_pages: the model takes the index first and then the one part
 it needs. A list carries no bodies; a thesis is read a part at a time.
@@ -165,6 +167,56 @@ def get_tracked(get: Get, metric: str, points: int, max_chars: int) -> Any:
     if not metric.strip():
         raise RuntimeError("pass a metric id or reference from list_tracked")
     return ask_pages.fit(get(f"/api/v2/tracking/{metric.strip()}"), points, max_chars)
+
+
+# ── Anti-thesis (THESES → ANTI-THESIS) ───────────────────────────────────────
+
+_CLAIM_KEEP = ("ref", "statement", "negation", "basis", "stake")
+_OBJECTION_KEEP = ("ref", "angle", "argument", "would_see", "look_where")
+_VERDICT_KEEP = ("result", "reasoning", "consequence", "revised_statement", "searched",
+                 "next_check", "actor")
+
+
+def get_antithesis(get: Get, thesis: str, points: int, max_chars: int) -> Any:
+    """How one thesis has been argued against: its beliefs, each with its negation,
+    the objections raised and what became of them. Claims that were replaced or
+    retired are left out — the board as it stands."""
+    if not thesis.strip():
+        raise RuntimeError("pass a thesis id or ticker")
+    data = get("/api/v2/antithesis", {"thesis_id": _thesis_id(get, thesis), "include_closed": False})
+    claims = []
+    for c in data.get("claims", []):
+        state = c.get("state") or {}
+        row = _pick(c, _CLAIM_KEEP, 400)
+        row["status"] = state.get("status")
+        # Only what is out of the ordinary: a first wording and a full set of
+        # angles are the normal case.
+        if (state.get("round") or 1) > 1:
+            row["round"] = state["round"]
+        if state.get("untried"):
+            row["untried_angles"] = state["untried"]
+        if state.get("settled"):
+            row["settled"] = True
+        row["objections"] = []
+        for o in c.get("objections", []):
+            status = (o.get("state") or {}).get("status")
+            if status == "WITHDRAWN":
+                continue
+            verdict = o.get("proposal") or o.get("verdict") or {}
+            item = {**_pick(o, _OBJECTION_KEEP, 300), "status": status}
+            if verdict:
+                item["verdict"] = _pick(verdict, _VERDICT_KEEP, 400)
+                refs = [z.get("ref") for z in verdict.get("evidence") or [] if z.get("ref")]
+                if refs:
+                    item["verdict"]["evidence"] = refs
+            row["objections"].append(item)
+        none_found = [w.get("angle") for w in c.get("sweeps", [])]
+        if none_found:
+            row["searched_no_objection"] = none_found
+        claims.append(row)
+    return ask_pages.fit(
+        {"summary": data.get("summary"), "counts": data.get("counts"), "claims": claims},
+        points, max_chars)
 
 
 # ── Zettelkasten (findings attached to theses) ───────────────────────────────

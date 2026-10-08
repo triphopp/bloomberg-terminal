@@ -14,6 +14,7 @@ import { type ThesisDraft, ThesisEditor, draftFrom, emptyDraft } from "./ThesisE
 import { NavRail, ThesisNavigator, useThesisList } from "./ThesisNavigator";
 import { type NoteDraft, ThesisNotes } from "./ThesisNotes";
 import { ThesisTimeline } from "./ThesisTimeline";
+import { AntiPanel, useAntiCounts } from "./anti/AntiPanel";
 import { GraphsPanel } from "./graphs/GraphsPanel";
 import { renderMarkdown } from "./markdown";
 import { INSTRUMENT_KINDS, kindOf, sectorOf, tagsOf } from "./nav-filter";
@@ -27,7 +28,7 @@ import {
 import { ReadDot, UnreadBar, useReads } from "./useReads";
 import { ZettelPanel } from "./zettel/ZettelPanel";
 
-type SubTab = "thesis" | "notes" | "kb" | "graphs" | "history" | "trades" | "ai";
+type SubTab = "thesis" | "anti" | "notes" | "kb" | "graphs" | "history" | "trades" | "ai";
 
 const API = "/api/v2/theses";
 
@@ -55,6 +56,7 @@ export function ThesesTab({
     [setToolsThesisId]
   );
   const reads = useReads();
+  const { data: antiCounts } = useAntiCounts();
   const [menuOpen, setMenuOpen] = useState(false);
   const [detail, setDetail] = useState<{
     thesis: Thesis;
@@ -188,6 +190,15 @@ export function ThesesTab({
     const conflicts = kbCounts?.conflicts ?? detail?.counts?.conflicts ?? 0;
     return conflicts ? `KB (${notes}) ⟂${conflicts}` : `KB (${notes})`;
   }, [kbCounts, detail]);
+
+  // Beliefs still owed an argument; ⚠ = what waits for the user (a fallen key
+  // claim, a claim to rewrite, an agent's verdict to review). No number at all
+  // while nothing has been put on the board — "0" would read as "all clear".
+  const antiLabel = useMemo(() => {
+    const n = selectedId ? antiCounts?.by_thesis[selectedId] : undefined;
+    if (!n) return "ANTI-THESIS";
+    return `ANTI-THESIS (${n.open})${n.alert ? ` ⚠${n.alert}` : ""}`;
+  }, [antiCounts, selectedId]);
 
   const startNew = () => {
     setMobileList(false);
@@ -553,6 +564,7 @@ export function ThesesTab({
                   (
                     [
                       ["thesis", "THESIS"],
+                      ["anti", antiLabel],
                       ["notes", `NOTES (${openNoteCount})${dot(unread?.note)}`],
                       ["kb", `${kbLabel}${dot(unread?.zettel)}`],
                       [
@@ -567,6 +579,7 @@ export function ThesesTab({
                     <button
                       type="button"
                       key={key}
+                      aria-pressed={subTab === key}
                       onClick={() => setSubTab(key as SubTab)}
                       className={actionBtn}
                       style={{
@@ -682,6 +695,15 @@ export function ThesesTab({
                   )}
                 </div>
               </div>
+            )}
+
+            {!reading && subTab === "anti" && (
+              <AntiPanel
+                key={thesis.id}
+                thesisId={thesis.id}
+                colors={colors}
+                onChange={() => void loadDetail(thesis.id)}
+              />
             )}
 
             {!reading && subTab === "notes" && (

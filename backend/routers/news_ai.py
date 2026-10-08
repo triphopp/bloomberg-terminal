@@ -83,7 +83,8 @@ _TOOL_BUDGET = 100_000
 # held to links it was given (see `_Links`).
 _PRIVATE_TOOLS = frozenset({
     "list_theses", "get_thesis", "list_questions", "get_question",
-    "list_tracked", "get_tracked", "search_zettel", "get_zettel", "list_conflicts",
+    "list_tracked", "get_tracked", "get_antithesis", "search_zettel", "get_zettel",
+    "list_conflicts",
     # Earlier conversations hold whatever those answers read — the portfolio among it.
     "search_sessions", "read_session",
 })
@@ -422,6 +423,20 @@ _TOOLS: list[dict] = [
         }),
     },
     {
+        "name": "get_antithesis",
+        "description": (
+            "How one of the user's theses has been argued against (PORT → TOOLS → THESES → "
+            "ANTI-THESIS): the beliefs it rests on, each with its negation and stake (KEY = the "
+            "thesis falls with it), the objections raised from five angles (FACT, CAUSE, LOGIC, "
+            "TIME, PRICE) and what became of each — rebutted with evidence, conceded, undecided "
+            "or still open. `summary.verdict` reads the whole thesis: OPEN (beliefs never "
+            "attacked or objections unanswered), KEY_FALLEN, STANDING, SETTLED."
+        ),
+        "input_schema": _obj({
+            "thesis": {"type": "string", "description": "Thesis id or ticker"},
+        }),
+    },
+    {
         "name": "search_zettel",
         "description": (
             "The user's research notes (Zettelkasten): one finding per note, with its kind "
@@ -543,6 +558,7 @@ _TOOL_LABELS = {
     "get_question": "QUESTION",
     "list_tracked": "TRACK",
     "get_tracked": "TRACKED",
+    "get_antithesis": "ANTI-THESIS",
     "search_zettel": "ZETTEL",
     "get_zettel": "NOTE",
     "list_conflicts": "CONFLICTS",
@@ -752,6 +768,8 @@ def _run_tool(api: str, name: str, args: dict, cfg: dict, state: dict) -> Any:
         return ask_research.list_tracked(get, thesis, _clamp(args.get("due_days"), 0, 365, 0))
     if name == "get_tracked":
         return ask_research.get_tracked(get, str(args.get("metric", "")), points, room)
+    if name == "get_antithesis":
+        return ask_research.get_antithesis(get, thesis, points, room)
     if name == "search_zettel":
         return ask_research.search_zettel(get, str(args.get("query", "")), thesis)
     if name == "get_zettel":
@@ -840,7 +858,7 @@ Researching on the web: a headline or snippet tells you a story exists, not what
 
 Reading the terminal itself: the user is looking at a view of this terminal, and you can read it. Decide first how much the question needs. A question about what is on the page — a level, a label, "what does this say" — is answered from read_screen alone. Go to get_page_data only for what the screen does not hold: the history behind a chart, a section that is not displayed, more precision than is shown. Then take the one section that has it, with the fewest points that answer, and stop when you have enough. Do not fetch a page's sections to be thorough. A question that is not about the terminal's pages needs neither tool.
 
-The user's own research: list_theses, get_thesis, list_questions, get_question, list_tracked, get_tracked, search_zettel, get_zettel and list_conflicts read what the user has written about their holdings — the thesis, the questions it has not answered and the answers proposed so far, the numbers it is tracked by with forecast against reading, and the notes (zettel) that hold each finding with its source. Use them when the question is about their view ("my thesis", "why do I hold", "what is still open on X") or when their reasoning bears on the answer. Find the thesis in the list first, then read the one part that answers. What is written there is the user's reasoning and may be out of date: report it as theirs, and check a figure against a data tool before relying on it. You can read these, never change them.
+The user's own research: list_theses, get_thesis, list_questions, get_question, list_tracked, get_tracked, get_antithesis, search_zettel, get_zettel and list_conflicts read what the user has written about their holdings — the thesis, the questions it has not answered and the answers proposed so far, the numbers it is tracked by with forecast against reading, how the thesis has been argued against (each belief, the objections to it and which were rebutted or conceded), and the notes (zettel) that hold each finding with its source. Use them when the question is about their view ("my thesis", "why do I hold", "what is still open on X") or when their reasoning bears on the answer. Find the thesis in the list first, then read the one part that answers. What is written there is the user's reasoning and may be out of date: report it as theirs, and check a figure against a data tool before relying on it. You can read these, never change them.
 
 Earlier conversations: each earlier question in this conversation starts with [asked YYYY-MM-DD HH:MM], the time it was asked; the answer after it was written then. search_sessions and read_session read the user's other saved conversations — use them when the question refers to one ("what did we say about X", "last week we discussed …"). An earlier answer is a reading of its own day: say when it was from, and fetch any price, level, headline or date again before presenting it as current. Never state a figure from an earlier answer as today's.
 

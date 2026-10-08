@@ -342,6 +342,52 @@ def test_tracked_numbers_and_zettel_are_listed_short_and_opened_one_at_a_time():
     assert ask_research.get_tracked(get, "m1", 20, 30_000) == {"path": "/api/v2/tracking/m1"}
 
 
+def test_the_antithesis_board_is_read_as_claims_with_their_objections():
+    import ask_research
+
+    calls = []
+
+    def get(path, params=None, timeout=60):
+        calls.append((path, params))
+        if path == "/api/v2/theses":
+            return _THESES
+        return {"summary": {"verdict": "OPEN"}, "counts": {"open": 1}, "claims": [{
+            "id": "c1", "ref": "C-0001", "statement": "demand outgrows supply", "negation": "supply catches up",
+            "basis": "", "stake": "KEY", "actor": "user", "thesis_id": _TID,
+            "state": {"status": "CONTESTED", "round": 1, "untried": ["PRICE"], "settled": False},
+            "objections": [
+                {"id": "o1", "ref": "A-0001", "angle": "FACT", "argument": "a rival qualifies",
+                 "would_see": "a filing", "look_where": "", "state": {"status": "REBUTTED"},
+                 "verdict": {"id": "v", "result": "REBUTTED", "reasoning": "not qualified", "actor": "user",
+                             "evidence": [{"id": "z", "ref": "Z-0007", "title": "t", "sources": []}]},
+                 "proposal": None, "history": []},
+                {"id": "o2", "ref": "A-0002", "angle": "TIME", "argument": "noise",
+                 "state": {"status": "WITHDRAWN"}, "verdict": None, "proposal": None},
+                {"id": "o3", "ref": "A-0003", "angle": "CAUSE", "argument": "tariff pull-forward",
+                 "would_see": "", "state": {"status": "OPEN"}, "verdict": None, "proposal": None},
+            ],
+            "sweeps": [{"id": "s", "angle": "LOGIC", "look_where": "walked the chain"}],
+        }]}
+
+    out = ask_research.get_antithesis(get, "CBRS", 20, 30_000)
+    assert calls[-1] == ("/api/v2/antithesis", {"thesis_id": _TID, "include_closed": False})
+    assert out["summary"] == {"verdict": "OPEN"}
+    assert out["claims"] == [{
+        "ref": "C-0001", "statement": "demand outgrows supply", "negation": "supply catches up",
+        "stake": "KEY", "status": "CONTESTED", "untried_angles": ["PRICE"],
+        "objections": [
+            {"ref": "A-0001", "angle": "FACT", "argument": "a rival qualifies", "would_see": "a filing",
+             "status": "REBUTTED",
+             "verdict": {"result": "REBUTTED", "reasoning": "not qualified", "actor": "user",
+                         "evidence": ["Z-0007"]}},
+            {"ref": "A-0003", "angle": "CAUSE", "argument": "tariff pull-forward", "status": "OPEN"},
+        ],
+        "searched_no_objection": ["LOGIC"],
+    }]
+    with pytest.raises(RuntimeError, match="thesis"):
+        ask_research.get_antithesis(get, "", 20, 30_000)
+
+
 # ── History, links, budget ───────────────────────────────────────────────────
 
 def _turns(*pairs):

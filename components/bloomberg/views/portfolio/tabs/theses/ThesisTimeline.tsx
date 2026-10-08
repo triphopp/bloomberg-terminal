@@ -25,6 +25,11 @@ const KIND_COLOR: Record<string, string> = {
   METRIC_READ: "#60a5fa",
   KILLER_HIT: "#f87171",
   METRIC_RULE_CHANGED: "#fbbf24",
+  // Written by routers/antithesis.py (THESES → ANTI-THESIS)
+  ANTI_OBJECTION: "#fbbf24",
+  ANTI_REBUTTED: "#4ade80",
+  ANTI_REVISED: "#60a5fa",
+  ANTI_FALLEN: "#f87171",
 };
 
 // The theses router stamps `actor` on the payload when a write carries
