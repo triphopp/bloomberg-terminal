@@ -80,6 +80,12 @@ export {
 } from "./volume-profile.ts";
 export { createZigZag, calcZigZag } from "./zigzag.ts";
 export {
+  createIchimoku,
+  createIchimokuCloudOverlay,
+  calcIchimoku,
+  ICHIMOKU_COLORS,
+} from "./ichimoku.ts";
+export {
   createSdZones,
   createSdZonesOverlay,
   createSdTrapsOverlay,
@@ -111,6 +117,7 @@ import { createBollingerBands } from "./bollinger.ts";
 import { createEMA } from "./ema.ts";
 import { createFearGreed } from "./fear-greed.ts";
 import { createFlowToxicity } from "./flow-toxicity.ts";
+import { ICHIMOKU_PARAMS, createIchimoku } from "./ichimoku.ts";
 import { createMACD } from "./macd.ts";
 import { createRealizedVol } from "./realized-vol.ts";
 import { createRSI } from "./rsi.ts";
@@ -209,6 +216,17 @@ export const INDICATOR_REGISTRY: IndicatorRegistryEntry[] = [
     // baseMax / legBars count bars but describe a pattern's shape, not a
     // lookback window — a 6-bar base is a 6-bar base on any interval.
     factory: createSdZones,
+  },
+  {
+    id: "ichimoku",
+    name: "Ichimoku Cloud",
+    category: "trend",
+    type: "overlay",
+    description:
+      "Tenkan / Kijun, leading spans + cloud projected ahead, Chikou (TradingView displacement)",
+    defaultParams: ICHIMOKU_PARAMS,
+    timeScalableParams: ["tenkan", "kijun", "senkou", "shift"],
+    factory: createIchimoku,
   },
 
   // ─── Momentum ───

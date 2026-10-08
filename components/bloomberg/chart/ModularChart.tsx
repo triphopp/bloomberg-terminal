@@ -310,6 +310,17 @@ export function ModularChart({
   logicalRangeRef.current = onLogicalRange;
   const viewportKeyRef = useRef(viewportKey);
   viewportKeyRef.current = viewportKey;
+  const futureRoomRef = useRef(futureRoomBars);
+  futureRoomRef.current = futureRoomBars;
+  /** fitContent, plus `futureRoomBars` of whitespace right of the last bar. */
+  const fitView = useCallback((chart: IChartApi, bars: OhlcvBar[]) => {
+    const room = futureRoomRef.current;
+    if (room > 0 && bars.length > 0) {
+      chart.timeScale().setVisibleLogicalRange({ from: 0, to: bars.length - 1 + room });
+    } else {
+      chart.timeScale().fitContent();
+    }
+  }, []);
   const drawnViewportKeyRef = useRef(viewportKey);
   /**
    * The viewport as it stood at the last teardown, tagged with the view it
@@ -773,7 +784,7 @@ export function ModularChart({
       saved !== null &&
       saved.key === currentViewportKey &&
       applyVisibleRange(chart, saved.range);
-    if (!restored) chart.timeScale().fitContent();
+    if (!restored) fitView(chart, data);
     // A resize can force a rebuild while the query still serves the old view
     // as placeholder data. Keep its old identity so the real bars fit on arrival.
     if (!waitingForNewViewBars) drawnViewportKeyRef.current = currentViewportKey;
@@ -1139,10 +1150,10 @@ export function ModularChart({
     // after its new bars land; fitting placeholder bars would flash the old
     // range and then jump again when the request completes.
     if (drawnViewportKeyRef.current !== viewportKey) {
-      chartRef.current?.timeScale().fitContent();
+      if (chartRef.current) fitView(chartRef.current, data);
       drawnViewportKeyRef.current = viewportKey;
     }
-  }, [data, viewportKey]);
+  }, [data, viewportKey, fitView]);
 
   /**
    * Which sub-pane sits under a viewport y. Pane 0 is the price pane; the rest

@@ -33,6 +33,7 @@ import { createBbVolumeOverlay } from "./bb-volume-overlay";
 import {
   INDICATOR_REGISTRY,
   createCompositeVPOverlay,
+  createIchimokuCloudOverlay,
   createSdTrapsOverlay,
   createSdZonesOverlay,
   createSessionVPOverlay,
@@ -518,8 +519,20 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     [indicators]
   );
 
+  // Ichimoku: the lines are series, the cloud + its future stretch an overlay.
+  const ichimokuConfigs = useMemo(
+    () => indicators.filter((ind) => ind.id.startsWith("ichimoku-")).map((ind) => ind.config),
+    [indicators]
+  );
+  // Bars of whitespace the cloud is projected into (displacement − 1).
+  const ichimokuFutureRoom = ichimokuConfigs.reduce(
+    (m, c) => Math.max(m, Math.max(0, Number(c.shift ?? 26) - 1)),
+    0
+  );
+
   const overlays: CanvasOverlay[] = useMemo(() => {
     const result: CanvasOverlay[] = [];
+    for (const c of ichimokuConfigs) result.push(createIchimokuCloudOverlay(c));
     // First, so VP strips, channels and chips all paint over it.
     if (bbVolumeConfig && chartType === "candle") {
       result.push(createBbVolumeOverlay(bbVolumeConfig));
@@ -542,6 +555,7 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     }
     return result;
   }, [
+    ichimokuConfigs,
     bbVolumeConfig,
     sdZonesConfig,
     chartType,
@@ -849,8 +863,8 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     clearTrendLines,
     /** Any click-to-draw tool is waiting for a click — show the crosshair cursor. */
     drawingArmed: regressionArmed || trendArmed,
-    /** <ModularChart futureRoomBars> — a trend line may end in the future. */
-    drawingFutureRoom: trendArmed ? 12 : 0,
+    /** <ModularChart futureRoomBars> — a trend line may end in the future, the Ichimoku cloud does. */
+    drawingFutureRoom: Math.max(trendArmed ? 12 : 0, ichimokuFutureRoom),
     handleChartClick,
     handlePointerMove,
     // Lookback window unit: "bars" (raw candles) vs "days" (session time)
