@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { PYTHON_API } from "@/lib/constants";
 
-const READS = new Set(["status", "depth"]);
+const READS = new Set(["status", "depth", "ticks"]);
 const WRITES = new Set(["token", "token/check"]);
 
 type Ctx = { params: Promise<{ path: string[] }> };
@@ -32,7 +32,7 @@ async function forward(
   }
 }
 
-// GET /api/webull/status · /api/webull/depth?symbol=&depth=&overnight=
+// GET /api/webull/status · /api/webull/depth?symbol=&depth=&overnight= · /api/webull/ticks?symbol=&count=
 export const GET = (req: Request, ctx: Ctx) => forward("GET", req, ctx, READS);
 
 // POST /api/webull/token (asks Webull for an access token — in production that texts
