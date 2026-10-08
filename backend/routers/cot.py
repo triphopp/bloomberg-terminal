@@ -467,7 +467,7 @@ def build_basis(window: int = 156, weeks: int = 260) -> dict:
             "stats": stats, "series": series[-weeks:], "tenors": tenors, "status": _status()}
 
 
-# ── Positioning factor (MKT REGIME → COT) ─────────────────────────────────────
+# ── Positioning factor (ex MKT REGIME → COT) ────────────────────────────────────
 # One number for "how is the whole futures book leaning": PC1 of the causal
 # rolling z of each contract's focus-group net/OI. Display only — it is not fed
 # into the regime HMM, whose calibration it would change without a backtest.
