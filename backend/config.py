@@ -351,6 +351,14 @@ FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 FISCAL_AI_API_KEY = os.getenv("FISCAL_AI_API_KEY", "")
 FISCAL_AI_BASE_URL = "https://api.fiscal.ai/v3"
 FISCAL_AI_DAILY_LIMIT = int(os.getenv("FISCAL_AI_DAILY_LIMIT", "250") or 250)
+
+# Webull OpenAPI (Thailand) — L2 depth for US stocks / ETFs (MKT → STRUCTURE → DEPTH).
+# The secret signs requests locally and is never sent; the access token is made at
+# run time and kept outside the repository (backend/webull_client.py).
+WEBULL_APP_KEY = os.getenv("WEBULL_APP_KEY", "").strip()
+WEBULL_APP_SECRET = os.getenv("WEBULL_APP_SECRET", "").strip()
+WEBULL_API_HOST = (os.getenv("WEBULL_API_HOST", "").strip().removeprefix("https://").strip("/")
+                   or "api.webull.co.th")
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 
 BOT_API_TOKEN   = os.getenv("BOT_API_TOKEN", "")     # Bond Auction
