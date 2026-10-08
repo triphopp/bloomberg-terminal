@@ -94,7 +94,8 @@ attribution still works. `memory/reference/api-endpoints.md` lists every route.
 |---|---|
 | Theses (read) | `list_theses` · `get_thesis` · `notes_due` |
 | Theses (write) | `create_thesis` (always `draft`) · `update_thesis` (`reason` required) · `log_event` (NOTE/REVIEW/EVIDENCE/CHECKPOINT) · `add_note` · `update_note` · `link_trade` |
-| Portfolio | `get_positions` · `get_trades` |
+| Portfolio | `get_positions` |
+| Trade history (read-only; start with coverage, totals come from stats) | `get_trade_coverage` · `get_trades` · `get_trade` · `get_trade_stats` · `get_option_trades` |
 | Research | `get_stock_data(kind=quote\|financials\|ratios\|estimates\|analyst\|earnings-calendar\|ownership\|management\|dividends\|pe-history\|quality\|sector\|sec-filings)` · `get_price_history` · `get_news` · `get_filings` |
 | Analysis graphs | `graph_list` · `graph_get` · `graph_create` · `graph_update` |
 | Knowledge base | `zettel_search` · `zettel_list` · `zettel_get` · `zettel_create` · `zettel_update` · `zettel_link` · `zettel_add_source` · `zettel_attach` · `open_conflicts` · `resolve_conflict` · `zettel_by_source` |

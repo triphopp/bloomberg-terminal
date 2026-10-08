@@ -67,7 +67,10 @@ COT refreshes in its own background thread (`cot-refresh`) when its cache is sta
 Added 2026-09-25/26: `bonds.py`, `cot.py`, `discover.py`, `market_heatmap.py`, `dev.py`; `macro.py` gained
 `/api/macro/calendar`; `portfolio_v2.py` gained `/takeover`, `/history-review` and the `/nav-index`
 start-of-day flow rule.
+Added 2026-10-08: `trade_history.py` (`/api/v2/trade-history/*`) — the read side of the trade book built for agents (MCP-only consumer): plain functions `coverage` / `list_lots` / `one_lot` / `lot_stats` / `option_history` behind thin endpoints, one `_select` shared by the list and the stats so both see the same rows. It never writes and never calls the network unless `base_currency` asks for a conversion.
+
 Added 2026-09-28: `google_trends.py` (`/api/trends/{daily,interest}`, free public Google Trends; MCP-only consumer) and `fiscal_ai.py` (`/api/fiscal/*`, Fiscal.ai free trial; MCP-only consumer).
+Added 2026-10-08: `webull.py` (`/api/webull/*`) + `webull_client.py` — Webull OpenAPI order-book depth for the MKT STRUCTURE → DEPTH mode. First source with a signed request and a run-time access token (2FA in the Webull app); the token lives in app-data, never in the repo or an env var.
 
 ## Frontend Views (6, since 2026-09-26)
 
@@ -87,7 +90,7 @@ URL carries the view (`?view=bonds`, `layout/view-navigation.ts`).
 ## Key files
 
 ### Backend
-- `backend/main.py` — app init, CORS, schema init, mounts all 74 routers; imports `dev_status`, `upstream_health`, `yahoo_gate` before any router
+- `backend/main.py` — app init, CORS, schema init, mounts all 77 routers; imports `dev_status`, `upstream_health`, `yahoo_gate` before any router
 - `backend/mcp_server.py` — MCP stdio server (not mounted; separate process spawned by the MCP client via `/.mcp.json`). HTTP client of the backend, writes tagged `X-Thesis-Actor: agent:<name>`
 - `backend/config.py` — All env vars + BOT tokens (BOT_API_TOKEN, BOT_IR_TOKEN, BOT_FX_TOKEN, BOT_STATS_TOKEN) + SEC_KEYS (old portal) + SEC2_KEYS (new portal, falls back to SEC2_API_KEY)
 - `backend/db.py` — SQLite connection manager + schema init + compute_holdings() + sector_classifications helpers
@@ -239,3 +242,41 @@ derived by `_derive` — same sync reasoning as the questions. Crossing a kill l
 shown and logged (`KILLER_HIT`). MCP: `track_due` / `track_list` / `track_get` / `track_add` / `track_update` /
 `track_expect` / `track_record` + `get_tracking_spec` (serves `memory/reference/thesis-tracking.md`). UI: PORT →
 TOOLS → TRACK, badge from `/api/v2/tracking/counts`; QUESTIONS → calendar lists the metrics read on each date.
+
+## Calendar (2026-10-08)
+
+`backend/calendar_feed.py` is one read over the dates the terminal already had in four places: `event_calendar.py`
+(macro — TAIL strip, chart rail), `routers/stock.py` (earnings, dividends), `thesis_notes.watch_date` and
+`question_dates` (what the theses wait on), plus option expiries and HOLD review dates. `build(start, end)` returns
+them in one shape with the theses each belongs to: a note through its thesis, a question date through its questions /
+tracked numbers / symbol, a company date through the symbol; a macro event through nothing (the user ties one by writing
+a dated note). It owns no table — the calendar's add form posts to the thesis-note and question-calendar routes — so
+nothing new syncs. Each source fails alone and is reported under `sources`. Company dates are the slow part: pulled on
+short-lived daemon threads (`_schedule` / `_work`), kept in `backend/cache/calendar_company.json`, negative-cached, and
+never awaited by a request. `calendar_scheduler.py` turns today's and the next business day's open events into
+`alert_events` rows (`cal:<KIND>`, one per event, acked by the scheduler once the day is over); the snapshot holds
+`thesis_id` / `note_id` / `question_id`, which is all the frontend needs to link (`alerts/calendar-alert.ts` →
+`useOpenAlertTarget` → `toolsRequestAtom` → `PortfolioView`, or `calendarRequestAtom` → `CalendarView` when no
+thesis claims the date). `alerts/schema.py`'s start-up orphan sweep skips `cal:%`.
+UI: the CAL view (key `6`, `views/calendar/` — a view of its own, not a PORT tab: its dates come from every view);
+TAIL's event strip links to it; ASK reads it as `calendar/events` (`ask_pages._calendar`: nearest first).
+
+## Anti-thesis (2026-10-08)
+
+`routers/antithesis.py` is the step back: where a question tracks what is not known and a tracked metric what will be
+known on a date, a claim is something the thesis ALREADY believes, written beside its negation and argued against on
+purpose. Three tables: `anti_claims` (statement, negation, stake KEY / SUPPORT, `revises_id`), `anti_objections` (one
+reason the negation could be true, from one of five angles — FACT, CAUSE, LOGIC, TIME, PRICE — with what we would see
+if it were right; kind NONE_FOUND records an angle that was searched and gave nothing) and `anti_verdicts` (REBUTTED /
+CONCEDED / UNDECIDED, plus the user's REVIEW of an agent's verdict). The asymmetry is the design: an objection needs
+only its argument, a rebuttal needs a zettel with url + quote that is not in an open conflict (`_evidence_problem`,
+`_open_conflicts` from `routers/questions.py`). A claim with any objection is never reworded — conceding with REVISE
+writes a new claim (`_replace`) that inherits the stake and starts UNTESTED, so the dialectic is a chain of rows
+(`round` = its length). It reuses rather than rebuilds: evidence is a zettel, an objection that cannot be settled is
+sent to `questions._create`, and every accepted verdict lands on the thesis timeline (`ANTI_*` events). Status is
+derived by `_derive` (UNTESTED / CONTESTED / STANDS / BROKEN / FALLEN; `settled` = stands and every angle tried) and
+the thesis reading by `_summary` (OPEN / KEY_FALLEN / STANDING / SETTLED) — same sync reasoning as the questions. A
+fallen key claim never changes the thesis. MCP: `anti_board` / `anti_queue` / `anti_claim_add` / `anti_claim_update` /
+`anti_object` / `anti_none_found` / `anti_verdict` / `anti_to_question` / `anti_import` + `get_antithesis_spec`
+(serves `memory/reference/anti-thesis.md`) + prompt `step_back`. ASK reads it with `get_antithesis`
+(`ask_research.py`, private tool). UI: PORT → TOOLS → THESES → ANTI-THESIS, label from `/api/v2/antithesis/counts`.

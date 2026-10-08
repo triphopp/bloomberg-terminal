@@ -30,7 +30,8 @@
 | SEC filings (10-K/10-Q/20-F/8-K) | `get_filings` |
 | Fundamentals แหล่งรอง (ต้องเทียบ SEC) | `get_fiscal_data` |
 | ความสนใจการค้นหา / trending | `get_google_trends` · `get_trending_searches` |
-| พอร์ต · เทรด | `get_positions` · `get_trades` |
+| พอร์ตที่ถืออยู่ + ราคาสด | `get_positions` |
+| ประวัติเทรดจาก DB — เริ่มที่ coverage; ยอดรวม / win rate เอาจาก stats เท่านั้น ห้ามบวกแถวเอง | `get_trade_coverage` · `get_trades` · `get_trade` · `get_trade_stats` · `get_option_trades` |
 | สิ่งที่เคยค้นและจดไว้แล้ว | `zettel_search` · `zettel_by_source` · `graph_list` |
 | สเปควิเคราะห์พื้นฐาน | `get_fundamental_spec` |
 
@@ -83,6 +84,7 @@
 |---|---|
 | `/api/company/filings/{symbol}` · `/xbrl/{symbol}` · `/outlook/{symbol}` | SEC filings + XBRL facts |
 | `/api/fiscal/{kind}/{symbol}` · `/api/fiscal/transcript/...` | Fiscal.ai (มีโควตารายวัน `FISCAL_AI_DAILY_LIMIT`) |
+| `/api/webull/depth?symbol=&depth=` | Webull OpenAPI — order book (bid/offer levels) หุ้น/ETF สหรัฐเท่านั้น; ต้องมี key + access token; เกิน 1 ระดับต้องซื้อ OpenAPI TotalView (ยิงจริงแล้ว 2026-10-08: L1 ใช้ได้ด้วย "Nasdaq Basic - Non Display" ฟรี) |
 
 ---
 
@@ -137,6 +139,8 @@ board/forum ทุกแหล่ง **ต้องตรวจ ToS ก่อน
 | **arXiv (งานวิชาการ HBF / KV cache)** | `arxiv.org/abs/<id>` (บทคัดย่อ) · `arxiv.org/html/<id>` (เนื้อเต็ม พารามิเตอร์อุปกรณ์) — เช่น `2609.25782`, `2608.11668`, `2609.39131`, `2607.10186` | แบบจำลอง HBF: bandwidth, latency, อายุ, ความร้อน, ผลต่องาน agent | ✅ WebFetch (ตรวจ 2026-10-07) · ตัวเลขเปลี่ยนระหว่าง v1/v2 — ระบุฉบับ · เป็นแบบจำลอง ยังไม่มีชิปจริง |
 | **Tom's Hardware ผ่าน Jina Reader** | `https://r.jina.ai/https://www.tomshardware.com/...` | เนื้อบทความ (สเปก HBF สามเกรด, Hot Chips) | ✅ ตรวจ 2026-10-07 · WebFetch ตรงได้แค่เมนู เนื้อถูกตัด |
 | **Yahoo estimates = S&P Global MI** | `help.yahoo.com/kb/finance-for-web/SLN2310.html` | ยืนยันว่าคอนเซนซัสใน `get_stock_data(estimates/analyst)` มาจาก S&P Global Market Intelligence | ใช้ตอบว่า "คอนเซนซัสมาจากใคร" |
+| **Platformonomics "Follow the CAPEX" scoreboard** | `platformonomics.com/2026/07/follow-the-capex-q2-2026-scoreboard/` (URL เปลี่ยนตามไตรมาส — ค้น "Follow the CAPEX Q3 2026 scoreboard") | capex รายไตรมาสของ Amazon · Microsoft · Alphabet · Meta ในหน้าเดียว + แนวทางทั้งปี + คำพูดเรื่องปีถัดไป | ✅ WebFetch (ตรวจ 2026-10-08) · ออกราวสิ้นเดือนหลังรายสุดท้ายประกาศ · แหล่งรอง: นิยามต่างกันรายบริษัท (รวม / ไม่รวม finance lease) และไตรมาสก่อนหน้าให้เป็น %QoQ — ตัวเลขที่ใช้ตัดสินให้เทียบ 8-K · ใช้กับ TRACK K-0040 |
+| **Tom's Hardware / Investing.com (ข่าว foundry — Terafab, TSMC, Intel 14A, AMD Venice)** | `r.jina.ai/https://www.tomshardware.com/tech-industry/semiconductors/<slug>` · `investing.com/news/stock-market-news/<slug>` | ลำดับเหตุการณ์ + คำพูดจากโพสต์ X + การขยับของราคาหุ้นรายวัน | ✅ ตรวจ 2026-10-08 · Investing.com เปิดตรงได้ · ไม่มีเอกสารปฐมภูมิของ Terafab (ไม่มี 8-K ของ Intel เรื่องเงื่อนไขสัญญา) — ใช้กับ Q-0045 ถึง Q-0047 |
 
 ### 3.3 อ่านเนื้อหน้าเว็บ (ทดสอบ 2026-10-05)
 
@@ -154,7 +158,8 @@ thesis `MEM-KRJP` (Samsung · SK hynix · Kioxia) ใช้แหล่งชุ
 | แหล่ง | URL / ตัวอย่าง | ได้อะไร | หมายเหตุ |
 |---|---|---|---|
 | **คอนเซนซัสเกาหลี (FnGuide) ผ่านข่าว** | `koreajoongangdaily.com` (EN) · `biz.heraldcorp.com/article/<id>` (KR) · `en.fnnews.com/news/<id>` | คอนเซนซัสกำไรดำเนินงาน/รายได้ของ Samsung และ SK hynix + ประมาณการรายโบรกเกอร์ (Citi, IBK, Goldman) | ✅ WebFetch อ่านได้ทั้งสามเว็บ · ค้นด้วยคำเกาหลี `3분기 영업이익 컨센서스` ได้ตัวเลขตรงกว่าคำอังกฤษ · สื่อเกาหลีตัดสิน beat/miss ด้วย FnGuide ไม่ใช่ S&P ที่ Yahoo ใช้ |
-| **Samsung งบเบื้องต้น** | `news.samsung.com/global/samsung-electronics-announces-earnings-guidance-for-<first\|second\|third\|fourth>-quarter-<ปี>` | รายได้รวม + กำไรดำเนินงานรวม (ไม่มีรายส่วน) | ออกราววันที่ 7–8 หลังสิ้นไตรมาส ก่อนตลาดเกาหลีเปิด (7 เม.ย. · 7 ก.ค. · 8 ต.ค. 2026) · บริษัทไม่ประกาศวันล่วงหน้า · URL เห็นจากผลค้น ยังไม่ได้ WebFetch เอง |
+| **Samsung งบเบื้องต้น** | `news.samsung.com/global/samsung-electronics-announces-earnings-guidance-for-<first\|second\|third\|fourth>-quarter-<ปี>` | รายได้รวม + กำไรดำเนินงานรวม (ไม่มีรายส่วน) | ออกราววันที่ 7–8 หลังสิ้นไตรมาส ก่อนตลาดเกาหลีเปิด (7 เม.ย. · 7 ก.ค. · 8 ต.ค. 2026) · บริษัทไม่ประกาศวันล่วงหน้า · ⚠️ WebFetch ตรง → timeout 60s; ผ่าน `r.jina.ai/https://news.samsung.com/...` อ่านได้ (ตรวจ 2026-10-08 รอบ third-quarter-2026) |
+| **คำพูดผู้บริหารใน call ของ Samsung / SK hynix (ภาษาอังกฤษ)** | `en.edaily.co.kr/news/<id>/` · `wccftech.com/<slug>/` | ภาพปีถัดไป, สัญญายาว + เงินล่วงหน้า, HBM — สิ่งที่ข่าวแจกไม่มี | ✅ WebFetch ทั้งสองเว็บ (ตรวจ 2026-10-08) · Edaily เป็นคำแปลด้วย AI จากเกาหลี ถ้อยคำอาจไม่ตรง · Wccftech อ้างโพสต์ X อีกชั้น — ติดป้ายแหล่งรอง ยังไม่มีแหล่ง transcript เต็มที่ดึงได้ |
 | **ส่งออกเกาหลีรายเดือน** | `koreatimes.co.kr/economy/<yyyymmdd>/…` · KED Global | ส่งออกรวม + เซมิคอนดักเตอร์ ($, % YoY) จากกระทรวงการค้า อุตสาหกรรมและทรัพยากร | ✅ ออกวันที่ 1 ของเดือนถัดไป · ตัวเลข 10 วัน / 20 วันแรกจากศุลกากรราววันที่ 11 และ 21 · เป็นดอลลาร์ จึงไม่ถูกรบกวนด้วยค่าเงินวอน |
 | **Kioxia IR calendar** | `kioxia-holdings.com/en-jp/ir/calendar.html` · `/ja-jp/ir/calendar.html` | วันประกาศงบที่บริษัทยืนยัน | ✅ WebFetch · ⚠️ ลงวันล่วงหน้าไม่นาน (7 ต.ค. 2026 ยังไม่มีวันงบไตรมาส 2 ปีงบ 2026) — ระหว่างรอใช้ `get_stock_data(285A.T, earnings-calendar)` เป็นค่าประมาณ |
 | **ราคาหุ้น .KS / .T และ KRW=X** | `/api/stock/history/{sym}?period=1y&interval=1d` (backend) | ราคาปิดรายวัน — ใช้คำนวณ lead-lag เอเชีย→สหรัฐ และค่าเฉลี่ยค่าเงินรายไตรมาส | ✅ · ⚠️ history ของหุ้น .KS ช้ากว่า quote 1–2 วันทำการ (6 ต.ค. มีใน `/api/stock/quote` แต่ history ถึง 2 ต.ค.) |
@@ -183,6 +188,7 @@ thesis `MEM-KRJP` (Samsung · SK hynix · Kioxia) ใช้แหล่งชุ
 | **FRED** | ✅ `FRED_API_KEY` | series สหรัฐเกือบทั้งหมด — ผ่าน §2 |
 | **ก.ล.ต. (SEC TH)** | ✅ `SEC_*` keys | กองทุน, หุ้นกู้, One Report — ผ่าน §2 |
 | **Fiscal.ai** | ✅ `FISCAL_AI_API_KEY` (โควตารายวัน) | fundamentals, transcripts — ผ่าน MCP |
+| **Webull OpenAPI (TH)** | ✅ `WEBULL_APP_KEY` + `WEBULL_APP_SECRET` + token (2FA ในแอป) | L2 depth US stocks/ETFs — docs: developer.webull.co.th; ไม่มี SET, ไม่มี option depth |
 | **Alpha Vantage** | ✅ `ALPHA_VANTAGE_API_KEY` | ราคา / fundamentals สำรอง |
 | EIA | ⚠️ `EIA_API_KEY` ยังไม่ตั้ง — ใช้ `DEMO_KEY` (10 ครั้ง/ชม.) | น้ำมัน สต๊อก พลังงานสหรัฐ — มีแล้วที่ `/api/tail-risk/oil` (สต๊อก crude/gasoline/distillate/Cushing/SPR, กำลังผลิต, refinery util, demand รายสัปดาห์ เทียบ 5 ปี) |
 | BEA / Census | ❌ ยังไม่มี | GDP สหรัฐละเอียด, ค้าปลีก |

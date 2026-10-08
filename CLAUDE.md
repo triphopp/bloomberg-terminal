@@ -134,7 +134,7 @@ decides**: the Google Drive folder the portfolio syncs through (`<SYNC_DIR>/ask-
 one `git add .` from a commit. Each question shows when it was asked: an answer is a reading of that moment; the latest pictures
 travel with the next 3 exchanges; a conversation opened again from HISTORY is told when each question was asked and, after
 ≥6 h, that its figures are old; exchanges past the 12-turn window go as one-line digests; `search_sessions` / `read_session`
-let ASK read other saved conversations (private tools, their links never unlock `read_page`); `get_page_data` has sections for all seven views (`key` = ticker / market code).
+let ASK read other saved conversations (private tools, their links never unlock `read_page`); `get_page_data` has sections for all eight views (`key` = ticker / market code).
 
 ## Writes to `/api/**` — same origin only (2026-10-06)
 
@@ -203,6 +203,58 @@ UPDATE a forecast or a reading (a revision or correction is a new row). The rele
 calendar (`question_dates`) — do not build a second calendar. Served over MCP: `get_tracking_spec` ·
 `spec://thesis-tracking` · tools `track_*`. **New `track_*` rows must not be written until every machine runs this
 code** (same reason as `question*`).
+
+## Anti-thesis — PORT → TOOLS → THESES → ANTI-THESIS (2026-10-08)
+
+Stepping back from a thesis — what it believes, argued against on purpose — is rows in `anti_*`, not a "## Risks"
+paragraph in the body. Follow **[`memory/reference/anti-thesis.md`](memory/reference/anti-thesis.md)**: break the thesis
+into claims (one sentence that could turn out false, stake KEY when the thesis falls with it), write each negation as a
+state of the world, attack each claim from five angles (FACT · CAUSE · LOGIC · TIME · PRICE) with what we would see if
+the objection were right, then look. The server (`routers/antithesis.py`) takes an objection with only its argument but
+refuses a rebuttal without evidence (zettel with url + quote, not in an open conflict); an angle is called clean only
+with where it was searched. A claim that has been argued over is never reworded — conceding with REVISE writes a new
+claim that starts untested (thesis → antithesis → synthesis). An agent's verdict is a proposal; only the user accepts
+it, withdraws an objection, or rewrites / retires / deletes a claim, and a fallen key claim never changes the thesis by
+itself. Status is derived on read — never add a status column, and never UPDATE a verdict (a new verdict is a new row).
+Served over MCP: `get_antithesis_spec` · `spec://anti-thesis` · prompt `step_back` · tools `anti_*`; ASK reads it with
+`get_antithesis`. **New `anti_*` rows must not be written until every machine runs this code** (same reason as
+`question*`).
+
+## Calendar — the CAL view, key `6` (2026-10-08)
+
+Every dated thing on one month grid: macro releases (the TAIL strip's `event_calendar.py`), earnings / ex-dividend dates
+of each thesis symbol and holding, what the theses wait on (dated notes, question dates, tracked numbers), option
+expiries and HOLD reviews. `backend/calendar_feed.py` reads them into one list (`GET /api/calendar`) and says which
+theses each event belongs to. **It stores nothing and there is no calendar table — do not add one.** What the user adds
+from the calendar is written where such rows already live: a dated note on a thesis (`thesis_notes.watch_date`), or a
+row of the question calendar (`question_dates`) when it belongs to no thesis. A new source of dates → one function in
+`calendar_feed.build()` (category MACRO / COMPANY / THESIS / PORT); the grid, the filter and the reminders follow.
+A macro event belongs to no thesis by itself — the user ties one by writing a note on that day; never infer the link.
+Company dates are pulled behind the request (daemon threads, `backend/cache/calendar_company.json`, a failed symbol is
+negative-cached): the route never waits on Yahoo and lists what is `pending`. Reminders: `calendar_scheduler.py` writes
+`alert_events` `cal:<KIND>` for today and the next business day (macro only when high impact; `CALENDAR_SCAN_INTERVAL`,
+default 1800, 0 = off), one row per event, cleared when its day is over; the snapshot carries the thesis, and every alert
+surface links there through `alerts/useOpenAlertTarget.ts` (thesis NOTES at the note · the question · else that day of
+the calendar). It is a view of its own (`views/calendar/`, moved out of PORT → TOOLS the same day — three clicks deep
+was too far for something read daily). To send the user somewhere from anywhere: a thesis or a question →
+`useOpenTools()` / `toolsRequestAtom`; a day of the calendar → `useOpenCalendar()` / `calendarRequestAtom` — do not
+add another request atom. ASK reads it as `get_page_data("calendar", "events")`.
+`pytest tests/test_calendar_feed.py` · `npm run test:views`.
+
+## Trade history for agents — MCP `get_trade*` (2026-10-08)
+
+Past trades are rows in SQLite (`trades`, one row per lot; options in `option_trades` + matches). An agent reads them
+through `routers/trade_history.py` (`/api/v2/trade-history/*`, read-only, no UI) and the MCP tools over it:
+`get_trade_coverage` (what exists + what each field means — the first call) · `get_trades` · `get_trade` ·
+`get_trade_stats` · `get_option_trades`. The module exists so a wrong answer has nowhere to come from — keep these when
+changing it: filters are exact and echoed back (a bad date or an unknown account is 422, never "no rows"); every list
+carries `total_matching` / `returned` / `complete` / `next_offset`; sums, counts and win rates are computed by the server
+over ALL matching rows, one line per currency (THB is never added to USD; `base_currency` converts on request and says
+so); stored values pass through unrounded and NULL stays null; a symbol never traded says so. **Never hand an agent
+`/api/v2/portfolio/trades`** (substring symbol match, no dates, no count — it serves the PORT table), never add a tool
+that takes SQL, and never let the MCP cut a list mid-row (`_out_rows` drops whole rows and sets `complete: false`).
+A trade column an agent should read → add it to `FIELDS` (prompt text) and, when it belongs in the default row, `_BRIEF`.
+`pytest tests/test_trade_history.py` holds every figure equal to plain SQL and the stats equal to PORT → ANALYTICS.
 
 ## Fundamental analysis — "วิเคราะห์พื้นฐาน [ticker]" (2026-09-27)
 
@@ -308,16 +360,17 @@ async def get_x():
     return data
 ```
 
-## Views (6 views — BOND added, CLIP removed, CRDT merged into BOND 2026-09-25)
+## Views (7 views — BOND added, CLIP removed, CRDT merged into BOND 2026-09-25, CAL added 2026-10-08)
 
 | Key | Button | View | Content |
 |-----|--------|------|---------|
-| `1` | MKT   | market-view    | Watchlist · Chart · TICK DATA board (indices · RATES·US · RATES·JP · VOLATILITY · FX; ▼p/▲p CFTC crowding mark on flagged rows) · REGIME panel modes CORR/GEOM/ROT/IV/**COT** (positioning PC1) |
+| `1` | MKT   | market-view    | Watchlist · Chart · TICK DATA board (indices · RATES·US · RATES·JP · VOLATILITY · FX; ▼p/▲p CFTC crowding mark on flagged rows) · STRUCTURE panel (ex-REGIME, renamed 2026-10-08) modes **DEPTH**/CORR/GEOM/ROT/IV (DEPTH = bid/offer ladder of the chart symbol, Webull OpenAPI, US stocks + ETFs, `routers/webull.py`; the access token is requested from the panel and kept outside the repo — never an env var, never committed) — COT mode removed 2026-10-08, backend `/api/cot/factor` stays (no UI consumer) |
 | `2` | NEWS  | news-view → `views/news/` | **ASK** bar above every tab (question → DeepSeek with read-only terminal tools + news search + page reading, `/api/news/ask`, needs `DEEPSEEK_API_KEY`; general web search with `TAVILY_API_KEY`/`BRAVE_API_KEY`) · WATCHLIST tab (ข่าวรายหุ้นจาก watchlist, 7 แหล่ง, แบ่งตาม SECTOR) · NEWSFEED (topic) · SOCIAL · Polymarket column (right 256px: watchlist markets + macro signals) |
 | `h` / `heatmap(MKT)` | HMAP (no nav button) | `views/heatmap-view.tsx` | One equity market as a sector-grouped treemap sized by market cap (~275 names, 25/sector). Command `heatmap(TH)`, `heatmap(US, 52w)`, bare `HMAP` = last market; `h` reopens it. Metrics 1D · 52W · 50D · 200D · HIGH · RVOL switch with no request; sector strip = zoom; hover line = all metrics; click → equity, shift-click → chart window. `/api/market-heatmap` (`routers/market_heatmap.py`, Yahoo screener, 11 parallel sector calls, 90s cache + last-good) |
 | `5` / `t` | TAIL  | tail-risk-view | MARKET EVENTS (named: Rates Volatility Shock, Treasury Selloff — Bear Flattening … from z of 1d/5d changes; SEVERE raises composite; ribbon shows top 2) + 6 risk dimensions (composite) + MACRO CONTEXT (not in composite): event strip FOMC/SEP/CPI/NFP/PCE/GDP + EVENT WINDOW tag on VIX signals, Fed rate/stance, 10Y−2Y/10Y−3M, regime, latest prints, event markers on 90D chart · MACRO READ (inflation/growth/rates-vol) · SECTOR ROTATION (turnover tilt, ไม่ใช่ fund flow) · **POSITIONING** (CFTC COT crowding flags + table; `cot_crowding` signal shown with CTX tag, `counted: False`, backtest WEAK) · **BUSINESS CYCLE** (`/api/cycle`, `backend/cycle.py`): official indicators read by their publishers' definitions — NBER, Sahm, recession probability, CFNAI, GDP-based index, yield-curve probit, OECD CLI, CBO gaps, PCE vs 2%, policy vs SEP longer-run / Taylor 1993, NFCI — each row opens to the rule, source and track record; WHAT FOLLOWS = ควรรู้ / ควรทำ / ไม่ควรทำ. No composite, no phase of our own, never a sector call (tested DEAD) |
 | `3` / `b` | BOND  | `views/bonds/` | 2 tabs (Alt+1/2). **MARKET** — price vs supply: KPI strip · **10Y YIELD DECOMPOSITION** (expected real + breakeven + term premium via NY Fed ACM; 20D driver REAL/TP/BE; Δ attribution 1/5/20/60D; tripwires TP>10y high · BE≥2.5→20y high · 10Y 5.5%; `/api/bonds/decomposition`, `backend/bond_decomposition.py`) · TREASURY LEG (2/10/30Y, real, term premium) · CREDIT LEG (IG/HY OAS, Baa−Aaa, BBB yield) · CORPORATE ISSUANCE/WEEK = SEC EFTS 424B2/424B5 deals ex-bank (SIC-classified, 365d backfill into SQLite) + EVENT STUDY (heavy days vs rest, Δ10Y/ΔIG OAS t..t+3) + RECENT DEALS · TREASURY AUCTIONS (fiscaldata) · DEBT STOCK (Z.1, C&I, SLOOS). Counts deals, not $ — no free daily $ source. **CONDITIONS** (ex-CRDT, `/api/crisis`) — crisis level L0–3 (also in status bar) · STL FSI/NFCI · 5Y/10Y breakeven · 30Y mortgage · CC/mortgage delinquency. IG/HY trigger lines (2%/5%) on CREDIT LEG. **CFTC** (`/api/cot/basis`): TREASURY FUTURES POSITIONING · BASIS TRADE (MARKET, DV01 10Y-eq) + DEALER BALANCE SHEET (CONDITIONS) |
-| `4` / `p` | PORT  | portfolio-view | 4 top-level: PORTFOLIO (sub: POSITIONS·OPTIONS·TRADES·CASH·ENTRY) · ANALYTICS (P&L, no sub strip) · RISK (6 pages: สรุป = one look — plain-words risk, down-tilted paths 3/5/7/21/42 days, margin, TRADE GUARD, decision journal, then the methods (ex-เชิงลึก) · REBALANCE (+ "ยังไม่ขาย" with a reason) · BUDGET · FACTOR · WHAT-IF · MONTE CARLO · ขาลง · OPTIONS; a `guard:REBALANCE` alert links straight to REBALANCE via `useOpenRisk`) · TOOLS (sub: THESES·QUESTIONS·TRACK·IMPORT·AUDIT — the first three share one thesis navigator + read marks, set in `.reading` type; THESES → RESEARCH is the ex-GRAPHS tab) |
+| `4` / `p` | PORT  | portfolio-view | 4 top-level: PORTFOLIO (sub: POSITIONS·OPTIONS·TRADES·CASH·ENTRY) · ANALYTICS (P&L, no sub strip) · RISK (6 pages: สรุป = one look — plain-words risk, down-tilted paths 3/5/7/21/42 days, margin, TRADE GUARD, decision journal, then the methods (ex-เชิงลึก) · REBALANCE (+ "ยังไม่ขาย" with a reason) · BUDGET · FACTOR · WHAT-IF · MONTE CARLO · ขาลง · OPTIONS; a `guard:REBALANCE` alert links straight to REBALANCE via `useOpenRisk`) · TOOLS (sub: THESES·QUESTIONS·TRACK·IMPORT·AUDIT — the first three share one thesis navigator + read marks, set in `.reading` type; THESES → RESEARCH is the ex-GRAPHS tab; THESES → ANTI-THESIS = step back: claims, objections, verdicts) |
+| `6` | CAL   | `views/calendar/` | One calendar over every dated thing (2026-10-08): macro releases (TAIL's `event_calendar.py`), earnings / ex-dividend of each thesis symbol and holding, what the theses wait on (dated notes, question dates, tracked numbers), option expiries, HOLD reviews. Month grid (6 weeks, Monday first) or agenda; filters: category (มหภาค · บริษัท · THESIS · พอร์ต), kind, thesis, linked-only, weekly prints; day panel with source, `≈` estimated dates and a link to each event's thesis (NOTES at the note) or question; add form → thesis note or question-calendar date. `/api/calendar` (`backend/calendar_feed.py`, no table of its own). Reminders `cal:<KIND>` in the alert strip. Command `CAL` |
 
 **TICK DATA board** (MKT right panel): 7 built-in collapsible sections — AMERICAS · EMEA · ASIA PACIFIC (`/api/market-data`, 6 incl. KOSPI) · RATES·US (11 UST tenors, FRED daily) · RATES·JP (15 JGB tenors, MOF CSV) · VOLATILITY (20 VIX-family incl. MOVE, `/api/volatility`, sub-grouped S&P TERM / VOL OF VOL / EQUITY / GLOBAL / COMMOD·RATES) · FX (`/api/fx`) — **plus the user's own sections** (2026-10-07): ✎ in the header = EDIT — add a section, put any quoted symbol in it (`/api/tick-custom`), rename / reorder / delete, and HIDE / SHOW any built-in row or section. All of that is `components/bloomberg/lib/tick-board.ts` (pure, tested) + `localStorage["bloomberg_tickdata_custom"]`, per browser; a never-edited board shows MY LIST = IXG. **A new built-in row goes in `backend/config.py`; never hard-code a user's symbol into the board.** Collapse state in `localStorage["bloomberg_tickdata_sections"]`. ▲/▼ tally counts indices + FX only — a green VIX is a bad day, and a rising yield is a falling bond, so neither belongs in it. แถบบนสุดของ board = `UsMarketClock` (นาฬิกา ET + phase PRE/OPEN/AFTER/CLOSED + timeline + นับถอยหลัง). **ตลาดสหรัฐไม่มีพักกลางวัน** — เทรดต่อเนื่อง 09:30–16:00 ET (ที่พักเที่ยงคือ SET 12:30–14:30, TSE 11:30–12:30, HKEX 12:00–13:00). Logic อยู่ใน `components/bloomberg/lib/us-market-session.ts` (pure, test ได้) — วันหยุด NYSE + half-day 13:00 ET hardcode ถึงปี 2027 เท่านั้น เกินนั้น widget ขึ้นเตือนตัวเอง. Yield rows show bp, not %chg, and only 4 tenors (`^IRX ^FVX ^TNX ^TYX`) can drive the chart.
 
@@ -325,7 +378,7 @@ async def get_x():
 **GMOV `3` removed 2026-09-25** — replaced by HMAP (above). `views/market-movers-view.tsx` deleted; its global-indices table lives on in MKT TICK DATA. **Backend `/api/heatmap*` endpoints + `app/api/heatmap/*` proxies stay** (no UI consumer now).  
 **Removed:** GVOL (fake `Math.random()` data), EQTY (duplicates MKT search), RMI (removed 2026-05-24), CRYP `C` + FX `E` (2026-08-01 — FX folded into the TICK DATA board; crypto via global search `BTC-USD` → stock-view, which also has Order Footprint. **Backend `crypto.py`/`fx.py` routers stay** — `/api/crypto/footprint` powers that indicator). Keys `C` and `E` are now free.  
 **Stock analysis** (9 tabs: financials, options, etc.) still accessible from global search / heatmap click — plus a **COT** tab when the symbol maps to a CFTC contract (ES=F/SPY, ^VIX, JPY=X, BTC-USD, CL=F, GC=F, ^TNX …). PORT → RISK shows FUTURES POSITIONING vs BOOK (`/api/cot/portfolio`). All COT surfaces are weekly context (as of Tue, released Fri) — `backend/routers/cot.py`  
-**CRDT `6` merged into BOND 2026-09-25** — `views/credit-view.tsx` deleted; overlap dropped (HY/IG OAS + curve = BOND MARKET, VIX = TAIL, TED spread = dead since 2022-01); the rest is BOND → CONDITIONS via `useCreditData(isActive)`. **Backend `crisis.py` stays** (TAIL + `/api/crisis/composite`). Key `6` is free.  
+**CRDT `6` merged into BOND 2026-09-25** — `views/credit-view.tsx` deleted; overlap dropped (HY/IG OAS + curve = BOND MARKET, VIX = TAIL, TED spread = dead since 2022-01); the rest is BOND → CONDITIONS via `useCreditData(isActive)`. **Backend `crisis.py` stays** (TAIL + `/api/crisis/composite`). Key `6` was free until CAL took it (2026-10-08).  
 **CLIP removed 2026-09-25** (was `4`). Keys renumbered 2026-09-26: `1` MKT · `2` NEWS · `3`/`b` BOND · `4`/`p` PORT · `5`/`t` TAIL · `h` HMAP. `views/clippings-view.tsx` + `app/api/clippings/*` deleted; **backend `clippings.py` router stays** (Obsidian/Ollama endpoints, no UI consumer).  
 **MACRO `5` removed 2026-09-17** — US macro (Fed, curve, indicators, regime) + FOMC/release calendar moved into TAIL as context; COUNTRY (World Bank) and SIGNALS (country rotation / sector selection / allocation) tabs were deleted with it. Backend routers remain (`/api/macro`, `/api/sovereign/*`, `/api/country-rotation`, `/api/sector`, `/api/allocation`) — TAIL reads `/api/macro` in-process. Key `5` now opens TAIL (renumbered 2026-09-26).
 
@@ -352,7 +405,7 @@ async def get_x():
 memory/
 ├── INDEX.md               ← navigation map
 ├── AGENTS.md              ← format rules (อ่านก่อนเขียนไฟล์ใดๆ ใน memory/)
-├── project_summary.md     ← slim core: run, tests, stack, env vars, 74 routers, DB schema, 6 views + ASK, known issues, plans
+├── project_summary.md     ← slim core: run, tests, stack, env vars, 78 routers, DB schema, 6 views + ASK, known issues, plans
 ├── reference/
 │   ├── architecture.md         ← data flow, key files, accounting layer, views
 │   ├── api-endpoints.md        ← all endpoints + caching strategy + Next.js proxy routes
@@ -361,7 +414,8 @@ memory/
 │   ├── data-catalog.md         ← 17 data categories available for analysis
 │   ├── data-sources.md         ← where to look for data (read before searching)
 │   ├── question-research.md    ← how to answer an open question (signals, answer levels, assumptions)
-│   └── thesis-tracking.md      ← tracked numbers: source, forecast vs actual, kill lines
+│   ├── thesis-tracking.md      ← tracked numbers: source, forecast vs actual, kill lines
+│   └── anti-thesis.md          ← step back: claims + negation, objections by angle, evidence-gated verdicts
 ├── plans/                 ← feature plans (active + completed/)
 └── sessions/              ← audit trail + reports
 ```

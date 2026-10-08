@@ -357,6 +357,46 @@ retire, reopen or delete (403). Next.js proxy: `app/api/v2/tracking/[[...path]]/
 - `POST /api/v2/tracking/{id}/retire` (reason required) · `/reopen` · `DELETE /api/v2/tracking/{id}` (soft) — user only
 - `POST /api/v2/tracking/resolve-ref-collisions`
 
+## Calendar (`routers/calendar_feed.py`) — 2026-10-08
+
+The one calendar (the CAL view, key `6`). Read-only; logic in `backend/calendar_feed.py`. Next.js proxy:
+`app/api/calendar/route.ts`. Writes from the calendar go through `POST /api/v2/theses/{id}/notes` (a dated note) or
+`POST /api/v2/questions/calendar` (a date with no thesis) — there is no calendar table.
+- `GET /api/calendar?start=YYYY-MM-DD&end=YYYY-MM-DD&refresh=false` — default a week back → 45 days ahead; 422 on a bad
+  date, `end < start`, or a window over 400 days. → `{as_of, start, end, events:[CalEvent], sources, theses}` (shape in
+  `data-shapes.md`), soonest first. `refresh=true` queues a new Yahoo pull for every company symbol.
+- Sources: MACRO = `event_calendar` (FOMC hardcoded, FRED `release/dates` asked a calendar year at a time so a month
+  move hits its 12 h cache, rule dates); COMPANY = `stock_earnings_calendar` + `stock_dividends` per symbol, pulled on
+  daemon threads and kept in `backend/cache/calendar_company.json` (fresh 6 h · failed 30 min, 6 h after three in a row
+  · last good shown up to 30 d) — the request never waits, `sources.company.pending` lists what is still out; THESIS =
+  `thesis_notes.watch_date`, `question_dates` (+ linked questions, tracked numbers), forecasts with only a `due_date`;
+  PORT = `v_option_open_lots` expiries, `risk_decisions` HOLD `review_on`.
+- Reminders are not a route: `calendar_scheduler.py` (every `CALENDAR_SCAN_INTERVAL`, default 1800 s) writes
+  `alert_events` `rule_id = "cal:<KIND>"`, `bar_time = "<date>#<hash>"`; `GET /api/alerts/events` names them
+  `CALENDAR · <KIND>` and gives `notify = ["ticker","toast"]` when the snapshot has a `thesis_id`, else `["ticker"]`.
+
+## Anti-thesis (`routers/antithesis.py`) — prefix `/api/v2/antithesis` (2026-10-08)
+Step back from a thesis: claims (what it believes) → objections (why each could be false) → verdicts. Status is derived
+on read. Writes carry `X-Thesis-Actor`; an agent's verdict is a proposal, and an agent cannot review, withdraw, revise,
+retire, delete or change a stake (403). Next.js proxy: `app/api/v2/antithesis/[[...path]]/route.ts`. Protocol for
+agents: `memory/reference/anti-thesis.md`.
+- `GET /api/v2/antithesis?thesis_id&include_closed=true` — `{claims:[AClaim], counts, summary{verdict, live, challenged_at}, angles, required_angles}`, most urgent first (FALLEN → BROKEN → CONTESTED → UNTESTED → STANDS → REVISED → RETIRED; KEY before SUPPORT)
+- `GET /api/v2/antithesis/counts` — `{fallen, broken, contested, untested, stands, revised, retired, pending, due, settled, key_fallen, key_open, open, alert, by_thesis{…, verdict}}`; `open` = untested + contested + broken, `alert` = key_fallen + broken + pending + due (tab label, polled every 60 s)
+- `GET /api/v2/antithesis/queue?thesis_id&limit=20` — for agents: `objections` (OPEN, or UNDECIDED past `next_check`) then `claims` with `gaps` / `untried` angles
+- `GET /api/v2/antithesis/{id|ref}` — `{claim: AClaim}`
+- `POST /api/v2/antithesis` — `{statement, thesis_id, negation?, basis?, stake?}`; 422 `{code:"CLAIM_REFUSED", missing}`; 409 when the belief is already on the board
+- `PATCH /api/v2/antithesis/{id}` — `negation` / `basis` by anyone; `stake` user-only; `statement` only while no objection row exists (409 after) and, for a user-written claim, user-only
+- `POST /api/v2/antithesis/{id}/revise` — `{statement, negation?, reason}` user-only → new claim with `revises_id`, thesis event `ANTI_REVISED`
+- `POST /api/v2/antithesis/{id}/retire` (reason required) · `/reopen` · `DELETE /api/v2/antithesis/{id}` (soft) — user only
+- `POST /api/v2/antithesis/{id}/objections` — `{argument, angle?, would_see?, look_where?, parent?}` → `{claim, objection_id, objection_ref}`; 409 on a duplicate or a REVISED / RETIRED claim
+- `POST /api/v2/antithesis/{id}/sweeps` — `{angle, searched}`: the angle was searched and gave no objection; 409 when the angle already has one
+- `PATCH /api/v2/antithesis/objections/{id}` — `angle` / `would_see` / `look_where` only
+- `POST /api/v2/antithesis/objections/{id}/verdicts` — `{result REBUTTED|CONCEDED|UNDECIDED, reasoning, evidence?[Z-ref], consequence? REVISE|FALLS, revised_statement?, revised_negation?, searched?, next_check?}`; 422 `{code:"VERDICT_REFUSED", missing}`; reply `{claim, verdict_id, proposal, revised_to?}`
+- `POST /api/v2/antithesis/verdicts/{id}/review` — `{decision ACCEPTED|REJECTED, note}` user-only (REJECTED needs a note); ACCEPTED on CONCEDED + REVISE writes the new claim (`revised_to`)
+- `POST /api/v2/antithesis/objections/{id}/withdraw` (reason required, user only) · `POST …/objections/{id}/question` — opens (or reuses) a `questions` row, idempotent
+- `POST /api/v2/antithesis/import` — `{thesis_id, claims:[{statement, negation, stake, basis, objections[], none_found[]}]}`, one transaction; 422 `{code:"IMPORT_REFUSED", item, statement, missing}`
+- `POST /api/v2/antithesis/resolve-ref-collisions`
+
 ## Series (`routers/series.py`) — prefix `/api/v2/series`
 Generic indicator series: any number a publisher puts out over time that is **not** a tradable instrument (industry spot prices, freight rates, survey indices). Two tables — `series_meta` (head row) + `series_points` (one number on one day, PK `(series_id, date)`), both in `SYNC_TABLES`. Collectors live in `backend/series_sources/`; adding a source is one file + `register()`, no endpoint or UI change. First collector: `dramexchange` (DRAM/NAND/module/memory-card spot from the public home page + DRAM/NAND/SSD contract prices from its own `/Home/HomePrice` JSON).
 **The history is ours.** DRAMeXchange's charts are members-only, so there is no back-fill: `series_scheduler.py` records a point a day (same design as `iv_snapshots`) and a day nobody recorded stays a hole.
@@ -396,7 +436,7 @@ Rendered analysis pages. The HTML is a file (`GRAPHS_DIR/<slug>/index.html`, old
 
 ### MCP server (`backend/mcp_server.py`, stdio; setup → `docs/mcp-server.md`)
 Claude Code: `/.mcp.json` (repo root). Claude Desktop: `%APPDATA%\Claude\claude_desktop_config.json` — absolute interpreter path + `PYTHONIOENCODING=utf-8`, does NOT read `.mcp.json`. Any other MCP client takes the same command/args/env. `MCP_AGENT_NAME` distinguishes clients in the timeline (`AGENT·<NAME>` + zettel `actor`). `MCP_TRANSPORT=streamable-http MCP_PORT=9319` serves the same tools at `http://127.0.0.1:9319/mcp` for agents that cannot spawn a process (loopback only — no auth of its own).
-HTTP client over the running backend (`PYTHON_API_URL`, default :9317) — never opens the DB. 30 tools: theses `list_theses` `get_thesis` `notes_due` `create_thesis` (always draft) `update_thesis` (reason required) `log_event` (NOTE/REVIEW/EVIDENCE/CHECKPOINT) `add_note` `update_note` `link_trade` · context `get_positions` `get_trades` · research `get_stock_data(kind)` `get_price_history` `get_news` `get_filings` · knowledge base `zettel_search` `zettel_list` `zettel_get` `zettel_create` `zettel_update` `zettel_link` `zettel_add_source` `zettel_attach` `open_conflicts` `resolve_conflict` `zettel_by_source` · analysis graphs `graph_list` `graph_get` `graph_create` `graph_update`. Prompts `review_thesis`, `triage_conflicts`. **No delete tool** by design. Output capped at 40k chars.
+HTTP client over the running backend (`PYTHON_API_URL`, default :9317) — never opens the DB. 30 tools: theses `list_theses` `get_thesis` `notes_due` `create_thesis` (always draft) `update_thesis` (reason required) `log_event` (NOTE/REVIEW/EVIDENCE/CHECKPOINT) `add_note` `update_note` `link_trade` · context `get_positions` · trade history `get_trade_coverage` `get_trades` `get_trade` `get_trade_stats` `get_option_trades` (router `trade_history.py`; a list over the 40k cap is cut on a row boundary by `_out_rows` and marked `complete: false`, never mid-JSON) · research `get_stock_data(kind)` `get_price_history` `get_news` `get_filings` · knowledge base `zettel_search` `zettel_list` `zettel_get` `zettel_create` `zettel_update` `zettel_link` `zettel_add_source` `zettel_attach` `open_conflicts` `resolve_conflict` `zettel_by_source` · analysis graphs `graph_list` `graph_get` `graph_create` `graph_update`. Prompts `review_thesis`, `triage_conflicts`. **No delete tool** by design. Output capped at 40k chars.
 
 ## Portfolio Risk (`routers/risk.py`)
 - `GET /api/v2/portfolio/risk/metrics` — VaR/CVaR 1D–6M with √T scaling (Basel). **2026-09-29:** weights on a NAV basis — cash in the denominator, short lots as negative weights (were dropped), open options as delta-equivalent underlying exposure (`_option_exposure`); + `nav_value`, `cash_value`, `gross_exposure_pct`, `net_exposure_pct`, `short_value`, `option_delta_value`. `var_backtest_*` / `kupiec_*` are now ROLLING OUT-OF-SAMPLE (`_var_backtest_oos`, each day vs the VaR of the prior ≤126 days; `var_backtest_obs`, `var_backtest_method`) — the old in-sample count could not fail
@@ -496,11 +536,32 @@ Proxy: `app/api/v2/portfolio/margin/[[...path]]` (GET + PUT, 60 s timeout). No c
 **Conditional GET (ETag/304, 2026-09-28):** `lib/etag.ts` (`etagJson` / `etagResponse`) tags 200s of the polled proxies — `market-data`, `volatility`, `fx`, `rates`, `alerts/events`, `ticker`, `crisis`, `macro`, `bonds/[section]`, `tail-risk/*`, and everything through `marketDataProxy` (`stock`, `watchlist/{quotes,sparklines,signals}`, `polymarket/stocks`). `Cache-Control: private, no-cache` → the browser revalidates with `If-None-Match` and an unchanged payload costs a bodiless 304. Client fetches of these must not use `cache: "no-store"`.
 - Consumers (one shared EventSource per page, `hooks/useQuoteStream.ts`): PORT positions (`live-patch.ts` `applyTicks`, price deltas) · every chart via `useStockHistory` (`chartkit/live-bars.ts` `applyTickToBars`: moves last candle, opens a new one past it) · chart header via `useStockQuote` · watchlist via `useWatchlistQuotes` · TICK DATA board: indices (`useMarketDataQuery`), FX (`useFxTicks`), volatility (market-view) — all through `lib/live-quotes.ts`.
 
+### Trade history for agents (`routers/trade_history.py`) — read-only (2026-10-08)
+- `GET /api/v2/trade-history/coverage` — what the book holds: `book` (lots, open/closed, first/last dates), `accounts[]` (+ `sub_ports`, `currencies_traded`), `symbols[]` (every symbol ever traded, per account), `strategies[]`, `sectors[]`, `options`, `not_in_this_data[]`, `fields` (what each column means) and `rules` (how to read it). The first call an agent makes.
+- `GET /api/v2/trade-history/trades?symbol&account_id&status=all|open|closed&result=W|L&date_from&date_to&date_field=any|entry|exit&strategy&sector&sub_port&market&limit=50&offset=0&order=newest|oldest&detail=brief|full` — one row per lot. `symbol` is exact on `symbol` or `resolved_symbol` (case-insensitive), dates are inclusive `YYYY-MM-DD`; `(none)` selects an empty strategy / sector / sub-port. 422 on a malformed date, `date_from` after `date_to`, an unknown `account_id` (the message lists the accounts) or a value outside an enum. `limit` ≤ 500.
+- `GET /api/v2/trade-history/trades/{id}` — the lot in full + `audit_log[]` (`trade_audit_log`, oldest first) + `broker_slips[]` (`broker_executions`) + `theses[]` + `same_order_lots[]`. A unique id prefix of ≥ 6 characters works; 404 when unknown (says so when the trade was deleted), 409 when a prefix fits several ids.
+- `GET /api/v2/trade-history/stats?group_by=none|symbol|month|year|strategy|sector|account|sub_port|market|instrument&…same filters…&include_options=true&base_currency=THB|USD` — realized results of closed lots (+ closed option round trips unless a stock-only filter is set). `date_field` defaults to `exit`. `totals[]` per currency, `groups[]` per group × currency, `combined` only with `base_currency` (converted at each lot's exit-date rate — the same conversion PORT → ANALYTICS uses).
+- `GET /api/v2/trade-history/options?underlying&account_id&date_from&date_to&limit&offset` — `round_trips[]` (`v_option_realized`, one close ↔ one open) and `open_lots[]` (`v_option_open_lots`, no valuation); dates filter round trips by exit date.
+- Every response: `as_of` (UTC), `source` (table, row count, last write), `query` (the filters as applied), `notes[]`. Lists add `total_matching`, `returned`, `complete`, `next_offset`, `totals[]`. Shapes: `data-shapes.md` → Trade history.
+- No Next.js proxy / UI: the consumer is the MCP. No cache (reads SQLite directly), no outbound call except the FX history lookup `base_currency` may trigger. `/api/v2/portfolio/trades` stays the PORT table's endpoint — not for agents (substring match, no dates, no count).
+
 ### Google Trends (`routers/google_trends.py`) — free/public (2026-09-28)
 - `GET /api/trends/daily?geo=US` — daily trending searches from `trends.google.com/trending/rss?geo=`: `items[] {query, approx_traffic ("2000+" bucket), published_at (UTC ISO), news[] {title,url,source}}`. Cache 30 min, failure negative-cached 5 min.
 - `GET /api/trends/interest?keywords=Visa,Mastercard&geo=US&timeframe=today 12-m` — ≤5 keywords; timeframe ∈ `now 7-d | today 1-m | today 3-m | today 12-m | today 5-y`; `geo=''` = worldwide. `series[] {date, values{kw: 0–100}, partial}`. **0–100 index relative to the peak in that window and keyword set — not search volume.** Unofficial endpoints (explore → widgetdata/multiline); Google 429s them often → **429** (Retry-After 1800) with the explore URL, negative-cached 30 min, never retried around. Cache 6 h. One pull at a time (lock).
 - Both return `source {name, url, retrieved_at, tier, note}` — agents must cite `source.url`.
 - No Next.js proxy / UI yet; consumers are MCP `get_trending_searches`, `get_google_trends`. Official Trends API = application-gated alpha (developers.google.com/search/apis/trends) — swap in if access is granted.
+
+### Webull depth (`routers/webull.py` + `webull_client.py`) — L2 bid/offer, US stocks + ETFs (2026-10-08)
+- `GET /api/webull/status` — `{configured, host, environment: production|test|custom, token: {status, expires_at, checked_at}|null}`. Never a key, secret or token.
+- `POST /api/webull/token` — asks Webull for an access token (`/auth/tokens/create`). Production: comes back `PENDING`, Webull texts a code, the owner enters it in the Webull app (Menu → Messages → OpenAPI Notifications) within 5 min. Test host: `NORMAL` at once. **Only this endpoint requests a token** — a read never does (it would send an SMS).
+- `POST /api/webull/token/check` — re-reads the status (`/auth/tokens/check`).
+- `GET /api/webull/depth?symbol=AAPL&depth=10&overnight=false` — upstream `GET /market-data/stocks/depths/list`. `depth` 1–50. Tries `US_STOCK` then `US_ETF`, remembers which answered (24 h). Symbols outside the feed (index, future, FX, crypto, `.BK`) → 422 without an upstream call.
+- Errors: `detail = {message, code}`, code ∈ `keys` (424) · `token_missing` / `token_pending` (409) · `subscription` (403) · `unsupported` (422) · `empty` (404) · `rate_limit` (429) · `upstream` (424 — never 5xx, `main.py` would blank the reason).
+- Cache: success 1 s (panel polls every 2 s; Webull limit 300 / 60 s), refusals 20 s (negative cache). A token in `PENDING` is re-checked at most every 10 s (Webull answered 429 on `/auth/tokens/check` at one call / 3 s, 2026-10-08); a failed check keeps it pending.
+- Token file: `<app-data>/BloombergTerminal/webull/token-<hash of host+key>.json` or `WEBULL_TOKEN_DIR`; a folder inside the repo is refused. Invalid after 15 days without a call.
+- Levels returned = what the account is entitled to: Nasdaq Basic (free) → 1 level; more needs the **OpenAPI** TotalView subscription (the in-app one does not count). `levels` < `depth_requested` says so.
+- Proxy: `app/api/webull/[...path]/route.ts` (GET status/depth, POST token, token/check).
+- **Verified live 2026-10-08** (production, Nasdaq Basic - Non Display): real bid/ask for INTC and SPY. Learned: asking for more levels than the entitlement is refused with 417 `ILLEGAL_PARAMETER: depth not more than 1` — the router reads the number, remembers it 10 min per session (`_entitled`) and asks for that; an ETF answers under `US_STOCK`; L1 levels carry no `order[]` (`count` null); no entitlement at all = 403 `MARKET_DATA_NOT_SUBSCRIBED … STOCK QUOTES` (overnight: `NIGHT TRADING STOCK QUOTES`); `BRK.B` → 417 `INVALID_SYMBOL` (share-class form still unknown); `/auth/tokens/create` handed an EXPIRED token returns that same dead token with 200 and sends no SMS — only a NORMAL token is handed back. Subscriptions that count are the ones named "… - Non Display" on the Webull website; a new one took ~3 min to apply and needed no new token. Not yet seen: an L2 answer (TotalView - Non Display).
 
 ### Fiscal.ai (`routers/fiscal_ai.py`) — secondary fundamentals (2026-09-28)
 - `GET /api/fiscal/status` → `{key_set, date_utc, calls_used, daily_limit}` (no upstream call).
@@ -519,7 +580,7 @@ Proxy: `app/api/v2/portfolio/margin/[[...path]]` (GET + PUT, 60 s timeout). No c
   in 10Y-note equivalents (approx DV01 weights), only weeks where every tenor reported; stats z/pct of net/OI; per-tenor table
   (`dv01_net`). BOND → MARKET `BasisTradePanel` + CONDITIONS `DealerBalanceSheetPanel`.
 - `GET /api/cot/factor?window=156&weeks=260` — PC1 of every contract's causal rolling z (focus group net/OI), loadings,
-  explained share; weekly. MKT REGIME → COT. Display only (not an HMM input). In-process cache keyed on latest report dates.
+  explained share; weekly. No UI consumer since 2026-10-08 (was MKT REGIME → COT). Display only (not an HMM input). In-process cache keyed on latest report dates.
 - `GET /api/cot/portfolio?account_id=&base_currency=THB` — open positions (`portfolio_v2._open_positions_enriched`) mapped to
   contracts (explicit SYMBOL_MAP; US single stock → ES proxy; TH etc. unmapped; SVXY inverse) × crowding flags →
   WITH_CROWD / AGAINST_CROWD, weights, `unpriced` (no live price → not sized). PORT → RISK `CotCrowdingPanel`.

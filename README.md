@@ -18,7 +18,7 @@ data. One dark UI backed by a Python data service.
 
 | Key | View | What it shows |
 |-----|------|---------------|
-| `1` | **MKT** | Watchlist (WATCH / FREQ / ACTIVE feeds), main chart with indicators, REGIME panel (CORR · GEOM · ROT · IV · COT), TICK DATA board (indices, US/JP rates, volatility, FX) |
+| `1` | **MKT** | Watchlist (WATCH / FREQ / ACTIVE feeds), main chart with indicators, STRUCTURE panel (DEPTH · CORR · GEOM · ROT · IV), TICK DATA board (indices, US/JP rates, volatility, FX) |
 | `2` | **NEWS** | Per-ticker news from 7 sources grouped by sector, topic feed, social, indicator DATA board, Polymarket column; ASK as a column of the view |
 | `3` / `b` | **BOND** | MARKET: 10Y yield decomposition, Treasury and credit legs, corporate issuance (SEC 424B filings) with an event study, Treasury auctions, debt stock, CFTC Treasury-futures positioning · CONDITIONS: crisis level, financial-stress indices, breakevens, mortgage and delinquency data |
 | `4` / `p` | **PORT** | PORTFOLIO (positions, options, trades, cash, entry) · ANALYTICS (P&L, TWR growth, XIRR) · RISK (VaR/CVaR, trade guard, what-if, margin) · TOOLS (THESES · QUESTIONS · TRACK · IMPORT · AUDIT) |

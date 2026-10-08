@@ -58,6 +58,8 @@ The first preparation phase added no persisted schema. Existing `ledger_events` 
   status: { running; last_error: string|null; cooldown; rows_last_run; expected_as_of; stored; contracts } }
 ```
 Basis (`/api/cot/basis`): `{window, as_of, released, unit, stats:{am|lev|dealer:{net,d_net,z,pct,n}}, series:[{date,released,am,lev,dealer,oi}] (10Y-eq, oldest first), tenors:[snapshot contract + dv01_net{grp:number}], status}`
+Webull depth (`/api/webull/depth`): `{symbol, category: US_STOCK|US_ETF, overnight, bids:[{price, size, count|null}] (high→low), asks:[…] (low→high), levels, depth_requested, has_counts, quote_time (ISO UTC)|null, source:{name, endpoint, environment, retrieved_at}}`. `count` = entries in the upstream level's `order[]` (per market participant), null when absent. Errors `{detail:{message, code}}`. TS: `DepthBook` in `components/bloomberg/lib/depth-book.ts`.
+
 Factor (`/api/cot/factor`): `{series:[{date,value}], loadings:{KEY:number}, explained, weeks, window, group, as_of, status}`
 Portfolio (`/api/cot/portfolio`): `{as_of, released, base_currency, rows:[{key,label,side,exposure,weight_pct,symbols[],proxy,focus,focus_z,focus_pct,flags:[flag + relation "WITH_CROWD"|"AGAINST_CROWD"]}], with_crowd_weight_pct, mapped_weight_pct, unmapped_weight_pct, unpriced[], status}`
 TAIL `/api/tail-risk/signals` → each signal gains `counted: boolean` (false = shown, not counted; only `cot_crowding` today).
@@ -1939,3 +1941,129 @@ TCounts  { kill; due; off; setup; waiting; retired; alert /* kill + due + off */
 
 Refusals: HTTP 422 with `detail = {code: "METRIC_REFUSED" | "EXPECTATION_REFUSED" | "READING_REFUSED", missing: string[]}`.
 
+## Anti-thesis (`/api/v2/antithesis`) — 2026-10-08
+
+TypeScript: `components/bloomberg/views/portfolio/tabs/theses/anti/types.ts`.
+
+```ts
+AClaim     { id; ref: "C-0007"; thesis_id; symbol; statement; negation; basis; stake: "KEY"|"SUPPORT";
+             retired_at; retire_reason; actor; created_at;
+             state: AClaimState;
+             revises: {id, ref, statement} | null;      // the wording this one replaced
+             revised_by: {id, ref, statement} | null;   // the wording that replaced this one
+             objections: AObjection[]; sweeps: ASweep[] }
+AClaimState{ status: "FALLEN"|"BROKEN"|"CONTESTED"|"UNTESTED"|"STANDS"|"REVISED"|"RETIRED";   // derived, never stored
+             round: number;                              // 1 = first wording, +1 per revision
+             gaps: ("negation"|"angles"|"would_see")[];
+             angles: Record<"FACT"|"CAUSE"|"LOGIC"|"TIME"|"PRICE", "open"|"conceded"|"rebutted"|"none_found"|"untried">;
+             untried: string[]; settled: boolean;       // settled = STANDS and no untried angle
+             objections: {open, pending, undecided, rebutted, conceded, due};
+             challenged_at: string | null }
+AObjection { id; ref: "A-0012"; claim_id; parent_id; angle; argument; would_see; look_where;
+             withdrawn_at; withdraw_reason; actor; created_at;
+             state: { status: "OPEN"|"PENDING"|"UNDECIDED"|"REBUTTED"|"CONCEDED"|"WITHDRAWN"; due: boolean };
+             question: {id, ref, title, status} | null;
+             verdict: AVerdict | null;                  // the one the user stands behind
+             proposal: AVerdict | null;                 // an agent's newer one, not reviewed yet
+             history: AVerdict[] }
+AVerdict   { id; result: "REBUTTED"|"CONCEDED"|"UNDECIDED"; reasoning; evidence: ZettelBrief[];
+             searched; next_check; consequence: "REVISE"|"FALLS"|null; revised_statement; revised_negation;
+             actor; created_at; review: {result: "ACCEPTED"|"REJECTED", note, actor, created_at} | null }
+ASweep     { id; angle; look_where; actor; created_at }  // kind NONE_FOUND row of anti_objections
+ABoard     { claims: AClaim[]; counts: ACounts;
+             summary: { verdict: "EMPTY"|"KEY_FALLEN"|"OPEN"|"STANDING"|"SETTLED"; live; challenged_at };
+             angles: Record<angle, string>; required_angles: string[] }
+ACounts    { fallen, broken, contested, untested, stands, revised, retired, pending, due, settled,
+             key_fallen, key_open, open, alert }         // /counts adds by_thesis: Record<id, ACounts & {verdict}>
+```
+
+Refusals: HTTP 422 with `detail = {code: "CLAIM_REFUSED" | "OBJECTION_REFUSED" | "SWEEP_REFUSED" | "VERDICT_REFUSED" |
+"IMPORT_REFUSED", missing: string[]}` (import adds `item`, `statement`); 409 / 403 carry a sentence.
+Thesis events written: `ANTI_CLAIM_ADDED`, `ANTI_OBJECTION`, `ANTI_REBUTTED`, `ANTI_REVISED`, `ANTI_FALLEN`,
+`ANTI_RETIRED`, `ANTI_STAKE_CHANGED`. Tables `anti_claims` / `anti_objections` / `anti_verdicts`: `project_summary.md`.
+
+## Trade history (`/api/v2/trade-history`) — 2026-10-08
+
+Read-only, for agents (MCP `get_trade*`). Field meanings live in `routers/trade_history.py` `FIELDS` and are served by
+`/coverage` — do not restate them in a prompt.
+
+```ts
+Envelope   { as_of: string /* UTC */; source: {database, table, rows_in_table, last_write_utc};
+             query: {...filters as applied}; notes: string[] }
+LotList    Envelope & { total_matching; returned; complete: boolean;   // complete = `rows` is every matching lot
+             next_offset: number | null; totals: LotTotals[]; rows: Lot[] }
+LotTotals  { currency; lots; open_lots; closed_lots; wins; losses;
+             realized_pnl: number | null;                // null when no closed lot — not 0
+             open_cost: number | null }                  // over ALL matching lots, one entry per currency
+Lot (brief){ id; account_id; sub_port; symbol; resolved_symbol; market; currency;
+             status: "OPEN"|"CLOSED"; result: "W"|"L"|null; date_entry; date_exit; holding_days;
+             volume; price_entry /* AVCO of the position */; lot_price /* paid for this lot */; price_exit;
+             cost; cost_source: "amount"|"price_entry × volume"|null;
+             pnl_amount: number | null; pnl_percent; fee_entry; fee_exit;
+             strategy_name; sector; acquisition_type }
+Lot (full) = every `trades` column (minus win_loss → status / result) + the derived fields above
+LotDetail  Envelope & { trade: Lot(full); audit_log: {at_utc, action, fields_changed, reason}[];
+             broker_slips: {order_ref, side, executed_at_local, quantity, unit_price, gross_value, commission, vat, ...}[];
+             theses: {thesis_id, role, title, status}[]; same_order_lots: {id, volume, date_exit, win_loss}[] }
+LotStats   Envelope & { scope: string; definitions: Record<string, string>;
+             totals: (Stats & {currency})[]; groups: (Stats & {group, currency, realized_pnl_base?})[];
+             combined: {currency, realized_pnl, closed_lots, wins, losses, win_rate_pct} | null }  // only with base_currency
+Stats      { closed_lots; wins; losses; win_rate_pct; realized_pnl; gross_win; gross_loss; avg_win; avg_loss;
+             payoff; expectancy_per_lot; cost_closed; return_on_cost_pct; avg_holding_days;
+             entry_fees_recorded: number | null;         // null = none recorded
+             best, worst: {id, symbol, date_exit, pnl_amount} | null;
+             pnl_not_recorded; flag_disagrees_with_sign }
+Options    Envelope & { total_matching; returned; complete; next_offset;
+             totals: {currency, round_trips, wins, losses, realized_pnl, pnl_not_recorded}[];
+             round_trips: {close_trade_id, open_trade_id, account_id, occ_symbol, underlying, option_type, strike, expiry,
+                           multiplier, currency, direction, quantity, entry_date, entry_price, exit_date, exit_price,
+                           close_reason, fees_alloc, realized_pnl: number | null}[];
+             open_lots: {lot_id, account_id, occ_symbol, underlying, option_type, strike, expiry, multiplier, currency,
+                         direction, quantity, entry_date, entry_price, entry_fees}[] }
+```
+
+Wins / losses follow the stored `win_loss` flag (as PORT counts them); `flag_disagrees_with_sign` reports where the flag
+and the sign of `pnl_amount` differ. Errors: 422 (unreadable filter — the sentence says which), 404 / 409 on `/trades/{id}`.
+
+## Calendar (`/api/calendar`) — 2026-10-08
+
+TS: `components/bloomberg/views/calendar/types.ts` (`CalPayload`, `CalEvent`, `CalThesis`, `CalRef`).
+
+```jsonc
+{
+  "as_of": "2026-10-08", "start": "2026-09-28", "end": "2026-11-08",
+  "events": [{
+    "id": "co:EARNINGS:INTC:2026-10-29",     // macro:<KIND>:<date> · co:<KIND>:<SYM>:<date> · note:<id> · qdate:<id>
+                                              // · track:<metric>:<period> · opt:<underlying>:<expiry> · hold:<id>
+    "date": "2026-10-29",
+    "category": "COMPANY",                    // MACRO | COMPANY | THESIS | PORT
+    "kind": "EARNINGS",                       // FOMC CPI NFP … | EARNINGS DIVIDEND SPLIT | NOTE QDATE TRACK | EXPIRY REVIEW
+    "tag": null,                              // NOTE: the note kind (CATALYST…); QDATE: FILING / EARNINGS / …; TRACK: role
+    "title": "Earnings", "symbol": "INTC",
+    "impact": null,                           // MACRO only: high | medium | low
+    "estimated": false,                       // a window, a rule date, a SET deadline, a question date not CONFIRMED
+    "source": "Yahoo earnings dates", "source_url": "",
+    "detail": "EPS est 0.39",                 // QDATE: the tracked numbers waiting ("K-0015 … — expected: …")
+    "done": false,                            // reported / resolved / read — shown dim
+    "due": false,                             // its day came and a question or tracked number still waits
+    "theses": [{"id": "…", "symbol": "INTC", "title": "…", "status": "draft", "via": "symbol"}],  // via: note|question|metric|symbol
+    "ref": null,                              // {type:"note", id, thesis_id, status, impact}
+                                              // {type:"question_date", id, ref, questions:[{id, ref, title, thesis_id, status, reads}]}
+                                              // {type:"metric", id, ref, thesis_id}
+    "days_until": 21
+  }],
+  "sources": {
+    "macro":   {"ok": true, "releases_ok": true, "fomc_through": "2027-12-08", "fomc_missing": false},
+    "company": {"ok": true, "symbols": 25, "loaded": 25, "pending": [], "failed": {"AJ": {"earnings": "HTTP 500"}},
+                "oldest_pull": "2026-10-08T20:43:27"},
+    "notes": {"ok": true, "count": 15}, "dates": {"ok": true, "count": 18}, "port": {"ok": true, "count": 0}
+  },
+  "theses": [{"id": "…", "symbol": "INTC", "title": "…", "status": "draft"}]   // the pick list of the add form
+}
+```
+
+A CALENDAR reminder in `GET /api/alerts/events`: `ruleId "cal:<KIND>"`, `ruleName "CALENDAR · <KIND>"`,
+`barTime "<date>#<8-hex>"`, and — unlike indicator alerts — a `snapshot` of strings:
+`{event_id, date, category, kind, title, symbol?, detail?, estimated, source?, thesis_id?, thesis_symbol?,
+thesis_count, note_id?, question_id?}`. Anything rendering `snapshot` generically must branch on
+`isCalendarEvent` (`alerts/calendar-alert.ts`) first.

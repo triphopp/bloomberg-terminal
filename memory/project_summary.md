@@ -1,7 +1,7 @@
 # Bloomberg Terminal — Project Summary
 
 **Repo:** `bloomberg-terminal` — macOS `~/bloomberg-terminal`, Windows `D:\Agents\Claude\bloomberg-terminal-main`
-**Last updated:** 2026-10-07 — TICK DATA board the user arranges (own sections, hide/show, MOVE), PORT → RISK as 6 pages with everything on สรุป, down-tilted paths, REBALANCE "not yet" + risk decision journal (`risk_decisions`), alert → RISK → REBALANCE link. Before that 2026-10-06 — refreshed after PRs #87–#94 (ASK chat on every view + saved conversations, NEWS cold-path work, same-origin write guard, `dev_server.py` reload, `aria-pressed` sweep, IV snapshots dated by the US session). Previous full rewrite 2026-09-26.
+**Last updated:** 2026-10-08 — CAL, a view of its own (key `6`): one calendar over macro, company, thesis and book dates (`backend/calendar_feed.py`, `GET /api/calendar`, no new table — what the user adds is a thesis note or a `question_dates` row), reminders `cal:<KIND>` in the alert strip that link to the thesis (`calendar_scheduler.py`), TAIL strip → CALENDAR. Same day — ANTI-THESIS (step back) under PORT → TOOLS → THESES: the beliefs a thesis rests on, each beside its negation, objections from five angles, evidence-gated verdicts (`routers/antithesis.py`, `anti_*` tables, MCP `anti_*`, spec `reference/anti-thesis.md`). Same day — trade history for agents: `routers/trade_history.py` (`/api/v2/trade-history/*`, read-only) + MCP `get_trade_coverage` · `get_trades` · `get_trade` · `get_trade_stats` · `get_option_trades` — exact filters, honest paging, server-side totals per currency. Before that 2026-10-07 — TICK DATA board the user arranges (own sections, hide/show, MOVE), PORT → RISK as 6 pages with everything on สรุป, down-tilted paths, REBALANCE "not yet" + risk decision journal (`risk_decisions`), alert → RISK → REBALANCE link. Before that 2026-10-06 — refreshed after PRs #87–#94 (ASK chat on every view + saved conversations, NEWS cold-path work, same-origin write guard, `dev_server.py` reload, `aria-pressed` sweep, IV snapshots dated by the US session). Previous full rewrite 2026-09-26.
 
 > Slim core reference. Navigate via [memory/INDEX.md](INDEX.md).
 > - [reference/architecture.md](reference/architecture.md) — data flow, routers, key files, accounting layer
@@ -32,11 +32,11 @@
 ## Tests (verified 2026-10-06)
 
 ```bash
-cd backend && python -m pytest -q -p no:cacheprovider --basetemp=<scratch dir>   # backend/pytest.ini: tests/ + slip_ocr/tests/ — 1767 collected (2026-10-07: 1766 pass, known issue 17 aside)
+cd backend && python -m pytest -q -p no:cacheprovider --basetemp=<scratch dir>   # backend/pytest.ini: tests/ + slip_ocr/tests/ — 1832 collected (2026-10-08: 1831 pass, known issue 17 aside)
 npm run typecheck      # tsc --noEmit — clean (also run by the pre-commit hook and CI)
 npm run test:chart     # 317 pass
 npm run test:session   # 121 pass (incl. tick-board, 2026-10-07)
-npm run test:views     # 40 pass
+npm run test:views     # 56 pass (incl. calendar-month, 2026-10-08)
 npm run test:alerts    # 44 pass
 npm run test:watchlist # 24 pass
 npm run test:ask       # 36 pass (ASK history, sessions, math, persist, proxy rules)
@@ -58,7 +58,7 @@ This Windows box denies the system temp dir to pytest — pass `--basetemp` to a
 | State | Jotai (atoms) + TanStack React Query |
 | Charts | lightweight-charts v5 via our `chartkit/` + `chart/` (ModularChart, panes, event rail, regression channels), Recharts for dashboards |
 | Styling | Tailwind CSS, `bloombergColors` theme; text-only controls (`styles/globals.css`) |
-| Backend | Python FastAPI (port 9317) — 74 routers, `main.py` mounts them; `dev_server.py` = auto-reload runner |
+| Backend | Python FastAPI (port 9317) — 78 routers, `main.py` mounts them; `dev_server.py` = auto-reload runner |
 | Data | yfinance through a provider registry (`sources/`) + app-wide Yahoo gate (`yahoo_gate.py`, 6 concurrent) + shared request coordinator (`market_requests.py`) |
 | Macro / rates | FRED (+ Alpha Vantage fallback), Japan MOF JGB CSV, CBOE vol CSVs, Treasury fiscaldata |
 | Filings / positioning | SEC EDGAR (submissions, 8-K EX-99.1, XBRL, EFTS 424B2/424B5), CFTC Socrata (TFF + Disaggregated) |
@@ -76,6 +76,7 @@ This Windows box denies the system temp dir to pytest — pass `--basetemp` to a
 FRED_API_KEY          — required: macro, rates, crisis, TAIL, BOND
 ALPHA_VANTAGE_API_KEY — macro fallback
 FISCAL_AI_API_KEY / FISCAL_AI_DAILY_LIMIT — Fiscal.ai fundamentals (free trial: 100 fixed companies, 250 calls/day; base `https://api.fiscal.ai/v3`, key in `apiKey` query param — never log URLs). Used by `routers/fiscal_ai.py` + MCP `get_fiscal_data` (2026-09-28)
+WEBULL_APP_KEY / WEBULL_APP_SECRET — Webull OpenAPI (Thailand): L2 bid/offer depth, US stocks + ETFs → MKT STRUCTURE → DEPTH (`routers/webull.py`, `webull_client.py`). Secret signs locally (HMAC-SHA256), never sent. Optional `WEBULL_API_HOST` (default `api.webull.co.th`; test `th-api.uat.webullbroker.com`), `WEBULL_TOKEN_DIR`. The access token is NOT an env var: requested from the panel, confirmed by SMS code in the Webull app, stored outside the repo (2026-10-08)
 EIA_API_KEY           — optional: TAIL oil balance (EIA weekly); unset = public DEMO_KEY, 10 calls/h (2026-10-02)
 ANTHROPIC_API_KEY     — portfolio AI; CLAUDE_MODEL / CLAUDE_MAX_TOKENS optional
 ASK_SESSIONS_STORE (auto | drive | local | off) / ASK_SESSIONS_DIR (explicit folder, outside the repo) — where THIS machine keeps ASK conversations (`backend/ask_sessions.py`): `<SYNC_DIR>/ask-sessions` on Google Drive, or the user's app-data folder. Set from ASK → HISTORY → STORAGE or `python scripts/ask_sessions.py`, 2026-10-06
@@ -101,6 +102,7 @@ SERIES_REFRESH_INTERVAL — indicator series collectors
 ALERT_SCAN_INTERVAL   — alert rule scanner
 TRADE_GUARD_SCAN_INTERVAL (default 900, 0 = off) — TRADE GUARD notifier (guard_scheduler.py)
 MARGIN_SCAN_INTERVAL (default 300, 0 = off) — MARGIN notifier (margin_scheduler.py): account level worsens → alert_events `margin:<LEVEL>`
+CALENDAR_SCAN_INTERVAL (default 1800, 0 = off) — CALENDAR notifier (calendar_scheduler.py): a date today or on the next business day → alert_events `cal:<KIND>` (2026-10-08)
 UPSTREAM_LOG          — override logs/upstream.jsonl
 ALLOW_DANGEROUS_OPS   — gate for destructive maintenance endpoints
 SYNC_ENABLED / SYNC_DIR (no quotes) / SYNC_DEVICE_ID / SYNC_FOLDER_NAME / SYNC_AUTODETECT
@@ -120,7 +122,7 @@ DEV_ORIGINS=                           — optional, comma-separated extra host 
 
 ## Backend Architecture — Modular Routers
 
-`main.py` = app init + CORS + schema init + router mounting (74 routers). All logic in `backend/routers/`.
+`main.py` = app init + CORS + schema init + router mounting (78 routers). All logic in `backend/routers/`.
 Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo_gate` load before any router.
 
 | Router file | Prefix | Source |
@@ -135,6 +137,7 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `stream.py` | `/api/stream/quotes?symbols=` (SSE, ≤1 msg/s, only symbols that ticked) · `/api/stream/status` | Yahoo pricing WebSocket, sharded ≤90 symbols per socket (Yahoo cap 100) on an own asyncio thread, protobuf decoded directly (`backend/quote_stream.py`), ref-counted subscriptions, regular-session ticks only; no REST calls, no key; upstream source `Yahoo stream` |
 | `google_trends.py` | `/api/trends/daily?geo=US` · `/api/trends/interest?keywords=a,b&geo=&timeframe=today 12-m` (no UI; MCP `get_trending_searches` / `get_google_trends`) | Google Trends public RSS (30 min, fail 5 min) + unofficial explore/multiline endpoints (6 h, 429 → fail 30 min, never retried around); every response has a `source` block; upstream source `Google Trends` |
 | `fiscal_ai.py` | `/api/fiscal/status` · `/api/fiscal/{kind}/{symbol}?period=` (profile, income, balance, cashflow, ratios, adjusted, segments-kpis, earnings-summary, ir-events, fund-letters, news-summary) · `/api/fiscal/transcript/{symbol}/{q3-2026}` (no UI; MCP `get_fiscal_data`) | Fiscal.ai API v1–v3, key in `X-Api-Key` header; daily budget persisted in `logs/fiscal_ai_usage.json` (429 when spent); cache 12 h, fail 10 min; no key → 424; upstream source `Fiscal.ai` |
+| `webull.py` | `/api/webull/status` · `POST /api/webull/token` · `POST /api/webull/token/check` · `/api/webull/depth?symbol=&depth=&overnight=` — order-book depth, US stocks + ETFs, Webull OpenAPI (`webull_client.py`: signature + token file in app-data). Cache 1 s, refusals 20 s. MKT STRUCTURE → DEPTH (2026-10-08) |
 | `cot.py` | `/api/cot/{snapshot,history,basis,factor,portfolio,status}` | CFTC Socrata, 17 contracts, background refresh → `cot_*` tables; endpoints read SQLite only |
 | `discover.py` | `/api/search-stats/{hit,top,{symbol}}`, `/api/most-active` (MKT FREQ / ACTIVE) | SQLite `search_hits` + yfinance `screen("most_actives")` |
 | `bonds.py` | `/api/bonds/{overview,decomposition,supply,issuance}` (BOND view) | FRED + NY Fed ACM + Treasury fiscaldata + SEC EFTS |
@@ -148,13 +151,14 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `pins.py` | `/api/pins/*` (watchlist groups, assets, tags) | SQLite |
 | `watchlist_signals.py` | `/api/watchlist/{quotes,signals,sparklines}` | shared `market_snapshots.py` / `market_requests.py` |
 | `news.py` / `news_watchlist.py` / `social.py` | `/api/news/*`, `/api/social/feed` | 7 news sources, RSS, RSSHub/Graph API. Watchlist news = one stored pull per (symbol, source), kept across restarts in `backend/cache/news_watchlist.json` (`persist_cache.py`); `wait` / `settle` / `pending` let the tab paint before the slow sources answer (2026-10-05) |
-| `news_ai.py` + `ask_sessions.py` | `/api/news/ask` (POST, SSE) · `/ask/status` · `/ask/key` · `/ask/models` · `/ask/sessions[/{id}]` (GET / PUT / PATCH pin / DELETE → trash) · `/ask/sessions/trash[/{id}[/restore]]` · `/ask/sessions/config` — ASK, the chat on every view (`components/bloomberg/ask`). Tools (26, read-only): terminal data, `read_screen` / `get_page_data` (`ask_pages.py`), theses · questions · tracked numbers · zettel · company accounts (`ask_research.py`), `search_sessions` / `read_session` (saved conversations), `search_web_news`, `read_page` (`web_reader.py`), `web_search` (Tavily/Brave). Conversations are files outside the repo (`<SYNC_DIR>/ask-sessions` or app-data; pin, trash, restore, erase only from trash); history turns carry `[asked …]`, a resumed conversation is told its figures are old, turns past the 12-turn window go as one-line digests (2026-10-06) | OpenAI chat-completions format via `requests` (upstream sources DeepSeek / Tavily / Brave Search); `backend/.env` re-read per question |
+| `news_ai.py` + `ask_sessions.py` | `/api/news/ask` (POST, SSE) · `/ask/status` · `/ask/key` · `/ask/models` · `/ask/sessions[/{id}]` (GET / PUT / PATCH pin / DELETE → trash) · `/ask/sessions/trash[/{id}[/restore]]` · `/ask/sessions/config` — ASK, the chat on every view (`components/bloomberg/ask`). Tools (27, read-only): terminal data, `read_screen` / `get_page_data` (`ask_pages.py`), theses · questions · tracked numbers · anti-thesis board (`get_antithesis`, 2026-10-08) · zettel · company accounts (`ask_research.py`), `search_sessions` / `read_session` (saved conversations), `search_web_news`, `read_page` (`web_reader.py`), `web_search` (Tavily/Brave). Conversations are files outside the repo (`<SYNC_DIR>/ask-sessions` or app-data; pin, trash, restore, erase only from trash); history turns carry `[asked …]`, a resumed conversation is told its figures are old, turns past the 12-turn window go as one-line digests (2026-10-06) | OpenAI chat-completions format via `requests` (upstream sources DeepSeek / Tavily / Brave Search); `backend/.env` re-read per question |
 | `polymarket.py` / `polymarket_stock.py` | `/api/polymarket/*` | Gamma API (client-side filtering, see gotchas) |
 | `company_filings.py` | `/api/company/{filings,outlook,xbrl}/{symbol}` | SEC EDGAR (US only) |
 | `series.py` | `/api/v2/series/*` (generic indicator series; dramexchange DRAM/NAND) | SQLite + `series_sources/` |
 | `chart_drawings.py` | `/api/v2/chart-drawings/*` (trend lines + REG channels drawn on charts; synced) | SQLite `chart_drawings` |
 | `ledger.py` | `/api/v2/ledger/*` — append-only journal v2: accounts/mode (LEGACY·SHADOW), wallets, events (trade, position, cash, dividend, transfer, fx-convert, opening, adjust, reverse, fee-trueup), balances, positions, close/reopen, closes, check (L1–L9), pilot, project. Core in `backend/ledger.py`; errors `{code, detail, evidence}` 409/422 | SQLite |
 | `portfolio_v2.py` | `/api/v2/portfolio/*` — accounts, trades, sell (AVCO), cash/transfer/reconcile, dividends, fees, open-positions, summary, returns, nav-history, **nav-index** (TWR, start-of-day for capital dated before the snapshot day), **takeover**, **history-review**, ledger check/stock-card/statements/evidence, import | SQLite |
+| `trade_history.py` | `/api/v2/trade-history/{coverage,trades,trades/{id},stats,options}` — the book's past trades for agents, read-only, no UI (MCP `get_trade_coverage` · `get_trades` · `get_trade` · `get_trade_stats` · `get_option_trades`). Filters exact and echoed back (bad date / unknown account = 422); every list has `total_matching` / `returned` / `complete` / `next_offset`; `totals` and `/stats` are computed over all matching rows, one line per currency (`base_currency` converts on request); stored values unrounded, NULL kept; `/coverage` = accounts, sub-ports, every traded symbol, the field dictionary (`FIELDS`) and reading rules (`RULES`). Stats equal PORT → ANALYTICS (test) (2026-10-08) | SQLite `trades`, `trade_audit_log`, `broker_executions`, option views |
 | `slip_ocr.py` | `/api/v2/portfolio/slip/{read,status}` — broker slip screenshot → ENTRY fields (engine `backend/slip_ocr/`, easyocr in a spawned worker); read-only | — |
 | `risk.py` | `/api/v2/portfolio/risk/*` (VaR/CVaR/Parity/Stress/Sizing + `/guard`, `/guard/override`, `/guard/size`, `/guard/report` TRADE GUARD via `trade_guard.py`, `/stop-sim` + `/what-if-sim` via `stop_sim.py`, `/monte-carlo` via `port_mc.py`, `/var-backtest`, `/factors` via `factor_exposure.py`, `/budget` via `risk_budget.py`, `/bear-paths` via `bear_paths.py` — down-tilted paths 3/5/7/21/42 days, `/decisions` via `risk_journal.py` — journal of stop / rebalance decisions + REBALANCE HOLD, 2026-10-07) | Ledoit-Wolf |
 | `margin.py` | `/api/v2/portfolio/margin/{status,overview,settings}` — IBKR Reg T per account (PORT + PAPER): NLV/ELV/IM/MM/EL/AF/cushion, level SAFE→LIQUIDATION, drop-to-call per account + per underlying; model `backend/margin.py`, PAPER order checks | in-process portfolio_v2 / paper_trading valuation |
@@ -164,6 +168,8 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `theses.py` / `zettel.py` / `graphs.py` | `/api/v2/theses/*`, `/api/v2/zettel/*`, `/api/v2/graphs/*` | SQLite + `THESES_DIR` / `OBSIDIAN_WIKI_DIR` / `GRAPHS_DIR` |
 | `questions.py` | `/api/v2/questions/*` — open questions per thesis as a tree (child → parent with `if_a` / `if_b`), evidence-gated answers (CONFIRMED / INFERRED / UNCLEAR / UNANSWERABLE, 422 lists what is missing), signals, testable assumptions, user review, agent queue + claim, `/counts` for the PORT badge. Status is derived on read. PORT → TOOLS → QUESTIONS; MCP `question_*` (2026-10-01) | SQLite + zettel as evidence |
 | `tracking.py` | `/api/v2/tracking/*` — the numbers a thesis stands or falls on (killers + watch numbers): where each is read (source name / url / locator / tool, optional `series_id`), a forecast per period with its reason and release date (a `question_dates` row), the reading with evidence, verdict decided by the numbers (IN_LINE / ABOVE / BELOW / OFF), kill line check; a miss opens a `questions` row in the same transaction. Status (KILL / DUE / OFF / SETUP / WAITING) derived on read; `/counts` for the PORT badge, `/due` for agents. PORT → TOOLS → TRACK; MCP `track_*` (2026-10-02) | SQLite + question calendar + zettel as evidence |
+| `calendar_feed.py` | `/api/calendar?start&end&refresh` — the one calendar, read-only: macro (FOMC · FRED releases · rule dates), company (earnings · ex-dividend · splits of every thesis symbol, holding and option underlying), thesis (dated notes · question dates with the questions and tracked numbers waiting on them), port (option expiries · HOLD reviews); every event `{id, date, category, kind, title, symbol, impact, estimated, source, detail, done, due, theses[], ref}`; `sources` says how each fared and which symbols are still `pending`. Logic `backend/calendar_feed.py`; reminders `backend/calendar_scheduler.py` → `alert_events` `cal:<KIND>`. CAL view (`6`); ASK `get_page_data calendar/events` (2026-10-08) | `event_calendar` + stock endpoints (Yahoo, background, `backend/cache/calendar_company.json`: fresh 6 h, failed 30 min → 6 h, last good 30 d) + SQLite |
+| `antithesis.py` | `/api/v2/antithesis/*` — step back from a thesis: its beliefs as claims (statement + negation, stake KEY / SUPPORT), objections per angle (FACT · CAUSE · LOGIC · TIME · PRICE · OTHER) with `would_see` / `look_where`, "searched, none found" sweeps, and verdicts (REBUTTED needs zettel evidence with url + quote and no open conflict · CONCEDED → REVISE writes a new claim with `revises_id` or FALLS · UNDECIDED needs `searched` + `next_check`). An agent's verdict is a proposal until the user reviews it; withdraw / revise / retire / delete / stake are user-only. Status (UNTESTED / CONTESTED / STANDS / BROKEN / FALLEN / REVISED / RETIRED) and the thesis reading (OPEN / KEY_FALLEN / STANDING / SETTLED) are derived on read; `/counts` for the tab label, `/queue` for agents, `/import` for a whole board, `/objections/{id}/question` opens a `questions` row. PORT → TOOLS → THESES → ANTI-THESIS; MCP `anti_*` (2026-10-08) | SQLite + zettel as evidence + questions |
 | `paper_trading.py` | `/api/paper/*` (no UI / proxy since 2026-10-02; `margin.py` still uses its valuation) | yfinance + SQLite |
 | `alerts.py` / `alert_rules.py` / `ticker.py` | `/api/alerts*`, `/api/ticker` | regime + SQLite rule engine |
 | `regime.py` / `market_state.py` / `rotation.py` / `analytics.py` / `fear_greed.py` | regime correlation, per-symbol HMM state, RRG rotation (`/api/rotation/{table,map,tilt}`), analytics, F&G | yfinance |
@@ -414,6 +420,18 @@ track_expectations  (id, metric_id, period, expected (words), low, high (band; e
 track_readings      (id, metric_id, expectation_id, period, as_of, value, value_text, verdict
                      IN_LINE|ABOVE|BELOW|OFF|UNSCORED, kill 0|1 (the line as it stood when read), note, zettel_id,
                      source_url, quote, question_id (the "why" a miss opened), actor)
+anti_claims         (id uuid PK, ref 'C-0007' (label), thesis_id, symbol, statement, negation, basis, stake KEY|SUPPORT,
+                     revises_id (the claim this wording replaced), retired_at, retire_reason, actor, deleted_at)
+                     — small head row (LWW); never reworded once argued over: a revision is a NEW row.
+                     Status is NOT a column: derived on read (routers/antithesis._derive)
+anti_objections     (id, ref 'A-0012', claim_id, parent_id (the objection it continues), kind OBJECTION|NONE_FOUND,
+                     angle FACT|CAUSE|LOGIC|TIME|PRICE|OTHER, argument, would_see, look_where, question_id,
+                     withdrawn_at, withdraw_reason, actor) — NONE_FOUND = an angle searched with no objection
+                     found (look_where = where it was searched); the argument is never edited
+anti_verdicts       (id, claim_id, objection_id, kind VERDICT|REVIEW, result REBUTTED|CONCEDED|UNDECIDED |
+                     ACCEPTED|REJECTED, target_id (REVIEW → the verdict), reasoning, evidence JSON [zettel ids],
+                     searched, next_check, consequence REVISE|FALLS, revised_statement, revised_negation, actor)
+                     — never updated; newest accepted verdict stands. All three tables SYNCED (2026-10-08)
                      — never updated: a correction adds a row. All three tables SYNCED (2026-10-02)
 theses              (id TEXT uuid PK, symbol, resolved_symbol, market, account_id, sub_portfolio,
                      title, category, strategy, status draft|active|watch|invalidated|closed,
@@ -463,7 +481,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 
 ---
 
-## Frontend Views — 6 views (since 2026-09-26)
+## Frontend Views — 7 views (CAL added 2026-10-08)
 
 | Key | Button | View | Component |
 |-----|--------|------|-----------|
@@ -471,6 +489,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 | `2` | NEWS | News | `views/news/` — ASK bar + column (`<AskBar />` / `<AskColumn />`, takes the Polymarket column's place while open) · WATCHLIST (per-ticker, 7 sources, by sector; answers from what has arrived, `UPDATING` while slow sources settle) · NEWSFEED · SOCIAL · DATA (indicator series board) + Polymarket column |
 | `3` / `b` | BOND | Bond Monitor | `views/bonds/` — MARKET: KPI strip, 10Y YIELD DECOMPOSITION (ACM: expected real + BE + TP, 20D driver, tripwires), TREASURY LEG, CREDIT LEG (IG/HY trigger lines 2%/5%), CORPORATE ISSUANCE/WEEK (SEC 424B2/424B5 ex-bank) + EVENT STUDY + RECENT DEALS, TREASURY AUCTIONS, DEBT STOCK, CFTC Treasury futures + basis trade · CONDITIONS (ex-CRDT, `useCreditData(isActive)` → `/api/crisis`): crisis level L0–3 (also in the status bar), STL FSI / NFCI, breakevens, 30Y mortgage, delinquencies, dealer balance sheet. `Alt+1/2` tabs |
 | `4` / `p` | PORT | Portfolio | `portfolio-view.tsx` → `views/portfolio/` — PORTFOLIO (POSITIONS incl. TAKEOVER strip · OPTIONS · TRADES · CASH · ENTRY) · ANALYTICS (P&L dashboard: KPI strip, flagged XIRR, period returns, PORTFOLIO GROWTH (TWR, deposit ▲ / withdrawal ▼ / EDIT ◆, estimated span shaded, monthly table) · ROTATION) · RISK (6 pages since 2026-10-07: สรุป = plain-words risk + down-tilted paths 3/5/7/21/42 days + margin + TRADE GUARD + decision journal + the methods (VaR/CVaR/ERC/EWS, FUTURES POSITIONING vs BOOK) · REBALANCE with "ยังไม่ขาย" + reason · BUDGET · FACTOR · WHAT-IF · MONTE CARLO · ขาลง · OPTIONS) · TOOLS (one thesis navigator shared by THESES · QUESTIONS · TRACK — search, kind / sector / status / owed-work / unread filters, selection kept across the three; THESES: THESIS / NOTES / KB Zettelkasten / RESEARCH (ex-GRAPHS, internals still `graph*`) / HISTORY / TRADES / AI · QUESTIONS: tree (foldable) + cross-thesis search + calendar · TRACK: tracked numbers, forecast vs actual; read marks on all of it · IMPORT · AUDIT incl. ACCOUNTING CHECK). PAPER tab + ANALYTICS → BACKTEST removed 2026-10-02 (backend routers stay) |
+| `6` | CAL | Calendar | `views/calendar/` (2026-10-08) — one calendar over macro releases, earnings / ex-dividend dates of thesis symbols and holdings, dated thesis notes · question dates · tracked numbers, option expiries and HOLD reviews (`/api/calendar`). Month grid or agenda, filters by category / kind / thesis, day panel with source and linked theses (one click to the thesis NOTES or the question), add → thesis note or question date. Reminders `cal:<KIND>` in the alert strip; TAIL's event strip links here. Command `CAL` |
 | `5` / `t` | TAIL | Tail Risk Monitor | `tail-risk-view.tsx` + `views/tail/` — MARKET EVENTS (named cross-asset shocks; SEVERE raises the composite) · 6 risk dimensions → composite · MACRO CONTEXT (not in composite: event strip, Fed, curve, regime, latest prints, MACRO READ) · SECTOR ROTATION (turnover tilt + self-recorded ETF AUM) · POSITIONING (CFTC crowding flags; `cot_crowding` shown with CTX tag, `counted: False`) · BUSINESS CYCLE (official indicators by their published definitions + track record; context, `views/tail/cycle.tsx`) |
 | `h` | — | HMAP (no nav button) | `heatmap-view.tsx` — one market as a sector treemap (~275 names); command `heatmap(TH)`, `heatmap(US, 52w)`; metrics 1D · 52W · 50D · 200D · HIGH · RVOL switch without a request; click → stock view, shift-click → floating chart |
 
@@ -520,7 +539,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 17. **`test_db_pool::test_recreated_file_at_same_path_gets_a_fresh_connection`** fails on Windows (`PermissionError [WinError 32]` unlinking a DB file a pooled connection still holds) — also when run alone; seen 2026-10-05, untouched by the NEWS work (`reports/db-pool-test-windows-unlink-risk-report.md`). Rest of the suite passes.
 18. ~~**`--reload` + open browser tab = backend down after every `.py` save**~~ — fixed 2026-10-06: `--timeout-graceful-shutdown 3` ended the hang, then `backend/dev_server.py` replaced `uvicorn --reload` on Windows (the worker's Ctrl-C arrived 10–20 s late). A save is live in ~6 s, measured 4 times with a stream held open.
 19. **IV snapshots were filed under the machine's date** — fixed 2026-10-06 (`us_session.py`, PR #93). The 61 `iv_snapshots` sync conflicts with alvis were resolved to alvis's in-session values; the peer is no longer DIVERGED. Still open: re-dating the 1,787 older rows (needs a rule for key collisions) and the snapshot-mode merge (`sync/merge.py`), unchanged (`reports/iv-snapshot-sync-conflicts-risk-report.md`).
-20. **`test_tracking::test_a_revised_forecast_stands_and_the_old_one_is_kept`** fails occasionally inside the full backend run only (the file alone passed 3/3) — likely order/timestamp dependent, not investigated.
+20. **`test_tracking::test_a_revised_forecast_stands_and_the_old_one_is_kept`** fails occasionally inside the full backend run only (the file alone passed 3/3) — likely order/timestamp dependent. Probable cause found 2026-10-08, not fixed: `questions._now_sync` writes no seconds (`reports/now-sync-missing-seconds-risk-report.md`).
 
 ---
 
@@ -528,6 +547,8 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 
 - [x] **CBRS evidence audit** — done 2026-10-06; MCP research v3, 11 evidence notes, contradictions and proposed answers verified (`plans/completed/cbrs-evidence-audit-2026-10-06.md`)
 - [x] **CBRS governance and cooling correlation** — done 2026-10-06; new MCP graph with Buffett-inspired governance audit, verified cooling links and 98-day matched-return analysis (`plans/completed/cbrs-governance-cooling-correlation-2026-10-06.md`)
+
+- [x] **Unified calendar** — done 2026-10-08; the CAL view (`6`): one calendar over macro / company / thesis / book dates with filters, add-event form, reminders in the alert strip linking to the thesis; no new table (`plans/completed/unified-calendar.md`)
 
 Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished plan becomes `- [x] … done YYYY-MM-DD` only with a Completion Evidence section.
 
@@ -623,7 +644,7 @@ Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished pl
 - [x] **Neocloud three-year accounting review** — done 2026-09-19; รายงานไทย 34 โปรไฟล์พร้อมช่องว่างหลักฐานและ MCP readback (`plans/completed/neocloud-three-year-accounting-review.md`)
 - [x] **Zettelkasten Knowledge Base (THESES)** — คลังความรู้อะตอมที่ใช้ซ้ำข้าม thesis: `zettel`/`zettel_edges`/`zettel_sources`/`zettel_refs` + FTS5, edge ชนิด SUPPORTS/CONTRADICTS/REFINES/SUPERSEDES, พาเนล OPEN CONFLICTS, MCP 11 tools, export ทางเดียว → Obsidian `[[wikilink]]` — done 2026-09-18 (`plans/completed/zettelkasten-knowledge-base.md`)
 - [x] **Indicator Series Board** — done 2026-09-19 — generic series store (`series_meta`/`series_points`) + collector registry `series_sources/`; dramexchange = ชุดแรก (31 series: DRAM/NAND/module/memcard spot + DRAM/NAND/SSD contract), แท็บ DATA ใน NEWS, scheduler วันละจุด, เข้า cloud sync (`plans/completed/indicator-series-board.md`)
-- [x] **CFTC COT Positioning** — done 2026-09-25 — `routers/cot.py` (`/api/cot/{snapshot,history,basis,factor,portfolio,status}`, 17 contracts, SQLite `cot_*`) → TAIL POSITIONING (`cot_crowding` counted=False, backtest WEAK) · BOND basis trade + dealer · MKT chips + REGIME COT · stock COT tab · PORT RISK crowding (`plans/completed/cot-positioning.md`, backtest `D:/Agents/Claude/backtest-idea/06_cot_crowding/results/2026-09-25/report.md`)
+- [x] **CFTC COT Positioning** — done 2026-09-25 — `routers/cot.py` (`/api/cot/{snapshot,history,basis,factor,portfolio,status}`, 17 contracts, SQLite `cot_*`) → TAIL POSITIONING (`cot_crowding` counted=False, backtest WEAK) · BOND basis trade + dealer · MKT chips (REGIME COT mode removed 2026-10-08, panel renamed STRUCTURE) · stock COT tab · PORT RISK crowding (`plans/completed/cot-positioning.md`, backtest `D:/Agents/Claude/backtest-idea/06_cot_crowding/results/2026-09-25/report.md`)
 - [x] **MKT Compact Chart Toolbar** — done 2026-09-25: รวมช่วงเวลาและ indicator controls ในแถบเดียวเมื่อแผงกว้าง; แผงแคบจัดสองแถวและเลื่อนรายการ indicator ได้ (`plans/completed/mkt-compact-chart-toolbar.md`)
 - [x] **Multiple Regression Channels** — done 2026-09-25: REG หลายชุดพร้อมกัน แยกตาม symbol/interval เลือก ปรับ mode และลบรายชุด (`plans/completed/multi-regression-channels.md`)
 - [x] **TAIL Macro Read (MOVE + core inflation + ISM proxy)** — MOVE เข้า `vol_indices` (yfinance-only) + สัญญาณ `move_spike` ใน CROSS-ASSET VOL; `/api/macro` เพิ่ม `cpi_core` `pce` `pce_core` `ism_proxy` (regional Fed composite — FRED ถอด ISM ออกปี 2022); บล็อก MACRO READ 3 แกน (INFLATION / GROWTH / RATES VOL) พร้อมกฎที่ใช้ตัดสิน — done 2026-09-20 (`plans/completed/tail-macro-read.md`)
