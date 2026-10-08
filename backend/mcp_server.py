@@ -90,6 +90,16 @@ mcp = MCPServer(
         "verdict is a proposal — only the user accepts it, withdraws an objection, or "
         "rewrites, retires or deletes a claim. A fallen claim never changes the thesis "
         "by itself. "
+        "TRADE HISTORY: the user's own past trades are rows in the terminal's "
+        "database, read with get_trade_coverage (what exists, what each field means — "
+        "call it first), get_trades, get_trade, get_trade_stats, get_option_trades. "
+        "State only what these return: a trade, date, price or amount that is not in a "
+        "result does not exist. Check `complete` on every list — false means you hold "
+        "one page, so fetch `next_offset` or say the answer is partial. Never add rows "
+        "up yourself: sums, counts, win rates and averages come from `totals` or "
+        "get_trade_stats, and amounts in different currencies are never added. null is "
+        "not zero (an open lot has no P&L). Zero matching rows is an answer — say there "
+        "are none. Quote the row id, the dates and the result's `as_of` with any figure. "
         "Fundamental analysis (\"วิเคราะห์พื้นฐาน\" a ticker): call "
         "get_fundamental_spec FIRST and follow it exactly — which data to pull "
         "(get_stock_data, get_filings, get_fiscal_data, get_news, the earnings call), "
@@ -181,6 +191,43 @@ def _out(data: Any) -> str:
 
 def _clean(d: dict) -> dict:
     return {k: v for k, v in d.items() if v is not None}
+
+
+def _out_rows(data: dict, key: str = "rows") -> str:
+    """`_out` for a paged list: when the result is over the cap, drop whole rows
+    from the end and say so in the envelope, instead of cutting the JSON
+    mid-row. A model that is handed a clipped list reads it as the whole list;
+    `complete: false` + `next_offset` is something it can act on."""
+    text = json.dumps(data, ensure_ascii=False, default=str)
+    rows = data.get(key)
+    if len(text) <= MAX_CHARS or not isinstance(rows, list) or not rows:
+        return text
+    total = len(rows)
+    offset = int((data.get("query") or {}).get("offset") or 0)
+    out = dict(data)
+    out["notes"] = list(data.get("notes") or [])
+    out["notes"].append("")  # placeholder — sized before the rows are cut
+    lo, hi = 0, total  # the most rows that fit
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _fits(out, key, rows, mid, total, offset):
+            lo = mid
+        else:
+            hi = mid - 1
+    _fits(out, key, rows, lo, total, offset)
+    return json.dumps(out, ensure_ascii=False, default=str)
+
+
+def _fits(out: dict, key: str, rows: list, keep: int, total: int, offset: int) -> bool:
+    out[key] = rows[:keep]
+    out["returned"] = keep
+    out["complete"] = False
+    out["next_offset"] = offset + keep
+    out["notes"][-1] = (
+        f"Output limit: {keep} of the {total} rows the server sent fit in this result. "
+        f"Call again with offset={offset + keep} for the rest; `totals` already covers "
+        "every matching row.")
+    return len(json.dumps(out, ensure_ascii=False, default=str)) <= MAX_CHARS
 
 
 # ── Theses: read ─────────────────────────────────────────────────────────────
@@ -375,12 +422,143 @@ def get_positions(symbol: Optional[str] = None, account_id: Optional[str] = None
     return _out(data)
 
 
+# ── Trade history (read-only) ────────────────────────────────────────────────
+# The backend router (routers/trade_history.py) does the filtering, the paging
+# and every sum; these tools only pass the question through. Nothing here
+# computes a number.
+
+TRADES = f"{API}/api/v2/trade-history"
+
+
 @mcp.tool()
-def get_trades(symbol: Optional[str] = None, account_id: Optional[str] = None,
-               limit: int = 50) -> str:
-    """Trade log (entries/exits), newest first."""
-    return _out(_call("GET", f"{API}/api/v2/portfolio/trades",
-                      params={"symbol": symbol, "account_id": account_id, "limit": limit}))
+def get_trade_coverage() -> str:
+    """START HERE for any question about the user's past trades. What the trade
+    database holds: accounts and sub-ports, every symbol ever traded (with lot
+    counts and first / last dates), strategies, the date range, what is NOT in
+    it — plus `fields` (what each column means: price_entry is the position's
+    average cost, not the lot's purchase price) and `rules` for reading it.
+    Use the exact `symbol` / `account_id` / `strategy` values from here as
+    filters in the other trade tools."""
+    return _out(_call("GET", f"{TRADES}/coverage"))
+
+
+@mcp.tool()
+def get_trades(
+    symbol: Optional[str] = None,
+    account_id: Optional[str] = None,
+    status: Literal["all", "open", "closed"] = "all",
+    result: Optional[Literal["W", "L"]] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    date_field: Literal["any", "entry", "exit"] = "any",
+    strategy: Optional[str] = None,
+    sector: Optional[str] = None,
+    sub_port: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    order: Literal["newest", "oldest"] = "newest",
+    detail: Literal["brief", "full"] = "brief",
+) -> str:
+    """The user's trades from the database, one row per LOT (stocks, ETFs,
+    crypto; options are in get_option_trades).
+
+    Filters are exact: symbol 'DELTA' or 'DELTA.BK' (never a substring),
+    dates YYYY-MM-DD inclusive. date_field: 'any' = bought OR sold in the range,
+    'entry' = bought in it, 'exit' = sold in it. strategy / sector / sub_port
+    take a value from get_trade_coverage; '(none)' selects rows with none.
+
+    Read the envelope before the rows:
+      total_matching — how many lots match
+      returned / complete / next_offset — complete=false means this is ONE PAGE;
+        call again with offset=next_offset, or say the answer is partial
+      totals — lots, wins, losses and realized P&L over ALL matching lots, per
+        currency. Use these; do not add the rows up.
+      notes — e.g. that a symbol was never traded.
+    Values in rows are the stored values. null = not recorded / not applicable
+    (an open lot has no pnl_amount), never zero. detail='full' adds the user's
+    notes, triggers, stop / target and provenance columns.
+    For sums, win rates or a breakdown use get_trade_stats, not this."""
+    data = _call("GET", f"{TRADES}/trades", params={
+        "symbol": symbol, "account_id": account_id, "status": status, "result": result,
+        "date_from": date_from, "date_to": date_to, "date_field": date_field,
+        "strategy": strategy, "sector": sector, "sub_port": sub_port,
+        "limit": limit, "offset": offset, "order": order, "detail": detail,
+    })
+    return _out_rows(data)
+
+
+@mcp.tool()
+def get_trade(trade_id: str) -> str:
+    """One lot in full: every stored column, its audit trail (each recorded
+    change, oldest first), the broker order slips attached to it, the theses it
+    is linked to and other lots split from the same order. trade_id = `id` from
+    get_trades (a unique leading part of at least 6 characters also works).
+    An unknown id is an error that says so — it is never answered with a
+    similar trade."""
+    return _out(_call("GET", f"{TRADES}/trades/{trade_id.strip()}"))
+
+
+@mcp.tool()
+def get_trade_stats(
+    group_by: Literal["none", "symbol", "month", "year", "strategy", "sector",
+                      "account", "sub_port", "market", "instrument"] = "none",
+    symbol: Optional[str] = None,
+    account_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    date_field: Literal["any", "entry", "exit"] = "exit",
+    strategy: Optional[str] = None,
+    sector: Optional[str] = None,
+    sub_port: Optional[str] = None,
+    include_options: bool = True,
+    base_currency: Optional[Literal["THB", "USD"]] = None,
+) -> str:
+    """Realized results of CLOSED lots, computed by the server from every
+    matching row — the only place a total, count, win rate or average about
+    past trades should come from.
+
+    Per currency (`totals`) and per group × currency (`groups`): closed_lots,
+    wins, losses, win_rate_pct, realized_pnl, gross_win / gross_loss, avg_win /
+    avg_loss, payoff, expectancy_per_lot, cost_closed, return_on_cost_pct,
+    avg_holding_days, best / worst lot (with its id). `definitions` says exactly
+    how each is calculated — quote it rather than assume.
+
+    Dates default to the EXIT date (a result belongs to the day it was
+    realized). Closed option round trips are folded in (include_options=false
+    for stocks only). Currencies are never mixed: one line per currency, unless
+    base_currency is given — then `combined` and *_base are conversions at each
+    lot's exit-date rate, and must be described as converted.
+    Open lots are not in any figure here: they have no result yet."""
+    data = _call("GET", f"{TRADES}/stats", params={
+        "group_by": group_by, "symbol": symbol, "account_id": account_id,
+        "date_from": date_from, "date_to": date_to, "date_field": date_field,
+        "strategy": strategy, "sector": sector, "sub_port": sub_port,
+        "include_options": include_options, "base_currency": base_currency,
+    }, timeout=60)
+    return _out(data)
+
+
+@mcp.tool()
+def get_option_trades(
+    underlying: Optional[str] = None,
+    account_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> str:
+    """The user's option trades: `round_trips` (one close matched to one open,
+    with entry / exit price, quantity, multiplier and realized_pnl) and
+    `open_lots` (still held — no P&L here, that needs a live option chain).
+    underlying is exact (INTC). Dates (YYYY-MM-DD) filter round trips by exit
+    date. `totals` is per currency over all matching round trips; the same
+    `complete` / `next_offset` paging as get_trades. realized_pnl null = the
+    closing price was never recorded: unknown, not zero."""
+    data = _call("GET", f"{TRADES}/options", params={
+        "underlying": underlying, "account_id": account_id,
+        "date_from": date_from, "date_to": date_to, "limit": limit, "offset": offset,
+    })
+    return _out_rows(data, key="round_trips")
 
 
 # ── Market research (read-only) ──────────────────────────────────────────────
