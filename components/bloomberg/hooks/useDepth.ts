@@ -1,8 +1,15 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
-import { type DEPTH_CHOICES, type DepthBook, buildLadder, isDepthSymbol } from "../lib/depth-book";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type DEPTH_CHOICES,
+  type DepthBook,
+  SPLIT,
+  buildLadder,
+  clampSplit,
+  isDepthSymbol,
+} from "../lib/depth-book";
 import { type Trade, mergeTape, tapeTotals } from "../lib/trade-tape";
 import { type VolumeProfile, addPull, emptyProfile, profileRows } from "../lib/volume-by-price";
 
@@ -78,6 +85,27 @@ const SEED = 100; // of those, what the tape starts with
 export function useDepth(symbol: string | null, enabled: boolean) {
   const [depth, setDepth] = useState<(typeof DEPTH_CHOICES)[number]>(10);
   const [overnight, setOvernight] = useState(false);
+  // How the row under the book is shared between the tape and the volume by
+  // price. Here, not in the panel: the compact panel and the expanded one are
+  // two components and must show the same split.
+  const [split, setSplitState] = useState<number>(() => {
+    if (typeof window === "undefined") return SPLIT.initial;
+    try {
+      const stored = localStorage.getItem(SPLIT.key);
+      if (stored != null) return clampSplit(Number(stored));
+    } catch {
+      /* ignore */
+    }
+    return SPLIT.initial;
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(SPLIT.key, String(split));
+    } catch {
+      /* ignore */
+    }
+  }, [split]);
+  const setSplit = useCallback((value: number) => setSplitState(clampSplit(value)), []);
   const [live, setLive] = useState(false);
   // Why the stream is not delivering, when it said why (the 2 s request then
   // carries the panel — which works, and is exactly how a fault goes unseen).
@@ -275,6 +303,9 @@ export function useDepth(symbol: string | null, enabled: boolean) {
       status.data?.token?.status === "NORMAL" ? (status.data.token.expires_in_s ?? null) : null,
     depth,
     setDepth,
+    /** The tape's share (0–1) of the row it splits with the volume by price. */
+    split,
+    setSplit,
     overnight,
     setOvernight,
     requestToken,

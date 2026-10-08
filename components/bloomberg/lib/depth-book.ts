@@ -45,6 +45,22 @@ export interface DepthLadder {
 
 export const DEPTH_CHOICES = [5, 10, 20, 50] as const;
 
+/** The tape's share of the row it splits with the volume by price. */
+export const SPLIT = {
+  key: "bloomberg_depth_split",
+  initial: 0.6,
+  min: 0.15,
+  max: 0.85,
+  step: 0.05,
+};
+
+/** A share the panel can be dragged to; anything else (a bad stored value) is the initial one. */
+export function clampSplit(value: unknown): number {
+  const n = typeof value === "number" ? value : Number.NaN;
+  if (!Number.isFinite(n)) return SPLIT.initial;
+  return Math.min(SPLIT.max, Math.max(SPLIT.min, n));
+}
+
 /**
  * Symbols the feed covers: US stocks and ETFs, share classes included (BRK.B, BF-B).
  * A two-letter suffix is a foreign listing (PTT.BK). Mirrors `_SYMBOL` in routers/webull.py.
