@@ -1,6 +1,7 @@
 """Webull OpenAPI — order-book depth for US stocks and ETFs (MKT → STRUCTURE → DEPTH).
 
   GET  /api/webull/status          keys set? which host? token status — never a secret
+                                   `shared`: is the token shared through Drive, and any error
   POST /api/webull/token           ask for an access token (production: texts a code to the owner)
   POST /api/webull/token/check     re-read the token's status from Webull
   GET  /api/webull/depth?symbol=AAPL&depth=10&overnight=false
@@ -124,13 +125,13 @@ def _shape(symbol: str, data, asked: int, category: str, overnight: bool,
     }
 
 
-def _refusal(r) -> tuple[int, str, str]:
+def _refusal(r, token: str | None = None) -> tuple[int, str, str]:
     """Webull said no → (status to answer with, what to tell the user, code).
     One place, so every endpoint names an ended token or a lapsed subscription
     the same way and none of them reports it as a vague upstream error."""
     reason = wb.explain(r)
     if r.status_code == 401:                      # INVALID_TOKEN — the same on every endpoint
-        wb.mark_token("INVALID", reason)
+        wb.mark_token("INVALID", reason, token)
         return (409, "The Webull access token is no longer accepted (a token lasts 15 days) — request "
                      "a new one and confirm the SMS code in the Webull app", "token_missing")
     if r.status_code == 403:
@@ -184,12 +185,13 @@ def webull_ticks(symbol: str = Query(..., max_length=12), count: int = Query(100
     if (bad := _fail.get(key)) is not None:
         raise HTTPException(bad["status"], bad["detail"])
     try:
-        r = wb.call("GET", _TICKS_PATH, token=wb.active_token(), query={
+        token = wb.active_token()
+        r = wb.call("GET", _TICKS_PATH, token=token, query={
             "symbol": sym, "category": _category.get(sym) or "US_STOCK", "count": str(count)})
     except wb.WebullError as err:
         _raise(err)
     if not r.ok:
-        status, message, code = _refusal(r)
+        status, message, code = _refusal(r, token)
         detail = {"message": message, "code": code}
         if code != "token_missing":
             _fail.set(key, {"status": status, "detail": detail})
@@ -216,7 +218,8 @@ def webull_status():
     except wb.WebullError:
         token = None
     return {"configured": wb.configured(), "host": wb.host(), "environment": wb.environment(),
-            "token": token, "subscription": _subscription(), "stream": webull_stream.hub.status()}
+            "token": token, "shared": wb.shared_status(), "subscription": _subscription(),
+            "stream": webull_stream.hub.status()}
 
 
 @router.post("/api/webull/token")
@@ -294,7 +297,7 @@ def webull_depth(symbol: str = Query(..., max_length=12),
                 return out
             last = (404, f"{sym}: no bid/ask in the {category} book", "empty")
             continue                      # an ETF asked as a stock answers empty: try the other
-        last = _refusal(r)
+        last = _refusal(r, token)
         if last[2] != "upstream":
             break
         # 417 = business refusal: wrong category for this symbol is one of them.
