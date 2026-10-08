@@ -2136,7 +2136,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
             style={{ background: "#0a0a0a", borderBottom: `1px solid ${colors.border}` }}
           >
             <Activity className="h-2.5 w-2.5 shrink-0" style={{ color: colors.accent }} />
-            {/* Same switcher shape as REGIME's CORR/GEOM/…/IV — one slot, three feeds. */}
+            {/* Same switcher shape as STRUCTURE's CORR/GEOM/ROT/IV — one slot, three feeds. */}
             <div className="flex overflow-hidden border" style={{ borderColor: colors.border }}>
               {LEFT_FEEDS.map(({ key, label, desc }) => (
                 <button

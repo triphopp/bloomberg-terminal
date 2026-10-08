@@ -5,7 +5,6 @@ import { Loader2, Maximize2, X } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import { useIvSmile } from "../hooks/useIvSmile";
 import type { bloombergColors } from "../lib/theme-config";
-import { CotFactorPanel } from "./cot-factor-panel";
 import { IvSmilePanel } from "./iv-smile-panel";
 import { RotationTable } from "./rotation-table";
 
@@ -18,15 +17,10 @@ const MODES = [
   { key: "geom", label: "GEOM", desc: "Geometric: Wedge Product / Gram Determinant" },
   { key: "rot", label: "ROT", desc: "Theme/Sector rotation table vs SPY (RRG quadrants)" },
   { key: "iv", label: "IV", desc: "IV smile for the symbol selected on the MKT chart" },
-  {
-    key: "cot",
-    label: "COT",
-    desc: "CFTC futures positioning — PC1 across contracts + extremes (weekly)",
-  },
 ] as const;
 
 type Period = (typeof PERIODS)[number];
-type Mode = "corr" | "geom" | "rot" | "iv" | "cot";
+type Mode = "corr" | "geom" | "rot" | "iv";
 type GeomView = "matrix" | "space";
 
 // One distinct vivid colour per sector (dark-background safe)
@@ -726,7 +720,6 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
 
   const isRot = mode === "rot";
   const isSmile = mode === "iv";
-  const isCot = mode === "cot";
   const isMatrix = mode === "corr" || mode === "geom";
   const smile = useIvSmile(symbol, isSmile);
 
@@ -789,12 +782,13 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
           style={{ background: "#0a0a0a", borderBottom: `1px solid ${colors.border}` }}
         >
           <span className="text-[8px] font-bold tracking-wide" style={{ color: "#FF9800" }}>
-            REGIME
+            STRUCTURE
           </span>
 
           <div className="flex overflow-hidden border ml-1" style={{ borderColor: colors.border }}>
             {MODES.map(({ key, label, desc }) => (
               <button
+                aria-pressed={mode === key}
                 type="button"
                 key={key}
                 title={desc}
@@ -953,10 +947,6 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
           <div className="flex-1 min-h-0 overflow-hidden">
             <IvSmilePanel model={smile} colors={colors} compact />
           </div>
-        ) : isCot ? (
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <CotFactorPanel colors={colors} compact />
-          </div>
         ) : isRot ? (
           <div className="flex-1 min-h-0 overflow-hidden">
             <RotationTable colors={colors} compact />
@@ -1050,7 +1040,7 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
               style={{ borderBottom: `1px solid ${colors.border}`, background: "#0c0c0c" }}
             >
               <span className="text-[10px] font-bold tracking-widest" style={{ color: "#FF9800" }}>
-                {isSmile ? "IV SMILE" : "US SECTOR REGIME DETECTION"}
+                {isSmile ? "IV SMILE" : isRot ? "SECTOR ROTATION" : "US SECTOR REGIME DETECTION"}
               </span>
 
               <div
@@ -1059,6 +1049,7 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
               >
                 {MODES.map(({ key, label, desc }) => (
                   <button
+                    aria-pressed={mode === key}
                     type="button"
                     key={key}
                     title={desc}
@@ -1189,8 +1180,6 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
               )}
               {isSmile ? (
                 <IvSmilePanel model={smile} colors={colors} />
-              ) : isCot ? (
-                <CotFactorPanel colors={colors} compact={false} />
               ) : isRot ? (
                 <RotationTable colors={colors} compact={false} />
               ) : showSpace ? (
