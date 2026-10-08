@@ -11,9 +11,9 @@
  */
 
 import { Loader2 } from "lucide-react";
-import { type ReactNode, memo } from "react";
+import { type PointerEvent, type ReactNode, memo, useRef } from "react";
 import type { useDepth } from "../hooks/useDepth";
-import { DEPTH_CHOICES, type DepthLadder, type DepthRow } from "../lib/depth-book";
+import { DEPTH_CHOICES, type DepthLadder, type DepthRow, SPLIT } from "../lib/depth-book";
 import { fmtPriceStd, numberFormat } from "../lib/number-format";
 import { SCROLLBAR_THIN } from "../lib/style-constants";
 import type { bloombergColors } from "../lib/theme-config";
@@ -206,7 +206,7 @@ const Tape = memo(function Tape({
   const head = `${compact ? "px-1 text-[6px] leading-3" : "px-3 text-[9px] leading-5"} font-mono font-bold tracking-wide`;
   const decided = totals.buy + totals.sell;
   return (
-    <div className="flex min-h-0 min-w-0 flex-col" style={{ flex: "3 1 0" }}>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div
         className={`flex items-center gap-2 shrink-0 ${head}`}
         style={{ background: "#0c0c0c", color: "#8a8a8a" }}
@@ -280,10 +280,7 @@ const VolumeByPrice = memo(function VolumeByPrice({
   const head = `${compact ? "px-1 text-[6px] leading-3" : "px-3 text-[9px] leading-5"} font-mono font-bold tracking-wide`;
   const step = rows.length > 1 ? rows[0].price - rows[1].price : 0.01;
   return (
-    <div
-      className="flex min-h-0 min-w-0 flex-col"
-      style={{ flex: "2 1 0", borderLeft: `1px solid ${colors.border}` }}
-    >
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div
         className={`flex items-center gap-2 shrink-0 ${head}`}
         style={{ background: "#0c0c0c", color: "#8a8a8a" }}
@@ -350,6 +347,89 @@ const VolumeByPrice = memo(function VolumeByPrice({
     </div>
   );
 });
+
+/**
+ * The tape and the volume by price side by side, with a divider that drags.
+ * The share is the caller's (it is remembered, and common to the compact and
+ * the expanded panel); the two halves are passed in already built, so a drag
+ * resizes two boxes and re-renders neither list.
+ */
+function SplitRow({
+  share,
+  onShare,
+  left,
+  right,
+  colors,
+}: {
+  share: number;
+  onShare: (share: number) => void;
+  left: ReactNode;
+  right: ReactNode;
+  colors: DepthPanelProps["colors"];
+}) {
+  const row = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+  const follow = (e: PointerEvent<HTMLDivElement>) => {
+    const box = row.current?.getBoundingClientRect();
+    if (dragging.current && box && box.width > 0) onShare((e.clientX - box.left) / box.width);
+  };
+  return (
+    <div
+      ref={row}
+      className="flex flex-1 min-h-0"
+      style={{ borderTop: `1px solid ${colors.border}` }}
+    >
+      <div className="flex min-h-0 min-w-0" style={{ flex: `${share} 1 0` }}>
+        {left}
+      </div>
+      {/* biome-ignore lint/a11y/useSemanticElements: a focusable splitter that is dragged and holds a grip — an <hr> can be neither */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Tape and volume-by-price split"
+        aria-valuemin={Math.round(SPLIT.min * 100)}
+        aria-valuemax={Math.round(SPLIT.max * 100)}
+        aria-valuenow={Math.round(share * 100)}
+        tabIndex={0}
+        title="Drag to resize · double-click to reset · ← → when focused"
+        className="shrink-0 cursor-col-resize flex items-center justify-center hover:opacity-80"
+        style={{
+          width: 7,
+          background: "#111",
+          borderLeft: `1px solid ${colors.border}`,
+          borderRight: `1px solid ${colors.border}`,
+          touchAction: "none",
+        }}
+        onPointerDown={(e) => {
+          dragging.current = true;
+          e.currentTarget.setPointerCapture(e.pointerId);
+          e.preventDefault(); // no text selection while dragging
+        }}
+        onPointerMove={follow}
+        onPointerUp={(e) => {
+          dragging.current = false;
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        }}
+        onPointerCancel={() => {
+          dragging.current = false;
+        }}
+        onDoubleClick={() => onShare(SPLIT.initial)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") onShare(share - SPLIT.step);
+          else if (e.key === "ArrowRight") onShare(share + SPLIT.step);
+          else if (e.key === "Home") onShare(SPLIT.initial);
+          else return;
+          e.preventDefault();
+        }}
+      >
+        <div className="h-10 w-px" style={{ background: colors.textSecondary, opacity: 0.4 }} />
+      </div>
+      <div className="flex min-h-0 min-w-0" style={{ flex: `${1 - share} 1 0` }}>
+        {right}
+      </div>
+    </div>
+  );
+}
 
 export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) {
   const { symbol, supported, status, book, ladder, error } = model;
@@ -599,23 +679,30 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
             </div>
           </>
         )}
-        <div className="flex flex-1 min-h-0" style={{ borderTop: `1px solid ${colors.border}` }}>
-          <Tape
-            trades={model.trades}
-            totals={model.totals}
-            error={model.tapeError}
-            colors={colors}
-            compact={compact}
-          />
-          <VolumeByPrice
-            rows={model.profileLevels}
-            profile={model.profile}
-            mid={ladder.mid}
-            error={model.tapeError}
-            colors={colors}
-            compact={compact}
-          />
-        </div>
+        <SplitRow
+          share={model.split}
+          onShare={model.setSplit}
+          colors={colors}
+          left={
+            <Tape
+              trades={model.trades}
+              totals={model.totals}
+              error={model.tapeError}
+              colors={colors}
+              compact={compact}
+            />
+          }
+          right={
+            <VolumeByPrice
+              rows={model.profileLevels}
+              profile={model.profile}
+              mid={ladder.mid}
+              error={model.tapeError}
+              colors={colors}
+              compact={compact}
+            />
+          }
+        />
       </div>
     );
   }

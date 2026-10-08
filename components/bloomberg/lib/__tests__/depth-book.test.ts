@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildLadder, isDepthSymbol } from "../depth-book.ts";
+import { SPLIT, buildLadder, clampSplit, isDepthSymbol } from "../depth-book.ts";
 
 const L = (price: number, size: number, count: number | null = null) => ({ price, size, count });
 
@@ -72,5 +72,17 @@ describe("isDepthSymbol", () => {
       null,
     ])
       assert.equal(isDepthSymbol(s), false, String(s));
+  });
+});
+
+describe("clampSplit", () => {
+  it("keeps a share inside the range it can be dragged to", () => {
+    assert.equal(clampSplit(0.5), 0.5);
+    assert.equal(clampSplit(0), SPLIT.min);
+    assert.equal(clampSplit(1), SPLIT.max);
+  });
+  it("falls back to the initial share for anything that is not a number", () => {
+    for (const bad of [Number.NaN, null, undefined, "0.4", {}, Number.POSITIVE_INFINITY])
+      assert.equal(clampSplit(bad), SPLIT.initial, String(bad));
   });
 });
