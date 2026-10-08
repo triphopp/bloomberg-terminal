@@ -2221,6 +2221,118 @@ def init_tracking_schema() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_trackr_exp    ON track_readings(expectation_id)")
 
 
+def init_antithesis_schema() -> None:
+    """Anti-thesis — stepping back from a thesis by arguing against it
+    (routers/antithesis.py, how an agent uses it: memory/reference/anti-thesis.md).
+
+    A question is something not known; a tracked metric is something that will
+    be known on a date. A claim here is something the thesis ALREADY believes,
+    written beside its negation and attacked on purpose. Three kinds of row,
+    written at different times by different hands:
+
+      anti_claims      one belief the thesis rests on, its negation ("if this
+                       is false, the world looks like …") and whether the thesis
+                       falls with it (stake KEY | SUPPORT). The head row (LWW),
+                       kept small. A claim that had to change is not edited: the
+                       new wording is a NEW claim with `revises_id` pointing
+                       back — thesis, antithesis, synthesis, and the synthesis is
+                       attacked again.
+      anti_objections  one reason the negation could be true, from one angle
+                       (FACT | CAUSE | LOGIC | TIME | PRICE | OTHER), with what
+                       we would see if it were right and where to look. Also a
+                       head row, but only its fill-in fields, `question_id` and
+                       `withdrawn_at` ever change. kind NONE_FOUND = "looked for
+                       an objection on this angle and found none" — kept for the
+                       same reason question_signals keeps NOT_FOUND.
+      anti_verdicts    what became of an objection. Never updated.
+                       kind VERDICT → result REBUTTED | CONCEDED | UNDECIDED
+                       kind REVIEW  → target_id = a verdict, result ACCEPTED | REJECTED
+
+    Nothing here is a status. Untested / contested / stands / fallen are derived
+    on read (routers/antithesis._derive) from rows that are only ever added, so
+    two devices cannot disagree — same reasoning as the questions schema.
+
+    `ref` (C-0007, A-0012) is a label, not a key — same reasoning as zettel.ref.
+    """
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS anti_claims (
+                id            TEXT PRIMARY KEY,
+                ref           TEXT,
+                thesis_id     TEXT,
+                symbol        TEXT,
+                statement     TEXT NOT NULL DEFAULT '',
+                negation      TEXT NOT NULL DEFAULT '',
+                basis         TEXT NOT NULL DEFAULT '',
+                stake         TEXT NOT NULL DEFAULT 'SUPPORT',
+                revises_id    TEXT,
+                retired_at    TEXT,
+                retire_reason TEXT NOT NULL DEFAULT '',
+                actor         TEXT NOT NULL DEFAULT 'user',
+                deleted_at    TEXT,
+                device_id     TEXT,
+                created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_antic_thesis  ON anti_claims(thesis_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_antic_ref     ON anti_claims(ref)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_antic_revises ON anti_claims(revises_id)")
+
+        # parent_id: the objection this one continues — a rebuttal that was
+        # itself challenged. It threads the display; every objection still
+        # counts against the claim on its own.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS anti_objections (
+                id              TEXT PRIMARY KEY,
+                ref             TEXT,
+                claim_id        TEXT NOT NULL,
+                parent_id       TEXT,
+                kind            TEXT NOT NULL DEFAULT 'OBJECTION',
+                angle           TEXT NOT NULL DEFAULT 'OTHER',
+                argument        TEXT NOT NULL DEFAULT '',
+                would_see       TEXT NOT NULL DEFAULT '',
+                look_where      TEXT NOT NULL DEFAULT '',
+                question_id     TEXT,
+                withdrawn_at    TEXT,
+                withdraw_reason TEXT NOT NULL DEFAULT '',
+                actor           TEXT NOT NULL DEFAULT 'user',
+                device_id       TEXT,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_antio_claim ON anti_objections(claim_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_antio_ref   ON anti_objections(ref)")
+
+        # revised_statement / revised_negation: what a conceded objection would
+        # turn the claim into. Kept on the verdict so an agent's proposal can be
+        # read before it is accepted; the new claim is written on acceptance.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS anti_verdicts (
+                id                TEXT PRIMARY KEY,
+                claim_id          TEXT NOT NULL,
+                objection_id      TEXT NOT NULL,
+                kind              TEXT NOT NULL DEFAULT 'VERDICT',
+                result            TEXT NOT NULL,
+                target_id         TEXT,
+                reasoning         TEXT NOT NULL DEFAULT '',
+                evidence          TEXT,
+                searched          TEXT NOT NULL DEFAULT '',
+                next_check        TEXT,
+                consequence       TEXT,
+                revised_statement TEXT NOT NULL DEFAULT '',
+                revised_negation  TEXT NOT NULL DEFAULT '',
+                actor             TEXT NOT NULL DEFAULT 'user',
+                device_id         TEXT,
+                created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_antiv_claim     ON anti_verdicts(claim_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_antiv_objection ON anti_verdicts(objection_id)")
+
+
 # Tables whose every INSERT / UPDATE / DELETE lands in audit_events.
 # option_trade_matches is left out on purpose: it is rebuilt from option_trades
 # on every edit, so logging it would bury the real change under recomputation.

@@ -35,6 +35,7 @@ SYNCED_WRITE_PREFIXES: tuple[str, ...] = SYNC_GATED_PREFIXES + (
     "/api/v2/zettel",
     "/api/v2/questions",
     "/api/v2/tracking",
+    "/api/v2/antithesis",
     "/api/v2/graphs",
     "/api/v2/series",
     "/api/v2/chart-drawings",

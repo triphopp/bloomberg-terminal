@@ -149,6 +149,15 @@ SYNC_TABLES: list[tuple[str, list[str]]] = [
     ("track_metrics",            ["id"]),
     ("track_expectations",       ["id"]),
     ("track_readings",           ["id"]),
+    # Anti-thesis (routers/antithesis.py). anti_claims and anti_objections are
+    # small head rows (LWW): a claim is filled in, retired or soft-deleted, an
+    # objection is filled in, sent to a question or withdrawn — and neither is
+    # ever reworded once argued over (a revision is a new claim). A verdict and
+    # the user's review of one are insert-only, so a merge unions them and
+    # untested / contested / stands / fallen are derived on read.
+    ("anti_claims",              ["id"]),
+    ("anti_objections",          ["id"]),
+    ("anti_verdicts",            ["id"]),
     # Rendered analysis pages. The ROW travels here; the HTML file beside it
     # travels through sync/files.py, because a page index without its pages is
     # four links that 404 on the other machine. Keyed on `slug` (UNIQUE, and the

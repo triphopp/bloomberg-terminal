@@ -80,6 +80,16 @@ mcp = MCPServer(
         "question for you to answer. Call get_tracking_spec before the first track_* "
         "write. You cannot move a kill line, retire a metric or change a thesis's "
         "status because a line was crossed — report it and let the user decide. "
+        "ANTI-THESIS (step back): what a thesis believes is argued against in PORT → "
+        "TOOLS → THESES → ANTI-THESIS — each belief beside its negation, attacked from "
+        "five angles (FACT, CAUSE, LOGIC, TIME, PRICE). Call get_antithesis_spec before "
+        "the first anti_* write. Raising an objection needs only the argument; "
+        "dismissing one (anti_verdict REBUTTED) is refused without evidence (zettel "
+        "with url + quote). Your job there is to ATTACK the thesis, not to defend it: "
+        "an objection you cannot rebut with evidence stays open or is conceded. Your "
+        "verdict is a proposal — only the user accepts it, withdraws an objection, or "
+        "rewrites, retires or deletes a claim. A fallen claim never changes the thesis "
+        "by itself. "
         "Fundamental analysis (\"วิเคราะห์พื้นฐาน\" a ticker): call "
         "get_fundamental_spec FIRST and follow it exactly — which data to pull "
         "(get_stock_data, get_filings, get_fiscal_data, get_news, the earnings call), "
@@ -112,6 +122,8 @@ SOURCES_FILE = SPEC_FILE.with_name("data-sources.md")
 QUESTION_SPEC_FILE = SPEC_FILE.with_name("question-research.md")
 # And for tracked metrics: how to set one up, forecast it and record the result.
 TRACKING_SPEC_FILE = SPEC_FILE.with_name("thesis-tracking.md")
+# And for stepping back from a thesis: claims, negations, objections, verdicts.
+ANTITHESIS_SPEC_FILE = SPEC_FILE.with_name("anti-thesis.md")
 
 
 def _read_ref(path: Path, what: str) -> str:
@@ -1134,6 +1146,181 @@ def tracking_spec_resource() -> str:
     return _read_ref(TRACKING_SPEC_FILE, "thesis-tracking spec")
 
 
+# ── Anti-thesis: arguing against what a thesis believes ──────────────────────
+#
+# A question is something not known; a tracked number will be known on a date. A
+# claim is something the thesis already believes — written beside its negation
+# and attacked on purpose. The server derives whether it stands; this file only
+# carries the argument in.
+
+ANTITHESIS = f"{API}/api/v2/antithesis"
+
+AntiAngle = Literal["FACT", "CAUSE", "LOGIC", "TIME", "PRICE", "OTHER"]
+
+
+@mcp.tool()
+def anti_board(thesis_id: str, include_closed: bool = False) -> str:
+    """The step-back board of one thesis: every claim it rests on with its negation,
+    stake (KEY = the thesis falls with it), the objections raised and what became of
+    each, and `state` — status (UNTESTED / CONTESTED / STANDS / BROKEN / FALLEN),
+    `angles` (per angle: untried / open / rebutted / conceded / none_found), `gaps`.
+    `summary.verdict` reads the whole thesis: OPEN, KEY_FALLEN, STANDING, SETTLED.
+    Run this before anti_claim_add / anti_object — writing one twice is refused."""
+    return _out(_call("GET", ANTITHESIS,
+                      params={"thesis_id": thesis_id, "include_closed": include_closed}))
+
+
+@mcp.tool()
+def anti_queue(thesis_id: Optional[str] = None, limit: int = 20) -> str:
+    """What a step back still owes. `objections` = raised and not answered (or
+    UNDECIDED with its look-again date come) — each with would_see / look_where, so
+    go and look. `claims` = beliefs with gaps: no negation, angles never tried
+    (`untried`), objections with no would_see. Key claims first. `angles` explains
+    what each angle argues."""
+    return _out(_call("GET", f"{ANTITHESIS}/queue",
+                      params={"thesis_id": thesis_id, "limit": limit}))
+
+
+@mcp.tool()
+def anti_claim_add(
+    thesis_id: str,
+    statement: str,
+    negation: str = "",
+    stake: Literal["KEY", "SUPPORT"] = "SUPPORT",
+    basis: str = "",
+) -> str:
+    """Put one belief the thesis rests on onto the board. `statement` = the belief as
+    one sentence that could turn out false (not a topic, not a hope). `negation` =
+    what the world looks like if it IS false — concrete enough to go looking for.
+    stake KEY = the thesis falls if this does. `basis` = why it is believed (cite
+    Z-refs in the text). It starts UNTESTED. For a whole thesis use anti_import."""
+    return _out(_call("POST", ANTITHESIS, body={
+        "thesis_id": thesis_id, "statement": statement, "negation": negation,
+        "stake": stake, "basis": basis}))
+
+
+@mcp.tool()
+def anti_claim_update(
+    ref_or_id: str,
+    negation: Optional[str] = None,
+    basis: Optional[str] = None,
+    statement: Optional[str] = None,
+) -> str:
+    """Fill in a claim's negation or basis. `statement` can be corrected only on a
+    claim an agent wrote and nobody has argued over yet; after that the wording
+    changes through anti_verdict CONCEDED + consequence=REVISE (409 / 403 here).
+    The stake is the user's to change."""
+    return _out(_call("PATCH", f"{ANTITHESIS}/{ref_or_id}", body=_clean({
+        "negation": negation, "basis": basis, "statement": statement})))
+
+
+@mcp.tool()
+def anti_object(
+    claim: str,
+    argument: str,
+    angle: AntiAngle = "OTHER",
+    would_see: str = "",
+    look_where: str = "",
+    parent: Optional[str] = None,
+) -> str:
+    """Raise an objection against a claim (C-ref or id). `argument` = the reason the
+    claim could be false, as one sentence. `angle` = the way it would be wrong:
+    FACT (data false / stale / measures something else) · CAUSE (another cause
+    explains what we see) · LOGIC (conclusion does not follow) · TIME (true but not
+    long / wide / soon enough) · PRICE (true and already paid for).
+    `would_see` = what we would observe if the objection were right — the thing to
+    go and look for; `look_where` = the document, table or tool. `parent` = A-ref
+    of an objection this continues (e.g. the evidence used to rebut it is flawed).
+    Raising one needs no evidence. Do not hold back an objection because you think
+    you can answer it — raise it, then answer it with anti_verdict."""
+    return _out(_call("POST", f"{ANTITHESIS}/{claim}/objections", body=_clean({
+        "argument": argument, "angle": angle, "would_see": would_see,
+        "look_where": look_where, "parent": parent})))
+
+
+@mcp.tool()
+def anti_none_found(
+    claim: str,
+    angle: Literal["FACT", "CAUSE", "LOGIC", "TIME", "PRICE"],
+    searched: str,
+) -> str:
+    """Record that one angle was searched for an objection and none was found.
+    `searched` = where you looked and what for — required: an angle nobody searched
+    is untried, not clean. Refused (409) when the angle already has an objection.
+    Only after really looking: this is what lets a claim be called settled."""
+    return _out(_call("POST", f"{ANTITHESIS}/{claim}/sweeps",
+                      body={"angle": angle, "searched": searched}))
+
+
+@mcp.tool()
+def anti_verdict(
+    objection: str,
+    result: Literal["REBUTTED", "CONCEDED", "UNDECIDED"],
+    reasoning: str,
+    evidence: str = "",
+    consequence: Optional[Literal["REVISE", "FALLS"]] = None,
+    revised_statement: str = "",
+    revised_negation: str = "",
+    searched: str = "",
+    next_check: Optional[str] = None,
+) -> str:
+    """Say what became of an objection (A-ref or id), after looking for what its
+    `would_see` names.
+
+    REBUTTED  — it does not hold. `evidence` (Z-refs, comma-separated) is required:
+                zettel carrying a url and the quoted sentence, none in an open
+                conflict. zettel_create the finding first.
+    CONCEDED  — it holds. consequence=REVISE with `revised_statement` (the claim as
+                it has to read now; + `revised_negation`) or consequence=FALLS (the
+                claim is given up).
+    UNDECIDED — searched and cannot tell: `searched` + `next_check` (YYYY-MM-DD).
+
+    Your verdict is a proposal; the user accepts or rejects it. Refused (422) → fix
+    every item in `missing` or go down to UNDECIDED — never rebut with a zettel you
+    did not read. Conceding is as good a result as rebutting."""
+    return _out(_call("POST", f"{ANTITHESIS}/objections/{objection}/verdicts", body=_clean({
+        "result": result, "reasoning": reasoning,
+        "evidence": [e.strip() for e in evidence.split(",") if e.strip()],
+        "consequence": consequence, "revised_statement": revised_statement,
+        "revised_negation": revised_negation, "searched": searched, "next_check": next_check,
+    })))
+
+
+@mcp.tool()
+def anti_to_question(objection: str) -> str:
+    """Send an objection that cannot be settled yet to the open questions (it gets
+    a Q-ref and enters question_queue, answered by get_question_spec). The
+    objection stays open on the board until a verdict is given on it."""
+    return _out(_call("POST", f"{ANTITHESIS}/objections/{objection}/question"))
+
+
+@mcp.tool()
+def anti_import(thesis_id: str, claims: list[dict]) -> str:
+    """A whole step back in one transaction. Each claim: {statement, negation,
+    stake KEY|SUPPORT, basis, objections: [{argument, angle, would_see, look_where}],
+    none_found: [{angle, searched}]}. One refused item and nothing is written — the
+    error names the item and what is missing. anti_board first: a belief already on
+    the board is refused as a duplicate."""
+    return _out(_call("POST", f"{ANTITHESIS}/import",
+                      body={"thesis_id": thesis_id, "claims": claims}))
+
+
+@mcp.tool()
+def get_antithesis_spec() -> str:
+    """How a step back works: breaking a thesis into claims, writing the negation,
+    the five angles of attack, what an objection and each verdict need, when a
+    claim is settled, and what only the user may do. Call this BEFORE the first
+    anti_* write."""
+    return _read_ref(ANTITHESIS_SPEC_FILE, "anti-thesis spec")
+
+
+@mcp.resource("spec://anti-thesis", name="anti-thesis-spec",
+              description="Step back: claims, negations, objections by angle, evidence-gated verdicts",
+              mime_type="text/markdown")
+def antithesis_spec_resource() -> str:
+    return _read_ref(ANTITHESIS_SPEC_FILE, "anti-thesis spec")
+
+
 # ── Graphs: rendered analysis pages ──────────────────────────────────────────
 #
 # A zettel holds one claim in prose. Some findings are only legible as a picture:
@@ -1327,6 +1514,34 @@ Do not accept your own answer and do not drop a question — those are mine.
 
 --- SPEC (memory/reference/question-research.md) ---
 {_read_ref(QUESTION_SPEC_FILE, "question-research spec")}"""
+
+
+@mcp.prompt()
+def step_back(thesis_id: str) -> str:
+    """Argue against one thesis: its beliefs, their negations, the objections."""
+    return f"""Step back from thesis {thesis_id} with me. Your side is the opposition.
+
+1. get_thesis — read the body. anti_board — what is already on the board.
+2. Claims: list every belief the thesis needs to be true (5–12, one sentence each,
+   each one able to turn out false). Mark the ones the thesis cannot survive losing
+   as KEY. Write each negation as a state of the world, not as "not X".
+3. For each claim, each angle (FACT, CAUSE, LOGIC, TIME, PRICE): the strongest
+   objection you can make, with what we would see if it were right and where to
+   look. anti_import the claims with their objections in one call.
+4. Then look. For each objection: zettel_search first, then the data tools in the
+   order of get_data_sources. Record findings as zettel (EVIDENCE, url + quote).
+5. anti_verdict at what the evidence supports — REBUTTED only with evidence,
+   CONCEDED when the objection holds (say how the claim must change), UNDECIDED
+   with where you looked and when to look again. An angle that gave nothing after a
+   real search → anti_none_found with where you searched.
+6. Tell me in chat: which claims stand, which are contested, which should be
+   rewritten or given up — key claims first — and what would change each.
+
+Do not accept your own verdicts, withdraw an objection, or rewrite, retire or
+delete a claim — those are mine. Do not touch the thesis body or its status.
+
+--- SPEC (memory/reference/anti-thesis.md) ---
+{_read_ref(ANTITHESIS_SPEC_FILE, "anti-thesis spec")}"""
 
 
 @mcp.prompt()
