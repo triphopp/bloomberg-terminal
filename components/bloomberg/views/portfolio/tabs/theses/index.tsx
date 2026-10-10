@@ -48,7 +48,7 @@ export function ThesesTab({
   onConsumeInitialSymbol?: () => void;
   /** A thesis to land on, handed over by the calendar or a CALENDAR alert —
    *  on NOTES, at one note, when the date is a note of it. */
-  initialOpen?: { thesisId: string; sub: "thesis" | "notes"; noteId?: string } | null;
+  initialOpen?: { thesisId: string; sub: "thesis" | "notes" | "graphs"; noteId?: string } | null;
   onConsumeInitialOpen?: () => void;
 }) {
   const qc = useQueryClient();
