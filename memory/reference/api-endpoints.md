@@ -357,6 +357,23 @@ retire, reopen or delete (403). Next.js proxy: `app/api/v2/tracking/[[...path]]/
 - `POST /api/v2/tracking/{id}/retire` (reason required) · `/reopen` · `DELETE /api/v2/tracking/{id}` (soft) — user only
 - `POST /api/v2/tracking/resolve-ref-collisions`
 
+## Google Calendar (`routers/gcal.py`) — 2026-10-11
+
+CAL pushed one way into a "Bloomberg Terminal" calendar in the user's Google account; logic `backend/gcal_sync.py`.
+Next.js proxy `app/api/gcal/[...path]/route.ts` (status · connect · sync · disconnect · settings; sync 180 s timeout).
+- `GET /api/gcal/status` → `{configured, connected, revoked, calendar_id, shared_calendar, connected_at, scope,
+  settings:{categories, macro_impact}, last_sync:{at, ok, events, created, updated, deleted, unchanged, failed, error}|null,
+  window_days:[7, GCAL_SYNC_DAYS], token_dir}` — never a token.
+- `POST /api/gcal/connect` → `{auth_url, redirect_uri}`; 424 `code: config` without the client id/secret. The redirect is
+  `<backend base>/api/gcal/callback` — Google sends the browser straight to the backend (loopback), not through Next.
+- `GET /api/gcal/callback?state&code` → small HTML page; trades the code (PKCE), finds or makes the calendar, starts the
+  first pass on a thread; `postMessage("gcal:ok"|"gcal:error")` to the CAL tab. 400 on a state this process did not start.
+- `POST /api/gcal/sync` → the pass result (`state.json`); 409 `not_connected` / `busy`, 401 `revoked`.
+- `PUT /api/gcal/settings {categories:[MACRO|COMPANY|THESIS|PORT], macro_impact: high|medium|all}` → `{settings}`; a pass
+  follows on a thread. Default MACRO (high+medium) · COMPANY · THESIS — PORT off.
+- `POST /api/gcal/disconnect?delete_calendar=false` → revokes, forgets the token (calendar kept unless asked).
+- The calendar scheduler's tick (`CALENDAR_SCAN_INTERVAL`) also runs a pass when this machine is connected.
+
 ## Calendar (`routers/calendar_feed.py`) — 2026-10-08
 
 The one calendar (the CAL view, key `6`). Read-only; logic in `backend/calendar_feed.py`. Next.js proxy:

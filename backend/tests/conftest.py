@@ -39,3 +39,10 @@ def _no_v7_quote_network(monkeypatch):
     yield
     market_snapshots._v7_cache.clear()
     market_snapshots._v7_inflight.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_gcal_token(tmp_path, monkeypatch):
+    """No test reads or writes this machine's Google Calendar token (gcal_sync.py):
+    the calendar scheduler's tick calls gcal_sync.run_if_connected()."""
+    monkeypatch.setenv("GCAL_TOKEN_DIR", str(tmp_path / "gcal-token"))

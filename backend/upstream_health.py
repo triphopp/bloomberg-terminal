@@ -74,6 +74,7 @@ SOURCES: dict[str, str] = {
     "binance.com": "Binance",
     "worldbank.org": "World Bank",
     "trends.google.com": "Google Trends",
+    "googleapis.com": "Google Calendar",
     "fiscal.ai": "Fiscal.ai",
     "eia.gov": "EIA",
     "deepseek.com": "DeepSeek",
