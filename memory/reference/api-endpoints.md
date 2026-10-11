@@ -1,6 +1,6 @@
 # API Endpoints Reference
 
-> All Python FastAPI routes. Next.js proxies all requests — browser never hits :8000 directly.
+> All Python FastAPI routes. Next.js proxies all requests — browser never hits :9317 directly.
 > **See also:** [data-shapes.md](data-shapes.md) — response JSON shapes | [architecture.md](architecture.md) — router table + analytics folder | [frontend-structure.md](frontend-structure.md) — proxy route file locations | [gotchas.md](gotchas.md) — error dictionary + anti-patterns
 
 ---
@@ -456,6 +456,7 @@ HTTP client over the running backend (`PYTHON_API_URL`, default :9317) — never
 - `GET /api/v2/portfolio/risk/factors?account_id=&lookback=252&base_currency=THB&fresh=` — factor exposure (2026-10-07, `backend/factor_exposure.py`, PORT → RISK → FACTOR). The book's returns regressed on market-wide factors, each a Yahoo ETF or a spread of two: `MKT_US` SPY · `MKT_TH` TDEX.BK (only with `.BK` holdings) · `SIZE` IWM−SPY · `VALUE` IWD−IWF · `MOM` MTUM−SPY · `RATES` IEF · `CREDIT` HYG−IEF · `USDTHB` THB=X · `OIL` USO · `GOLD` GLD · `CRYPTO` BTC-USD (only with crypto holdings). One multiple OLS on **5-day overlapping sums of simple returns** (a Thai stock closes before New York opens, so daily betas to US factors read near zero), Newey-West t (Bartlett, 8 lags); book beta = Σ weight × holding beta exactly. Per factor: `beta`, `t_stat`, `significant` (|t| ≥ 2), `risk_share_pct` (β·cov(f, fitted)/var — the shares sum to R², the rest is `specific_pct`), `vif`/`collinear` (≥ 5), `sd_1m_pct` and `impact_1sd_pct`/`impact_1sd_amount` (a one-SD month of the factor → the book), `top` (3 holdings by weight × beta). Holdings are in `base_currency` (FX inside), factors in their own currency — the currency bet lands on `USDTHB`. NAV weights as `/metrics` (cash, shorts, option delta). `lookback` 120–1260; a holding needs ≥ 120 bars (`excluded`), a factor leg with no data drops its factor (`missing_factors`); < 60 observations → `error: "not enough history"`. Cached 5 min per (account, lookback, base), errors included. Shape: `data-shapes.md`. Proxy `app/api/v2/portfolio/risk/factors`.
 - `GET /api/v2/portfolio/risk/budget?account_id=&scope=symbol|sector|thesis&lookback=252&base_currency=THB` — risk budget (2026-10-07, `backend/risk_budget.py`, PORT → RISK → BUDGET). Risk in use = Euler contribution to volatility (`w·(Σw)/σ`), the **same weights and Ledoit-Wolf covariance as `/metrics`** (`risk_pct` equals its `risk_contribution_pct`). Buckets: holding (key = yf symbol) · sector (`trades.sector`, `Other`, `Options`) · thesis (explicit `thesis_links` row, else the newest live thesis on the symbol, else `_none`). Status with `band_pp` tolerance: `OVER` (+ `trim_value`/`trim_pct`) · `UNDER` (+ `add_value`) · `OK` · `UNSET` (holdings, no budget) · `EMPTY` (budget, no holdings). `trim_value` is solved by bisection with the other buckets held still — a pro-rata cut is too small, because selling lowers the book's volatility too. `vol` = the book's annual volatility against `vol_cap_pct` (`derisk_pct` of every holding to cash when over). 400 on an unknown scope. Not cached (a saved budget must show at once; prices come from the 5-min close-frame cache).
 - `PUT /api/v2/portfolio/risk/budget` `{account_id?, scope?, budgets?{key: pct}, vol_cap_pct?, band_pp?}` — `budgets` REPLACES the whole set of `scope`; `vol_cap_pct` changes only when the key is sent (`null` clears it); 400 when a scope's budgets exceed 100% or a value is out of range. `DELETE …/budget?account_id=` forgets every scope, the cap and the band of that book view. Stored in `risk_budgets` (one row per book view, machine-local, not synced). Nothing sets a budget but the user; nothing here trades. Proxy `app/api/v2/portfolio/risk/budget` (GET · PUT · DELETE).
+- `GET /api/v2/portfolio/risk/sigma?account_id=&base_currency=THB&confidence=0.95` — daily sigma for POSITIONS (2026-10-09, `backend/port_sigma.py`, pure): EWMA λ 0.94 on 252 days per symbol / account / sub-port / book + 1-day VaR / CVaR by filtered historical simulation (normal quantile under 120 days; blank under 60). `sigma_pct` = price only (compare with day %), `var_*` / `cvar_*` include FX. Group sigma comes from the group's own return series with today's holdings weighted at the LAST CLOSE (fixed for the day — the UI puts money figures on the start-of-day value and marks VaR95 `PASSED` when today's loss is larger), never a sum of rows. SET symbols carry `tick_pct` / `coarse` / `sigma_eff_pct` (one price step as a floor). Options not included. Cache 10 min, failed pull 60 s. Light — no Monte Carlo; do not call `/risk/metrics` for this. `pytest tests/test_port_sigma.py`
 - `GET /api/v2/portfolio/risk/capm` — `α = Rp − [rf + β(Rm − rf)]` โดย `Rp` = CAGR/XIRR จาก `/returns` (ช่วงของบัญชีเอง), `Rm` = benchmark ช่วงเดียวกัน (`_index_return`, แปลงเป็นสกุลรายงาน), `β` = Σwᵢβᵢ ของที่ถือวันนี้ — **ไม่มีตัวไหนอ่าน `date_entry`/`date_exit`**. Fields: `beta`/`beta_local`/`hedge_notional`/`market_value` · `return_annual_pct`/`return_xirr_pct`/`holding_days`/`first_date` · `index_annual_pct`/`index_cumulative_pct` · `expected_annual_pct` · `alpha_annual_pct`/`alpha_xirr_annual_pct`/`excess_vs_index_pct` · `r_squared`/`benchmark_fit` (WEAK เมื่อ R²<0.10) · `excluded_symbols` (ประวัติ <60 แท่ง). Params: `benchmark`, `lookback`, `account_id`, `base_currency`, `rf_annual` (optional — ไม่ส่ง = ดึงสด: THB → BOT policy rate, USD → FRED `DGS3MO`, cache 12 ชม.; response มี `rf_source`/`rf_series`/`rf_as_of`/`rf_currency`).
 - `GET /api/v2/portfolio/risk/correlation` — correlation matrix (Ledoit-Wolf shrinkage)
 - `GET /api/v2/portfolio/risk/stress` — stress test scenarios
@@ -612,7 +613,7 @@ Proxy: `app/api/v2/portfolio/margin/[[...path]]` (GET + PUT, 60 s timeout). No c
 - `GET /api/etf/{symbol}` — ETF info, top holdings, sector weights, country weights
 
 ## Order Footprint (`routers/footprint.py`)
-- `GET /api/crypto/footprint` — Binance aggTrades → buy/sell volume per price level per candle
+- `GET /api/crypto/footprint/{symbol}?interval=&limit=(5–500)&buckets=` — Binance klines → exact buy/sell/delta of every candle (one request); aggTrades → volume per price level for the most recent candles only (`_DETAIL_CANDLES`: 150 on 1m/5m, fewer above), read ≤30 candles per request and kept once a candle is closed. Response: `{symbol, interval, step, pending, candles[]}`; candle = `{openTime, open, high, low, close, volume, trades, totalBuyVol, totalSellVol (from the kline), levels[{priceLow, priceHigh, buyVol, sellVol}] on one shared grid of `step`, coverage (share of volume the levels hold; null = no levels), minDelta, maxDelta (null unless coverage ≥ 0.98)}`. `pending` > 0 = levels of older candles still to read — the hook asks again in 4 s. (2026-10-10)
 
 ## Central Banks (`routers/central_banks.py`)
 - `GET /api/central-banks/list` — list supported banks
@@ -892,6 +893,20 @@ Per symbol: `trend` (EMA20/50/200 stack), `rsi` (Wilder 14), `rvol` (vs 20d avg)
 `asOf` is the last bar's date — equal to today while the session is open, in which case
 `rvol` only counts partial volume.
 
+## Routers with no section above (added 2026-10-09 — every mounted router is now in this file)
+
+| Router | Routes | UI / proxy |
+|--------|--------|------------|
+| `changes.py` | `GET /api/changes` → `{tables: {<table>: seq}}` — change feed; triggers on `change_feed.WATCHED` (today `chart_drawings`) bump `table_versions` | asked by the 15 s heartbeat |
+| `ir_stress.py` (prefix `/api/ir-stress`) | `GET /curve` · `/scenarios` · `/{symbol}` · `/{symbol}/exposure` · `/{symbol}/duration` · `/{symbol}/scenario` · `/screen/rank` — CIRST, US listings only (EDGAR XBRL + FRED) | stock view → RATE STRESS; `app/api/ir-stress/*` |
+| `circuit_breaker.py` | `GET /api/circuit-breaker/check` · `/market` · `/margin` — halt tiers per stock, market-wide halt levels, countercyclical margin | `app/api/circuit-breaker/*` |
+| `listing_gate.py` | `POST /api/listing-gate/screen` — IPO quality gate from a JSON body (hard filters + weighted score) | `app/api/listing-gate/*` |
+| `social.py` | `GET /api/social/feed` — Facebook (RSSHub) · X (Nitter RSS) · YouTube · Reddit · generic RSS | NEWS → SOCIAL through `app/api/news/social/route.ts` |
+| `config_router.py` | `GET /api/config/symbols` · `GET/POST /api/config/symbols/{list_id}` · `PATCH/DELETE /api/config/symbols/{list_id}/{symbol_id}` — CRUD on `symbol_lists` | no proxy, no UI |
+| `screener.py` | `GET /api/screener/sp500` · `/sp500/sectors` · `/sp500/{sector}` — S&P 500 constituents + GICS from Wikipedia | no proxy, no UI |
+| `paper_trading.py` (prefix `/api/paper`) | accounts (`GET/POST /accounts`, `DELETE /accounts/{id}`, `/accounts/{id}/summary` · `/orders` · `/positions` · `/fills` · `/equity-curve` · `/options` · `/options/closed`), `POST /orders`, `POST /orders/{id}/cancel`, `POST /execute-pending`, `POST /options/order`, `POST /options/{id}/close` · `/expire` | no proxy, no UI since 2026-10-02 (`margin.py` still uses its valuation) |
+| `backtest_v2.py` (prefix `/api/v2/portfolio/backtest`) | `GET /equity` · `/holdings-timeline` · `/distribution` | no proxy, no UI since 2026-10-02 |
+
 ## Caching Strategy
 
 | Data | Cache | Where |
@@ -987,10 +1002,6 @@ app/api/
 
 ## Dev (`routers/dev.py`, 2026-09-25)
 - `GET /api/dev/status` — `{pid, started_at, reload, supervised, stale, changed[{file,change,at}], changed_count, restart: "reload"|"launcher"|null}`. Compares backend `.py` mtimes (minus `tests/`, `scripts/`) to the snapshot `dev_status.py` took at import; in reload mode a file saved <5s ago is not stale yet. Next proxy `app/api/dev/status` returns `{state: ok|stale|down}` + the above; a backend without this route (404) → `{state:"stale", legacy:true}`.
-- `POST /api/dev/restart` — needs header `X-BT-Dev: 1` (403 otherwise; forces a CORS preflight). reload → touches `main.py`; launcher-supervised → `os._exit(0)` after 0.5s, watchdog restarts in ~5s; started by hand → 409. Proxy `app/api/dev/restart` adds the header.
-
-## Dev (`routers/dev.py`, 2026-09-25)
-- `GET /api/dev/status` — `{pid, started_at, reload, supervised, stale, changed[{file,change,at}], changed_count, restart: "reload"|"launcher"|null}`. Compares backend `.py` mtimes (minus `tests/`, `scripts/`) with the snapshot `dev_status.py` took at import; in reload mode a file saved <5s ago is not stale yet. Next proxy `app/api/dev/status` adds `state: ok|stale|down`; a backend without this route (404) → `{state:"stale", legacy:true}`.
 - `POST /api/dev/restart` — needs header `X-BT-Dev: 1` (403 otherwise; forces a CORS preflight). reload → touches `main.py`; launcher-supervised → `os._exit(0)` after 0.5s, watchdog restarts in ~5s; started by hand → 409. Proxy `app/api/dev/restart` adds the header.
 
 ## Dividend units (2026-09-25)

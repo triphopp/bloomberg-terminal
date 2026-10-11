@@ -32,7 +32,7 @@ Preview POSTs do not write data. Choosing FIFO here does not change the live sel
 ```
 components/bloomberg/
 ├── layout/
-│   ├── bloomberg-terminal.tsx   ← root view router (6 views: MKT · NEWS · BOND · PORT · TAIL · HMAP)
+│   ├── bloomberg-terminal.tsx   ← root view router (7 views: MKT · NEWS · BOND · PORT · TAIL · CAL · HMAP, plus the stock view)
 │   ├── tail-risk-ribbon.tsx     ← fixed TAIL level + top 3 named events in shared 24px status row
 │   ├── alert-ticker.tsx        ← fixed alert summary beside continuously scrolling market quotes
 │   ├── terminal-header.tsx      ← top nav bar + view buttons (phone <768px: title + ask + search)
@@ -458,6 +458,7 @@ components/bloomberg/
 | `chart/VolumeEventPanel.tsx` | `VolumeEventPanel` (props `data` `colors` `height`) |
 | `chart/indicators/rvol.ts` | `createRVOL` + `RVOL_SCALES` `RVOL_BASELINES` `RVOL_MODES` (select options re-exported through `indicators/index.ts` for the registry) |
 | `lib/us-market-session.ts` | `computeSession` `fmtClock` `fmtCountdown` + `NYSE_HOLIDAYS` `NYSE_HALF_DAYS` — pure session maths, no React. **US markets have no lunch break**; the model is pre/regular/after + 13:00 ET half-days. Tests: `npm run test:session` (21) |
+| `views/portfolio/day-context.ts` | `zScore` `zTone` `fmtZ` `marketLive` `focusOrder` `WATCH_Z`; types `SigmaPayload` `SigmaBlock` `SigmaSymbol` `ZTone` — today's move in daily sigmas + which rows are on a market that is trading (POSITIONS dims the shut ones and sorts live accounts first; a row at ≥2σ stays lit; nothing live = no dimming). Pure. Tests: `npm run test:views` |
 | `views/portfolio/weights.ts` | `navBreakdown` `weightPct` `fmtWeight`; types `NavInputs` `NavBreakdown` — pure % of NAV maths (NAV = equity MV + option MV + cash). Tests: `npm run test:views` |
 | `views/portfolio/ui/usePortfolioNav.ts` | `usePortfolioNav(accountId, currency)` → `{ breakdown, pct }` (reads openPositions + summary query caches); `equityMarketValue(trade)` |
 | `views/tail/macro-context.tsx` | `useMacroContext()` `EventStrip` `MacroPanel` `KIND_COLOR`; types `MacroEvent` `EventKind` `MacroContextData` |

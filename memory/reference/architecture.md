@@ -62,7 +62,7 @@ COT refreshes in its own background thread (`cot-refresh`) when its cache is sta
 
 ## Backend Routers
 
-65 routers in `backend/routers/`, all mounted in `main.py`. The maintained table (prefix + source per router) is
+78 routers in `backend/routers/` (counted 2026-10-09), all mounted in `main.py`. The maintained table (prefix + source per router) is
 `project_summary.md` → "Backend Architecture — Modular Routers"; every endpoint is in `api-endpoints.md`.
 Added 2026-09-25/26: `bonds.py`, `cot.py`, `discover.py`, `market_heatmap.py`, `dev.py`; `macro.py` gained
 `/api/macro/calendar`; `portfolio_v2.py` gained `/takeover`, `/history-review` and the `/nav-index`
@@ -74,7 +74,7 @@ Added 2026-10-08: `webull.py` (`/api/webull/*`) + `webull_client.py` — Webull 
 Added 2026-10-08: `webull_stream.py` + `webull_wire.py` — the live book. One on-demand MQTT session (thread `webull-depth-stream`) fans out to SSE listeners of `/api/webull/depth/stream`; the browser writes each pushed book into the same React Query entry the HTTP poll fills, so the panel has one source of truth. Separate from `quote_stream.py` (Yahoo last-price ticks for the watchlist), which it does not replace.
 Added 2026-10-08: `webull_scheduler.py` — fourth ruleless alert source beside `guard_scheduler`, `margin_scheduler`, `calendar_scheduler`: writes `webull:<KIND>` rows to `alert_events` when the access token or the market-data entitlement is about to end / has ended. Pure `wanted(token, subscription, now)` + `apply(conn, rows)`; started from `main.py`; asks Webull at most once per 6 h and never requests a token.
 
-## Frontend Views (6, since 2026-09-26)
+## Frontend Views (7 — CAL added 2026-10-08)
 
 | Key | Atom value | Button | View file |
 |-----|------------|--------|-----------|
@@ -83,16 +83,17 @@ Added 2026-10-08: `webull_scheduler.py` — fourth ruleless alert source beside 
 | `3` / `b` | bonds | BOND | `views/bonds/` (MARKET · CONDITIONS) |
 | `4` / `p` | portfolio | PORT | `views/portfolio-view.tsx` → `views/portfolio/` |
 | `5` / `t` | tail | TAIL | `views/tail-risk-view.tsx` + `views/tail/` |
+| `6` | calendar | CAL | `views/calendar/` (`/api/calendar`, no table of its own) |
 | `h` | heatmap | — (command `heatmap(MARKET)`) | `views/heatmap-view.tsx` |
 
-**Not routed:** `stock-view.tsx` (global search / heatmap / watchlist click), `volatility-view.tsx` (exported, unused).
+**No nav button:** `stock-view.tsx` (atom value `stock`; opened from global search / heatmap / watchlist click), `volatility-view.tsx` (exported, unused).
 **Deleted:** `market-movers-view.tsx`, `credit-view.tsx`, `clippings-view.tsx` (2026-09-25), `macro-view.tsx` (2026-09-17), crypto/fx views (2026-08-01), `rmi-view.tsx` (2026-05-24).
 URL carries the view (`?view=bonds`, `layout/view-navigation.ts`).
 
 ## Key files
 
 ### Backend
-- `backend/main.py` — app init, CORS, schema init, mounts all 77 routers; imports `dev_status`, `upstream_health`, `yahoo_gate` before any router
+- `backend/main.py` — app init, CORS, schema init, mounts all 78 routers; imports `dev_status`, `upstream_health`, `yahoo_gate` before any router
 - `backend/mcp_server.py` — MCP stdio server (not mounted; separate process spawned by the MCP client via `/.mcp.json`). HTTP client of the backend, writes tagged `X-Thesis-Actor: agent:<name>`
 - `backend/config.py` — All env vars + BOT tokens (BOT_API_TOKEN, BOT_IR_TOKEN, BOT_FX_TOKEN, BOT_STATS_TOKEN) + SEC_KEYS (old portal) + SEC2_KEYS (new portal, falls back to SEC2_API_KEY)
 - `backend/db.py` — SQLite connection manager + schema init + compute_holdings() + sector_classifications helpers
@@ -146,7 +147,7 @@ URL carries the view (`?view=bonds`, `layout/view-navigation.ts`).
 - `bot_cache.json` — BOT API (auctions, rates, fx)
 
 ### Frontend
-- `components/bloomberg/layout/bloomberg-terminal.tsx` — view router (6 views), shortcuts, URL ↔ view sync, dev `BackendStatusBanner`
+- `components/bloomberg/layout/bloomberg-terminal.tsx` — view router (7 views: MKT · NEWS · BOND · PORT · TAIL · CAL · HMAP, plus the stock view), shortcuts, URL ↔ view sync, dev `BackendStatusBanner`
 - `components/bloomberg/layout/terminal-header.tsx` / `mobile-nav.tsx` — nav links (`<a href>` via `view-navigation.ts`)
 - `components/bloomberg/atoms/index.ts` — Jotai atoms (currentViewAtom)
 - `components/bloomberg/hooks/useTerminalUI.ts` — view navigation handlers
@@ -280,5 +281,5 @@ derived by `_derive` (UNTESTED / CONTESTED / STANDS / BROKEN / FALLEN; `settled`
 the thesis reading by `_summary` (OPEN / KEY_FALLEN / STANDING / SETTLED) — same sync reasoning as the questions. A
 fallen key claim never changes the thesis. MCP: `anti_board` / `anti_queue` / `anti_claim_add` / `anti_claim_update` /
 `anti_object` / `anti_none_found` / `anti_verdict` / `anti_to_question` / `anti_import` + `get_antithesis_spec`
-(serves `memory/reference/anti-thesis.md`) + prompt `step_back`. ASK reads it with `get_antithesis`
+(serves `memory/reference/anti-thesis.md`) + prompt `step_back`. The interview (`get_interview_spec` · prompt `interview_thesis`, serves `memory/reference/thesis-interview.md`) has no router and no table: the agent questions the user and the rules land in `thesis_notes`, `questions`, `track_metrics` and `anti_*`. ASK reads it with `get_antithesis`
 (`ask_research.py`, private tool). UI: PORT → TOOLS → THESES → ANTI-THESIS, label from `/api/v2/antithesis/counts`.
