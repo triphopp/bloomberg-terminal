@@ -25,8 +25,12 @@ import { useEffect } from "react";
 
 const NUM_RE = /^\(?[+\-−]?[฿$€£¥]?[+\-−]?\d[\d,]*(\.\d+)?\s*(%|bps?|[KMBT]|x)?\)?\s*[▲▼]?$/;
 
-const UP = "#22ff88";
-const DOWN = "#ff4d6a";
+// Soft tints, a 1px halo (2026-10-09): the neon pair with a 6px text-shadow read
+// as a lit sign on every tick. The change still has to show on a figure that
+// is already pure green / red (P&L), so these are paler than those, not dimmer.
+const UP = "#86efac";
+const DOWN = "#fca5a5";
+const FLASH_MS = 600;
 
 /** A change arriving this soon after a click or key press is the user's own
  *  doing (tab switch, THB↔USD, sort), not a tick. */
@@ -56,11 +60,18 @@ function ownText(el: Element, oldValues?: Map<Node, string>): string {
 
 function flash(el: Element, up: boolean) {
   const c = up ? UP : DOWN;
-  // Colour + glow, not a background: the global text-only rule forces span
+  // Colour, not a background: the global text-only rule forces span
   // backgrounds transparent with !important, which beats an animation.
-  el.animate([{ color: c, textShadow: `0 0 6px ${c}` }], {
-    duration: 900,
-    easing: "ease-out",
+  // The faint 1px halo is what the corner of the eye catches when
+  // a green figure flashes green: without it only the tint changes.
+  // Starts AT the flash colour, holds it for a quarter of the time, then fades
+  // back. A lone keyframe is the END of the animation: the figure crept toward
+  // the colour, touched it on the last frame and snapped back — it never
+  // looked fully changed.
+  const lit = { color: c, textShadow: `0 0 1px ${c}1a` };
+  // The easing sits on the fade only; on the whole animation it would eat the hold.
+  el.animate([{ ...lit, offset: 0 }, { ...lit, offset: 0.25, easing: "ease-out" }, { offset: 1 }], {
+    duration: FLASH_MS,
   });
 }
 
