@@ -93,6 +93,9 @@ PAGES: dict[str, dict[str, tuple[str, dict, str]]] = {
         "decisions": ("/api/v2/portfolio/risk/decisions", {"limit": 60},
                       "RISK → decision journal: why a stop-loss or a rebalance was held, followed or changed — the "
                       "reason typed, the numbers at that moment, the review date, whether the hold is still live"),
+        "research": ("/api/v2/graphs", {"limit": 60},
+                     "TOOLS → RESEARCH: the analysis pages of every thesis, newest first — title, description, symbol, "
+                     "thesis, as-of date, version, sources, when last written; the page text itself is not included"),
     },
     "calendar": {
         "events": ("/api/calendar", {},
