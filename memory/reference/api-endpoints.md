@@ -368,7 +368,12 @@ Next.js proxy `app/api/gcal/[...path]/route.ts` (status · connect · sync · di
   `<backend base>/api/gcal/callback` — Google sends the browser straight to the backend (loopback), not through Next.
 - `GET /api/gcal/callback?state&code` → small HTML page; trades the code (PKCE), finds or makes the calendar, starts the
   first pass on a thread; `postMessage("gcal:ok"|"gcal:error")` to the CAL tab. 400 on a state this process did not start.
-- `POST /api/gcal/sync` → the pass result (`state.json`); 409 `not_connected` / `busy`, 401 `revoked`.
+- `POST /api/gcal/sync` → the pass result (`state.json`, + `requests`, `skipped`); always asks Google (forced). 409
+  `not_connected` / `busy`, 401 `revoked`.
+- Request budget: the scheduler pass compares a fingerprint of what would go up with the last confirmed one and sends
+  **0 requests** when equal (Google re-read every `GCAL_RECHECK_S`, default 6 h); otherwise 1 incremental
+  `events.list` (`syncToken`, mirror in `mirror.json` beside the token) + writes **50 per HTTP batch**, throttled calls
+  retried, 409 → update, 404 → insert. A hand edit in Google is caught by hashing Google's copy (`content_hash`).
 - `PUT /api/gcal/settings {categories:[MACRO|COMPANY|THESIS|PORT], macro_impact: high|medium|all}` → `{settings}`; a pass
   follows on a thread. Default MACRO (high+medium) · COMPANY · THESIS — PORT off.
 - `POST /api/gcal/disconnect?delete_calendar=false` → revokes, forgets the token (calendar kept unless asked).

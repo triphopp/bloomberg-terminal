@@ -68,9 +68,10 @@ async def gcal_callback(state: str = Query(""), code: str = Query(""), error: st
 
 @router.post("/api/gcal/sync")
 async def gcal_sync_now():
-    """One pass now (the calendar scheduler also runs one every CALENDAR_SCAN_INTERVAL)."""
+    """One pass now, asking Google even when nothing changed here (the calendar scheduler
+    also runs one every CALENDAR_SCAN_INTERVAL, free when nothing changed)."""
     try:
-        return await run_in_threadpool(gc.sync)
+        return await run_in_threadpool(lambda: gc.sync(force=True))
     except gc.GcalError as exc:
         raise _fail(exc) from None
 

@@ -39,6 +39,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -77,6 +78,7 @@ _session = requests.Session()
 _token_lock = threading.RLock()     # read-modify-write of token.json
 _sync_lock = threading.Lock()       # one pass at a time
 _pending: dict[str, dict] = {}      # OAuth state → verifier + redirect
+_calls = [0]                        # HTTP requests sent to Google (for the pass report)
 
 
 class GcalError(Exception):
@@ -271,6 +273,7 @@ def _access_token_locked() -> str:
         raise GcalError(409, "Google Calendar is not connected", "not_connected")
     if token.get("access_token") and time.time() < float(token.get("expires_at") or 0):
         return token["access_token"]
+    _calls[0] += 1
     r = _session.post(TOKEN_URL, data={
         "client_id": client_id(), "client_secret": client_secret(),
         "refresh_token": token["refresh_token"], "grant_type": "refresh_token",
@@ -337,6 +340,7 @@ def _why(r: requests.Response, data: dict) -> str:
 
 def _api(method: str, path: str, params: Optional[dict] = None, body: Optional[dict] = None,
          ok_404: bool = False) -> Optional[dict]:
+    _calls[0] += 1
     r = _session.request(method, API + path, params=params, json=body, timeout=_TIMEOUT,
                          headers={"Authorization": f"Bearer {_access_token()}"})
     if r.status_code in (404, 410) and ok_404:      # 410 = deleted
@@ -422,13 +426,30 @@ def event_body(e: dict) -> dict:
         "transparency": "transparent",          # a date to know, not a meeting: never "busy"
         "status": "confirmed",
     }
-    h = hashlib.sha1(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
-    body["extendedProperties"] = {"private": {"bt": "1", "bt_h": h}}
+    body["extendedProperties"] = {"private": {"bt": "1", "bt_h": content_hash(body)}}
     return body
 
 
-def plan(events: list[dict], existing: list[dict], settings: dict) -> dict:
-    """What to write: {"put": [(gid, body, revive)], "delete": [gid]}. Pure — the tests hold it."""
+_HASHED = ("summary", "description", "start", "end", "colorId", "transparency", "status")
+
+
+def content_hash(item: dict) -> str:
+    """Hash of what a person sees. Taken from Google's copy too, so an event edited by hand
+    in Google no longer matches (its bt_h, carried along untouched, would)."""
+    seen = {k: item.get(k) for k in _HASHED if item.get(k) not in (None, "")}
+    seen["start"] = {"date": (item.get("start") or {}).get("date")}
+    seen["end"] = {"date": (item.get("end") or {}).get("date")}
+    return hashlib.sha1(json.dumps(seen, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
+
+
+def plan(events: list[dict], existing: list[dict], settings: dict,
+         window: Optional[tuple[str, str]] = None) -> dict:
+    """What to write: {"put": [(gid, body, known)], "delete": [gid]}. Pure — the tests hold it.
+
+    `existing` is what Google holds ({id, status, date, extendedProperties}); `known` says the
+    id exists there (cancelled included), so a put is an update, not an insert. Only events of
+    ours are deleted, and with `window` only those dated inside it: a past event stays in
+    Google as the record of that day after the feed has moved on."""
     want: dict[str, dict] = {}
     for e in events:
         if wanted(e, settings):
@@ -440,48 +461,199 @@ def plan(events: list[dict], existing: list[dict], settings: dict) -> dict:
         if cur is None:
             put.append((gid, body, False))
             continue
-        cancelled = cur.get("status") == "cancelled"
         h = ((cur.get("extendedProperties") or {}).get("private") or {}).get("bt_h")
-        if cancelled or h != body["extendedProperties"]["private"]["bt_h"]:
-            put.append((gid, body, cancelled))
+        if cur.get("status") == "cancelled" or h != body["extendedProperties"]["private"]["bt_h"]:
+            put.append((gid, body, True))
     for gid, cur in have.items():
         mine = ((cur.get("extendedProperties") or {}).get("private") or {}).get("bt") == "1"
-        if mine and gid not in want and cur.get("status") != "cancelled":
-            delete.append(gid)
+        if not mine or gid in want or cur.get("status") == "cancelled":
+            continue
+        day = cur.get("date") or ((cur.get("start") or {}).get("date"))
+        if window and day and not (window[0] <= day <= window[1]):
+            continue
+        delete.append(gid)
     return {"put": put, "delete": delete}
 
 
-def _list_existing(cid: str, start: date, end: date) -> list[dict]:
-    out, page = [], None
+def fingerprint(events: list[dict], settings: dict) -> str:
+    """One hash for everything that would go up. Equal to the last pass's = nothing to do."""
+    parts = sorted(f"{event_id(e['id'])}:{event_body(e)['extendedProperties']['private']['bt_h']}"
+                   for e in events if wanted(e, settings))
+    return hashlib.sha1("|".join(parts).encode()).hexdigest()
+
+
+# ── What Google holds, mirrored here ─────────────────────────────────────────
+#
+# mirror.json (beside the token, machine-local, rebuilt from Google whenever it is
+# missing or doubtful): {calendar_id, sync_token, fp, checked_at, events: {gid: {h, d,
+# s, m}}}. events.list with a syncToken returns only what changed since the last list
+# — an empty page when nothing did — so knowing Google's side costs one small call,
+# and a pass whose fingerprint matches the last one costs none at all until
+# RECHECK_S has passed (an event edited or deleted by hand in Google is put back then,
+# or at once on SYNC NOW).
+
+RECHECK_S = 6 * 3600
+BATCH_URL = "https://www.googleapis.com/batch/calendar/v3"
+BATCH_MAX = 50              # Google's limit per batch for the Calendar API
+_RETRY_ROUNDS = 3
+
+
+def recheck_s() -> int:
+    try:
+        return max(0, int(os.getenv("GCAL_RECHECK_S", "") or RECHECK_S))
+    except ValueError:
+        return RECHECK_S
+
+
+def _mirror_item(x: dict) -> dict:
+    priv = (x.get("extendedProperties") or {}).get("private") or {}
+    return {"h": content_hash(x), "d": (x.get("start") or {}).get("date"),
+            "s": x.get("status") or "confirmed", "m": priv.get("bt") == "1"}
+
+
+def _as_existing(events: dict[str, dict]) -> list[dict]:
+    return [{"id": gid, "status": v["s"], "date": v["d"],
+             "extendedProperties": {"private": {"bt": "1" if v["m"] else "", "bt_h": v["h"]}}}
+            for gid, v in events.items()]
+
+
+def _refresh_mirror(cid: str, mirror: dict) -> dict:
+    """Bring the mirror level with Google: the changes since the last list, or everything."""
+    if mirror.get("calendar_id") != cid:
+        mirror = {"calendar_id": cid, "events": {}}
+    token = mirror.get("sync_token")
+    if not token:
+        mirror["events"] = {}
+    path = f"/calendars/{_q(cid)}/events"
+    page = None
     while True:
-        params = {"timeMin": f"{start.isoformat()}T00:00:00Z",
-                  "timeMax": f"{(end + timedelta(days=2)).isoformat()}T00:00:00Z",
-                  "showDeleted": "true", "maxResults": 2500, "singleEvents": "true"}
+        params: dict = {"maxResults": 2500, "showDeleted": "true"}
+        if token:
+            params["syncToken"] = token
         if page:
             params["pageToken"] = page
-        data = _api("GET", f"/calendars/{_q(cid)}/events", params=params) or {}
-        out += data.get("items") or []
+        try:
+            data = _api("GET", path, params=params) or {}
+        except GcalError as exc:
+            if token and exc.status == 410:             # token too old: Google asks for a full list
+                return _refresh_mirror(cid, {"calendar_id": cid, "events": {}})
+            raise
+        for x in data.get("items") or []:
+            if x.get("id"):
+                mirror["events"][x["id"]] = _mirror_item(x)
         page = data.get("nextPageToken")
         if not page:
-            return out
+            mirror["sync_token"] = data.get("nextSyncToken")
+            return mirror
 
 
-def _put(cid: str, gid: str, body: dict, known: bool) -> str:
+# ── Batch ────────────────────────────────────────────────────────────────────
+
+def _batch_body(calls: list[tuple[str, str, Optional[dict]]], boundary: str) -> bytes:
+    out = []
+    for i, (method, path, body) in enumerate(calls):
+        part = (f"--{boundary}\r\nContent-Type: application/http\r\nContent-ID: <item{i}>\r\n\r\n"
+                f"{method} /calendar/v3{path} HTTP/1.1\r\n")
+        if body is not None:
+            part += "Content-Type: application/json; charset=UTF-8\r\n\r\n" + json.dumps(body, ensure_ascii=False)
+        out.append(part + "\r\n")
+    out.append(f"--{boundary}--\r\n")
+    return "".join(out).encode("utf-8")
+
+
+def _batch_parse(content_type: str, raw: bytes) -> dict[int, tuple[int, dict]]:
+    """{item index: (status, json body)} from a multipart/mixed batch answer."""
+    m = re.search(r'boundary="?([^";]+)"?', content_type or "")
+    if not m:
+        raise GcalError(424, "Google batch answer without a boundary")
+    text = raw.decode("utf-8", "replace")
+    out: dict[int, tuple[int, dict]] = {}
+    for part in text.split("--" + m.group(1)):
+        idx = re.search(r"Content-ID:\s*<response-item(\d+)>", part, re.I)
+        status = re.search(r"HTTP/1\.1 (\d{3})", part)
+        if not idx or not status:
+            continue
+        inner = part[status.start():]
+        sep = re.search(r"\r?\n\r?\n", inner)
+        body = inner[sep.end():].strip() if sep else ""
+        try:
+            data = json.loads(body) if body else {}
+        except ValueError:
+            data = {}
+        out[int(idx.group(1))] = (int(status.group(1)), data if isinstance(data, dict) else {})
+    return out
+
+
+def _batch(calls: list[tuple[str, str, Optional[dict]]]) -> list[tuple[int, dict]]:
+    """Run the calls BATCH_MAX to an HTTP request; returns (status, body) per call, in order.
+    Each inner call still counts against the quota — a batch saves round trips, not quota."""
+    results: list[tuple[int, dict]] = []
+    for k in range(0, len(calls), BATCH_MAX):
+        chunk = calls[k:k + BATCH_MAX]
+        boundary = "bt_" + secrets.token_hex(8)
+        _calls[0] += 1
+        r = _session.request("POST", BATCH_URL, data=_batch_body(chunk, boundary), timeout=60,
+                             headers={"Authorization": f"Bearer {_access_token()}",
+                                      "Content-Type": f"multipart/mixed; boundary={boundary}"})
+        if not r.ok:
+            raise GcalError(424 if r.status_code >= 500 or r.status_code == 429 else r.status_code,
+                            f"Google Calendar batch → {_why(r, _json(r))}")
+        parsed = _batch_parse(r.headers.get("Content-Type", ""), r.content)
+        results += [parsed.get(i, (0, {})) for i in range(len(chunk))]
+    return results
+
+
+def _rate_limited(status: int, body: dict) -> bool:
+    if status == 429:
+        return True
+    reasons = [e.get("reason") for e in ((body.get("error") or {}).get("errors") or []) if isinstance(e, dict)]
+    return status == 403 and any(r in ("rateLimitExceeded", "userRateLimitExceeded") for r in reasons)
+
+
+def _write_all(cid: str, todo: dict, mirror: dict, counts: dict, errors: list[str]) -> None:
+    """Every put and delete in as few requests as Google allows. An insert that meets an id
+    Google already has (409) becomes an update, an update of an id it does not have (404) an
+    insert, and calls Google throttled are sent again after a pause."""
     base = f"/calendars/{_q(cid)}/events"
-    if known and _api("PUT", f"{base}/{gid}", body=body, ok_404=True) is not None:
-        return "updated"
-    try:
-        _api("POST", base, body={**body, "id": gid})
-        return "created"
-    except GcalError as exc:
-        if exc.status != 409:                       # 409 = the id exists (deleted outside the window)
-            raise
-    _api("PUT", f"{base}/{gid}", body=body)
-    return "updated"
+    # (kind, gid, body): "ins" / "upd" / "del"
+    pending = [("upd" if known else "ins", gid, body) for gid, body, known in todo["put"]]
+    pending += [("del", gid, None) for gid in todo["delete"]]
+    for round_ in range(_RETRY_ROUNDS + 1):
+        if not pending:
+            return
+        if round_:
+            time.sleep(1.5 * round_)
+        calls = [("POST", base, {**body, "id": gid}) if kind == "ins"
+                 else ("PUT", f"{base}/{gid}", body) if kind == "upd"
+                 else ("DELETE", f"{base}/{gid}", None) for kind, gid, body in pending]
+        nxt = []
+        for (kind, gid, body), (status, resp) in zip(pending, _batch(calls)):
+            if 200 <= status < 300 or (kind == "del" and status in (404, 410)):
+                if kind == "del":
+                    counts["deleted"] += 1
+                    if gid in mirror["events"]:
+                        mirror["events"][gid]["s"] = "cancelled"
+                else:
+                    counts["created" if kind == "ins" else "updated"] += 1
+                    mirror["events"][gid] = {"h": body["extendedProperties"]["private"]["bt_h"],
+                                             "d": body["start"]["date"], "s": "confirmed", "m": True}
+            elif kind == "ins" and status == 409:
+                nxt.append(("upd", gid, body))
+            elif kind == "upd" and status == 404:
+                nxt.append(("ins", gid, body))
+            elif _rate_limited(status, resp) and round_ < _RETRY_ROUNDS:
+                nxt.append((kind, gid, body))
+            else:
+                counts["failed"] += 1
+                err = resp.get("error")
+                errors.append(f"Google Calendar {kind} → {status} "
+                              f"{err.get('message') if isinstance(err, dict) else err or ''}".strip())
+        pending = nxt
 
 
-def sync(events_fn=None, today: Optional[date] = None) -> dict:
-    """One pass. `events_fn(start, end)` defaults to calendar_feed.build()['events']."""
+def sync(events_fn=None, today: Optional[date] = None, force: bool = False) -> dict:
+    """One pass. `events_fn(start, end)` defaults to calendar_feed.build()['events'].
+    `force` asks Google even when nothing changed here (SYNC NOW)."""
     if not load_token():
         raise GcalError(409, "Google Calendar is not connected", "not_connected")
     if not _sync_lock.acquire(blocking=False):
@@ -491,40 +663,44 @@ def sync(events_fn=None, today: Optional[date] = None) -> dict:
     try:
         today = today or date.today()
         start, end = today - timedelta(days=BACK_DAYS), today + timedelta(days=ahead_days())
+        window = (start.isoformat(), end.isoformat())
         if events_fn is None:
             import calendar_feed
             events_fn = lambda s, e: calendar_feed.build(s, e, today)["events"]  # noqa: E731
         events = events_fn(start, end)
         settings = get_settings()
-        cid = (load_token() or {}).get("calendar_id") or ensure_calendar()
-        existing = _list_existing(cid, start, end)
-        todo = plan(events, existing, settings)
-        known = {x["id"] for x in existing}
-        errors: list[str] = []
-        for gid, body, _revive in todo["put"]:
-            try:
-                counts[_put(cid, gid, body, gid in known)] += 1
-            except GcalError as exc:
-                counts["failed"] += 1
-                errors.append(str(exc))
-        for gid in todo["delete"]:
-            try:
-                _api("DELETE", f"/calendars/{_q(cid)}/events/{gid}", ok_404=True)
-                counts["deleted"] += 1
-            except GcalError as exc:
-                counts["failed"] += 1
-                errors.append(str(exc))
         mine = sum(1 for e in events if wanted(e, settings))
+        fp = fingerprint(events, settings)
+        cid = (load_token() or {}).get("calendar_id") or ensure_calendar()
+        mirror = _read("mirror.json") or {}
+        base_state = {"events": mine, "window": list(window)}
+        if (not force and mirror.get("calendar_id") == cid and mirror.get("fp") == fp
+                and time.time() - float(mirror.get("checked_at") or 0) < recheck_s()):
+            # Nothing changed here since a pass Google confirmed: no request at all.
+            state = {**(_read("state.json") or {}), **base_state, "at": int(time.time()), "ok": True,
+                     **counts, "unchanged": mine, "requests": 0, "skipped": True,
+                     "elapsed_s": round(time.time() - started, 2), "error": None}
+            _write("state.json", state)
+            return state
+        calls_before = _calls[0]
+        mirror = _refresh_mirror(cid, mirror)
+        todo = plan(events, _as_existing(mirror["events"]), settings, window)
+        errors: list[str] = []
+        _write_all(cid, todo, mirror, counts, errors)
         counts["unchanged"] = max(0, mine - counts["created"] - counts["updated"] - counts["failed"])
-        state = {"at": int(time.time()), "ok": not errors, "events": mine, **counts,
-                 "error": errors[0] if errors else None, "elapsed_s": round(time.time() - started, 1),
-                 "window": [start.isoformat(), end.isoformat()]}
+        mirror.update(fp=fp if not errors else None, checked_at=time.time())
+        _write("mirror.json", mirror)
+        state = {"at": int(time.time()), "ok": not errors, **base_state, **counts,
+                 "requests": _calls[0] - calls_before, "skipped": False,
+                 "error": errors[0] if errors else None, "elapsed_s": round(time.time() - started, 1)}
         _write("state.json", state)
         if counts["created"] or counts["updated"] or counts["deleted"]:
-            logger.info("google calendar: +%d ~%d -%d (%d failed)", counts["created"],
-                        counts["updated"], counts["deleted"], counts["failed"])
+            logger.info("google calendar: +%d ~%d -%d (%d failed, %d requests)", counts["created"],
+                        counts["updated"], counts["deleted"], counts["failed"], state["requests"])
         return state
     except GcalError as exc:
+        if exc.code == "revoked" or exc.status == 404:
+            _remove("mirror.json")                  # the calendar or the grant is gone: start over
         _write("state.json", {"at": int(time.time()), "ok": False, "error": str(exc), **counts})
         raise
     finally:

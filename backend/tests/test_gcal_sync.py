@@ -1,7 +1,9 @@
 """Google Calendar push (gcal_sync.py) against a fake Google.
 
 What is held: the Google id is a pure function of the CAL id and valid for
-Google; a second pass over the same events writes nothing; a changed event is
+Google; a second pass over the same events sends no request, SYNC NOW one small
+list; writes go 50 to a batch, throttled ones again, a 409 becomes an update;
+a past event stays in Google; a changed event is
 updated, a vanished one deleted, one deleted in Google put back; only events of
 ours are ever deleted; the categories and the macro impact the user chose are
 the ones that go up (PORT off by default); a second machine uses the calendar
@@ -23,10 +25,11 @@ TODAY = date(2026, 10, 11)
 
 
 class Reply:
-    def __init__(self, status=200, body=None):
+    def __init__(self, status=200, body=None, raw=None, content_type="application/json"):
         self.status_code = status
         self._body = body
-        self.content = b"" if body is None else json.dumps(body).encode()
+        self.content = raw if raw is not None else (b"" if body is None else json.dumps(body).encode())
+        self.headers = {"Content-Type": content_type}
         self.ok = status < 400
 
     def json(self):
@@ -36,15 +39,20 @@ class Reply:
 
 
 class FakeGoogle:
-    """Calendars and events in dicts; enough of the v3 API and the token endpoint."""
+    """Calendars and events in dicts; enough of the v3 API — sync tokens and batch
+    included — and of the token endpoint."""
 
     def __init__(self):
         self.calendars: dict[str, dict] = {}
         self.events: dict[str, dict[str, dict]] = {}
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str]] = []      # every HTTP request (a batch is one)
+        self.inner: list[tuple[str, str]] = []      # every API call, batched or not
         self.refresh_error = None
+        self.throttle = 0                           # the next N calls answer 403 rateLimitExceeded
         self.next_cal = 1
+        self.seq = 0
 
+    # token endpoint
     def post(self, url, data=None, params=None, timeout=None):
         self.calls.append(("POST", url))
         if url == gc.TOKEN_URL:
@@ -57,49 +65,91 @@ class FakeGoogle:
             return Reply(200, body)
         return Reply(200, {})
 
-    def request(self, method, url, params=None, json=None, timeout=None, headers=None):
+    def request(self, method, url, params=None, json=None, data=None, timeout=None, headers=None):
         assert headers["Authorization"].startswith("Bearer at-")
+        if url == gc.BATCH_URL:
+            self.calls.append(("BATCH", url))
+            return self._batch(headers["Content-Type"], data)
         path = urllib.parse.unquote(url[len(gc.API):])
         self.calls.append((method, path))
+        status, body = self._one(method, path, params or {}, json)
+        return Reply(status, body)
+
+    def _batch(self, content_type, data):
+        boundary = re.search(r"boundary=(\S+)", content_type).group(1)
+        parts = [p for p in data.decode().split("--" + boundary) if "Content-ID" in p]
+        assert 0 < len(parts) <= gc.BATCH_MAX
+        out = []
+        for p in parts:
+            i = re.search(r"<item(\d+)>", p).group(1)
+            line = re.search(r"(GET|POST|PUT|DELETE) /calendar/v3(\S+) HTTP/1.1", p)
+            js = p.split("charset=UTF-8\r\n\r\n", 1)
+            body = __import__("json").loads(js[1]) if len(js) == 2 else None
+            status, resp = self._one(line.group(1), urllib.parse.unquote(line.group(2)), {}, body)
+            out.append(f"--resp\r\nContent-Type: application/http\r\nContent-ID: <response-item{i}>\r\n\r\n"
+                       f"HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n\r\n"
+                       f"{__import__('json').dumps(resp) if resp is not None else ''}\r\n")
+        out.append("--resp--")
+        return Reply(200, raw="".join(out).encode(), content_type="multipart/mixed; boundary=resp")
+
+    def _stamp(self, e):
+        self.seq += 1
+        e["_v"] = self.seq
+        return e
+
+    def _one(self, method, path, params, json):
+        self.inner.append((method, path))
+        if self.throttle and method != "GET":
+            self.throttle -= 1
+            return 403, {"error": {"errors": [{"reason": "rateLimitExceeded"}], "message": "Rate Limit"}}
         if method == "POST" and path == "/calendars":
             cid = f"cal{self.next_cal}@group.calendar.google.com"
             self.next_cal += 1
             self.calendars[cid] = dict(json)
             self.events[cid] = {}
-            return Reply(200, {"id": cid, **json})
+            return 200, {"id": cid, **json}
         m = re.fullmatch(r"/calendars/([^/]+)(?:/events(?:/([^/]+))?)?", path)
         cid, rest = m.group(1), path[len("/calendars/") + len(m.group(1)):]
         if cid not in self.calendars:
-            return Reply(404, {"error": {"message": "Not Found"}})
+            return 404, {"error": {"message": "Not Found"}}
         evs = self.events[cid]
         gid = m.group(2)
         if rest == "" and method == "GET":
-            return Reply(200, self.calendars[cid])
+            return 200, self.calendars[cid]
         if rest == "" and method == "DELETE":
             del self.calendars[cid]
-            return Reply(204)
+            return 204, None
         if rest == "/events" and method == "GET":
-            items = [e for e in evs.values() if params.get("showDeleted") == "true" or e["status"] != "cancelled"]
-            return Reply(200, {"items": items})
+            since = int(params.get("syncToken") or 0)
+            items = [{k: v for k, v in e.items() if k != "_v"} for e in evs.values() if e["_v"] > since]
+            return 200, {"items": items, "nextSyncToken": str(self.seq)}
         if rest == "/events" and method == "POST":
             if json["id"] in evs:
-                return Reply(409, {"error": {"message": "duplicate"}})
-            evs[json["id"]] = dict(json)
-            return Reply(200, evs[json["id"]])
+                return 409, {"error": {"message": "duplicate"}}
+            evs[json["id"]] = self._stamp(dict(json))
+            return 200, evs[json["id"]]
         if method == "PUT":
             if gid not in evs:
-                return Reply(404, {"error": {"message": "Not Found"}})
-            evs[gid] = {**json, "id": gid}
-            return Reply(200, evs[gid])
+                return 404, {"error": {"message": "Not Found"}}
+            evs[gid] = self._stamp({**json, "id": gid})
+            return 200, evs[gid]
         if method == "DELETE":
-            if gid not in evs:
-                return Reply(404, {"error": {"message": "Not Found"}})
+            if gid not in evs or evs[gid]["status"] == "cancelled":
+                return 410 if gid in evs else 404, {"error": {"message": "gone"}}
             evs[gid]["status"] = "cancelled"
-            return Reply(204)
+            self._stamp(evs[gid])
+            return 204, None
         raise AssertionError(f"unexpected {method} {path}")
+
+    def edit_by_hand(self, cid, gid, **changes):
+        self.events[cid][gid].update(changes)
+        self._stamp(self.events[cid][gid])
 
     def live(self, cid):
         return {k: v for k, v in self.events[cid].items() if v["status"] != "cancelled"}
+
+    def writes(self):
+        return [c for c in self.inner if c[0] != "GET"]
 
 
 def ev(eid, day="2026-10-20", category="THESIS", kind="NOTE", title="Check margin", **kw):
@@ -214,20 +264,81 @@ def test_sync_creates_then_nothing_then_updates_deletes_revives(google):
     assert (r["created"], r["updated"], r["deleted"]) == (2, 0, 0)       # PORT stays off Google
     assert set(google.live(cid)) == {gc.event_id("note:1"), gc.event_id("note:2")}
 
-    writes = len([c for c in google.calls if c[0] in ("POST", "PUT", "DELETE")])
+    # Nothing changed here: the pass sends no request at all.
+    sent = len(google.calls)
     r = gc.sync(feed, TODAY)
+    assert r["skipped"] and r["requests"] == 0 and r["unchanged"] == 2
+    assert len(google.calls) == sent
+
+    # SYNC NOW asks Google anyway — one small list, no write.
+    r = gc.sync(feed, TODAY, force=True)
     assert (r["created"], r["updated"], r["deleted"], r["unchanged"]) == (0, 0, 0, 2)
-    assert len([c for c in google.calls if c[0] in ("POST", "PUT", "DELETE")]) == writes
+    assert len(google.calls) == sent + 1
 
     events[0] = ev("note:1", title="Check margin — moved")
     del events[1]
     r = gc.sync(feed, TODAY)
     assert (r["created"], r["updated"], r["deleted"]) == (0, 1, 1)
+    assert r["requests"] == 2                                            # list + one batch
     assert google.live(cid)[gc.event_id("note:1")]["summary"] == "MU · Check margin — moved"
 
-    google.events[cid][gc.event_id("note:1")]["status"] = "cancelled"   # deleted by hand in Google
-    r = gc.sync(feed, TODAY)
+    google.edit_by_hand(cid, gc.event_id("note:1"), status="cancelled")  # deleted by hand in Google
+    assert gc.sync(feed, TODAY)["skipped"]                               # not looked at yet …
+    r = gc.sync(feed, TODAY, force=True)                                 # … SYNC NOW puts it back
     assert r["updated"] == 1 and gc.event_id("note:1") in google.live(cid)
+
+
+def test_google_is_looked_at_again_after_recheck(google, monkeypatch):
+    cid = connect()["calendar_id"]
+    events = [ev("note:1")]
+    gc.sync(lambda s, e: events, TODAY)
+    google.edit_by_hand(cid, gc.event_id("note:1"), summary="changed in Google")
+    m = gc._read("mirror.json")
+    m["checked_at"] -= gc.RECHECK_S + 1
+    gc._write("mirror.json", m)
+    r = gc.sync(lambda s, e: events, TODAY)
+    assert not r["skipped"]
+    assert google.live(cid)[gc.event_id("note:1")]["summary"] == "MU · Check margin"
+
+
+def test_many_events_go_in_batches(google):
+    cid = connect()["calendar_id"]
+    events = [ev(f"note:{i}", title=f"n{i}") for i in range(121)]
+    before = len(google.calls)
+    r = gc.sync(lambda s, e: events, TODAY)
+    assert r["created"] == 121 and r["failed"] == 0 and len(google.live(cid)) == 121
+    batches = [c for c in google.calls[before:] if c[0] == "BATCH"]
+    assert len(batches) == 3                                             # 50 + 50 + 21
+    assert r["requests"] == 1 + 3                                        # the list + the batches
+
+
+def test_throttled_calls_are_sent_again(google, monkeypatch):
+    monkeypatch.setattr(gc.time, "sleep", lambda s: None)
+    cid = connect()["calendar_id"]
+    google.throttle = 3
+    r = gc.sync(lambda s, e: [ev(f"note:{i}") for i in range(5)], TODAY)
+    assert r["created"] == 5 and r["failed"] == 0 and len(google.live(cid)) == 5
+
+
+def test_an_id_google_already_has_becomes_an_update(google):
+    cid = connect()["calendar_id"]
+    gid = gc.event_id("note:1")
+    google.events[cid][gid] = google._stamp({**gc.event_body(ev("note:1", title="old")), "id": gid,
+                                             "status": "cancelled"})
+    gc._remove("mirror.json")
+    m = {"calendar_id": cid, "events": {}, "sync_token": str(google.seq)}   # mirror blind to it
+    gc._write("mirror.json", m)
+    r = gc.sync(lambda s, e: [ev("note:1")], TODAY)
+    assert r["updated"] == 1 and r["failed"] == 0
+    assert google.live(cid)[gid]["summary"] == "MU · Check margin"
+
+
+def test_a_past_event_stays_in_google(google):
+    cid = connect()["calendar_id"]
+    gc.sync(lambda s, e: [ev("note:old", day="2026-10-05")], TODAY)
+    later = date(2026, 10, 25)                       # the event is now before the window
+    r = gc.sync(lambda s, e: [], later)
+    assert r["deleted"] == 0 and gc.event_id("note:old") in google.live(cid)
 
 
 def test_unticking_a_category_removes_it(google):

@@ -25,6 +25,9 @@ export interface GcalStatus {
     deleted: number;
     unchanged?: number;
     failed: number;
+    /** HTTP requests the pass sent to Google — 0 when nothing changed here. */
+    requests?: number;
+    skipped?: boolean;
     error: string | null;
   } | null;
   window_days: [number, number];
@@ -117,7 +120,7 @@ export function GooglePanel({ colors }: { colors: Colors }) {
       if (!r.ok) throw new Error(await errorText(r));
       const d = (await r.json()) as NonNullable<GcalStatus["last_sync"]>;
       setMsg({
-        text: `ส่งแล้ว: ใหม่ ${d.created} · แก้ ${d.updated} · ลบ ${d.deleted}${d.failed ? ` · พลาด ${d.failed}` : ""}`,
+        text: `ส่งแล้ว: ใหม่ ${d.created} · แก้ ${d.updated} · ลบ ${d.deleted}${d.failed ? ` · พลาด ${d.failed}` : ""} · ${d.requests ?? "?"} req`,
         bad: d.failed > 0,
       });
     });
@@ -260,7 +263,7 @@ export function GooglePanel({ colors }: { colors: Colors }) {
         >
           {last
             ? last.ok
-              ? `ส่งล่าสุด ${ago(last.at)} · ${last.events ?? 0} เหตุการณ์`
+              ? `ส่งล่าสุด ${ago(last.at)} · ${last.events ?? 0} เหตุการณ์${last.requests != null ? ` · ${last.requests} req` : ""}`
               : `ส่งล่าสุดพลาด ${ago(last.at)}: ${last.error ?? ""}`
             : "ยังไม่เคยส่ง"}
         </span>

@@ -102,7 +102,7 @@ SERIES_REFRESH_INTERVAL — indicator series collectors
 ALERT_SCAN_INTERVAL   — alert rule scanner
 TRADE_GUARD_SCAN_INTERVAL (default 900, 0 = off) — TRADE GUARD notifier (guard_scheduler.py)
 MARGIN_SCAN_INTERVAL (default 300, 0 = off) — MARGIN notifier (margin_scheduler.py): account level worsens → alert_events `margin:<LEVEL>`
-GOOGLE_CALENDAR_CLIENT_ID / GOOGLE_CALENDAR_CLIENT_SECRET — CAL → Google Calendar (OAuth client "Desktop app"); optional GCAL_SYNC_DAYS (120), GCAL_TOKEN_DIR, GCAL_TIMEZONE (Asia/Bangkok), GCAL_SCOPE (2026-10-11)
+GOOGLE_CALENDAR_CLIENT_ID / GOOGLE_CALENDAR_CLIENT_SECRET — CAL → Google Calendar (OAuth client "Desktop app"); optional GCAL_SYNC_DAYS (120), GCAL_TOKEN_DIR, GCAL_TIMEZONE (Asia/Bangkok), GCAL_SCOPE, GCAL_RECHECK_S (21600) (2026-10-11)
 CALENDAR_SCAN_INTERVAL (default 1800, 0 = off) — CALENDAR notifier (calendar_scheduler.py): a date today or on the next business day → alert_events `cal:<KIND>` (2026-10-08)
 UPSTREAM_LOG          — override logs/upstream.jsonl
 DB_POOL_SIZE (16, 0 = off) / CPU_POOL_WORKERS (2) — `db.get_db` connection pool, `cpu_pool.py` process pool
