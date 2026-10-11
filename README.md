@@ -23,6 +23,7 @@ data. One dark UI backed by a Python data service.
 | `3` / `b` | **BOND** | MARKET: 10Y yield decomposition, Treasury and credit legs, corporate issuance (SEC 424B filings) with an event study, Treasury auctions, debt stock, CFTC Treasury-futures positioning · CONDITIONS: crisis level, financial-stress indices, breakevens, mortgage and delinquency data |
 | `4` / `p` | **PORT** | PORTFOLIO (positions, options, trades, cash, entry) · ANALYTICS (P&L, TWR growth, XIRR) · RISK (VaR/CVaR, trade guard, what-if, margin) · TOOLS (THESES · QUESTIONS · TRACK · IMPORT · AUDIT) |
 | `5` / `t` | **TAIL** | Named market events, 6 risk dimensions → composite, macro context (release calendar, Fed, curve, oil balance), sector rotation, CFTC positioning |
+| `6` | **CAL** | One calendar over every dated thing: macro releases, earnings / ex-dividend dates of thesis symbols and holdings, what the theses wait on (notes, question dates, tracked numbers), option expiries; month grid or agenda, reminders in the alert strip |
 | `h` | **HMAP** | One equity market as a sector treemap sized by market cap (`heatmap(US)`, `heatmap(TH, 52w)` …) |
 | `c` | **ASK** | Chat drawer over any view (see below) |
 
@@ -63,7 +64,7 @@ Keys and the model are set from **MODEL ▸** in the panel (written to `backend/
 | State | Jotai atoms + TanStack React Query |
 | Charts | lightweight-charts (custom `chartkit/`) + Recharts |
 | Styling | Tailwind CSS |
-| Backend | Python FastAPI — 73 routers in `backend/routers/` |
+| Backend | Python FastAPI — 78 routers in `backend/routers/` |
 | Database | SQLite (`backend/portfolio.db`); op-log sync between machines through a Google Drive folder |
 | Market data | yfinance (through a provider registry and an app-wide Yahoo request gate), Yahoo pricing WebSocket for live quotes |
 | Macro / rates | FRED, NY Fed ACM, Japan MOF, CBOE volatility CSVs, Treasury fiscaldata, EIA |
@@ -166,11 +167,11 @@ bloomberg-terminal/
 │   ├── hooks/ · lib/         data hooks, pure helpers (market session, number format …)
 │   ├── layout/               terminal shell, header, view navigation
 │   ├── terminal/             command registry (heatmap(US), ALERT …)
-│   └── views/                market · news/ · bonds/ · heatmap · portfolio/ · tail/ · stock/
+│   └── views/                market · news/ · bonds/ · heatmap · portfolio/ · tail/ · calendar/ · stock/
 ├── backend/
 │   ├── main.py               app init + router mounting
 │   ├── dev_server.py         auto-reload runner (uvicorn's reloader without the Windows stall)
-│   ├── routers/              73 routers (market, stock, bonds, cot, portfolio_v2, news_ai, tail_risk …)
+│   ├── routers/              78 routers (market, stock, bonds, cot, portfolio_v2, news_ai, tail_risk …)
 │   ├── ask_*.py · web_reader.py   ASK: page data, research reads, saved conversations, page reading
 │   ├── analytics/            quantitative models (regime, market state, DCF, SVI, payoff …)
 │   ├── sources/ · sync/      quote provider registry · op-log sync
@@ -221,9 +222,9 @@ curl -s http://localhost:9317/api/health/upstream     # live state
 
 ## Agent access (MCP)
 
-`backend/mcp_server.py` lets Claude Code / Claude Desktop read and edit investment theses, open
-questions, tracked numbers and the Zettelkasten, and pull the terminal's own portfolio, price,
-news and filing data over stdio. It talks to the running backend, so the event log and sync stay
+`backend/mcp_server.py` (75 tools) lets Claude Code / Claude Desktop read and edit investment
+theses, open questions, tracked numbers, the anti-thesis board and the Zettelkasten, and pull the
+terminal's own portfolio, trade history, price, news and filing data over stdio. It talks to the running backend, so the event log and sync stay
 identical to the UI. Setup: [docs/mcp-server.md](docs/mcp-server.md).
 
 ---
@@ -232,7 +233,7 @@ identical to the UI. Setup: [docs/mcp-server.md](docs/mcp-server.md).
 
 | Key | Action |
 |-----|--------|
-| `1` `2` `3` `4` `5` | MKT · NEWS · BOND · PORT · TAIL |
+| `1` `2` `3` `4` `5` `6` | MKT · NEWS · BOND · PORT · TAIL · CAL |
 | `b` `p` `t` `h` | BOND · PORT · TAIL · HMAP |
 | `c` | ASK |
 | `/`, `Ctrl+K` | Global symbol search |

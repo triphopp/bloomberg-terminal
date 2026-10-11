@@ -1,10 +1,10 @@
 # Bloomberg Terminal — Memory Index
 
-> **Navigation map only — no content here** (memory/AGENTS.md). Last rewritten 2026-09-26; refreshed 2026-10-06 (PRs #87–#94).
+> **Navigation map only — no content here** (memory/AGENTS.md). Last rewritten 2026-09-26; refreshed 2026-10-06 (PRs #87–#94); audited against the repo 2026-10-09 (PRs up to #118 — counts, links, missing rows).
 
 ## Start here
 
-1. [`project_summary.md`](project_summary.md) — how to run, tests, stack, env vars, 73 routers, DB schema, 6 views + ASK, known issues, plan list
+1. [`project_summary.md`](project_summary.md) — how to run, tests, stack, env vars, 78 routers, DB schema (107 tables), 7 views + ASK, **agent access** (75 MCP tools · 27 ASK tools · REST), known issues, plan list
 2. [`AGENTS.md`](AGENTS.md) — writing rules for every file in `memory/` (read before writing)
 3. [`reference/gotchas.md`](reference/gotchas.md) — read before investigating a bug
 4. `sessions/INDEX.md` — what recent sessions changed (machine-local)
@@ -29,7 +29,8 @@ memory/
 │   ├── fundamental-analysis.md  "วิเคราะห์พื้นฐาน [ticker]" — data to pull + 12-section report
 │   ├── question-research.md   how to answer an open question (signals, answer levels, assumptions)
 │   ├── thesis-tracking.md     tracked numbers: source, forecast vs actual, kill lines (PORT → TOOLS → TRACK)
-│   └── anti-thesis.md         step back: claims + negation, objections by angle, evidence-gated verdicts (THESES → ANTI-THESIS)
+│   ├── anti-thesis.md         step back: claims + negation, objections by angle, evidence-gated verdicts (THESES → ANTI-THESIS)
+│   └── thesis-interview.md    the agent questions the user: eight core questions, reflecting answers, holding rules
 ├── plans/                ← ⚠️ gitignored — machine-local (completed/ inside)
 ├── sessions/             ← ⚠️ gitignored — machine-local (INDEX.md + reports/)
 └── reports/              ← ⚠️ gitignored — machine-local risk reports
@@ -96,10 +97,17 @@ memory/
 | [Port Redesign](plans/port-redesign.md) · [System Audit 2026-07](plans/system-audit-2026-07/README.md) · [Refactor backlog](plans/refactor-backlog.md) | 🔄 open items |
 | [Bloomberg CLI + MCP](plans/bloomberg-cli-mcp.md) | 🔄 MCP server done, CLI not built |
 | [Stock analysis nested tab shortcuts](plans/stock-analysis-tab-shortcuts.md) · [Data Source Contract](plans/data-source-contract.md) · [Scaling](plans/scaling/README.md) · [Infra](plans/infra/production-infrastructure.md) | 📋 planned |
+| [Data Lab](plans/data-lab/README.md) (13 files, 2026-05-24) · [Yield Curve Interpretation](plans/yield-curve-interpretation-workflow.md) (2026-05-20 — written for `macro-view.tsx` / `credit-view.tsx`, both deleted since; the curve now lives in BOND + TAIL) | 📋 planned, never started — indexed 2026-10-09 |
 
 Full list with one-line status: `project_summary.md` → "What Could Be Built Next".
 
-## งานล่าสุด (2026-09-23 → 27)
+## งานล่าสุด
+
+- **Merged work** — git is the record: `git log --merges --first-parent --date=short --format="%ad %s"` (one line per pull request). Do not list merged work here.
+- **In progress, not merged** — 2026-10-09 PORT → POSITIONS daily sigma: 🔄 branch `feat/2026-10-09-port-sigma-focus` (`backend/port_sigma.py`, `GET /api/v2/portfolio/risk/sigma`, `views/portfolio/day-context.ts`; shape in `reference/data-shapes.md`) · PR #116 open (`fix/2026-10-08-webull-verify-lock`)
+- Session reports on this machine: [memory audit 2026-10-09](sessions/2026-10-09-memory-audit.md) · [unified calendar](sessions/2026-10-08-unified-calendar.md) · [TICK DATA custom + RISK one look](sessions/2026-10-07-tick-custom-risk-one-look.md) · [RISK factor + budget](sessions/2026-10-07-risk-factor-budget.md)
+
+## งานก่อนหน้า (2026-09-23 → 10-02)
 
 - [AXTI และหุ้นเทียบห่วงโซ่ InP](sessions/2026-10-02-axti-peer-theses.md) — อัปเดต AXTI และสร้าง peer THESIS 4 ตัวผ่าน MCP; อธิบาย substrate กับ AI optical และแยกส่วนแบ่งรายได้ที่ยังไม่ชัด.
 - [ANALYTICS INDEX drawdown pane](sessions/2026-09-27-analytics-index-drawdown-pane.md) — underwater chart for portfolio and SPY beneath the equity curve; verified in browser.
@@ -167,6 +175,14 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 
 | ต้องการ | ไฟล์ |
 |---------|------|
+| **Agent ตัวอื่นเรียกอะไรได้บ้าง** — MCP 75 tools (แบ่งกลุ่ม + เขียนได้/อ่านอย่างเดียว), ASK 27 tools, REST, คำสั่งนับซ้ำ | `project_summary.md` → "Agent access" · setup + guard rails `../docs/mcp-server.md` |
+| **ระบบมีอะไรบ้าง (ภาพรวมเดียว)** — 7 views, 78 routers, 107 tables | `project_summary.md` → "Frontend Views" + "Backend Architecture" + "SQLite Database Schema" |
+| **CAL** — ปฏิทินรวม, ไม่มีตารางของตัวเอง, เพิ่มแหล่งวันที่ใหม่ที่ไหน | `../CLAUDE.md` → "Calendar" · `reference/architecture.md` → Calendar |
+| **MKT DEPTH / Webull** — token, stream, TIME & SALES, VOL BY PRICE, วันหมดอายุ | `../CLAUDE.md` → Views `1` · `reference/api-endpoints.md` → Webull · `project_summary.md` → `WEBULL_*` |
+| **Open questions · Tracked numbers · Anti-thesis** — วิธีทำ + กฎที่ server บังคับ | `reference/question-research.md` · `reference/thesis-tracking.md` · `reference/anti-thesis.md` |
+| **ทบทวน thesis กับผู้ใช้ / ข่าวนี้คือจุดจบหรือสัญญาณรบกวน** — คำถามแกน 8 ข้อ, วิธีสะท้อนคำตอบ, กติกาการถือไปอยู่ที่ไหน | `reference/thesis-interview.md` |
+| **Trade history ให้ agent** — `get_trade*`, กฎห้าม (ไม่ใช้ `/portfolio/trades`, ไม่มี SQL tool) | `../CLAUDE.md` → "Trade history for agents" |
+| **หลังแก้ code ต้องอัปเดต memory ไฟล์ไหน** | `../CLAUDE.md` → "Memory Maintenance" · `AGENTS.md` §6c |
 | **PORT Monte Carlo** — โมเดล (FHS), จำนวน path, ความเร็ว, ผล backtest ที่วัดจริง (2026-10-02) | `backend/port_mc.py` (docstring) · `sessions/2026-10-02-port-monte-carlo.md` |
 | **RISK tab: THB amounts under "$" in USD view** — `/risk/metrics` เรียกโดยไม่ส่ง `base_currency` (📋 report 2026-10-07, ยังไม่แก้) | `reports/risk-tab-usd-symbol-risk-report.md` |
 | **Risk close frame loses one symbol** — joint Yahoo download ทำ holding หายจาก /risk/metrics เงียบๆ | `reports/risk-close-frame-lost-symbol-risk-report.md` |
@@ -188,7 +204,7 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 | **กฎการเขียน report / format / workflow** | **`AGENTS.md`** |
 | วิธี run app (2 terminals, env vars) | `reference/architecture.md` → "Running the app" |
 | Tech stack, API endpoints ทั้งหมด, DB schema | `project_summary.md` |
-| Keyboard shortcuts (`1`–`5`, `b` `p` `t` `h`, `/`, `y`, `i`, `Alt+N`) | `project_summary.md` → "Global keyboard shortcuts" |
+| Keyboard shortcuts (`1`–`6`, `b` `p` `t` `h`, `c`, `/`, `y`, `i`, `Alt+N`) | `project_summary.md` → "Global keyboard shortcuts" |
 | Key file paths (atoms, hooks, chart) | `reference/architecture.md` → "Key files" |
 | วิธีเพิ่ม view / endpoint ใหม่ | `reference/architecture.md` → "Navigation" + "Backend layout" |
 | Known bugs / limitations | `project_summary.md` → "Known Issues" |
@@ -213,7 +229,7 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 | **Options in Portfolio** (premium MV เข้า NAV + delta notional ถ่วง allocation; `portfolio_options.py` เป็น single source; schema exit_price/currency/multiplier; greeks spot bug fix 🔴) ✅ done 2026-09-09 | `plans/completed/options-in-portfolio.md` |
 | **Port Redesign** (symbol resolver at-write, sub_portfolios table, currency module, ปิด F06) 🔄 | `plans/port-redesign.md` |
 | **Multi-Currency Sub-Portfolio** (instrument ccy authoritative, per-trade rollup, hybrid historical/live FX, ECON attribution) ✅ done 2026-07-14 | `plans/completed/multi-currency-portfolio.md` |
-| **Bloomberg CLI + MCP Server** (`bloomberg market/portfolio/mcp`, 13 MCP tools) | `plans/bloomberg-cli-mcp.md` |
+| **Bloomberg CLI + MCP Server** (plan said 13 MCP tools; the server now has 75 — see "Agent access"; CLI still not built) | `plans/bloomberg-cli-mcp.md` |
 | **Portfolio Risk Management System** (VaR/CVaR/Greeks/Stress, RiskTab, Action Log) | `plans/portfolio-risk-system.md` |
 | **RISK OVERVIEW redesign + WHAT-IF SIM** (STOP SIM → ทำ vs ไม่ทำ บนหุ้นจริง, รวมเข้า OVERVIEW, ตัดส่วนซ้ำ) ✅ done 2026-09-29 | `plans/completed/risk-overview-whatif-sim.md` |
 | **Corporate IR Stress Testing (CIRST)** (bottom-up firm-level rate shock: EaR → Merton PD → ΔWACC/ΔEV, ES/Euler, IR-Stress Score) 📋 planned | `plans/corporate-ir-stress-testing.md` |
@@ -261,7 +277,7 @@ Full list with one-line status: `project_summary.md` → "What Could Be Built Ne
 | Load optimization steps ที่ค้าง | `plans/infra/load-optimization.md` |
 | View consolidation (ลบ GVOL/EQTY, reassign keys) (ทำเสร็จแล้ว) | `plans/completed/view-consolidation.md` |
 | UI Design System shared primitives | `plans/ui-design-system.md` + `components/bloomberg/core/ui-primitives.tsx` |
-| 6 views — MKT · NEWS · BOND · PORT · TAIL · HMAP + TICK DATA board + ASK drawer (`c`) | `project_summary.md` → "Frontend Views" (also `CLAUDE.md` → Views) |
+| 7 views — MKT · NEWS · BOND · PORT · TAIL · CAL · HMAP + stock view + TICK DATA board + ASK drawer (`c`) | `project_summary.md` → "Frontend Views" (also `CLAUDE.md` → Views) |
 | session X ทำอะไร / ไฟล์ไหนเปลี่ยน | `sessions/INDEX.md` |
 | **OPTIONS Greeks math derivation + bug log** | `reports/options-greeks-math-report.md` |
 | **Strategy Builder** (19 templates, multi-expiry Calendar/Diagonal, payoff w/ BS pricing, PoP/E[P&L]/Kelly ranking) | ✅ done 2026-06-08 — `plans/completed/strategy-builder.md` |

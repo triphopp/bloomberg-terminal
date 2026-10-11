@@ -1,7 +1,7 @@
 # Bloomberg Terminal — Project Summary
 
 **Repo:** `bloomberg-terminal` — macOS `~/bloomberg-terminal`, Windows `D:\Agents\Claude\bloomberg-terminal-main`
-**Last updated:** 2026-10-08 — CAL, a view of its own (key `6`): one calendar over macro, company, thesis and book dates (`backend/calendar_feed.py`, `GET /api/calendar`, no new table — what the user adds is a thesis note or a `question_dates` row), reminders `cal:<KIND>` in the alert strip that link to the thesis (`calendar_scheduler.py`), TAIL strip → CALENDAR. Same day — ANTI-THESIS (step back) under PORT → TOOLS → THESES: the beliefs a thesis rests on, each beside its negation, objections from five angles, evidence-gated verdicts (`routers/antithesis.py`, `anti_*` tables, MCP `anti_*`, spec `reference/anti-thesis.md`). Same day — trade history for agents: `routers/trade_history.py` (`/api/v2/trade-history/*`, read-only) + MCP `get_trade_coverage` · `get_trades` · `get_trade` · `get_trade_stats` · `get_option_trades` — exact filters, honest paging, server-side totals per currency. Before that 2026-10-07 — TICK DATA board the user arranges (own sections, hide/show, MOVE), PORT → RISK as 6 pages with everything on สรุป, down-tilted paths, REBALANCE "not yet" + risk decision journal (`risk_decisions`), alert → RISK → REBALANCE link. Before that 2026-10-06 — refreshed after PRs #87–#94 (ASK chat on every view + saved conversations, NEWS cold-path work, same-origin write guard, `dev_server.py` reload, `aria-pressed` sweep, IV snapshots dated by the US session). Previous full rewrite 2026-09-26.
+**Last updated:** 2026-10-09 — audited against the repo (counts re-measured, see `AGENTS.md` §6c). What was merged and when is in git, not here: `git log --merges --first-parent --date=short --format="%ad %s"`. Previous full rewrite 2026-09-26.
 
 > Slim core reference. Navigate via [memory/INDEX.md](INDEX.md).
 > - [reference/architecture.md](reference/architecture.md) — data flow, routers, key files, accounting layer
@@ -29,14 +29,14 @@
 - **env-doctor**: `npm run doctor` / `doctor:fix` / `doctor:ci` — gitignored env files drift between machines; runs as `predev` and from `.husky/post-merge` / `post-checkout`.
 - **Upstream log**: every outbound call → `logs/upstream.jsonl`; read it first when data is missing/stale (`python backend/scripts/upstream_report.py`, `GET /api/health/upstream`).
 
-## Tests (verified 2026-10-06)
+## Tests (counts re-measured 2026-10-09)
 
 ```bash
-cd backend && python -m pytest -q -p no:cacheprovider --basetemp=<scratch dir>   # backend/pytest.ini: tests/ + slip_ocr/tests/ — 1832 collected (2026-10-08: 1831 pass, known issue 17 aside)
+cd backend && python -m pytest -q -p no:cacheprovider --basetemp=<scratch dir>   # backend/pytest.ini: tests/ + slip_ocr/tests/ — 1936 collected 2026-10-09 (collect only; 10 of them = test_port_sigma on the port-sigma branch). Last full run 2026-10-08: 1831 of 1832 pass, known issue 17 aside
 npm run typecheck      # tsc --noEmit — clean (also run by the pre-commit hook and CI)
-npm run test:chart     # 317 pass
-npm run test:session   # 121 pass (incl. tick-board, 2026-10-07)
-npm run test:views     # 56 pass (incl. calendar-month, 2026-10-08)
+npm run test:chart     # 356 pass (2026-10-09, incl. SD zones + Ichimoku)
+npm run test:session   # 156 pass (2026-10-09)
+npm run test:views     # 63 pass (2026-10-09; 7 of them = day-context on the port-sigma branch)
 npm run test:alerts    # 44 pass
 npm run test:watchlist # 24 pass
 npm run test:ask       # 36 pass (ASK history, sessions, math, persist, proxy rules)
@@ -104,6 +104,8 @@ TRADE_GUARD_SCAN_INTERVAL (default 900, 0 = off) — TRADE GUARD notifier (guard
 MARGIN_SCAN_INTERVAL (default 300, 0 = off) — MARGIN notifier (margin_scheduler.py): account level worsens → alert_events `margin:<LEVEL>`
 CALENDAR_SCAN_INTERVAL (default 1800, 0 = off) — CALENDAR notifier (calendar_scheduler.py): a date today or on the next business day → alert_events `cal:<KIND>` (2026-10-08)
 UPSTREAM_LOG          — override logs/upstream.jsonl
+DB_POOL_SIZE (16, 0 = off) / CPU_POOL_WORKERS (2) — `db.get_db` connection pool, `cpu_pool.py` process pool
+LATENCY_SLOW_MS (200) / LATENCY_LOG (logs/latency.jsonl) / LATENCY_LOCAL_LANE (1) / LATENCY_LOCAL_TOKENS (16) — `request_latency.py`: slow-request log + the local thread lane for DB-only routers (`GET /api/health/latency`)
 ALLOW_DANGEROUS_OPS   — gate for destructive maintenance endpoints
 SYNC_ENABLED / SYNC_DIR (no quotes) / SYNC_DEVICE_ID / SYNC_FOLDER_NAME / SYNC_AUTODETECT
 OPLOG_ENABLED (true = op-log sync, turns the snapshot merge off) / OPLOG_DEVICE_ID (else `.oplog_device_<db>` beside the DB) / OPLOG_INTERVAL (s, default 15)
@@ -128,7 +130,8 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | Router file | Prefix | Source |
 |-------------|--------|--------|
 | `dev.py` | `/api/dev/{status,restart}` — dev-only stale-backend check | `dev_status.py` mtimes + launcher supervisor |
-| `health.py` | `/api/health/upstream` — live upstream state (no outbound call) | `upstream_health.py` |
+| `health.py` | `/api/health/upstream` — live upstream state (no outbound call) · `/api/health/latency` — per-route p50/p95, thread-queue and DB waits (2026-09-30) | `upstream_health.py`, `request_latency.py` |
+| `changes.py` | `/api/changes` — per-table version numbers for the frontend change feed (asked by the 15 s heartbeat; a bumped number refetches that table's queries). Triggers on the tables in `change_feed.WATCHED` (today `chart_drawings`) bump `table_versions` (2026-09-28) | `change_feed.py` + SQLite |
 | `market.py` | `/api/market-data`, `/api/volatility` (20 vol indices incl. MOVE), `/api/tick-custom?symbols=` (rows the user added to the TICK DATA board, 2026-10-07), `/api/heatmap*` (no UI consumer since GMOV removal) | yfinance |
 | `stock.py` | `/api/stock/*` — quote, history, financials, earnings (+ `Ticker.calendar`, SET filing deadlines via `earnings_deadlines.py`) | yfinance |
 | `dcf.py` | `/api/dcf/*` (adaptive valuation + sensitivity + audit lineage) | yfinance + `analytics/dcf.py` |
@@ -160,7 +163,7 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `portfolio_v2.py` | `/api/v2/portfolio/*` — accounts, trades, sell (AVCO), cash/transfer/reconcile, dividends, fees, open-positions, summary, returns, nav-history, **nav-index** (TWR, start-of-day for capital dated before the snapshot day), **takeover**, **history-review**, ledger check/stock-card/statements/evidence, import | SQLite |
 | `trade_history.py` | `/api/v2/trade-history/{coverage,trades,trades/{id},stats,options}` — the book's past trades for agents, read-only, no UI (MCP `get_trade_coverage` · `get_trades` · `get_trade` · `get_trade_stats` · `get_option_trades`). Filters exact and echoed back (bad date / unknown account = 422); every list has `total_matching` / `returned` / `complete` / `next_offset`; `totals` and `/stats` are computed over all matching rows, one line per currency (`base_currency` converts on request); stored values unrounded, NULL kept; `/coverage` = accounts, sub-ports, every traded symbol, the field dictionary (`FIELDS`) and reading rules (`RULES`). Stats equal PORT → ANALYTICS (test) (2026-10-08) | SQLite `trades`, `trade_audit_log`, `broker_executions`, option views |
 | `slip_ocr.py` | `/api/v2/portfolio/slip/{read,status}` — broker slip screenshot → ENTRY fields (engine `backend/slip_ocr/`, easyocr in a spawned worker); read-only | — |
-| `risk.py` | `/api/v2/portfolio/risk/*` (VaR/CVaR/Parity/Stress/Sizing + `/guard`, `/guard/override`, `/guard/size`, `/guard/report` TRADE GUARD via `trade_guard.py`, `/stop-sim` + `/what-if-sim` via `stop_sim.py`, `/monte-carlo` via `port_mc.py`, `/var-backtest`, `/factors` via `factor_exposure.py`, `/budget` via `risk_budget.py`, `/bear-paths` via `bear_paths.py` — down-tilted paths 3/5/7/21/42 days, `/decisions` via `risk_journal.py` — journal of stop / rebalance decisions + REBALANCE HOLD, 2026-10-07) | Ledoit-Wolf |
+| `risk.py` | `/api/v2/portfolio/risk/*` (VaR/CVaR/Parity/Stress/Sizing + `/guard`, `/guard/override`, `/guard/size`, `/guard/report` TRADE GUARD via `trade_guard.py`, `/stop-sim` + `/what-if-sim` via `stop_sim.py`, `/monte-carlo` via `port_mc.py`, `/var-backtest`, `/factors` via `factor_exposure.py`, `/budget` via `risk_budget.py`, `/bear-paths` via `bear_paths.py` — down-tilted paths 3/5/7/21/42 days, `/decisions` via `risk_journal.py` — journal of stop / rebalance decisions + REBALANCE HOLD, 2026-10-07; `/sigma` via `port_sigma.py` — daily sigma + 1-day VaR / CVaR per symbol / account / sub-port / book for POSITIONS, 2026-10-09) | Ledoit-Wolf |
 | `margin.py` | `/api/v2/portfolio/margin/{status,overview,settings}` — IBKR Reg T per account (PORT + PAPER): NLV/ELV/IM/MM/EL/AF/cushion, level SAFE→LIQUIDATION, drop-to-call per account + per underlying; model `backend/margin.py`, PAPER order checks | in-process portfolio_v2 / paper_trading valuation |
 | `backtest_v2.py` | `/api/v2/portfolio/backtest/*` (no UI / proxy since 2026-10-02) | SQLite trades + yfinance |
 | `portfolio.py` | `/api/portfolio/*` (legacy research: thesis files, transactions, backtest) | filesystem + SQLite |
@@ -179,13 +182,41 @@ Import order matters: `dev_status` (source mtimes), `upstream_health` and `yahoo
 | `circuit_breaker.py` / `listing_gate.py` / `config_router.py` / `providers.py` / `sync_router.py` | market circuit breaker, IPO gate, symbol lists, quote providers, cloud sync | mixed |
 | `clippings.py` | `/api/clippings/*` — kept, **no UI** since CLIP removal 2026-09-25 | filesystem + Ollama |
 
+### Agent access — what another agent can call (counted 2026-10-09)
+
+Three doors, one backend. Setup and guard rails: [`docs/mcp-server.md`](../docs/mcp-server.md).
+
+**1. MCP server — `backend/mcp_server.py`, 75 tools** (counted 2026-10-10) (separate process, HTTP client of the backend; writes are tagged `X-Thesis-Actor: agent:<name>`)
+
+| Group | Tools | Writes? |
+|-------|-------|---------|
+| Theses | `list_theses` · `get_thesis` · `notes_due` · `create_thesis` · `update_thesis` · `log_event` · `add_note` · `update_note` · `link_trade` | yes — never status / conviction unless asked |
+| Portfolio | `get_positions` | no |
+| Trade history | `get_trade_coverage` (first call) · `get_trades` · `get_trade` · `get_trade_stats` · `get_option_trades` | no |
+| Market research | `get_stock_data` · `get_price_history` · `get_news` · `get_filings` · `get_fiscal_data` · `get_google_trends` · `get_trending_searches` | no |
+| Zettelkasten | `zettel_search` · `zettel_list` · `zettel_get` · `zettel_create` · `zettel_update` · `zettel_link` · `zettel_add_source` · `zettel_attach` · `zettel_by_source` · `open_conflicts` · `resolve_conflict` | yes |
+| Open questions | `question_queue` · `question_list` · `question_tree` · `question_get` · `question_add` · `question_add_parent` · `question_set_effect` · `question_import` · `question_claim` · `question_release` · `question_answer` · `assumption_check` · `question_calendar` · `question_date_add` · `question_date_update` · `question_date_link` | yes — an answer is a proposal, only the user accepts |
+| Tracked numbers | `track_due` · `track_list` · `track_get` · `track_add` · `track_update` · `track_expect` · `track_record` | yes — never a kill line, a role or a retirement |
+| Anti-thesis | `anti_board` · `anti_queue` · `anti_claim_add` · `anti_claim_update` · `anti_object` · `anti_none_found` · `anti_verdict` · `anti_to_question` · `anti_import` | yes — a verdict is a proposal |
+| Analysis graphs | `graph_list` · `graph_get` · `graph_create` · `graph_update` | yes |
+| Specs (read before the matching work) | `get_fundamental_spec` · `get_data_sources` · `get_question_spec` · `get_tracking_spec` · `get_antithesis_spec` · `get_interview_spec` | no |
+
+Prompts: `fundamental_analysis` · `review_thesis` · `triage_conflicts` · `investigate_questions` · `step_back` · `interview_thesis`. Resources: `spec://fundamental-analysis` · `spec://data-sources` · `spec://question-research` · `spec://thesis-tracking` · `spec://anti-thesis` · `spec://thesis-interview` (each serves the file of the same name in `memory/reference/` — edit the file, not the MCP). No tool deletes, and no tool takes SQL.
+
+**2. ASK — the chat inside the terminal, 27 tools, all read-only** (`routers/news_ai.py`): news `get_watchlist_news` · `get_topic_news` · `search_web_news` · `web_search` · `read_page`; the page `read_screen` · `get_page_data` (sections for 8 pages in `backend/ask_pages.py`: market, news, bonds, portfolio, tail, calendar, heatmap, stock); market `get_quote` · `get_price_history` · `get_market_overview` · `get_macro_snapshot` · `get_macro_calendar` · `search_prediction_markets` · `get_filings` · `get_company_data`; research `list_theses` · `get_thesis` · `list_questions` · `get_question` · `list_tracked` · `get_tracked` · `get_antithesis` · `search_zettel` · `get_zettel` · `list_conflicts`; saved chats `search_sessions` · `read_session`. Never give ASK a tool that writes.
+
+**3. REST** — every route in [`reference/api-endpoints.md`](reference/api-endpoints.md) (78 routers; 230 Next.js proxies under `app/api/`). An agent without MCP sends `X-Thesis-Actor: agent:<name>` on writes.
+
+Re-count before quoting a number: `grep -c "@mcp.tool" backend/mcp_server.py` · `grep -c "include_router" backend/main.py` · `grep -cE '^\s*"name": "' backend/routers/news_ai.py` · `find app/api -name route.ts | wc -l`.
+
 ### Quote Provider Registry (live-quote path)
 `market_data` singleton = `FailoverSource` facade. Quote path (`download_quotes`/`get_fast_info`/`download`/`get_history`) → `ProviderRegistry` (manual switch + auto-failover, capability-scoped, gap-fill merge per symbol). Only `YFQuoteProvider` is registered (Stooq removed 2026-09-24). Add a vendor: implement `QuoteProvider` + `registry.register()` in `sources/__init__.py`. FE seam: `useLiveQuery` + header `ProviderSwitch`. Roadmap: `plans/scaling/`.
 
 ---
 
-### SQLite Database Schema (`portfolio.db`, 66 tables + 2 views, 2026-09-26)
+### SQLite Database Schema (`portfolio.db`, 107 tables + 2 views + 508 triggers, counted on the live DB 2026-10-09)
 
+The count includes `zettel_fts` with its 4 FTS5 shadow tables. Re-count: `SELECT type, COUNT(*) FROM sqlite_master GROUP BY type`.
 Core portfolio tables first; the full per-table notes follow.
 
 ```sql
@@ -409,6 +440,13 @@ question_signals    (id, question_id, answer_id, expectation, result FOUND|NOT_F
 question_assumptions(id, question_id, answer_id, statement, metric, source_hint, check_by, falsifier) — never updated
 question_checks     (id, question_id, kind REVIEW|ASSUMPTION, target_id, result ACCEPTED|REJECTED|HELD|BROKEN, note,
                      zettel_id, actor) — accepting an answer / testing an assumption ADDS a row. All six tables SYNCED
+question_dates      (id uuid PK, ref, title, date, status CONFIRMED|ESTIMATED, source, source_url, symbol,
+                     kind EARNINGS|FILING|DATA_RELEASE|EVENT|OTHER, note, actor,
+                     deleted_at) — the question calendar: a day something a question waits on comes out. Head row (the
+                     date gets revised). Also the release date of a tracked number (`track_expectations.date_id`) and
+                     what the CAL view writes when an added date belongs to no thesis — the ONLY calendar table
+question_date_links (id, date_id, question_id, reads (what to read on that day), actor) — one date serves many questions
+question_date_changes (id, date_id, old_date, new_date, old_status, new_status, reason, actor) — every revision of a date, kept
 track_metrics       (id uuid PK, ref 'K-0007' (label, not unique), thesis_id, symbol, title, role KILLER|WATCH, unit,
                      definition, why, kill_rule (words), kill_op < <= > >=, kill_value, cadence, source_name,
                      source_url, source_locator, source_tool, series_id, question_id, retired_at, retire_reason,
@@ -461,6 +499,14 @@ allocation_targets  (id TEXT uuid PK, account_id, scope sector|symbol, key, targ
                      updated_at) UNIQUE(account_id, scope, key)
 sync_tombstones     (table_name, row_id, deleted_at) PK(table_name,row_id)  -- cloud-sync delete log
 _sync_guard         (active)  -- flag; raised during restore to silence sync triggers
+-- op-log sync (backend/sync/oplog.py) — machine-local bookkeeping, never synced themselves:
+sync_pending        (table_name, row_key) PK both  -- rows changed since the last op was cut (written by triggers)
+sync_oplog          (op_id PK, device, seq, hlc, table_name, row_key, kind upsert|delete, row_json, parent, …)  -- every op, own and peers'
+sync_row_head       (table_name, row_key, op_id, hlc, device) PK(table_name,row_key)  -- the op each row currently stands on
+sync_peer_seq       (device PK, last_seq)  -- how far each peer's ops have been applied
+sync_oplog_meta     (key PK, value)  -- key/value state of the op-log layer
+sync_conflicts      (id PK, table_name, row_key, kept_op, kept_device, kept_row, other_op, other_device, other_row, …)  -- header chip → REVIEW
+table_versions      (table_name PK, seq)  -- change feed (backend/change_feed.py): triggers bump seq; GET /api/changes
 ```
 Holdings computed via **average-cost method** in `db.compute_holdings()`.
 
@@ -485,7 +531,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 
 | Key | Button | View | Component |
 |-----|--------|------|-----------|
-| `1` | MKT | Market (default, eager-loaded) | `market-view.tsx` — left panel WATCH / FREQ / ACTIVE (`discover-lists.tsx`, watchlist `pinned-assets.tsx` compact/table/cards) · main chart (`chart/ModularChart`, indicators, multiple regression channels, event rail: dividends/earnings/SET deadlines/FOMC/CPI/NFP/PCE/GDP) · REGIME panel CORR / GEOM / ROT (table + RRG map) / IV (smile, SVI, OI, 25Δ) / COT (PC1 + extremes) · TICK DATA board — ✎ EDIT adds the user's own sections / symbols and hides built-in rows (`lib/tick-board.ts`, `/api/tick-custom`, 2026-10-07) on top of 7 foldable, drag-reorderable sections (AMERICAS / EMEA / ASIA PACIFIC / RATES·US / RATES·JP / VOLATILITY / FX) in 4 columns NAME · LAST · CHG · YTD, ▼p/▲p CFTC crowding marks, `UsMarketClock` on top |
+| `1` | MKT | Market (default, eager-loaded) | `market-view.tsx` — left panel WATCH / FREQ / ACTIVE (`discover-lists.tsx`, watchlist `pinned-assets.tsx` compact/table/cards) · main chart (`chart/ModularChart`, indicators in `chart/indicators/` — SD ZONES and ICHIMOKU added 2026-10-08/09, multiple regression channels, event rail: dividends/earnings/SET deadlines/FOMC/CPI/NFP/PCE/GDP) · STRUCTURE panel (ex-REGIME, renamed 2026-10-08) DEPTH (Webull book, live over MQTT, TIME & SALES + VOL BY PRICE, `views/depth-panel.tsx`) / CORR / GEOM / ROT (table + RRG map) / IV (smile, SVI, OI, 25Δ) — COT mode removed 2026-10-08 · TICK DATA board — ✎ EDIT adds the user's own sections / symbols and hides built-in rows (`lib/tick-board.ts`, `/api/tick-custom`, 2026-10-07) on top of 7 foldable, drag-reorderable sections (AMERICAS / EMEA / ASIA PACIFIC / RATES·US / RATES·JP / VOLATILITY / FX) in 4 columns NAME · LAST · CHG · YTD, ▼p/▲p CFTC crowding marks, `UsMarketClock` on top |
 | `2` | NEWS | News | `views/news/` — ASK bar + column (`<AskBar />` / `<AskColumn />`, takes the Polymarket column's place while open) · WATCHLIST (per-ticker, 7 sources, by sector; answers from what has arrived, `UPDATING` while slow sources settle) · NEWSFEED · SOCIAL · DATA (indicator series board) + Polymarket column |
 | `3` / `b` | BOND | Bond Monitor | `views/bonds/` — MARKET: KPI strip, 10Y YIELD DECOMPOSITION (ACM: expected real + BE + TP, 20D driver, tripwires), TREASURY LEG, CREDIT LEG (IG/HY trigger lines 2%/5%), CORPORATE ISSUANCE/WEEK (SEC 424B2/424B5 ex-bank) + EVENT STUDY + RECENT DEALS, TREASURY AUCTIONS, DEBT STOCK, CFTC Treasury futures + basis trade · CONDITIONS (ex-CRDT, `useCreditData(isActive)` → `/api/crisis`): crisis level L0–3 (also in the status bar), STL FSI / NFCI, breakevens, 30Y mortgage, delinquencies, dealer balance sheet. `Alt+1/2` tabs |
 | `4` / `p` | PORT | Portfolio | `portfolio-view.tsx` → `views/portfolio/` — PORTFOLIO (POSITIONS incl. TAKEOVER strip · OPTIONS · TRADES · CASH · ENTRY) · ANALYTICS (P&L dashboard: KPI strip, flagged XIRR, period returns, PORTFOLIO GROWTH (TWR, deposit ▲ / withdrawal ▼ / EDIT ◆, estimated span shaded, monthly table) · ROTATION) · RISK (6 pages since 2026-10-07: สรุป = plain-words risk + down-tilted paths 3/5/7/21/42 days + margin + TRADE GUARD + decision journal + the methods (VaR/CVaR/ERC/EWS, FUTURES POSITIONING vs BOOK) · REBALANCE with "ยังไม่ขาย" + reason · BUDGET · FACTOR · WHAT-IF · MONTE CARLO · ขาลง · OPTIONS) · TOOLS (RESEARCH, 2026-10-09: the analysis pages of every thesis in one list, newest first, paged to the panel height — no scroll, ‹ ใหม่กว่า / เก่ากว่า ›, search, unread filter, jump to the page's thesis · one thesis navigator shared by THESES · QUESTIONS · TRACK — search, kind / sector / status / owed-work / unread filters, selection kept across the three; THESES: THESIS / NOTES / KB Zettelkasten / RESEARCH (ex-GRAPHS, internals still `graph*`) / HISTORY / TRADES / AI · QUESTIONS: tree (foldable) + cross-thesis search + calendar · TRACK: tracked numbers, forecast vs actual; read marks on all of it · IMPORT · AUDIT incl. ACCOUNTING CHECK). PAPER tab + ANALYTICS → BACKTEST removed 2026-10-02 (backend routers stay) |
@@ -504,7 +550,7 @@ Cadence: startup `sync.sync_startup()` = pull→merge→push, then one worker (`
 
 | Key | Action | Key | Action |
 |-----|--------|-----|--------|
-| `1`–`5` | MKT · NEWS · BOND · PORT · TAIL | `b` `p` `t` `h` | BOND · PORT · TAIL · HMAP |
+| `1`–`6` | MKT · NEWS · BOND · PORT · TAIL · CAL | `b` `p` `t` `h` | BOND · PORT · TAIL · HMAP |
 | `/`, `Ctrl+K` | global search | `i` | focus MKT symbol search |
 | `y` | %Chg YTD ↔ daily (THB ↔ USD in PORT) | `Ctrl+R` | refresh data |
 | `Esc` | back / close overlay | `?` | shortcut help |
@@ -603,6 +649,8 @@ Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished pl
 - [ ] **P/E History Pane + EPS Surprise Labels** — endpoint `/api/stock/pe-history` (TTM EPS × weekly close, 13–20yr), `PEPane.tsx` recharts sub-pane + valuation percentile bands, earnings marker สี beat/miss; code-complete, backend HTTP verified, frontend visual pending (`plans/pe-earnings-visualization.md`)
 - [ ] **Pane Height Persistence Fix** — pane indicator ยุบเป็น 0 ตอน rebuild (lw v5 setHeight→stretch แปลงบนฐานว่าง) + drag จับเฉพาะ teardown ทำให้ reload แล้วหาย + wrapper h=0; แผนแก้ 3 ชั้น: defer setHeight 2-frame, capturePaneDrags 4 จุดเรียก, ซ่อม height chain (`plans/pane-height-persistence-fix.md`)
 - [ ] **RSI Scale Modes** — คลิกขวาบน RSI pane เลือกสเกล 6 แบบ (standard / autofit / price projection / distance % / distance in avg moves / log RS) + modal ตั้งค่า; Step 1–2 done 2026-08-05 (`calcRSIState` export Wilder state + แก้ seed divergence 99.0099→100, `rsiInverse.ts`), Step 1–5 done 2026-08-05 — คลิกขวาบน RSI pane → เมนู 6 โหมด + เส้น projection บน price pane (Step 6 modal ยกเลิก ยุบลง context menu แทน) ยังไม่ verify ตัวเลขบนแกนด้วยตาเพราะ ModularChart ไม่วาด price series ในโปรไฟล์ที่ทดสอบ; audit: `sessions/reports/rsi-seed-divergence-risk-report.md` (`plans/rsi-scale-modes.md`)
+- [ ] **Data Lab** — free-form exploration across every series the terminal holds (correlation, spread, z-score, beta between any two); planned 2026-05-24, never started (`plans/data-lab/README.md`)
+- [ ] **Yield Curve Interpretation** — five-dimension reading of the curve; planned 2026-05-20 for `macro-view.tsx` / `credit-view.tsx`, both deleted since — needs re-scoping to BOND / TAIL before any work (`plans/yield-curve-interpretation-workflow.md`)
 - [ ] Polymarket: dashboard view in frontend
 - [ ] BOT: frontend view for Bond Auction + yield trend chart
 - [ ] BOT: activate Stat-ExchangeRate → add THB FX view
@@ -614,6 +662,9 @@ Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished pl
 - [ ] SEC One Report: frontend view (data available 2021–2023)
 
 ### Done (newest first)
+
+> Frozen 2026-10-09: merged work is read from git (`git log --merges --first-parent --date=short --format="%ad %s"`), not added here. The list still takes the `- [x] … done YYYY-MM-DD` line of a completed plan (Rule 2).
+
 
 - [x] **IV snapshots dated by the US session** — done 2026-10-06 (PR #93): `backend/us_session.py`; scheduler, writer and DTE use it; op-log keeps the after-close reading without a conflict
 - [x] **ASK — chat on every view** — done 2026-10-06 (PRs #90, #91): providers + MODEL panel, read-only tools incl. screen/page data and research, pictures, HISTORY (Drive / app-data files, pin, trash/restore/erase, RECENT CHATS), resumed-conversation dating, `search_sessions` / `read_session`; `aria-pressed` on toggles

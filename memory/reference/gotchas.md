@@ -7,6 +7,15 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### Order Footprint (FP) on, nothing drawn on a crypto chart (fixed 2026-10-10)
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| `BTC-USD`, FP lit, `/api/crypto/footprint` answers 200 with levels, the chart shows no cells on any intraday interval | Intraday bar times are `new Date("2026-10-10T02:55:00")` — exchange wall clock read in the **browser's** zone — so on a UTC+7 machine every bar sits 7 h before its true instant. The overlay looked bars up by the true UTC second from Binance; `timeToCoordinate` found none. It only ever worked on a machine set to UTC | `order-footprint.ts` `toChartTime` reads the UTC fields of `openTime` as local time, the same way the bars are built. Any overlay fed by a source with real UTC timestamps must do the same — never `ms / 1000` straight onto the time scale. |
+| Cells drawn but floating above/below the candles | Chart bars are Yahoo `BTC-USD`, footprint prices are Binance `BTCUSDT` — tens of dollars apart | One shift for the whole set: the median gap between the two mid-ranges (`basis`), so rows stay on one grid. The overlay hides the chart's candle behind a card and draws its own thin one from Binance. |
+| Footprint only showed when zoomed far in, and only on the last 20 candles | 20 candles requested; cells skipped under 12 px | 300 candles; rows adapt to the bar's width — SELL\|BUY table ≥64 px, row delta ≥30 px, colour only below — and a DELTA / CUM Δ strip is drawn for every candle at every zoom. |
+| Rows on 15m and up are partial (**by design, marked**) | `_PAGES_PER_CANDLE` in `routers/footprint.py` caps aggTrades pages, so a busy candle gets only its first minutes (measured 2026-10-09: 15m 21–84%, 1h 18–62%, 1d 2–11%) | Per-candle totals and the strip are exact at every interval (klines `takerBuyBaseVolume`). Rows carry `coverage`; under 90% they are drawn faded with the percentage. Also fixed: paging by `last T + 1` dropped trades sharing a millisecond — now by `fromId`. |
+
 ### Yahoo's name for a symbol is not evidence of what it is — `^MOVE` (2026-10-07)
 
 | Symptom | Root cause | Fix |
@@ -324,7 +333,7 @@ HTTP 200 / `status: ok`; live SNDK 2026-10-16 SVI returned `ok` for 56 call and
 | Next.js proxy 502 | Python backend not running on port 8000 | Start backend: `python -m uvicorn main:app --port 8000 --reload` |
 | `POST /api/v2/portfolio/X/subpath` returns 405 | Parent `route.ts` (e.g. `cash/route.ts`) only forwards to a hardcoded backend path (`/cash`), no passthrough for sub-paths | Add a dedicated `X/subpath/route.ts` file (Next.js file-based routing, same pattern as `cash/[id]/route.ts`) — one file per distinct backend path, not just per resource. Hit 2026-07-14 adding `cash/transfer` |
 | SSE stream cuts off | Vercel Edge Runtime needed for streaming in production | Add `export const runtime = "edge"` to SSE proxy route |
-| `PYTHON_API` undefined | `.env.local` missing `PYTHON_API_URL` | Default is `http://localhost:8000` — set in `lib/constants.ts` |
+| `PYTHON_API` undefined | `.env.local` missing `PYTHON_API_URL` | Default is `http://localhost:9317` — set in `lib/constants.ts` |
 
 ---
 
@@ -941,7 +950,7 @@ KOSPI อยู่ใน `config.INDICES` มานานแต่ไม่เ�
 
 ## `X.filter is not a function` — proxy 503 ไหลเข้า React Query แทน array
 
-`/api/*` proxy ของ Next คืน `{"error":"Backend unavailable"}` + HTTP 503 เมื่อ backend :8000 ตาย
+`/api/*` proxy ของ Next คืน `{"error":"Backend unavailable"}` + HTTP 503 เมื่อ backend :9317 ตาย
 `queryFn: () => fetch(url).then(r => r.json())` **ไม่เช็ค `res.ok`** → `query.data` กลายเป็น object
 `query.data ?? []` ไม่ช่วย (object ไม่ใช่ null) → caller เรียก `.filter()` แล้ว throw ทั้ง terminal ล่ม
 

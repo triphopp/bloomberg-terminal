@@ -12,9 +12,21 @@
 | **Session Report** | `sessions/` | บันทึกสิ่งที่ทำในแต่ละ session — ไฟล์ไหนเปลี่ยน, ตรวจสอบอย่างไร, rollback ได้อย่างไร | Agent ผู้ดำเนินงาน |
 | **Audit/Test Report** | `sessions/reports/` | ผลการทดสอบ, raw evidence, ข้อมูลจาก API จริง — ไม่ใช่แผน | Agent ผู้ทดสอบ |
 | **Plan** | `plans/` | แผนการทำงานที่ยังไม่ได้ implement — ขั้นตอน, code sample, build order | Agent หรือมนุษย์ |
-| **Reference** | `reference/` | ข้อมูลสถาปัตยกรรมที่เสถียร — stack, key files, data flow | Agent หรือมนุษย์ |
+| **Completed Plan** | `plans/completed/` | แผนที่ทำเสร็จและมี `## ✅ Completion Evidence` (ดู 6b) | Agent ผู้ปิดงาน |
+| **Risk Report** | `reports/` | จุดเสี่ยง bug ที่พบแต่อยู่นอก scope — ไฟล์, บรรทัด, วิธี reproduce (ดู 6b) | Agent ผู้พบ |
+| **Core summary** | `project_summary.md` | ภาพรวมเดียวของทั้งระบบ: run, tests, stack, env vars, routers, DB schema, views, agent access, known issues, plan list | ทุก Agent (ดู 6c) |
+| **Reference** | `reference/` | ข้อมูลสถาปัตยกรรมที่เสถียร — stack, key files, data flow, endpoints, shapes, gotchas, spec ที่ MCP เสิร์ฟ | Agent หรือมนุษย์ |
 | **Index** | `INDEX.md` (root) | Navigation map + feature status — ห้ามใส่ content จริง | ทุก Agent (update เมื่อจำเป็น) |
 | **Session Index** | `sessions/INDEX.md` | Audit trail — ตารางรายการ session + ไฟล์ที่เปลี่ยน | ทุก Agent (update ทุก session) |
+
+### อะไรอยู่ใน git อะไรอยู่เฉพาะเครื่อง
+
+| อยู่ใน git — ทุกเครื่องและทุก agent เห็นเหมือนกัน | เฉพาะเครื่อง (`.gitignore`) |
+|---|---|
+| `INDEX.md` · `AGENTS.md` · `project_summary.md` · `reference/*` · `../CLAUDE.md` · `../docs/*` | `plans/` (รวม `completed/`) · `sessions/` · `reports/` |
+
+- ข้อเท็จจริงที่ agent ตัวอื่นต้องใช้ **ต้องอยู่ฝั่งซ้าย** — session report อย่างเดียวไม่พอ เพราะอีกเครื่องไม่มีไฟล์นั้น
+- ลิงก์ใน `INDEX.md` ที่ชี้ไป `plans/` · `sessions/` · `reports/` อาจไม่มีไฟล์บนเครื่องนี้ = ไฟล์อยู่อีกเครื่อง ไม่ใช่ถูกลบ ห้ามลบลิงก์เพราะเหตุนี้
 
 ---
 
@@ -24,6 +36,8 @@
 sessions/YYYY-MM-DD-<task-slug>.md        เช่น 2026-05-19-pipeline-refactor.md
 sessions/reports/<topic>-report.md        เช่น api-test-report.md
 plans/<task-name>.md                      เช่น gmov-enhancement.md
+plans/completed/<task-name>.md            ชื่อเดิม ย้ายเมื่อผ่านเงื่อนไขใน 6b
+reports/<topic>-risk-report.md            เช่น db-latency-risk-report.md
 reference/<topic>.md                      เช่น architecture.md
 ```
 
@@ -128,7 +142,7 @@ metadata:
 **วันที่:** YYYY-MM-DD
 **Agent:** <model name>
 **วิธีทดสอบ:** <curl / unit test / manual / etc.>
-**สถานะ Backend:** <ทำงาน / หยุด> (localhost:8000)
+**สถานะ Backend:** <ทำงาน / หยุด> (localhost:9317)
 
 ---
 
@@ -274,10 +288,12 @@ Step 2 (~Xm) — ...
 ## 6. Agent Workflow — ต้องทำอะไรเมื่อไหร่
 
 ### ก่อนเริ่มทำงาน (START of session)
-1. อ่าน `memory/INDEX.md` — ดู feature status + rules สำคัญ
-2. อ่าน `memory/project_summary.md` — ดู full context
-3. อ่าน `memory/sessions/INDEX.md` — ดู session ล่าสุดเพื่อรู้ว่ามีอะไรเปลี่ยนไปแล้ว
+1. อ่าน `memory/project_summary.md` — ภาพรวมเดียวของระบบ (ลำดับเดียวกับ `CLAUDE.md` บรรทัดแรก)
+2. อ่าน `memory/INDEX.md` — ดู feature status + rules สำคัญ + "ต้องการรู้เรื่องอะไร → อ่านที่ไหน"
+3. อ่าน `memory/sessions/INDEX.md` — ดู session ล่าสุดบนเครื่องนี้ (ไฟล์เฉพาะเครื่อง — ไม่มีก็ข้าม); อะไรเข้า `main` บ้างดูจาก git: `git log --merges --first-parent --date=short --format="%ad %s"`
 4. หากงานที่รับมีแผนใน `memory/plans/` → อ่านแผนนั้นก่อนลงมือ
+5. ตามชนิดงาน: จะแก้ bug → `reference/gotchas.md` ก่อน · จะหาข้อมูล → `reference/data-sources.md` ก่อนค้นเว็บ · ข้อมูลหาย/ช้า → `logs/upstream.jsonl` ก่อน (`CLAUDE.md`)
+6. จะเรียก backend ในฐานะ agent → `project_summary.md` → "Agent access" (MCP · ASK · REST) และ `docs/mcp-server.md`
 
 ### ระหว่างทำงาน
 - หากพบ bug หรือข้อสังเกตที่ไม่เกี่ยวกับงานหลัก → บันทึกใน session report ส่วน "ข้อสังเกตอื่น" — ห้ามแก้ code นอก scope โดยไม่บอก
@@ -290,6 +306,7 @@ Step 2 (~Xm) — ...
    - เพิ่มแถวในตาราง "Quick Lookup" สำหรับทุกไฟล์ที่เปลี่ยน
 3. **อัปเดต `INDEX.md` (root)** — เปลี่ยน Feature Status ของสิ่งที่ทำเสร็จ (❌ → ✅)
 4. หากแผนใน `plans/` ถูก implement เสร็จแล้ว → เปลี่ยน status ในไฟล์แผนนั้นเป็น `Done`
+5. **อัปเดตไฟล์ที่อยู่ใน git ตาม 6c** — ถ้าเพิ่ม/ลบ router, endpoint, view, ตาราง, env var, MCP tool หรือ ASK tool แล้วไม่แก้ `project_summary.md` + `reference/` ใน commit เดียวกับ code, agent ตัวถัดไปจะเห็นระบบคนละภาพ
 
 ---
 
@@ -348,6 +365,30 @@ Step 2 (~Xm) — ...
 ```
 
 3. เพิ่ม entry ใน `memory/reference/gotchas.md` → Error Dictionary section ถ้าเป็น pattern ที่อาจเกิดซ้ำ
+
+---
+
+## 6c. ภาพรวมเดียวกันทุก Agent — ตัวเลขนับจาก repo ไม่ใช่จำ
+
+`project_summary.md` คือภาพรวมที่ agent ทุกตัวอ่าน ตัวเลขในนั้นซ้ำอยู่ในไฟล์อื่นด้วย — แก้ที่หนึ่งต้องแก้ให้ครบ
+ตารางว่า "เปลี่ยนอะไร → แก้ไฟล์ไหน" อยู่ที่ `CLAUDE.md` → "Memory Maintenance"; ตารางนี้บอกว่า **นับจากไหน** และ **เลขเดียวกันอยู่ที่ไหนบ้าง**
+
+| สิ่งที่นับ | นับจาก (รันจาก repo root) | เลขนี้ปรากฏที่ |
+|-----------|---------------------------|----------------|
+| Routers | `grep -c "include_router" backend/main.py` | `project_summary.md` (Stack + Backend Architecture) · `INDEX.md` · `reference/architecture.md` · `CLAUDE.md` (Memory files) · `README.md` |
+| Views | union ของ `currentViewAtom` ใน `components/bloomberg/atoms/index.ts` (ลบ `stock` = ไม่มีปุ่ม nav) | `project_summary.md` · `INDEX.md` · `reference/architecture.md` · `reference/frontend-structure.md` · `CLAUDE.md` (Views) · `README.md` |
+| MCP tools | `grep -c "@mcp.tool" backend/mcp_server.py` | `project_summary.md` → "Agent access" · `INDEX.md` · `docs/mcp-server.md` · `CLAUDE.md` |
+| ASK tools | `grep -cE '^\s*"name": "' backend/routers/news_ai.py` | `project_summary.md` (router `news_ai.py` + "Agent access") |
+| DB tables | `SELECT type, COUNT(*) FROM sqlite_master GROUP BY type` บน `backend/portfolio.db` (เปิดแบบ read-only) | `project_summary.md` → "SQLite Database Schema" · `INDEX.md` |
+| Next.js proxies | `find app/api -name route.ts \| wc -l` | `project_summary.md` → "Agent access" |
+| Test counts | รัน `npm run test:*` / `pytest --collect-only -q` จริง | `project_summary.md` → "Tests" |
+
+กฎ:
+- **ห้ามเขียนตัวเลขจากความจำหรือจากไฟล์ memory อีกไฟล์** — นับใหม่ แล้วใส่วันที่นับ (`counted YYYY-MM-DD`)
+- Router ทุกตัวที่ mount ใน `main.py` ต้องมีแถวใน `project_summary.md` และมี route อยู่ใน `reference/api-endpoints.md` — รวมตัวที่ไม่มี UI (เขียนว่า "no UI")
+- ตารางใหม่ทุกตารางต้องมีชื่ออยู่ใน `project_summary.md` พร้อมบอกว่า sync หรือเฉพาะเครื่อง
+- MCP tool ใหม่ → เพิ่มในกลุ่มของมันทั้งใน `project_summary.md` → "Agent access" และ `docs/mcp-server.md` → Tools พร้อมบอกว่าเขียนข้อมูลได้หรืออ่านอย่างเดียว
+- ตรวจทั้งชุดอีกครั้ง: สั่ง "audit memory" (skill `update-memory`) — ครั้งล่าสุด 2026-10-09
 
 ### กฎห้าม
 - ห้ามเขียน content จริงลงใน `INDEX.md` หรือ `sessions/INDEX.md` โดยตรง — มีไว้สำหรับ navigation เท่านั้น
