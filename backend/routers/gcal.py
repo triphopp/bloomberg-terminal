@@ -63,7 +63,7 @@ async def gcal_callback(state: str = Query(""), code: str = Query(""), error: st
         color="#4ade80" if ok else "#f87171", text=html.escape(msg),
         sub="You can close this tab and go back to CAL." if ok else "Go back to CAL and press CONNECT again.",
         kind="ok" if ok else "error", close="setTimeout(function(){window.close()},1500)" if ok else ""),
-        status=200 if ok else 400)
+        status_code=200 if ok else 400)
 
 
 @router.post("/api/gcal/sync")

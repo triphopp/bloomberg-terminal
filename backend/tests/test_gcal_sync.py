@@ -271,3 +271,39 @@ def test_disconnect_forgets_the_token(google):
     out = gc.disconnect(delete_calendar=True)
     assert out == {"connected": False, "calendar_deleted": True}
     assert gc.load_token() is None and cid not in google.calendars
+
+
+# ── the routes ───────────────────────────────────────────────────────────────
+
+def _client():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from routers import gcal as routes
+    app = FastAPI()
+    app.include_router(routes.router)
+    return TestClient(app)
+
+
+def test_callback_page_after_sign_in(google, monkeypatch):
+    monkeypatch.setattr(gc, "run_if_connected", lambda: None)     # no first pass on a thread here
+    c = _client()
+    url = c.post("/api/gcal/connect").json()["auth_url"]
+    state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
+    r = c.get(f"/api/gcal/callback?state={state}&code=the-code")
+    assert r.status_code == 200 and "gcal:ok" in r.text and "rt-secret" not in r.text
+    assert gc.status()["connected"]
+
+
+def test_callback_page_when_refused(google):
+    c = _client()
+    r = c.get("/api/gcal/callback?error=access_denied")
+    assert r.status_code == 400 and "gcal:error" in r.text and "access_denied" in r.text
+    r = c.get("/api/gcal/callback?state=forged&code=x")
+    assert r.status_code == 400
+
+
+def test_status_route_never_has_the_token(google):
+    connect()
+    body = _client().get("/api/gcal/status").text
+    assert "rt-secret" not in body and "at-" not in body
