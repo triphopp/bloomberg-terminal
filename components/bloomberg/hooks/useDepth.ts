@@ -17,6 +17,7 @@ export type DepthErrorCode =
   | "keys"
   | "token_missing"
   | "token_pending"
+  | "verify_locked"
   | "subscription"
   | "unsupported"
   | "empty"
@@ -44,6 +45,8 @@ export interface WebullStatus {
     expires_in_s: number | null;
     checked_at: number | null;
   } | null;
+  /** Webull locked SMS verification (5 failed codes): no token call goes out until `until` (unix s). */
+  verify_lock: { since: number; until: number; reason: string } | null;
   /** When the market-data entitlement ends, as written in backend/.env — the API does not say. */
   subscription: { ends: string; days_left: number | null; error: string | null } | null;
 }

@@ -60,6 +60,8 @@ The first preparation phase added no persisted schema. Existing `ledger_events` 
 Basis (`/api/cot/basis`): `{window, as_of, released, unit, stats:{am|lev|dealer:{net,d_net,z,pct,n}}, series:[{date,released,am,lev,dealer,oi}] (10Y-eq, oldest first), tenors:[snapshot contract + dv01_net{grp:number}], status}`
 Webull depth (`/api/webull/depth`): `{symbol, category: US_STOCK|US_ETF, overnight, bids:[{price, size, count|null}] (high→low), asks:[…] (low→high), levels, depth_requested, has_counts, quote_time (ISO UTC)|null, source:{name, endpoint, environment, retrieved_at}}`. `count` = entries in the upstream level's `order[]` (per market participant), null when absent. Errors `{detail:{message, code}}`. TS: `DepthBook` in `components/bloomberg/lib/depth-book.ts`.
 
+Webull status (`/api/webull/status`) adds `verify_lock: {since, until, reason}|null` — unix seconds; set after Webull's `417 VERIFY_FAILURE_EXCEED_LIMIT`. Error code `verify_locked` (423 on the token routes, 409 on depth). TS: `WebullStatus`, `DepthErrorCode` in `components/bloomberg/hooks/useDepth.ts`.
+
 Webull trades (`/api/webull/ticks`, SSE `event: trades`): `{t: ms, price, size, side: "B"|"S"|"N", session}`. TS: `Trade`, `TapeTotals` in `components/bloomberg/lib/trade-tape.ts`.
 
 Factor (`/api/cot/factor`): `{series:[{date,value}], loadings:{KEY:number}, explained, weeks, window, group, as_of, status}`

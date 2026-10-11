@@ -499,18 +499,38 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
         <span>Both come from the Webull Thailand website → OpenAPI.</span>
       </>
     );
-  else if (error?.code === "token_missing" || error?.code === "token_pending") {
+  else if (
+    error?.code === "token_missing" ||
+    error?.code === "token_pending" ||
+    error?.code === "verify_locked"
+  ) {
     const pending = error.code === "token_pending";
-    const busy = model.requestToken.isPending || model.checkToken.isPending;
     const failed = model.requestToken.error ?? model.checkToken.error;
+    // Webull stops verifying after 5 failed codes and says to stop calling; every
+    // press while it holds could only make it longer, so the buttons wait it out.
+    const lockUntil = status.verify_lock?.until ? status.verify_lock.until * 1000 : 0;
+    const locked =
+      Date.now() < lockUntil || error.code === "verify_locked" || failed?.code === "verify_locked";
+    const busy = locked || model.requestToken.isPending || model.checkToken.isPending;
     body = notice(
-      pending
-        ? "WAITING FOR YOU IN THE WEBULL APP"
-        : status.token?.status === "EXPIRED" || status.token?.status === "INVALID"
-          ? "ACCESS TOKEN EXPIRED"
-          : "NO ACCESS TOKEN",
+      locked
+        ? "WEBULL HAS LOCKED VERIFICATION"
+        : pending
+          ? "WAITING FOR YOU IN THE WEBULL APP"
+          : status.token?.status === "EXPIRED" || status.token?.status === "INVALID"
+            ? "ACCESS TOKEN EXPIRED"
+            : "NO ACCESS TOKEN",
       <>
-        {pending ? (
+        {locked ? (
+          <span>
+            5 SMS codes in a row were not confirmed, so Webull refuses new ones for now and asks
+            that nothing call it. This panel sends nothing
+            {lockUntil ? ` until ${clock(lockUntil).slice(0, 5)}` : " for an hour"}; Webull does not
+            say how long its lock lasts — if the next code is refused again, the wait starts over.
+            When you retry: open the Webull app at Messages → OpenAPI Notifications first, then
+            press once.
+          </span>
+        ) : pending ? (
           <span>
             Webull sent an SMS code. Open the Webull app → Menu → Messages → OpenAPI Notifications →
             Check Now, enter the code. You have 5 minutes; this panel picks it up by itself.
@@ -534,9 +554,9 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
             style={{ color: ACCENT, border: `1px solid ${ACCENT}66`, opacity: busy ? 0.5 : 1 }}
             onClick={() => model.requestToken.mutate()}
           >
-            {pending ? "SEND A NEW CODE" : "REQUEST TOKEN"}
+            {locked ? "LOCKED" : pending ? "SEND A NEW CODE" : "REQUEST TOKEN"}
           </button>
-          {pending && (
+          {pending && !locked && (
             <button
               type="button"
               data-frame
@@ -549,7 +569,7 @@ export function DepthPanel({ model, colors, compact = false }: DepthPanelProps) 
             </button>
           )}
         </span>
-        {failed && <span style={{ color: ASK }}>{failed.message}</span>}
+        {failed && !locked && <span style={{ color: ASK }}>{failed.message}</span>}
       </>
     );
   } else if (error)
