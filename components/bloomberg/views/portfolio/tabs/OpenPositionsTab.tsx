@@ -4,6 +4,7 @@ import { useSetAtom } from "jotai";
 import { AlertTriangle, ChevronDown, ChevronRight, Clock, Loader2, RefreshCw } from "lucide-react";
 import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { currentViewAtom, marketSearchSymbolAtom } from "../../../atoms";
+import { SessionGlyph } from "../../../core/market-session";
 import { useLiveQuery } from "../../../hooks/useLiveQuery";
 import { type QuoteTick, useQuoteStream } from "../../../hooks/useQuoteStream";
 import {
@@ -14,6 +15,15 @@ import {
   GROUP_COLORS,
   SUBPORT_COLORS,
 } from "../constants";
+import {
+  type SigmaBlock,
+  type ZTone,
+  fmtZ,
+  focusOrder,
+  marketLive,
+  zScore,
+  zTone,
+} from "../day-context";
 import {
   type Colors,
   fmt,
@@ -413,6 +423,10 @@ function mergePositions(positions: Trade[]): MergedPosition[] {
   return result;
 }
 
+/** Colour of a z-score. Direction is already in the sign and the P&L colour
+ *  beside it, so this only says how unusual the day is. */
+const Z_COLOR: Record<ZTone, string> = { quiet: "#555", normal: "#aaa", watch: "#f59e0b" };
+
 /** Right-aligned so digits line up by place value down the column. */
 const NUMERIC_COLS = new Set<DisplayCol>([
   "ENTRY",
@@ -576,6 +590,12 @@ export function OpenPositionsTab({
     enabled: symbols.length > 0,
   });
   const session = (premarketData?.quotes ?? EMPTY_SESSION) as Record<string, SessionQuote>;
+
+  // Daily sigma (EWMA) + VaR/CVaR — what makes "today +3%" readable as 1.5σ.
+  const { data: sigma } = useQuery({
+    ...portfolioQueries.sigma(currency, accountId),
+    enabled: symbols.length > 0,
+  });
 
   const { data: costRows } = useQuery(portfolioQueries.costOverrides(accountId));
   const costOverrides = useMemo(() => {
@@ -764,6 +784,22 @@ export function OpenPositionsTab({
     return Array.from(map.entries());
   }, [filtered, costByKey]);
 
+  // FOCUS: a row on a market that is shut is dimmed and its account sinks under
+  // the ones still trading — nothing is hidden, the book stays on one screen.
+  // null = no session quote yet, treated as live: never dim on missing data.
+  const rowLive = useCallback(
+    (p: Trade) =>
+      marketLive(session[p.symbol]?.market_state, activeSession(session[p.symbol]) != null),
+    [session]
+  );
+  // With no market open at all (a weekend) there is nothing to focus on.
+  const anyLive = useMemo(() => filtered.some((p) => rowLive(p) === true), [filtered, rowLive]);
+  const orderedGroups = useMemo(
+    () =>
+      anyLive ? focusOrder(groups, ([, rows]) => rows.some((p) => rowLive(p) !== false)) : groups,
+    [groups, anyLive, rowLive]
+  );
+
   const totalUnreal = positions.reduce((a, p) => {
     if (p.unrealized_pnl_base != null) return a + p.unrealized_pnl_base;
     if (currency === "THB") return a + (p.unrealized_pnl_thb ?? 0);
@@ -790,6 +826,93 @@ export function OpenPositionsTab({
           ? (p.unrealized_pnl ?? 0)
           : (p.unrealized_pnl ?? 0) / thb_per_usd);
     return cost + unreal;
+  };
+  /**
+   * Today's move of a set of rows against the value they STARTED the day at —
+   * all of them, including the ones whose market has not traded yet (their move
+   * so far is zero). That is the figure a sigma of the whole set is compared
+   * with; `dayReturnPct` below counts only the rows that moved.
+   */
+  const dayOf = (rows: Trade[]) => {
+    let pnl = 0;
+    let mv = 0;
+    let moved = 0;
+    for (const p of rows) {
+      const d = dayPnlOf(p);
+      mv += marketValueOf(p);
+      if (d == null) continue;
+      pnl += d;
+      moved++;
+    }
+    const prior = mv - pnl;
+    return { pnl, mv, prior, moved, pct: moved > 0 && prior > 0 ? (pnl / prior) * 100 : null };
+  };
+  /** Today's loss has passed the 1-day VaR — the line was set before the day began. */
+  const breached = (day: { pnl: number; prior: number }, varPct: number | null) =>
+    varPct != null && day.pnl < 0 && -day.pnl > (varPct / 100) * day.prior;
+  /** σ / today / VaR of one account or sub-port, for its header line. */
+  const riskLine = (rows: Trade[], blk: SigmaBlock | null | undefined, withVar: boolean) => {
+    if (!blk || blk.sigma_pct == null) return null;
+    const day = dayOf(rows);
+    const z = zScore(day.pct, blk.sigma_pct);
+    const tone = zTone(z);
+    // Money figures stand on the value the day STARTED at, so they hold still
+    // while prices run — a VaR that shrank with the book could not be passed.
+    const amt = (pct: number) => fmtAmt((pct / 100) * day.prior);
+    const hit = breached(day, blk.var_pct);
+    const partial =
+      blk.coverage_pct < 99.5
+        ? ` Covers ${blk.coverage_pct.toFixed(0)}% of the value — the rest has under 60 days of prices.`
+        : "";
+    return (
+      <>
+        <span
+          style={{ color: colors.textSecondary }}
+          title={`Daily sigma: an ordinary day moves this book about ±${blk.sigma_pct.toFixed(2)}% (two days in three stay inside it). EWMA λ ${sigma?.lambda ?? 0.94} on ${blk.obs} days to ${sigma?.as_of ?? "?"}, from the book's own return series with today's weights — not a sum of the rows. Price only, no FX.${partial}`}
+        >
+          σ <span style={{ color: colors.text }}>±{blk.sigma_pct.toFixed(2)}%</span>
+          <span className="ml-1">
+            ±{csym}
+            {amt(blk.sigma_pct)}
+          </span>
+        </span>
+        {day.pct != null && (
+          <span
+            style={{ color: colors.textSecondary }}
+            title={`Today's P&L ÷ the value these positions started the day at. ${day.moved} of ${rows.length} row(s) have traded today.${z != null ? ` ${fmtZ(z)} = that move ÷ sigma; 2σ or more is about one day in twenty.` : ""}`}
+          >
+            today{" "}
+            <span style={{ color: pnlColor(day.pnl) }}>
+              {day.pnl >= 0 ? "+" : "-"}
+              {csym}
+              {fmtAmt(Math.abs(day.pnl))} ({day.pct >= 0 ? "+" : ""}
+              {day.pct.toFixed(2)}%)
+            </span>
+            {tone && (
+              <span className="ml-1 font-bold" style={{ color: Z_COLOR[tone] }}>
+                {fmtZ(z)}
+              </span>
+            )}
+          </span>
+        )}
+        {withVar && blk.var_pct != null && (
+          <span
+            style={{ color: colors.textSecondary }}
+            title={`${hit ? "PASSED TODAY — today's loss is larger than this line. " : ""}1-day VaR ${Math.round((sigma?.confidence ?? 0.95) * 100)}%: on 19 days out of 20 the loss is not expected to pass ${blk.var_pct.toFixed(2)}% of this book. Set on the value and weights at the last close, so it does not move during the day. Currency moves included. ${blk.method === "normal" ? "Normal quantile (under 120 days of history)." : "Filtered historical: past days rescaled to today's sigma, so fat tails stay."}${blk.cvar_pct != null ? ` When it does pass, the average loss (CVaR) is ${blk.cvar_pct.toFixed(2)}% = ${csym}${amt(blk.cvar_pct)}.` : ""}`}
+          >
+            VaR95{" "}
+            <span
+              className={hit ? "font-bold" : undefined}
+              style={{ color: hit ? "#ef4444" : colors.text }}
+            >
+              {csym}
+              {amt(blk.var_pct)}
+              {hit && " PASSED"}
+            </span>
+          </span>
+        )}
+      </>
+    );
   };
   const totalDayPnl = positions.reduce((a, p) => a + (dayPnlOf(p) ?? 0), 0);
   const hasDayData = positions.some((p) => p.day_pnl != null);
@@ -854,80 +977,127 @@ export function OpenPositionsTab({
         className="flex-shrink-0 border-b"
         style={{ borderColor: colors.border, background: "#080808" }}
       >
-        {/* One row: book stats left, table controls right */}
-        <div className="flex flex-wrap items-center gap-x-4 px-3 py-0.5 text-[9px] font-mono">
-          <span style={{ color: colors.textSecondary }} title={`${groups.length} accounts`}>
-            {filtered.length}
-            {filter || activeSub ? `/${merged.length}` : ""} sym · {positions.length} lots
-          </span>
-          <span style={{ color: colors.textSecondary }}>
-            Cost{" "}
-            <span className="font-bold" style={{ color: colors.text }}>
-              {csym}
-              {fmtAmt(totalCost)}
+        {/* One row: book stats left, table controls right. Only the stats
+            wrap: when the row is too narrow (110% zoom) they fold onto a second
+            line under themselves and the controls stay where they are — with
+            one shared flex-wrap the controls were what dropped to a line of
+            their own. */}
+        <div className="flex items-start gap-x-4 px-3 py-0.5 text-[9px] font-mono">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4">
+            <span style={{ color: colors.textSecondary }} title={`${groups.length} accounts`}>
+              {filtered.length}
+              {filter || activeSub ? `/${merged.length}` : ""} sym · {positions.length} lots
             </span>
-          </span>
-          {navParts && navParts.nav > 0 && (
-            <span
-              style={{ color: colors.textSecondary }}
-              title={`NAV = equities ${csym}${fmtAmt(navParts.equity)} + options ${csym}${fmtAmt(navParts.options)} + cash ${csym}${fmtAmt(navParts.cash)}${accountId === "all" ? " (all accounts)" : ""}. Every % PORT is a share of this.${navParts.cashKnown ? "" : " Cash not loaded yet — counted as 0."}${navParts.unpriced ? ` ${navParts.unpriced} position(s) have no price and are left out.` : ""}`}
-            >
-              NAV{" "}
+            <span style={{ color: colors.textSecondary }}>
+              Cost{" "}
               <span className="font-bold" style={{ color: colors.text }}>
                 {csym}
-                {fmtAmt(navParts.nav)}
-              </span>
-              <span className="ml-1">
-                EQ {fmtWeight(navPct(navParts.equity))}
-                {navParts.options !== 0 && ` · OPT ${fmtWeight(navPct(navParts.options))}`}
-                {` · CASH ${fmtWeight(navPct(navParts.cash))}`}
-              </span>
-              {(!navParts.cashKnown || navParts.unpriced > 0) && (
-                <span className="ml-0.5" style={{ color: "#f59e0b" }}>
-                  *
-                </span>
-              )}
-            </span>
-          )}
-          {hasDayData && (
-            <span>
-              Today{" "}
-              <span className="font-bold" style={{ color: pnlColor(totalDayPnl) }}>
-                {totalDayPnl >= 0 ? "+" : "-"}
-                {csym}
-                {fmtAmt(Math.abs(totalDayPnl))}
-              </span>
-              {dayReturnPct != null && (
-                <span
-                  className="font-bold ml-1"
-                  style={{ color: pnlColor(totalDayPnl) }}
-                  title="Daily return = today's P&L ÷ the market value the book started the day at (market value now − today's P&L). Covers only the positions whose market has moved today. Positions opened today are measured from the previous close, which is not a price you paid."
-                >
-                  ({dayReturnPct >= 0 ? "+" : ""}
-                  {dayReturnPct.toFixed(2)}%)
-                </span>
-              )}
-              {stalePositions > 0 && (
-                <span
-                  className="text-[8px] ml-0.5"
-                  style={{ color: colors.textSecondary }}
-                  title={`${stalePositions} position(s) sit on markets that have not opened today. Their regular-session move does not exist yet, so they are excluded here — any pre-market move is shown per row instead.`}
-                >
-                  ({stalePositions} pending)
-                </span>
-              )}
-            </span>
-          )}
-          {totalUnreal !== 0 && (
-            <span>
-              Unreal{" "}
-              <span className="font-bold" style={{ color: pnlColor(totalUnreal) }}>
-                {csym}
-                {fmtAmt(Math.abs(totalUnreal))} {totalUnreal >= 0 ? "▲" : "▼"}
+                {fmtAmt(totalCost)}
               </span>
             </span>
-          )}
-          <div className="ml-auto flex items-center gap-2">
+            {navParts && navParts.nav > 0 && (
+              <span
+                style={{ color: colors.textSecondary }}
+                title={`NAV = equities ${csym}${fmtAmt(navParts.equity)} + options ${csym}${fmtAmt(navParts.options)} + cash ${csym}${fmtAmt(navParts.cash)}${accountId === "all" ? " (all accounts)" : ""}. Every % PORT is a share of this.${navParts.cashKnown ? "" : " Cash not loaded yet — counted as 0."}${navParts.unpriced ? ` ${navParts.unpriced} position(s) have no price and are left out.` : ""}`}
+              >
+                NAV{" "}
+                <span className="font-bold" style={{ color: colors.text }}>
+                  {csym}
+                  {fmtAmt(navParts.nav)}
+                </span>
+                <span className="ml-1">
+                  EQ {fmtWeight(navPct(navParts.equity))}
+                  {navParts.options !== 0 && ` · OPT ${fmtWeight(navPct(navParts.options))}`}
+                  {` · CASH ${fmtWeight(navPct(navParts.cash))}`}
+                </span>
+                {(!navParts.cashKnown || navParts.unpriced > 0) && (
+                  <span className="ml-0.5" style={{ color: "#f59e0b" }}>
+                    *
+                  </span>
+                )}
+              </span>
+            )}
+            {hasDayData && (
+              <span>
+                Today{" "}
+                <span className="font-bold" style={{ color: pnlColor(totalDayPnl) }}>
+                  {totalDayPnl >= 0 ? "+" : "-"}
+                  {csym}
+                  {fmtAmt(Math.abs(totalDayPnl))}
+                </span>
+                {dayReturnPct != null && (
+                  <span
+                    className="font-bold ml-1"
+                    style={{ color: pnlColor(totalDayPnl) }}
+                    title="Daily return = today's P&L ÷ the market value the book started the day at (market value now − today's P&L). Covers only the positions whose market has moved today. Positions opened today are measured from the previous close, which is not a price you paid."
+                  >
+                    ({dayReturnPct >= 0 ? "+" : ""}
+                    {dayReturnPct.toFixed(2)}%)
+                  </span>
+                )}
+                {(() => {
+                  const z = zScore(dayOf(positions).pct, sigma?.total?.sigma_pct);
+                  const tone = zTone(z);
+                  return tone ? (
+                    <span
+                      className="font-bold ml-1"
+                      style={{ color: Z_COLOR[tone] }}
+                      title={`Today's P&L ÷ the value the whole book started the day at, in daily sigmas (σ ±${sigma?.total?.sigma_pct?.toFixed(2)}%). Under 1σ is an ordinary day; 2σ or more is about one day in twenty.`}
+                    >
+                      {fmtZ(z)}
+                    </span>
+                  ) : null;
+                })()}
+                {stalePositions > 0 && (
+                  <span
+                    className="text-[8px] ml-0.5"
+                    style={{ color: colors.textSecondary }}
+                    title={`${stalePositions} position(s) sit on markets that have not opened today. Their regular-session move does not exist yet, so they are excluded here — any pre-market move is shown per row instead.`}
+                  >
+                    ({stalePositions} pending)
+                  </span>
+                )}
+              </span>
+            )}
+            {sigma?.total?.sigma_pct != null &&
+              (() => {
+                const t = sigma.total;
+                const day = dayOf(positions);
+                const hit = breached(day, t.var_pct);
+                const amt = (pct: number | null) =>
+                  pct == null ? "—" : `${csym}${fmtAmt((pct / 100) * day.prior)}`;
+                return (
+                  <span
+                    style={{ color: colors.textSecondary }}
+                    title={`Whole book, one day, on ${t.obs} days to ${sigma.as_of ?? "?"} (EWMA λ ${sigma.lambda}).\nσ — an ordinary day: ±${t.sigma_pct?.toFixed(2)}% = ±${amt(t.sigma_pct)} (price only).\nVaR95 — on 19 days out of 20 the loss stays under ${t.var_pct?.toFixed(2)}%.\nCVaR95 — the average loss on the 20th day: ${t.cvar_pct?.toFixed(2)}%.\nAll three stand on the value and weights at the last close — fixed for the day.\nVaR and CVaR include currency moves; options are not in these figures.${t.coverage_pct < 99.5 ? `\nCovers ${t.coverage_pct.toFixed(0)}% of the value.` : ""}`}
+                  >
+                    σ{" "}
+                    <span className="font-bold" style={{ color: colors.text }}>
+                      ±{t.sigma_pct?.toFixed(2)}%
+                    </span>
+                    {" · "}VaR95{" "}
+                    <span className="font-bold" style={{ color: hit ? "#ef4444" : colors.text }}>
+                      {amt(t.var_pct)}
+                      {hit && " PASSED"}
+                    </span>
+                    {" · "}CVaR95{" "}
+                    <span className="font-bold" style={{ color: colors.text }}>
+                      {amt(t.cvar_pct)}
+                    </span>
+                  </span>
+                );
+              })()}
+            {totalUnreal !== 0 && (
+              <span>
+                Unreal{" "}
+                <span className="font-bold" style={{ color: pnlColor(totalUnreal) }}>
+                  {csym}
+                  {fmtAmt(Math.abs(totalUnreal))} {totalUnreal >= 0 ? "▲" : "▼"}
+                </span>
+              </span>
+            )}
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {subPorts.length > 1 && (
               <fieldset
                 className="flex items-center gap-1.5 text-[8px] font-bold border-0 p-0 m-0"
@@ -1098,6 +1268,7 @@ export function OpenPositionsTab({
       ) : (
         <div
           className="flex-1 overflow-y-auto overflow-x-auto"
+          style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}
           onClick={() => setShowColPicker(false)}
           onKeyDown={() => setShowColPicker(false)}
           role="presentation"
@@ -1135,7 +1306,7 @@ export function OpenPositionsTab({
                   <th className="border-b" style={{ borderColor: colors.border }} />
                 </tr>
               </thead>
-              {groups.map(([gk, groupPositions]: [string, MergedPosition[]]) => {
+              {orderedGroups.map(([gk, groupPositions]: [string, MergedPosition[]]) => {
                 const groupColor = GROUP_COLORS[gk] ?? colors.accent;
                 const isCollapsed = !!collapsed[gk];
                 const { pnl: groupPnl, cost: groupCost, mv: groupMv } = statsOf(groupPositions);
@@ -1148,6 +1319,11 @@ export function OpenPositionsTab({
                   ? subDebt && { ...subDebt, subs: [activeSub] }
                   : takeoverDebt.get(acctId);
                 const sections = subPortSections(groupPositions);
+                const groupShut = anyLive && !groupPositions.some((p) => rowLive(p) !== false);
+                // One sub-port in view → its own sigma, not the account's.
+                const groupSigma = activeSub
+                  ? sigma?.sub_ports[`${acctId}::${activeSub}`]
+                  : sigma?.accounts[acctId];
 
                 return (
                   <tbody key={gk}>
@@ -1218,6 +1394,7 @@ export function OpenPositionsTab({
                             cost {csym}
                             {fmtAmt(groupCost)}
                           </span>
+                          {!filter.trim() && riskLine(groupPositions, groupSigma, true)}
                           {groupDebt && (
                             <span
                               style={{ color: colors.textSecondary }}
@@ -1250,6 +1427,16 @@ export function OpenPositionsTab({
                               ? `${groupPnl >= 0 ? "+" : "-"}${csym}${fmtAmt(Math.abs(groupPnl))}`
                               : "—"}
                           </span>
+                          {groupShut && (
+                            <span
+                              className="inline-flex items-center gap-1 font-bold tracking-wider"
+                              style={{ color: "#9ca3af" }}
+                              title="No market this account trades on is open now — its rows are dimmed and it sits under the accounts still trading. A row that closed 2σ or more from an ordinary day stays lit."
+                            >
+                              <SessionGlyph state="CLOSED" />
+                              CLOSED
+                            </span>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1323,6 +1510,14 @@ export function OpenPositionsTab({
                                       cost {csym}
                                       {fmtAmt(sec.cost)}
                                     </span>
+                                    {!filter.trim() &&
+                                      riskLine(
+                                        section.rows,
+                                        sigma?.sub_ports[
+                                          `${section.rows[0]?.account_id ?? ""}::${section.sub}`
+                                        ],
+                                        false
+                                      )}
                                     {secDebt && (
                                       <span
                                         style={{ color: colors.textSecondary }}
@@ -1398,6 +1593,14 @@ export function OpenPositionsTab({
                                 const thesis = theses[p.symbol.toUpperCase()];
                                 const pxText = (n: number) => `${sym}${fmtPx(toBase(n, acc))}`;
                                 const transferHint = transferCostHint(p.lots, pxText, fmtQty);
+                                const rowSigma = p.yf_symbol
+                                  ? sigma?.symbols[p.yf_symbol]
+                                  : undefined;
+                                const rowZ = zScore(p.day_pct, rowSigma?.sigma_eff_pct);
+                                const rowTone = zTone(rowZ);
+                                // Market shut and the day was ordinary → step back.
+                                const dimmed =
+                                  anyLive && rowLive(p) === false && rowTone !== "watch";
 
                                 const cellMap: Record<DisplayCol, React.ReactNode> = {
                                   SYMBOL: (
@@ -1670,6 +1873,15 @@ export function OpenPositionsTab({
                                             {p.day_pct.toFixed(2)}%)
                                           </span>
                                         )}
+                                        {rowTone && rowSigma && (
+                                          <span
+                                            className={`inline-block w-[34px] text-right text-[8px] ${rowTone === "watch" ? "font-bold" : "font-normal"}`}
+                                            style={{ color: Z_COLOR[rowTone] }}
+                                            title={`Today's move ÷ daily sigma ±${rowSigma.sigma_pct?.toFixed(2)}% (EWMA λ ${sigma?.lambda ?? 0.94}, ${rowSigma.obs} days). Under 1σ ordinary · 2σ or more about one day in twenty.${rowSigma.coarse ? ` ≈ one price step is ${rowSigma.tick_pct?.toFixed(2)}% of this price, so the move cannot be read finer than that.` : ""}`}
+                                          >
+                                            {fmtZ(rowZ, rowSigma.coarse)}
+                                          </span>
+                                        )}
                                       </span>
                                     );
                                   })(),
@@ -1726,7 +1938,7 @@ export function OpenPositionsTab({
                                 return (
                                   <React.Fragment key={p.rowKey}>
                                     <tr
-                                      className="group hover:bg-[#111]"
+                                      className={`group hover:bg-[#111] ${dimmed ? "opacity-[0.45] hover:opacity-100" : ""}`}
                                       style={{ borderBottom: "1px solid #141414", height: rowH }}
                                     >
                                       {displayCols.map((col) => (

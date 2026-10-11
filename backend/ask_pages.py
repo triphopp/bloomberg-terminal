@@ -75,6 +75,9 @@ PAGES: dict[str, dict[str, tuple[str, dict, str]]] = {
                     "accounts with NAV, cash, realised and unrealised P&L, totals in THB"),
         "positions": ("/api/v2/portfolio/open-positions", {"base_currency": "THB"},
                       "every open position: quantity, cost, price, market value, P&L, weight; open options"),
+        "sigma": ("/api/v2/portfolio/risk/sigma", {"base_currency": "THB"},
+                  "how big an ordinary day is: daily sigma (EWMA) of each holding, account, sub-port and the book, "
+                  "with 1-day VaR and CVaR at 95% — divide today's % move by sigma_pct to say if the day is unusual"),
         "guard": ("/api/v2/portfolio/risk/guard", {"base_currency": "THB"},
                   "TRADE GUARD: light, required actions, per-position and per-sector risk, heat, drawdown, sizing multiplier"),
         "factors": ("/api/v2/portfolio/risk/factors", {"base_currency": "THB"},

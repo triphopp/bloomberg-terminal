@@ -2069,3 +2069,30 @@ A CALENDAR reminder in `GET /api/alerts/events`: `ruleId "cal:<KIND>"`, `ruleNam
 `{event_id, date, category, kind, title, symbol?, detail?, estimated, source?, thesis_id?, thesis_symbol?,
 thesis_count, note_id?, question_id?}`. Anything rendering `snapshot` generically must branch on
 `isCalendarEvent` (`alerts/calendar-alert.ts`) first.
+
+## Position sigma (`GET /api/v2/portfolio/risk/sigma`) — 2026-10-09
+
+```jsonc
+{
+  "base_currency": "THB", "confidence": 0.95, "lambda": 0.94, "lookback": 252,
+  "horizon_days": 1, "as_of": "2026-10-08",          // last completed bar used
+  "excluded": [{"symbol": "X.BK", "reason": "insufficient history", "bars": 19}],
+  "symbols": {                                        // key = yf_symbol of a position
+    "DCON.BK": {"sigma_pct": 7.4511, "sigma_eff_pct": 7.4511, "tick_pct": 6.25, "coarse": true, "obs": 252}
+  },
+  "accounts":  {"dime": Block},                       // key = account_id
+  "sub_ports": {"finansia::6065151": Block},          // key = `${account_id}::${sub_port}` ("" when none)
+  "total": Block                                      // null when there are no priced positions
+}
+// Block
+{"mv": 952144.85, "n": 4, "n_covered": 4, "coverage_pct": 100.0,
+ "sigma_pct": 2.5456, "sigma_amt": 24238.0,           // price only, daily
+ "var_pct": 3.617, "var_amt": 34438.84,               // 1-day, FX included
+ "cvar_pct": 4.7957, "cvar_amt": 45661.74,
+ "method": "filtered-historical",                     // or "normal" (<120 days)
+ "obs": 252}
+```
+
+Every `*_pct` is null under 60 days of prices. `mv` / `*_amt` are at the last close (holdings × last completed bar), so
+they hold still through the day — the UI multiplies `*_pct` by its own start-of-day value (MV now − today's P&L). z-score of a row = `day_pct / sigma_eff_pct`; of a group = its day P&L ÷
+the value it started the day at ÷ `sigma_pct`. TS types: `views/portfolio/day-context.ts`.
