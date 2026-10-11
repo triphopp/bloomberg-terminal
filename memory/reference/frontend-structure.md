@@ -400,6 +400,7 @@ components/bloomberg/
 | `portfolio/tabs/theses/ThesisEditor.tsx` | `ThesisEditor`, `ThesisDraft`, `emptyDraft`, `draftFrom` |
 | `portfolio/tabs/theses/ThesisNotes.tsx` | `ThesisNotes`, `NoteDraft`, `emptyNoteDraft` |
 | `portfolio/tabs/theses/ThesisTimeline.tsx` | `ThesisTimeline` |
+| `portfolio/tabs/research/index.tsx` | `ResearchTab` (props: `colors`, `onOpenThesis`) — TOOLS → RESEARCH, all theses' pages newest first; `research/paging.ts`: `ROW_H`, `pageSizeFor`, `pageCount`, `pageOf`, `pageSlice`, `parseUtc`, `fmtStamp`, `matchesResearch`, `newestFirst` |
 | `portfolio/tabs/theses/graphs/GraphsPanel.tsx` | `GraphsPanel` (props: `thesisId`, `colors`, `onCountChange`), `AnalysisGraph` |
 | `ui/series-board.tsx` | `SeriesBoard` (props: `group`, `colors`, `days`), `SeriesRow`, `SeriesBoardColors` — generic indicator board: sections, values, Δ%, sparkline, detail chart. Names no specific market |
 | `views/news/data-tab.tsx` | `DataTab` — NEWS → DATA: group selector from `/api/v2/series/groups` + `SeriesBoard` |

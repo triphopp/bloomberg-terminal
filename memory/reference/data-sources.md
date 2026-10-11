@@ -1,6 +1,6 @@
 # Data Sources — หาข้อมูลที่นี่ก่อนออกไปข้างนอก
 
-**อัปเดตล่าสุด:** 2026-10-07 (เพิ่ม §3.4 งบและคอนเซนซัสของผู้ผลิตหน่วยความจำเกาหลี–ญี่ปุ่น; §3.5 หุ้นไทย: บทวิเคราะห์ ผู้ถือหุ้น งบประมาณรัฐ; §6 Kabutan / invezz / barchart)
+**อัปเดตล่าสุด:** 2026-10-09 (เพิ่ม §3.6 อุปสงค์ AI: รายได้ compute และผู้ใช้ของ AI lab; §6 cnbc transcript / amd blog) · ก่อนหน้า 2026-10-07 (§3.4 ผู้ผลิตหน่วยความจำเกาหลี–ญี่ปุ่น; §3.5 หุ้นไทย; §6 Kabutan / invezz / barchart)
 **ใช้เมื่อ:** ต้องหาข้อมูลอะไรก็ตาม — ตัวเลขมหภาค ประเทศ ดอกเบี้ย บริษัท ข่าว — ก่อนค้นเว็บ
 **ใช้กับ:** ทุก agent (Claude, Codex, DeepSeek, …) ทั้งใน repo และผ่าน MCP
 **ส่งผ่าน MCP:** ไฟล์นี้คือแหล่งเดียว — MCP `bloomberg-terminal` อ่านไฟล์นี้ตอนเรียก ให้บริการเป็น tool `get_data_sources` และ resource `spec://data-sources` (แก้ไฟล์แล้วมีผลทันที)
@@ -179,6 +179,23 @@ thesis `MEM-KRJP` (Samsung · SK hynix · Kioxia) ใช้แหล่งชุ
 | **งบประมาณรัฐ / คมนาคม** | `thansettakij.com/economy/megaproject/<id>` · `thairath.co.th/news/governmentpolicy/<id>` | วงเงินกระทรวง, งบผูกพันรายกรม, รายการโครงการ | ✅ WebFetch · ตัวเลขรายกรมต่างกันตามขั้นของงบ (คำขอ / ร่าง / พ.ร.บ.) — ระบุขั้นทุกครั้ง |
 | **OFAC recent actions** | `ofac.treasury.gov/recent-actions/<yyyymmdd>` | ชื่อและวันที่ของ general license ที่ออก/แก้ | ✅ WebFetch ได้แค่ชื่อ — เงื่อนไขอยู่ใน PDF ที่ลิงก์ |
 
+### 3.6 อุปสงค์ AI: รายได้ compute และผู้ใช้ของ AI lab (ทดสอบ 2026-10-09)
+
+ใช้กับโมเดล ผู้ใช้ → GW → GPU → หน่วยความจำ (Z-0249) และโน้ต RISK เรื่องระยะเวลาของอุปสงค์ AI — ตัวเลขของบริษัทนอกตลาดทั้งหมดเป็นแหล่งรอง ให้ติดป้ายทุกครั้ง
+
+| แหล่ง | URL / ตัวอย่าง | ได้อะไร | หมายเหตุ |
+|---|---|---|---|
+| **Reuters ผ่าน Euronext Live** | `live.euronext.com/en/financial-news/<slug>` | เนื้อข่าว Reuters เต็ม (เช่น หนังสือชี้ชวน Anthropic: รายได้ตามการใช้ / ค่าสมาชิก, ภาระ compute) | ✅ WebFetch · ใช้เมื่อ reuters.com และสื่อที่ลงต่อ (เช่น lufkindailynews → 429) เปิดไม่ได้ |
+| **Investing.com (สรุป FT / Bloomberg)** | `investing.com/news/stock-market-news/<slug>` | ประโยคหลักของข่าว paywall พร้อมเวลา (เช่น FT: รายได้ OpenAI $50bn) | ✅ WebFetch · เป็นสรุป ไม่ใช่ต้นฉบับ |
+| **investingLive (สรุป Bloomberg)** | `investinglive.com/news/<slug>/` | รายละเอียดข่าว Bloomberg (เช่น Oracle ขนก๊าซด้วยรถบรรทุก) | ✅ WebFetch |
+| **Seoul Economic Daily (EN)** | `en.sedaily.com/international/<yyyy>/<mm>/<dd>/<slug>` | สรุปตลาดสหรัฐรายวัน: SOX, ดัชนี, หุ้นชิปรายตัว | ✅ WebFetch · ออกราว 06:00 KST หลังตลาดสหรัฐปิด |
+| **SiliconANGLE** | `siliconangle.com/<yyyy>/<mm>/<dd>/<slug>/` | ตัวเลขที่ OpenAI เปิดเอง (compute GW และรายได้ต่อปี รายปี) | ✅ WebFetch · แทน openai.com และ datacenterdynamics.com ที่ 403 |
+| **Barchart ผ่าน Yahoo Finance** | `finance.yahoo.com/technology/ai/articles/<slug>.html` | สรุป call ของ NVIDIA (รายได้ต่อ GW ต่อรุ่น) | ✅ WebFetch · สรุป ไม่ใช่ transcript |
+| **The Decoder / BleepingComputer** | `the-decoder.com/<slug>/` · `bleepingcomputer.com/news/artificial-intelligence/<slug>/` | ต้นทุน compute ต่อบัญชี, การเปลี่ยนโควตาของ Claude Code พร้อมคำพูดของ Anthropic | ✅ WebFetch |
+| **Constellation Research** | `constellationr.com/insights/news/<slug>` | ตัวเลขผู้ใช้ที่ OpenAI ประกาศ (Codex รายสัปดาห์) | ✅ WebFetch · อ่านค่าในกราฟไม่ได้ |
+| **log การใช้งานของ Claude Code ในเครื่อง** | `~/.claude/projects/**/*.jsonl` (ช่อง `message.usage`) | token ที่ใช้จริงต่อโมเดล → มูลค่าตามราคา API | ✅ นับเฉพาะตัวเลข ไม่อ่านเนื้อหา · ได้แค่เครื่องนั้นและเฉพาะ Claude Code |
+| **โพสต์ Facebook สาธารณะ** | ลิงก์ `web.facebook.com/share/p/<id>/` ผ่าน browser pane | ข้อความโพสต์เต็ม | ✅ อ่านได้โดยไม่ต้อง login (WebFetch ไม่ได้) · เป็นแหล่งรอง ต้องตรวจกับต้นทาง |
+
 ## 4. ฟรีแต่ต้องมี key
 
 | แหล่ง | สถานะในระบบ | ข้อมูล |
@@ -236,6 +253,8 @@ thesis `MEM-KRJP` (Samsung · SK hynix · Kioxia) ใช้แหล่งชุ
 - **Kabutan หน้า信用残** (`kabutan.jp/stock/kabuka?code=285A&ashi=shin`) → WebFetch ได้ 403 (ตรวจ 2026-10-07) — ยอด margin รายหุ้นของญี่ปุ่นยังไม่มีแหล่งที่ดึงเองได้ ตัวเลขที่ใช้มาจากข่าว (Nikkei / Seoul Economic Daily)
 - **forbes.com → 403** และ **investor.sandisk.com ข่าวแจก → timeout 60s** กับ WebFetch (ตรวจ 2026-10-07) — ใช้ TrendForce News / EE Times ที่รายงานต่อแทน และติดป้ายแหล่งรอง
 - **invezz.com → 403** และ **barchart.com/story/news/… คืนหน้าว่าง** กับ WebFetch (ตรวจ 2026-10-07)
+- **cnbc.com transcript → 403**, **amd.com/en/blogs/… → timeout 60s**, **news.futunn.com คืนหน้าว่าง** กับ WebFetch (ตรวจ 2026-10-09) — คำพูดของ CFO OpenAI ใน Mad Money และบล็อก CPU:GPU ของ AMD จึงยังเป็นแหล่งรองผ่านสรุปของสื่ออื่น
+- **OpenAI ไม่เปิดเผยจำนวนผู้ใช้รายประเทศ และ Anthropic ไม่เปิดเผยจำนวนผู้ใช้หรือผู้จ่ายเงิน** (ตรวจ 2026-10-09) — ตัวเลขผู้ใช้สหรัฐและผู้ใช้ Claude Code ที่เห็นในเว็บรวมสถิติเป็นค่าประมาณจาก traffic ไม่มีต้นทาง ใช้ได้แค่ลำดับขนาด
 
 ---
 

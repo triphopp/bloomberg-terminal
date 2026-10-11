@@ -20,6 +20,7 @@ import { RiskTab } from "./tabs/RiskTab";
 import { ThesesTab } from "./tabs/ThesesTab";
 import { TradeLogTab } from "./tabs/TradeLogTab";
 import { QuestionBadges, QuestionsTab, useQuestionCounts } from "./tabs/questions";
+import { ResearchTab } from "./tabs/research";
 import { TrackBadges, TrackingTab, useTrackCounts } from "./tabs/tracking";
 import type { Account, Summary } from "./types";
 import type { OptionEntryPrefill } from "./ui/OptionEntryForm";
@@ -27,7 +28,7 @@ import { SummaryBar } from "./ui/SummaryBar";
 
 type TopTab = "portfolio" | "analytics" | "risk" | "tools";
 type PortfolioSub = "positions" | "options" | "trades" | "cash" | "entry";
-type ToolsSub = "theses" | "questions" | "track" | "import" | "audit";
+type ToolsSub = "theses" | "research" | "questions" | "track" | "import" | "audit";
 
 type Tab<T extends string> = { id: T; label: string };
 
@@ -48,6 +49,7 @@ const PORTFOLIO_SUBS: Tab<PortfolioSub>[] = [
 
 const TOOLS_SUBS: Tab<ToolsSub>[] = [
   { id: "theses", label: "THESES" },
+  { id: "research", label: "RESEARCH" },
   { id: "questions", label: "QUESTIONS" },
   { id: "track", label: "TRACK" },
   { id: "import", label: "IMPORT" },
@@ -148,7 +150,7 @@ export function PortfolioView() {
   // A thesis to land on (and its NOTES, at one note), from the calendar or an alert.
   const [openThesisAt, setOpenThesisAt] = useState<{
     thesisId: string;
-    sub: "thesis" | "notes";
+    sub: "thesis" | "notes" | "graphs";
     noteId?: string;
   } | null>(() =>
     toolsRequest?.sub === "theses"
@@ -164,10 +166,13 @@ export function PortfolioView() {
     setQuestionsKey((k) => k + 1);
     setToolsSub("questions");
   }, []);
-  const showThesis = useCallback((thesisId: string, sub: "thesis" | "notes", noteId?: string) => {
-    setOpenThesisAt({ thesisId, sub, noteId });
-    setToolsSub("theses");
-  }, []);
+  const showThesis = useCallback(
+    (thesisId: string, sub: "thesis" | "notes" | "graphs", noteId?: string) => {
+      setOpenThesisAt({ thesisId, sub, noteId });
+      setToolsSub("theses");
+    },
+    []
+  );
   // The request this view was opened with is already in the state above.
   const takenAtMount = useRef(toolsRequest);
   useEffect(() => {
@@ -633,6 +638,9 @@ export function PortfolioView() {
                 initialOpen={openThesisAt}
                 onConsumeInitialOpen={() => setOpenThesisAt(null)}
               />
+            )}
+            {topTab === "tools" && toolsSub === "research" && (
+              <ResearchTab colors={colors} onOpenThesis={(id) => showThesis(id, "graphs")} />
             )}
             {topTab === "tools" && toolsSub === "questions" && (
               <QuestionsTab
