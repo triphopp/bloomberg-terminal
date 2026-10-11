@@ -3,7 +3,12 @@
 import { useQuery } from "@tanstack/react-query";
 import type { FootprintData } from "../chart/indicators/order-footprint";
 
-async function fetchFootprint(symbol: string, interval: string, limit: number, buckets: number): Promise<FootprintData> {
+async function fetchFootprint(
+  symbol: string,
+  interval: string,
+  limit: number,
+  buckets: number
+): Promise<FootprintData> {
   const params = new URLSearchParams({
     symbol,
     interval,
@@ -22,14 +27,15 @@ export function useFootprintData(
   symbol: string | null,
   interval: string,
   enabled: boolean,
-  limit = 20,
-  buckets = 12,
+  limit = 300,
+  buckets = 12
 ) {
   return useQuery<FootprintData>({
     queryKey: ["footprint", symbol, interval, limit, buckets],
-    queryFn: () => fetchFootprint(symbol!, interval, limit, buckets),
+    queryFn: () => fetchFootprint(symbol ?? "", interval, limit, buckets),
     enabled: !!symbol && enabled,
     staleTime: 20_000,
-    refetchInterval: enabled ? 30_000 : false,
+    // While the backend is still reading trades for older candles, ask again soon.
+    refetchInterval: (query) => (!enabled ? false : query.state.data?.pending ? 4_000 : 30_000),
   });
 }
