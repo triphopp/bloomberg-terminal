@@ -1,6 +1,6 @@
 # Data Sources — หาข้อมูลที่นี่ก่อนออกไปข้างนอก
 
-**อัปเดตล่าสุด:** 2026-10-09 (เพิ่ม §3.6 อุปสงค์ AI: รายได้ compute และผู้ใช้ของ AI lab; §6 cnbc transcript / amd blog) · ก่อนหน้า 2026-10-07 (§3.4 ผู้ผลิตหน่วยความจำเกาหลี–ญี่ปุ่น; §3.5 หุ้นไทย; §6 Kabutan / invezz / barchart)
+**อัปเดตล่าสุด:** 2026-10-10 (เพิ่ม §2 งบดุล / หนี้ / กระแสเงินสดของผู้ซื้อศูนย์ข้อมูล และวิธีอ่าน 10-K / 10-Q ทั้งฉบับ; §3.2 ส่วนผสมลูกค้าจากไฟลิ่ง; §6 กับดัก ir-stress และ XBRL รายไตรมาส) · 2026-10-09 (เพิ่ม §3.6 อุปสงค์ AI: รายได้ compute และผู้ใช้ของ AI lab; §6 cnbc transcript / amd blog) · 2026-10-07 (§3.4 ผู้ผลิตหน่วยความจำเกาหลี–ญี่ปุ่น; §3.5 หุ้นไทย; §6 Kabutan / invezz / barchart)
 **ใช้เมื่อ:** ต้องหาข้อมูลอะไรก็ตาม — ตัวเลขมหภาค ประเทศ ดอกเบี้ย บริษัท ข่าว — ก่อนค้นเว็บ
 **ใช้กับ:** ทุก agent (Claude, Codex, DeepSeek, …) ทั้งใน repo และผ่าน MCP
 **ส่งผ่าน MCP:** ไฟล์นี้คือแหล่งเดียว — MCP `bloomberg-terminal` อ่านไฟล์นี้ตอนเรียก ให้บริการเป็น tool `get_data_sources` และ resource `spec://data-sources` (แก้ไฟล์แล้วมีผลทันที)
@@ -83,6 +83,9 @@
 | Endpoint | ได้อะไร |
 |---|---|
 | `/api/company/filings/{symbol}` · `/xbrl/{symbol}` · `/outlook/{symbol}` | SEC filings + XBRL facts |
+| `/api/stock/balance-sheet/{symbol}` · `/api/stock/financials/{symbol}` | งบดุลรายไตรมาส 5–6 งวด (`totalDebt` รวมสัญญาเช่า, `cash`, `shortTermInvestments`, `capitalLeaseObligations`) · `freeCashflow` รายไตรมาส — ใช้เทียบหนี้ปีต่อปีและ FCF ของผู้ซื้อหลายรายในครั้งเดียว (ใช้กับ Z-0259, TRACK K-0043 · ตรวจ 2026-10-10) |
+| `/api/ir-stress/{symbol}/exposure` | หนี้ เงินสด ดอกเบี้ยจ่าย EBIT อัตราส่วนความสามารถจ่ายดอกเบี้ย (ICR) และตารางครบกำหนดหนี้จาก XBRL — ⚠️ ใช้งบดุล **รายปี** ล่าสุด ดู §6 |
+| เนื้อ 10-K / 10-Q ทั้งฉบับเป็นข้อความ | จากโฟลเดอร์ `backend`: `from routers.company_filings import _fetch_doc` แล้วส่ง URL ที่ได้จาก `get_filings` — ใช้ session และ User-Agent ของระบบ (WebFetch ตรงไป sec.gov มักถูกปฏิเสธ) · บันทึกลงโฟลเดอร์ชั่วคราวแล้วค้นด้วย Grep (ตรวจ 2026-10-10 กับ MU, NVDA, MSFT, META, AMZN, CRWV, ORCL, SNDK) |
 | `/api/fiscal/{kind}/{symbol}` · `/api/fiscal/transcript/...` | Fiscal.ai (มีโควตารายวัน `FISCAL_AI_DAILY_LIMIT`) |
 | `/api/webull/depth?symbol=&depth=` | Webull OpenAPI — order book (bid/offer levels) หุ้น/ETF สหรัฐเท่านั้น; ต้องมี key + access token; เกิน 1 ระดับต้องซื้อ OpenAPI TotalView (ยิงจริงแล้ว 2026-10-08: L1 ใช้ได้ด้วย "Nasdaq Basic - Non Display" ฟรี) |
 
@@ -139,6 +142,7 @@ board/forum ทุกแหล่ง **ต้องตรวจ ToS ก่อน
 | **arXiv (งานวิชาการ HBF / KV cache)** | `arxiv.org/abs/<id>` (บทคัดย่อ) · `arxiv.org/html/<id>` (เนื้อเต็ม พารามิเตอร์อุปกรณ์) — เช่น `2609.25782`, `2608.11668`, `2609.39131`, `2607.10186` | แบบจำลอง HBF: bandwidth, latency, อายุ, ความร้อน, ผลต่องาน agent | ✅ WebFetch (ตรวจ 2026-10-07) · ตัวเลขเปลี่ยนระหว่าง v1/v2 — ระบุฉบับ · เป็นแบบจำลอง ยังไม่มีชิปจริง |
 | **Tom's Hardware ผ่าน Jina Reader** | `https://r.jina.ai/https://www.tomshardware.com/...` | เนื้อบทความ (สเปก HBF สามเกรด, Hot Chips) | ✅ ตรวจ 2026-10-07 · WebFetch ตรงได้แค่เมนู เนื้อถูกตัด |
 | **Yahoo estimates = S&P Global MI** | `help.yahoo.com/kb/finance-for-web/SLN2310.html` | ยืนยันว่าคอนเซนซัสใน `get_stock_data(estimates/analyst)` มาจาก S&P Global Market Intelligence | ใช้ตอบว่า "คอนเซนซัสมาจากใคร" |
+| **ส่วนผสมลูกค้าและผู้จ่ายจากไฟลิ่ง** (ทดสอบ 2026-10-10) | Micron 10-K: Item 1A + Note 20 (หน่วยธุรกิจ) + Note 21 (ลูกค้า ≥10%) + หมายเหตุ revenue (RPO, เงินมัดจำ SCA) · NVIDIA 10-Q: Note "Revenue by Market Platform" (Hyperscale เทียบ AI Clouds, Industrial & Enterprise) + Note Guarantees · Microsoft 10-K: หมายเหตุ related party (รายได้และลูกหนี้จาก OpenAI) · Amazon 10-Q: Note 1 (backlog ของ AWS, ภาระของ OpenAI / Anthropic) · Meta / Oracle / CoreWeave 10-Q: "not yet commenced" (สัญญาเช่านอกงบ) | ใครซื้อเครื่อง ใครเช่ากำลัง และภาระนอกงบดุล — ตัวเลขปฐมภูมิของแผนที่ผู้จ่าย | ค้นคำ `10% or more`, `not yet commenced`, `remaining performance obligations`, `OpenAI`, `Anthropic` · ไม่มีบริษัทใดแยกสัดส่วน neocloud / AI lab ตรง ๆ — ใช้กับ Q-0051, K-0044, หน้า `memory-payer-map-2026-10-10` |
 | **Platformonomics "Follow the CAPEX" scoreboard** | `platformonomics.com/2026/07/follow-the-capex-q2-2026-scoreboard/` (URL เปลี่ยนตามไตรมาส — ค้น "Follow the CAPEX Q3 2026 scoreboard") | capex รายไตรมาสของ Amazon · Microsoft · Alphabet · Meta ในหน้าเดียว + แนวทางทั้งปี + คำพูดเรื่องปีถัดไป | ✅ WebFetch (ตรวจ 2026-10-08) · ออกราวสิ้นเดือนหลังรายสุดท้ายประกาศ · แหล่งรอง: นิยามต่างกันรายบริษัท (รวม / ไม่รวม finance lease) และไตรมาสก่อนหน้าให้เป็น %QoQ — ตัวเลขที่ใช้ตัดสินให้เทียบ 8-K · ใช้กับ TRACK K-0040 |
 | **Tom's Hardware / Investing.com (ข่าว foundry — Terafab, TSMC, Intel 14A, AMD Venice)** | `r.jina.ai/https://www.tomshardware.com/tech-industry/semiconductors/<slug>` · `investing.com/news/stock-market-news/<slug>` | ลำดับเหตุการณ์ + คำพูดจากโพสต์ X + การขยับของราคาหุ้นรายวัน | ✅ ตรวจ 2026-10-08 · Investing.com เปิดตรงได้ · ไม่มีเอกสารปฐมภูมิของ Terafab (ไม่มี 8-K ของ Intel เรื่องเงื่อนไขสัญญา) — ใช้กับ Q-0045 ถึง Q-0047 |
 
@@ -250,6 +254,9 @@ thesis `MEM-KRJP` (Samsung · SK hynix · Kioxia) ใช้แหล่งชุ
 - **Northbound Stock Connect** ไม่มีตัวเลขซื้อ/ขายสุทธิรายวันแล้ว (HKEX ให้แค่ turnover) — อย่าหาต่อ
 - **Eastmoney 股吧 `gbapi`** ตอบ 200 แต่ list ว่างด้วย parameter แบบง่าย — ยังไม่ได้หา parameter ที่ถูก
 - **Baidu Index** (ความสนใจการค้นหาในจีน) ต้อง login — ไม่มีตัวแทนฟรีของ Google Trends สำหรับจีนแผ่นดินใหญ่
+- **`/api/ir-stress/{symbol}/exposure` ใช้งบดุลรายปีล่าสุด** — บริษัทที่กู้เร็วจะได้หนี้ต่ำกว่าจริงมาก (Alphabet: $59.3bn สิ้นปี 2025 เทียบ $112.8bn ณ มิ.ย. 2026 · CoreWeave: $29.8bn เทียบ $51.6bn) และ ICR เป็นของปีบัญชีล่าสุด ไม่ใช่ของหนี้ปัจจุบัน ⇒ ตัวเลขหนี้ล่าสุดให้เอาจาก `/api/stock/balance-sheet/{symbol}` → `quarterly[0]` (ตรวจ 2026-10-10)
+- **`/api/company/xbrl/{symbol}` ให้ `operating_cash_flow` / `capex` รายไตรมาสไม่ครบ** — หลายบริษัทได้เฉพาะไตรมาสแรกของปีบัญชี (งบกระแสเงินสดใน 10-Q เป็นยอดสะสม) และ `capex` ของ AMZN / NVDA คืนข้อมูลปี 2015–2020 เพราะ tag เปลี่ยน — FCF รายไตรมาสให้ใช้ `/api/stock/financials/{symbol}` แทน (ตรวจ 2026-10-10)
+- **ข้อมูลของ Yahoo ช้ากว่าไฟลิ่งได้หนึ่งไตรมาส** — 2026-10-10 งบของ AMZN ยังเป็นไตรมาสสิ้น มี.ค. ทั้งที่ 10-Q ไตรมาส 2 ยื่นแล้วตั้งแต่ 31 ก.ค. — ตรวจ `endDate` ทุกครั้งก่อนรวมหลายบริษัท
 - **Kabutan หน้า信用残** (`kabutan.jp/stock/kabuka?code=285A&ashi=shin`) → WebFetch ได้ 403 (ตรวจ 2026-10-07) — ยอด margin รายหุ้นของญี่ปุ่นยังไม่มีแหล่งที่ดึงเองได้ ตัวเลขที่ใช้มาจากข่าว (Nikkei / Seoul Economic Daily)
 - **forbes.com → 403** และ **investor.sandisk.com ข่าวแจก → timeout 60s** กับ WebFetch (ตรวจ 2026-10-07) — ใช้ TrendForce News / EE Times ที่รายงานต่อแทน และติดป้ายแหล่งรอง
 - **invezz.com → 403** และ **barchart.com/story/news/… คืนหน้าว่าง** กับ WebFetch (ตรวจ 2026-10-07)
