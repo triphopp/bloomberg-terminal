@@ -43,57 +43,61 @@
  * treat it as provisional and tune it per instrument/timeframe.
  */
 
-import type {
-  ChartIndicator,
-  HistogramDataPoint,
-  IndicatorFactory,
-  IndicatorSeriesOutput,
-  OhlcvBar,
-  SeriesDataPoint,
-} from "../types";
+import type { BarColumns } from "../columns.ts";
+import { columnar } from "../series-columns.ts";
+import type { ChartIndicator, IndicatorFactory } from "../types";
 
-interface ToxicityPoint {
-  /** Σ(|flow|·vol)/Σvol — total one-sidedness, VPIN-style. null until warmed up. */
-  toxicity: number | null;
+interface ToxicityColumns {
+  /** Σ(|flow|·vol)/Σvol — total one-sidedness, VPIN-style. */
+  toxicity: Float64Array;
   /** Σ(flow·vol)/Σvol — net directional pressure (Chaikin Money Flow). */
-  netFlow: number;
+  netFlow: Float64Array;
+  /** 1 once the window is full and has traded any weight; nothing is drawn before. */
+  ready: Uint8Array;
 }
 
-function calcToxicity(data: OhlcvBar[], window: number): ToxicityPoint[] {
+function calcToxicity(bars: BarColumns, window: number): ToxicityColumns {
+  const n = bars.length;
+  const { high, low, close, volume } = bars;
   // Volume weights the average. If the feed carries no volume at all (some
   // index/FX sources), fall back to equal weighting so the pane still shows
   // the price-shape reading instead of rendering silently blank. Bars that are
   // individually zero-volume inside a volumed feed correctly contribute nothing.
-  const hasVolume = data.some((b) => (b.volume ?? 0) > 0);
+  let hasVolume = false;
+  for (let i = 0; i < n; i++) {
+    if (volume[i] > 0) {
+      hasVolume = true;
+      break;
+    }
+  }
 
-  const wFlow: number[] = new Array(data.length).fill(0);
-  const wAbsFlow: number[] = new Array(data.length).fill(0);
-  const weight: number[] = new Array(data.length).fill(0);
+  const wFlow = new Float64Array(n);
+  const wAbsFlow = new Float64Array(n);
+  const weight = new Float64Array(n);
 
-  let prevClose: number | null = null;
-  for (let i = 0; i < data.length; i++) {
-    const bar = data[i];
-    const w = hasVolume ? (bar.volume ?? 0) : 1;
+  for (let i = 0; i < n; i++) {
+    const w = hasVolume ? volume[i] : 1;
 
     // Anchor the range on the previous close so gaps are priced in.
-    const hi = prevClose !== null ? Math.max(bar.high, prevClose) : bar.high;
-    const lo = prevClose !== null ? Math.min(bar.low, prevClose) : bar.low;
+    const hi = i > 0 ? Math.max(high[i], close[i - 1]) : high[i];
+    const lo = i > 0 ? Math.min(low[i], close[i - 1]) : low[i];
     const range = hi - lo;
     // range === 0 means the bar and the previous close are a single price:
     // genuinely no information, so treat it as balanced rather than guessing.
-    const flow = range > 0 ? (2 * (bar.close - lo)) / range - 1 : 0;
-    prevClose = bar.close;
+    const flow = range > 0 ? (2 * (close[i] - lo)) / range - 1 : 0;
 
     weight[i] = w;
     wFlow[i] = w * flow;
     wAbsFlow[i] = w * Math.abs(flow);
   }
 
-  const result: ToxicityPoint[] = [];
+  const toxicity = new Float64Array(n).fill(Number.NaN);
+  const netFlow = new Float64Array(n);
+  const ready = new Uint8Array(n);
   let sumW = 0;
   let sumFlow = 0;
   let sumAbsFlow = 0;
-  for (let i = 0; i < data.length; i++) {
+  for (let i = 0; i < n; i++) {
     sumW += weight[i];
     sumFlow += wFlow[i];
     sumAbsFlow += wAbsFlow[i];
@@ -103,13 +107,21 @@ function calcToxicity(data: OhlcvBar[], window: number): ToxicityPoint[] {
       sumAbsFlow -= wAbsFlow[i - window];
     }
     if (i >= window - 1 && sumW > 0) {
-      result.push({ toxicity: sumAbsFlow / sumW, netFlow: sumFlow / sumW });
-    } else {
-      result.push({ toxicity: null, netFlow: 0 });
+      toxicity[i] = sumAbsFlow / sumW;
+      netFlow[i] = sumFlow / sumW;
+      ready[i] = 1;
     }
   }
-  return result;
+  return { toxicity, netFlow, ready };
 }
+
+/** Net-flow bar colours by index: buy · buy hot · sell · sell hot. */
+const NET_PALETTE = [
+  "rgba(38,166,154,0.35)",
+  "#26a69a",
+  "rgba(239,83,80,0.35)",
+  "#ef5350",
+] as const;
 
 export const createFlowToxicity: IndicatorFactory = (overrides = {}) => {
   const window = (overrides.window as number) ?? 50;
@@ -145,29 +157,21 @@ export const createFlowToxicity: IndicatorFactory = (overrides = {}) => {
     ],
     config: { window, hotThreshold },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
+    ...columnar((bars, config) => {
       const w = config.window as number;
       const hotAt = (config.hotThreshold as number) ?? 0.15;
-      const values = calcToxicity(data, w);
+      const { toxicity, netFlow, ready } = calcToxicity(bars, w);
+      const n = bars.length;
 
       // Bars: |netFlow|, coloured by direction. Line: toxicity (always ≥ bars).
-      const netPoints: HistogramDataPoint[] = [];
-      const toxPoints: SeriesDataPoint[] = [];
-      for (let i = 0; i < data.length; i++) {
-        const v = values[i];
-        if (v.toxicity == null) continue;
-        const magnitude = Math.abs(v.netFlow);
-        const hot = magnitude >= hotAt;
-        const color =
-          v.netFlow >= 0
-            ? hot
-              ? "#26a69a"
-              : "rgba(38,166,154,0.35)"
-            : hot
-              ? "#ef5350"
-              : "rgba(239,83,80,0.35)";
-        netPoints.push({ time: data[i].time, value: magnitude, color });
-        toxPoints.push({ time: data[i].time, value: v.toxicity });
+      const magnitude = new Float64Array(n).fill(Number.NaN);
+      const colors = new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
+        if (ready[i] === 0) continue;
+        const net = netFlow[i];
+        const m = Math.abs(net);
+        magnitude[i] = m;
+        colors[i] = (net >= 0 ? 0 : 2) + (m >= hotAt ? 1 : 0);
       }
 
       return [
@@ -175,7 +179,11 @@ export const createFlowToxicity: IndicatorFactory = (overrides = {}) => {
           id: "toxicity-net",
           label: "Net Flow",
           type: "histogram",
-          data: netPoints,
+          values: magnitude,
+          from: 0,
+          emit: ready,
+          colors,
+          palette: NET_PALETTE,
           priceScaleId: "toxicity",
         },
         {
@@ -184,11 +192,15 @@ export const createFlowToxicity: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#ab47bc",
           lineWidth: 1,
-          data: toxPoints,
+          values: toxicity,
+          from: 0,
+          emit: ready,
           priceScaleId: "toxicity",
         },
       ];
-    },
+    }),
+    // Not `causal`: whether the feed has volume at all is asked of every bar —
+    // the first bar to carry some re-weights the whole series.
   };
 
   return indicator;

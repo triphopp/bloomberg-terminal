@@ -25,7 +25,45 @@
  * push copies one or two.
  *
  * Contract: callers must not mutate an array or its points after pushing it.
+ *
+ * ── Two ways in ──────────────────────────────────────────────────────────────
+ *
+ * `setSeriesData(series, points)` is the above: point objects, compared field
+ * by field against the last push (`tailStart`). It serves the candle series
+ * and every indicator that only has `compute()` — the ones that repaint
+ * (zigzag, S/D zones) or carry labels. (The candle series skips the
+ * comparison when the caller passes the bars' own delta — see the function.)
+ *
+ * `setSeriesColumns(series, columns, bars, delta, causal)` is for a columnar
+ * indicator (`ChartIndicator.columns`). The comparison above cost more than
+ * the indicators did — 5.9 ms of a 9.6 ms tick at 10,000 bars with eight
+ * indicators — because it walks every point of every series. Here nothing is
+ * walked that does not have to be:
+ *
+ *   - the bars are compared ONCE per refill (`barsDelta`, chart/columns.ts);
+ *     unless the time axis only moved at its end, it is `setData`, as before;
+ *   - a `causal` indicator is then taken at its word: slots before the first
+ *     changed bar are unchanged, so only the last one or two are sent;
+ *   - any other columnar indicator has its typed columns compared with the
+ *     previous ones (`firstItemDiff` — a loop over two Float64Arrays), which
+ *     finds the same answer `tailStart` did;
+ *   - in both cases the points sent are built for those slots alone.
+ *
+ * The copy contract holds without copies on this path: the points handed to
+ * the library are built for that call and never read again, and the baseline
+ * for the next comparison is the typed columns, which the library never sees.
  */
+
+import type { BarColumns, BarsDelta } from "./columns.ts";
+import {
+  firstItemDiff,
+  hasPoint,
+  itemAt,
+  lastItemSlot,
+  sameLayout,
+  seriesPoints,
+} from "./series-columns.ts";
+import type { SeriesColumns } from "./types";
 
 export interface SeriesLike<P> {
   setData(data: P[]): void;
@@ -82,10 +120,92 @@ export function tailStart(prev: readonly unknown[], next: readonly unknown[]): n
   return samePoint(prev[p - 1], next[p - 1]) ? p : p - 1;
 }
 
-export function setSeriesData<P>(series: SeriesLike<P>, next: P[]): void {
+/**
+ * `delta` is for a series whose points ARE the bars — the candle series, when
+ * no overlay has marked a bar (bar-borders.ts). If the last push and this one
+ * are the very arrays `delta` compares, it already says where they first
+ * differ in time, OHLC or volume — everything a candle is drawn from — and the
+ * scan would only find the same index again. For any other pair of arrays the
+ * delta is ignored.
+ */
+export function setSeriesData<P>(series: SeriesLike<P>, next: P[], delta?: BarsDelta | null): void {
   const prev = lastPushed.get(series);
-  const from = prev && prev !== next ? tailStart(prev, next) : -1;
+  let from = -1;
+  if (prev && prev !== next) {
+    if (delta && delta.prev.bars === prev && delta.next.bars === next) {
+      if (delta.tail && delta.sameUntil >= prev.length - 1) from = delta.sameUntil;
+    } else {
+      from = tailStart(prev, next);
+    }
+  }
   if (from < 0) series.setData(next.map(copy));
   else for (let i = from; i < next.length; i++) series.update(copy(next[i]));
   lastPushed.set(series, next);
+}
+
+// ── Columnar series ──────────────────────────────────────────────────────────
+
+interface PushedColumns {
+  cols: SeriesColumns;
+  bars: BarColumns;
+  /** Last slot that sent a point or whitespace, -1 when the series is empty. */
+  last: number;
+}
+
+/** Per series: the columns last pushed and the bars they were computed on. */
+const lastColumns = new WeakMap<object, PushedColumns>();
+
+/**
+ * First slot `update()` must send for `next` to replace what the series holds,
+ * or -1 when only `setData` can do it.
+ *
+ * `delta` must describe the step from the bars of the last push to `bars`;
+ * anything else (no delta, a delta for other arrays, a time axis that did not
+ * simply grow) is -1.
+ */
+export function columnsTailStart(
+  prev: PushedColumns | undefined,
+  next: SeriesColumns,
+  bars: BarColumns,
+  delta: BarsDelta | null | undefined,
+  causal: boolean
+): number {
+  if (!prev || prev.last < 0 || !delta || !delta.tail) return -1;
+  if (delta.prev !== prev.bars || delta.next !== bars) return -1;
+  if (!sameLayout(prev.cols, next)) return -1;
+  const p = delta.prev.length;
+  // Causal: the indicator vouches for every slot before the first changed bar.
+  // Otherwise, and whenever a closed bar changed, look.
+  const k =
+    causal && delta.sameUntil >= p - 1 ? delta.sameUntil : firstItemDiff(prev.cols, next, p);
+  // `update()` can replace the last item or add after it — nothing earlier,
+  // and it cannot take the last item away.
+  if (k < prev.last) return -1;
+  if (k === prev.last && !next.whitespace && !hasPoint(next, k)) return -1;
+  return k;
+}
+
+/**
+ * Point `series` at `next`: `update()` for the changed tail when that is
+ * enough, `setData` otherwise. The series always ends up holding exactly the
+ * points of `next`.
+ */
+export function setSeriesColumns<P>(
+  series: SeriesLike<P>,
+  next: SeriesColumns,
+  bars: BarColumns,
+  delta?: BarsDelta | null,
+  causal = false
+): void {
+  const n = bars.length;
+  const from = columnsTailStart(lastColumns.get(series), next, bars, delta, causal);
+  if (from < 0) {
+    series.setData(seriesPoints(next, bars.times) as P[]);
+  } else {
+    for (let i = from; i < n; i++) {
+      const item = itemAt(next, bars.times, i);
+      if (item) series.update(item as P);
+    }
+  }
+  lastColumns.set(series, { cols: next, bars, last: lastItemSlot(next, n) });
 }

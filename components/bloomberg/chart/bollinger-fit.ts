@@ -1,3 +1,5 @@
+import { barColumns } from "./columns.ts";
+import { boxed } from "./kernels.ts";
 import { rollingVariance } from "./rolling.ts";
 import type { IndicatorParam, OhlcvBar } from "./types";
 
@@ -34,20 +36,34 @@ export interface BollingerStats {
   deviation: (number | null)[];
 }
 
-/** Population standard deviation, matching the existing chart's BB definition. */
-export function calcBollingerStats(data: readonly OhlcvBar[], period: number): BollingerStats {
-  const middle: (number | null)[] = Array(data.length).fill(null);
-  const deviation: (number | null)[] = Array(data.length).fill(null);
-  if (!Number.isInteger(period) || period < 2) return { middle, deviation };
-  // O(1) per bar: the Sharpe fit calls this for every period on the grid.
-  const closes = new Float64Array(data.length);
-  for (let i = 0; i < data.length; i++) closes[i] = data[i].close;
-  const { mean, variance } = rollingVariance(closes, period, 0);
-  for (let i = period - 1; i < data.length; i++) {
-    middle[i] = mean[i];
-    deviation[i] = Math.sqrt(variance[i]);
+export interface BollingerColumns {
+  /** Window mean; NaN before `from`. */
+  middle: Float64Array;
+  /** Population standard deviation about it; NaN before `from`. */
+  deviation: Float64Array;
+  /** First index with a value (`period - 1`); the length when there is none. */
+  from: number;
+}
+
+/**
+ * Middle band and population standard deviation of `closes` — the chart's BB
+ * definition, O(1) per bar (the Sharpe fit runs it for every period on the grid).
+ */
+export function bollingerColumns(closes: ArrayLike<number>, period: number): BollingerColumns {
+  const n = closes.length;
+  if (!Number.isInteger(period) || period < 2) {
+    const none = new Float64Array(n).fill(Number.NaN);
+    return { middle: none, deviation: none, from: n };
   }
-  return { middle, deviation };
+  const { mean, variance } = rollingVariance(closes, period, 0);
+  for (let i = period - 1; i < n; i++) variance[i] = Math.sqrt(variance[i]);
+  return { middle: mean, deviation: variance, from: Math.min(period - 1, n) };
+}
+
+/** `bollingerColumns` of the bars' closes, boxed: `null` during warm-up. */
+export function calcBollingerStats(data: readonly OhlcvBar[], period: number): BollingerStats {
+  const { middle, deviation, from } = bollingerColumns(barColumns(data).close, period);
+  return { middle: boxed(middle, from), deviation: boxed(deviation, from) };
 }
 
 export function bollingerPercentB(

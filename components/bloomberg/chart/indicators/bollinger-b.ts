@@ -8,10 +8,12 @@
 
 import {
   BOLLINGER_FIT_PARAMS,
-  calcBollingerStats,
+  bollingerColumns,
   resolveBollingerParameters,
 } from "../bollinger-fit.ts";
-import type { ChartIndicator, IndicatorFactory, IndicatorSeriesOutput, OhlcvBar } from "../types";
+import { constant } from "../kernels.ts";
+import { columnar } from "../series-columns.ts";
+import type { ChartIndicator, IndicatorFactory } from "../types";
 
 export const createBollingerB: IndicatorFactory = (overrides = {}) => {
   const period = (overrides.period as number) ?? 20;
@@ -49,32 +51,21 @@ export const createBollingerB: IndicatorFactory = (overrides = {}) => {
     ],
     config: { period, stdDev, fitMode, fitCostBps },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
-      const { period: p, stdDev: sd } = resolveBollingerParameters(data, config);
-      const { middle: sma, deviation: stdDevValues } = calcBollingerStats(data, p);
-      const closes = data.map((d) => d.close);
+    ...columnar((bars, config) => {
+      const { period: p, stdDev: sd } = resolveBollingerParameters(bars.bars, config);
+      const { middle, deviation, from } = bollingerColumns(bars.close, p);
+      const n = bars.length;
+      const closes = bars.close;
 
       const scaleId = `bb-b-${p}-${sd}`;
-      const bValues: { time: string | number; value: number }[] = [];
-      const midLine: { time: string | number; value: number }[] = [];
-      const upperLine: { time: string | number; value: number }[] = [];
-      const lowerLine: { time: string | number; value: number }[] = [];
-
-      for (let i = 0; i < data.length; i++) {
-        const m = sma[i];
-        const deviation = stdDevValues[i];
-        if (m == null || deviation == null) continue;
-        const t = data[i].time;
-        const dev = deviation * sd;
+      const b = new Float64Array(n).fill(Number.NaN, 0, from);
+      for (let i = from; i < n; i++) {
+        const m = middle[i];
+        const dev = deviation[i] * sd;
         const upper = m + dev;
         const lower = m - dev;
         const bandwidth = upper - lower;
-        const b = bandwidth === 0 ? 0.5 : (closes[i] - lower) / bandwidth;
-
-        bValues.push({ time: t, value: b });
-        midLine.push({ time: t, value: 0.5 });
-        upperLine.push({ time: t, value: 1.0 });
-        lowerLine.push({ time: t, value: 0.0 });
+        b[i] = bandwidth === 0 ? 0.5 : (closes[i] - lower) / bandwidth;
       }
 
       return [
@@ -84,7 +75,9 @@ export const createBollingerB: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#26c6da",
           lineWidth: 1,
-          data: bValues,
+          values: b,
+          from,
+          emit: "all",
           priceScaleId: scaleId,
         },
         {
@@ -93,7 +86,9 @@ export const createBollingerB: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#555",
           lineWidth: 1,
-          data: midLine,
+          values: constant(n, 0.5, from),
+          from,
+          emit: "all",
           priceScaleId: scaleId,
         },
         {
@@ -102,7 +97,9 @@ export const createBollingerB: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#444",
           lineWidth: 1,
-          data: upperLine,
+          values: constant(n, 1.0, from),
+          from,
+          emit: "all",
           priceScaleId: scaleId,
         },
         {
@@ -111,11 +108,15 @@ export const createBollingerB: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#444",
           lineWidth: 1,
-          data: lowerLine,
+          values: constant(n, 0.0, from),
+          from,
+          emit: "all",
           priceScaleId: scaleId,
         },
       ];
-    },
+    }),
+    // A Sharpe fit reads every closed bar (see bollinger.ts).
+    causal: (config) => config.fitMode !== "sharpe",
   };
 
   return indicator;

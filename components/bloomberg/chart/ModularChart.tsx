@@ -44,11 +44,12 @@ import {
   watchLogicalRange,
 } from "../chartkit/adapters/lightweight-charts";
 import { outlineBars } from "./bar-borders";
+import { type BarsDelta, barColumns, barsDelta } from "./columns.ts";
 import { createEventRailOverlay } from "./event-rail-overlay";
 import { placeEvents } from "./event-reaction";
 import { createHeatmapOverlay } from "./heatmap-overlay";
 import { getIndicatorEntry } from "./indicators";
-import { calcRSIState } from "./indicators/rsi";
+import { rsiColumns } from "./indicators/rsi";
 import { priceForRsi } from "./indicators/rsiInverse";
 import {
   RSI_SCALE_MODES,
@@ -62,13 +63,13 @@ import { OverlayPrimitive } from "./overlay-primitive";
 import { clampPaneHeight, computePaneLayout, paneKey, subPaneKeyAtOffset } from "./pane-layout";
 import { PointLabelsPrimitive } from "./point-labels-primitive";
 import { createPriceGridOverlay } from "./price-grid-overlay";
+import { fillSeries, indicatorOutputs, isColumns, refillSeries } from "./refill.ts";
 import { setSeriesData } from "./series-data.ts";
 import type {
   CanvasOverlay,
   ChartColors,
   ChartEventMarker,
   ChartIndicator,
-  IndicatorSeriesOutput,
   OhlcvBar,
 } from "./types";
 
@@ -203,33 +204,6 @@ function isDarkSurface(el: HTMLElement | null, fallback: boolean): boolean {
     return luminance < 0.5;
   }
   return fallback;
-}
-
-/**
- * Recompute one indicator against new bars and re-point the series it owns.
- *
- * Returns false when the indicator no longer produces the same series it was
- * built with — more bars can turn a "not enough data" indicator into a drawn
- * one, and a chart cannot grow a series without being rebuilt.
- */
-function refillSeries(
-  indicator: ChartIndicator,
-  built: ISeriesApi<SeriesType>[],
-  bars: OhlcvBar[],
-  kinds: ReadonlyArray<IndicatorSeriesOutput["type"]>,
-  labelers?: (PointLabelsPrimitive | null)[]
-): boolean {
-  if (bars.length < indicator.minBars) return built.length === 0;
-  const outputs = indicator.compute(bars, indicator.config).filter((o) => kinds.includes(o.type));
-  if (outputs.length !== built.length) return false;
-  // A series that gained or lost labels needs a primitive attached / removed.
-  if (labelers && outputs.some((o, i) => !!o.labels !== !!labelers[i])) return false;
-  for (const [i, output] of outputs.entries()) {
-    // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
-    setSeriesData(built[i], output.data as any[]);
-    if (output.labels) labelers?.[i]?.setLabels(output.labels);
-  }
-  return true;
 }
 
 /**
@@ -407,16 +381,16 @@ export function ModularChart({
    */
   const rsiBasis: RsiScaleBasis | null = useMemo(() => {
     if (!rsiIndicator || data.length < rsiPeriod + 2) return null;
-    const closes = data.map((d) => d.close);
-    const states = calcRSIState(closes, rsiPeriod);
-    const idx = states.length - (rsiScale.basis === "closed" ? 2 : 1);
-    const state = idx >= 0 ? states[idx] : null;
-    if (!state) return null;
+    // The same columns and the same kernel the RSI pane computes from.
+    const closes = barColumns(data).close;
+    const states = rsiColumns(closes, rsiPeriod, true);
+    const idx = closes.length - (rsiScale.basis === "closed" ? 2 : 1);
+    if (idx < states.from) return null;
     return {
       close: closes[idx],
-      state,
+      state: { rsi: states.rsi[idx], avgGain: states.avgGain[idx], avgLoss: states.avgLoss[idx] },
       period: rsiPeriod,
-      decimals: inferPriceDecimals(closes),
+      decimals: inferPriceDecimals(Array.from(closes.subarray(Math.max(0, closes.length - 50)))),
     };
   }, [data, rsiIndicator, rsiPeriod, rsiScale.basis]);
   // Read by the axis formatter and the projected price lines. A ref because the
@@ -465,7 +439,7 @@ export function ModularChart({
      * Filled in as the chart is built; each entry either updates itself in
      * place and returns true, or reports that the change is structural.
      */
-    const refills: ((bars: OhlcvBar[]) => boolean)[] = [];
+    const refills: ((bars: OhlcvBar[], delta: BarsDelta | null) => boolean)[] = [];
 
     // ── Event markers (dividends, earnings, splits) ──
     // Resolved before the chart exists because the price scale needs to know up
@@ -553,16 +527,16 @@ export function ModularChart({
         axisLabelTextColor: "#000",
       });
     }
-    refills.push((bars) => {
+    refills.push((bars, delta) => {
       // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
-      setSeriesData(candleSeries, outlineBars(bars, overlays) as any[]);
+      setSeriesData(candleSeries, outlineBars(bars, overlays) as any[], delta);
       return true;
     });
 
     // ── Render overlay indicators on main pane ──
     for (const indicator of overlayIndicators) {
       if (data.length < indicator.minBars) continue;
-      const outputs = indicator.compute(data, indicator.config);
+      const outputs = indicatorOutputs(indicator, data);
 
       // Series in output order, so a refill can recompute and re-point them
       // one-for-one without knowing what the indicator is.
@@ -583,17 +557,19 @@ export function ModularChart({
             lastValueVisible: false,
             crosshairMarkerVisible: false,
           });
-          // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
-          setSeriesData(series, output.data as any[]);
+          fillSeries(series, output, data);
           built.push(series);
-          const labeler = output.labels
-            ? new PointLabelsPrimitive(output.labels, isDarkSurface(container, isDark))
+          const labels = isColumns(output) ? undefined : output.labels;
+          const labeler = labels
+            ? new PointLabelsPrimitive(labels, isDarkSurface(container, isDark))
             : null;
           if (labeler) series.attachPrimitive(labeler);
           labelers.push(labeler);
         }
       }
-      refills.push((bars) => refillSeries(indicator, built, bars, ["line"], labelers));
+      refills.push((bars, delta) =>
+        refillSeries(indicator, built, bars, ["line"], labelers, delta)
+      );
     }
 
     // ── Render pane indicators — each gets its own isolated pane ──
@@ -603,7 +579,7 @@ export function ModularChart({
     const builtPanes: { key: string; baseline: number | null; read: () => number }[] = [];
     for (const indicator of paneIndicators) {
       if (data.length < indicator.minBars) continue;
-      const outputs = indicator.compute(data, indicator.config);
+      const outputs = indicatorOutputs(indicator, data);
 
       const key = paneKey(indicator.id);
       const subPane = chart.addPane();
@@ -630,7 +606,7 @@ export function ModularChart({
       for (const output of outputs) {
         const isVolume = output.priceScaleId === "vol";
 
-        if (output.type === "heatmap") {
+        if (!isColumns(output) && output.type === "heatmap") {
           // The heatmap's columns, its anchor points and its primitive are all
           // built from the bars, so new bars mean a new pane — not a refill.
           paneRefillable = false;
@@ -680,8 +656,7 @@ export function ModularChart({
             priceLineVisible: false,
             lastValueVisible: false,
           });
-          // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
-          setSeriesData(series, output.data as any[]);
+          fillSeries(series, output, data);
           builtSeries.push(series);
         } else if (output.type === "line") {
           const series = subPane.addSeries(LineSeries, {
@@ -701,14 +676,15 @@ export function ModularChart({
               : {}),
             ...(rsiPriceFormat ? { priceFormat: rsiPriceFormat } : {}),
           });
-          // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
-          setSeriesData(series, output.data as any[]);
+          fillSeries(series, output, data);
           builtSeries.push(series);
         }
       }
 
-      refills.push((bars) =>
-        paneRefillable ? refillSeries(indicator, builtSeries, bars, ["line", "histogram"]) : false
+      refills.push((bars, delta) =>
+        paneRefillable
+          ? refillSeries(indicator, builtSeries, bars, ["line", "histogram"], undefined, delta)
+          : false
       );
     }
 
@@ -729,8 +705,15 @@ export function ModularChart({
       const basis = rsiBasisRef.current;
       if (!(rsiScale.projectToPricePane && rsiIndicator && basis)) return;
 
-      const floor = Math.min(...bars.map((d) => d.low));
-      const ceiling = Math.max(...bars.map((d) => d.high));
+      // A loop over the shared columns, not `Math.min(...bars.map(...))`: this
+      // runs on every refill, and a spread over a MAX intraday array throws.
+      const { low, high } = barColumns(bars);
+      let floor = Number.POSITIVE_INFINITY;
+      let ceiling = Number.NEGATIVE_INFINITY;
+      for (let i = 0; i < low.length; i++) {
+        floor = Math.min(floor, low[i]);
+        ceiling = Math.max(ceiling, high[i]);
+      }
       const span = ceiling - floor || ceiling;
 
       for (const [levelKey, color] of [
@@ -1003,8 +986,13 @@ export function ModularChart({
      * parts still worked while debugging.
      */
     refillRef.current = (bars) => {
+      // How these bars differ from the ones on screen, found once for every
+      // series: the column views of both arrays are already built (or are
+      // built here, once, for all the indicators that follow).
+      const drawn = appliedDataRef.current;
+      const delta = drawn && drawn !== bars ? barsDelta(barColumns(drawn), barColumns(bars)) : null;
       let ok = true;
-      for (const fn of refills) ok = fn(bars) && ok;
+      for (const fn of refills) ok = fn(bars, delta) && ok;
       if (ok) appliedDataRef.current = bars;
       return ok;
     };

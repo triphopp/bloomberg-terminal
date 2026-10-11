@@ -8,10 +8,11 @@
 import { BB_VOLUME_PARAMS, readBbVolumeSettings } from "../bb-volume-overlay.ts";
 import {
   BOLLINGER_FIT_PARAMS,
-  calcBollingerStats,
+  bollingerColumns,
   resolveBollingerParameters,
 } from "../bollinger-fit.ts";
-import type { ChartIndicator, IndicatorFactory, IndicatorSeriesOutput, OhlcvBar } from "../types";
+import { columnar } from "../series-columns.ts";
+import type { ChartIndicator, IndicatorFactory } from "../types";
 
 export const createBollingerBands: IndicatorFactory = (overrides = {}) => {
   const period = (overrides.period as number) ?? 20;
@@ -67,23 +68,17 @@ export const createBollingerBands: IndicatorFactory = (overrides = {}) => {
       vpBars: vol.vpBars,
     },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
-      const { period: p, stdDev: sd } = resolveBollingerParameters(data, config);
-      const { middle: sma, deviation: stdDevValues } = calcBollingerStats(data, p);
-
-      const upper: { time: string | number; value: number }[] = [];
-      const middle: { time: string | number; value: number }[] = [];
-      const lower: { time: string | number; value: number }[] = [];
-
-      for (let i = 0; i < data.length; i++) {
-        const m = sma[i];
-        const deviation = stdDevValues[i];
-        if (m == null || deviation == null) continue;
-        const t = data[i].time;
-        const dev = deviation * sd;
-        upper.push({ time: t, value: m + dev });
-        middle.push({ time: t, value: m });
-        lower.push({ time: t, value: m - dev });
+    ...columnar((bars, config) => {
+      const { period: p, stdDev: sd } = resolveBollingerParameters(bars.bars, config);
+      const { middle, deviation, from } = bollingerColumns(bars.close, p);
+      const n = bars.length;
+      const upper = new Float64Array(n).fill(Number.NaN, 0, from);
+      const lower = new Float64Array(n).fill(Number.NaN, 0, from);
+      for (let i = from; i < n; i++) {
+        const m = middle[i];
+        const dev = deviation[i] * sd;
+        upper[i] = m + dev;
+        lower[i] = m - dev;
       }
 
       return [
@@ -93,7 +88,9 @@ export const createBollingerBands: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#ef4444",
           lineWidth: 1,
-          data: upper,
+          values: upper,
+          from,
+          emit: "all",
           opacity: 0.6,
         },
         {
@@ -102,7 +99,9 @@ export const createBollingerBands: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#78909c",
           lineWidth: 1,
-          data: middle,
+          values: middle,
+          from,
+          emit: "all",
         },
         {
           id: "bb-lower",
@@ -110,11 +109,16 @@ export const createBollingerBands: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#22c55e",
           lineWidth: 1,
-          data: lower,
+          values: lower,
+          from,
+          emit: "all",
           opacity: 0.6,
         },
       ];
-    },
+    }),
+    // A Sharpe fit reads every closed bar: a new bar can move period and σ,
+    // and with them every point.
+    causal: (config) => config.fitMode !== "sharpe",
   };
 
   return indicator;

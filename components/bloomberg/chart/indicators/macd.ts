@@ -5,14 +5,12 @@
  * Default: fast=12, slow=26, signal=9
  */
 
-import type {
-  ChartIndicator,
-  HistogramDataPoint,
-  IndicatorFactory,
-  IndicatorSeriesOutput,
-  OhlcvBar,
-} from "../types";
-import { calcEMA } from "./ema.ts";
+import { difference, ema } from "../kernels.ts";
+import { columnar } from "../series-columns.ts";
+import type { ChartIndicator, IndicatorFactory } from "../types";
+import { emaStart } from "./ema.ts";
+
+const HIST_PALETTE = ["#4caf5088", "#ef535088"] as const;
 
 export const createMACD: IndicatorFactory = (overrides = {}) => {
   const fast = (overrides.fast as number) ?? 12;
@@ -57,67 +55,35 @@ export const createMACD: IndicatorFactory = (overrides = {}) => {
     ],
     config: { fast, slow, signal },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
+    ...columnar((bars, config) => {
       const f = config.fast as number;
       const s = config.slow as number;
       const sig = config.signal as number;
+      const n = bars.length;
 
-      const closes = data.map((d) => d.close);
-      const fastEMA = calcEMA(closes, f);
-      const slowEMA = calcEMA(closes, s);
+      // MACD line = fastEMA - slowEMA, from the first bar both exist
+      const macdFrom = Math.max(emaStart(n, f), emaStart(n, s));
+      const macd = difference(ema(bars.close, f), ema(bars.close, s), macdFrom);
 
-      // MACD line = fastEMA - slowEMA
-      const macdLine: (number | null)[] = data.map((_, i) => {
-        const a = fastEMA[i];
-        const b = slowEMA[i];
-        if (a == null || b == null) return null;
-        return a - b;
-      });
-
-      // Signal line = EMA of MACD line (ignore nulls at the start)
-      const macdValues = macdLine.filter((v) => v != null) as number[];
-      const signalEMA = calcEMA(macdValues, sig);
-
-      // Align signal back to full array
-      const signalLine: (number | null)[] = new Array(data.length).fill(null);
-      let signalIdx = 0;
-      for (let i = 0; i < data.length; i++) {
-        if (macdLine[i] != null) {
-          signalLine[i] = signalEMA[signalIdx] ?? null;
-          signalIdx++;
-        }
-      }
+      // Signal line = EMA of the MACD line, which begins after its warm-up
+      const signal = ema(macd, sig, macdFrom);
+      const signalFrom = emaStart(n, sig, macdFrom);
 
       // Histogram = MACD - Signal
-      const histogram: HistogramDataPoint[] = [];
-      const macdPoints: { time: string | number; value: number }[] = [];
-      const signalPoints: { time: string | number; value: number }[] = [];
-
-      for (let i = 0; i < data.length; i++) {
-        const m = macdLine[i];
-        const sg = signalLine[i];
-        if (m != null) {
-          macdPoints.push({ time: data[i].time, value: m });
-        }
-        if (sg != null) {
-          signalPoints.push({ time: data[i].time, value: sg });
-        }
-        if (m != null && sg != null) {
-          const diff = m - sg;
-          histogram.push({
-            time: data[i].time,
-            value: diff,
-            color: diff >= 0 ? "#4caf5088" : "#ef535088",
-          });
-        }
-      }
+      const hist = difference(macd, signal, signalFrom);
+      const sign = new Uint8Array(n);
+      for (let i = signalFrom; i < n; i++) sign[i] = hist[i] >= 0 ? 0 : 1;
 
       return [
         {
           id: "macd-histogram",
           label: "Histogram",
           type: "histogram",
-          data: histogram,
+          values: hist,
+          from: signalFrom,
+          emit: "all",
+          colors: sign,
+          palette: HIST_PALETTE,
           priceScaleId: "macd",
         },
         {
@@ -126,7 +92,9 @@ export const createMACD: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#2196f3",
           lineWidth: 1,
-          data: macdPoints,
+          values: macd,
+          from: macdFrom,
+          emit: "all",
           priceScaleId: "macd",
         },
         {
@@ -135,11 +103,14 @@ export const createMACD: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#ff9800",
           lineWidth: 1,
-          data: signalPoints,
+          values: signal,
+          from: signalFrom,
+          emit: "all",
           priceScaleId: "macd",
         },
       ];
-    },
+    }),
+    causal: true,
   };
 
   return indicator;

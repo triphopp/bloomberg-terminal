@@ -20,24 +20,30 @@
  * Mean of the last `period` values ending at each index. NaN during warm-up,
  * and NaN wherever the window holds any non-finite value (matching a plain
  * loop that bails on the first NaN).
+ *
+ * `start` skips a leading stretch that is not part of the series (the warm-up
+ * of whatever produced `values`): the result is that of the series beginning
+ * at `values[start]`, left at its own indices — bit for bit what compacting
+ * the prefix away, averaging and shifting back gives.
  */
-export function rollingMean(values: ArrayLike<number>, period: number): Float64Array {
+export function rollingMean(values: ArrayLike<number>, period: number, start = 0): Float64Array {
   const n = values.length;
   const out = new Float64Array(n).fill(Number.NaN);
   if (period < 1) return out;
   let sum = 0;
   let bad = 0; // non-finite values inside the window
-  for (let i = 0; i < n; i++) {
+  for (let i = start; i < n; i++) {
     const v = values[i];
     if (Number.isFinite(v)) sum += v;
     else bad++;
-    if (i >= period) {
+    const j = i - start; // index within the series
+    if (j >= period) {
       const old = values[i - period];
       if (Number.isFinite(old)) sum -= old;
       else bad--;
     }
-    if (i < period - 1) continue;
-    if (i % period === 0) sum = exactSum(values, i - period + 1, i);
+    if (j < period - 1) continue;
+    if (j % period === 0) sum = exactSum(values, i - period + 1, i);
     out[i] = bad > 0 ? Number.NaN : sum / period;
   }
   return out;

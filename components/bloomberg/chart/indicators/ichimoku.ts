@@ -27,16 +27,17 @@
  */
 
 import type { IChartApi, ISeriesApi, SeriesType, Time } from "lightweight-charts";
+import { barColumns } from "../columns.ts";
 import { rollingMax, rollingMin } from "../rolling.ts";
+import { columnar } from "../series-columns.ts";
 import type {
   CanvasOverlay,
   ChartIndicator,
   IndicatorFactory,
   IndicatorParam,
-  IndicatorSeriesOutput,
   OhlcvBar,
   OverlayRect,
-  SeriesDataPoint,
+  SeriesColumns,
 } from "../types";
 
 export const ICHIMOKU_COLORS = {
@@ -103,7 +104,7 @@ export interface IchimokuResult {
   offset: number;
 }
 
-function midpoint(highs: number[], lows: number[], period: number): Float64Array {
+function midpoint(highs: Float64Array, lows: Float64Array, period: number): Float64Array {
   const hh = rollingMax(highs, period);
   const ll = rollingMin(lows, period);
   const out = new Float64Array(highs.length);
@@ -113,13 +114,14 @@ function midpoint(highs: number[], lows: number[], period: number): Float64Array
 
 export function calcIchimoku(data: OhlcvBar[], cfg: IchimokuConfig): IchimokuResult {
   const n = data.length;
-  const highs = new Array<number>(n);
-  const lows = new Array<number>(n);
+  const { high, low, close } = barColumns(data);
+  const highs = new Float64Array(n);
+  const lows = new Float64Array(n);
   for (let i = 0; i < n; i++) {
     // rollingMax needs finite input — a bad print falls back to the close.
-    const c = data[i].close;
-    highs[i] = Number.isFinite(data[i].high) ? data[i].high : c;
-    lows[i] = Number.isFinite(data[i].low) ? data[i].low : c;
+    const c = close[i];
+    highs[i] = Number.isFinite(high[i]) ? high[i] : c;
+    lows[i] = Number.isFinite(low[i]) ? low[i] : c;
   }
   const tenkan = midpoint(highs, lows, cfg.tenkan);
   const kijun = midpoint(highs, lows, cfg.kijun);
@@ -135,12 +137,10 @@ export function calcIchimoku(data: OhlcvBar[], cfg: IchimokuConfig): IchimokuRes
   return { tenkan, kijun, spanA, spanB, offset };
 }
 
-const points = (data: OhlcvBar[], values: ArrayLike<number>): SeriesDataPoint[] => {
-  const out: SeriesDataPoint[] = [];
-  for (let i = 0; i < data.length; i++) {
-    const v = values[i];
-    if (Number.isFinite(v)) out.push({ time: data[i].time, value: v });
-  }
+/** The first `n` values, one per bar; a slot draws only where the value is finite. */
+const finite = (n: number, values: ArrayLike<number>): Float64Array => {
+  const out = new Float64Array(n);
+  for (let i = 0; i < n; i++) out[i] = Number.isFinite(values[i]) ? values[i] : Number.NaN;
   return out;
 };
 
@@ -160,17 +160,20 @@ export const createIchimoku: IndicatorFactory = (overrides = {}) => {
     })),
     config: { ...cfg, chikou: cfg.chikou ? "on" : "off" },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
+    ...columnar((bars, config) => {
       const c = readIchimokuConfig(config);
-      const r = calcIchimoku(data, c);
-      const out: IndicatorSeriesOutput[] = [
+      const r = calcIchimoku(bars.bars as OhlcvBar[], c);
+      const n = bars.length;
+      const out: SeriesColumns[] = [
         {
           id: "ichimoku-span-a",
           label: `Senkou A (${c.shift})`,
           type: "line",
           color: ICHIMOKU_COLORS.spanA,
           lineWidth: 1,
-          data: points(data, r.spanA),
+          values: finite(n, r.spanA),
+          from: 0,
+          emit: "valued",
         },
         {
           id: "ichimoku-span-b",
@@ -178,7 +181,9 @@ export const createIchimoku: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: ICHIMOKU_COLORS.spanB,
           lineWidth: 1,
-          data: points(data, r.spanB),
+          values: finite(n, r.spanB),
+          from: 0,
+          emit: "valued",
         },
         {
           id: "ichimoku-tenkan",
@@ -186,7 +191,9 @@ export const createIchimoku: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: ICHIMOKU_COLORS.tenkan,
           lineWidth: 1,
-          data: points(data, r.tenkan),
+          values: finite(n, r.tenkan),
+          from: 0,
+          emit: "valued",
         },
         {
           id: "ichimoku-kijun",
@@ -194,26 +201,32 @@ export const createIchimoku: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: ICHIMOKU_COLORS.kijun,
           lineWidth: 1,
-          data: points(data, r.kijun),
+          values: finite(n, r.kijun),
+          from: 0,
+          emit: "valued",
         },
       ];
       if (c.chikou) {
-        // The close of bar i, drawn on bar i − offset.
-        const chikou: SeriesDataPoint[] = [];
-        for (let i = r.offset; i < data.length; i++) {
-          chikou.push({ time: data[i - r.offset].time, value: data[i].close });
-        }
+        // The close of bar i, drawn on bar i − offset: the slots that have a
+        // bar `offset` ahead of them, whatever its close is.
+        const drawn = Math.max(0, n - r.offset);
+        const chikou = new Float64Array(n).fill(Number.NaN, drawn);
+        chikou.set(bars.close.subarray(n - drawn));
         out.push({
           id: "ichimoku-chikou",
           label: `Chikou (${c.shift})`,
           type: "line",
           color: ICHIMOKU_COLORS.chikou,
           lineWidth: 1,
-          data: chikou,
+          values: chikou,
+          from: 0,
+          emit: new Uint8Array(n).fill(1, 0, drawn),
         });
       }
       return out;
-    },
+    }),
+    // Not `causal`: Chikou puts a NEW bar's close on a slot `shift − 1` bars
+    // back, so a tick moves a point that is not at the last bar.
   };
 
   return indicator;
