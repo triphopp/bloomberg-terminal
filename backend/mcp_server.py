@@ -90,6 +90,13 @@ mcp = MCPServer(
         "verdict is a proposal — only the user accepts it, withdraws an objection, or "
         "rewrites, retires or deletes a claim. A fallen claim never changes the thesis "
         "by itself. "
+        "INTERVIEW: when the user asks whether a thesis still holds, whether a piece "
+        "of news is the end or noise, or is about to add to a position, call "
+        "get_interview_spec and question THEM — who pays in the end, what would end "
+        "the thesis, what the stop measures, what else in the book moves with it, how "
+        "much may be lost. You ask, they answer; work out what each rule they set "
+        "implies in numbers and say so, but never answer for them and never say buy, "
+        "sell or hold. Record the rules only when told to. "
         "TRADE HISTORY: the user's own past trades are rows in the terminal's "
         "database, read with get_trade_coverage (what exists, what each field means — "
         "call it first), get_trades, get_trade, get_trade_stats, get_option_trades. "
@@ -134,6 +141,8 @@ QUESTION_SPEC_FILE = SPEC_FILE.with_name("question-research.md")
 TRACKING_SPEC_FILE = SPEC_FILE.with_name("thesis-tracking.md")
 # And for stepping back from a thesis: claims, negations, objections, verdicts.
 ANTITHESIS_SPEC_FILE = SPEC_FILE.with_name("anti-thesis.md")
+# And for questioning the user about a thesis until its rules are explicit.
+INTERVIEW_SPEC_FILE = SPEC_FILE.with_name("thesis-interview.md")
 
 
 def _read_ref(path: Path, what: str) -> str:
@@ -1499,6 +1508,25 @@ def antithesis_spec_resource() -> str:
     return _read_ref(ANTITHESIS_SPEC_FILE, "anti-thesis spec")
 
 
+# ── Interview: the user answers, the rules of the thesis come out ────────────
+
+@mcp.tool()
+def get_interview_spec() -> str:
+    """How to question the user about a thesis: the eight core questions (who pays
+    in the end, the payer's health, what ends the thesis, what the stop measures,
+    the edge, what it overlaps with, the caps, the rule for adding), how to reflect
+    each answer back, and where the rules they set are recorded. Call this BEFORE
+    reviewing a thesis with the user or judging whether news is the end or noise."""
+    return _read_ref(INTERVIEW_SPEC_FILE, "thesis-interview spec")
+
+
+@mcp.resource("spec://thesis-interview", name="thesis-interview-spec",
+              description="Thesis interview: eight core questions, reflecting answers, where the rules go",
+              mime_type="text/markdown")
+def interview_spec_resource() -> str:
+    return _read_ref(INTERVIEW_SPEC_FILE, "thesis-interview spec")
+
+
 # ── Graphs: rendered analysis pages ──────────────────────────────────────────
 #
 # A zettel holds one claim in prose. Some findings are only legible as a picture:
@@ -1720,6 +1748,35 @@ delete a claim — those are mine. Do not touch the thesis body or its status.
 
 --- SPEC (memory/reference/anti-thesis.md) ---
 {_read_ref(ANTITHESIS_SPEC_FILE, "anti-thesis spec")}"""
+
+
+@mcp.prompt()
+def interview_thesis(thesis_id: str, news: str = "") -> str:
+    """Question me about one thesis until its rules are explicit."""
+    trigger = (f"What set this off: {news}. Start with what it changes — which claim, "
+               "which tracked number — and what it leaves untouched."
+               if news else
+               "No single event set this off — skip the news question.")
+    return f"""Interview me about thesis {thesis_id}. You ask, I answer.
+
+1. Read first: get_thesis, anti_board, question_list, track_list, get_positions for
+   its symbol. Every question must use my own numbers and my own sentences.
+2. {trigger}
+3. Ask the core questions of the spec in one message, the most decisive first.
+   Skip one the thesis already answers clearly.
+4. When I answer: one table — what I said, the weakness it shows, the one thing
+   to add to the thesis.
+5. Then follow up one point at a time: restate my rule in my words, work out what
+   it implies in numbers and which other rule it collides with, ask what is still
+   missing (two questions at most).
+6. Close with the full rule set, what each rule implies, and what is still open.
+
+Do not answer for me, do not fill in a number I did not give, and do not tell me to
+buy, sell or hold. Write nothing to the thesis until I say so; never touch its body,
+status, conviction, target or stop.
+
+--- SPEC (memory/reference/thesis-interview.md) ---
+{_read_ref(INTERVIEW_SPEC_FILE, "thesis-interview spec")}"""
 
 
 @mcp.prompt()

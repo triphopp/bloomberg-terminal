@@ -220,6 +220,22 @@ Served over MCP: `get_antithesis_spec` · `spec://anti-thesis` · prompt `step_b
 `get_antithesis`. **New `anti_*` rows must not be written until every machine runs this code** (same reason as
 `question*`).
 
+## Thesis interview — the agent asks, the user answers (2026-10-10)
+
+When the user asks whether a thesis still holds, whether a piece of news is the end or noise, or is about to add to a
+position, follow **[`memory/reference/thesis-interview.md`](memory/reference/thesis-interview.md)**: read the thesis,
+its board, questions, tracked numbers and the positions first, then put the eight core questions to the user — who
+pays in the end and with what money, the payer's health, what ends the thesis (a number, before revenue), what the
+stop measures, the edge over consensus, what else in the book moves with it, the size and loss caps, the rule for
+adding. Reflect every answer as a table (said · weakness · the one thing to add), then follow up one point at a time:
+restate the rule in the user's words, work out what it implies in numbers, ask what is still missing. **The agent never
+answers for the user, never fills in a number they did not give, never says buy / sell / hold**, and writes nothing
+until told. What comes out goes where such rows already live — unknowns to `questions`, numbers and kill lines to
+`track_metrics`, the claimed edge to the PRICE angle of the anti-thesis board, and the holding rules (stop meaning, one
+bet across positions, caps, adding) to a thesis note titled `กติกาการถือ (YYYY-MM-DD)`; a changed rule is a new note,
+the old one stays. **There is no interview table and no router — do not add one.** It applies to every thesis, not
+one sector. Served over MCP: `get_interview_spec` · `spec://thesis-interview` · prompt `interview_thesis`.
+
 ## Calendar — the CAL view, key `6` (2026-10-08)
 
 Every dated thing on one month grid: macro releases (the TAIL strip's `event_calendar.py`), earnings / ex-dividend dates
@@ -405,7 +421,7 @@ async def get_x():
 memory/
 ├── INDEX.md               ← navigation map
 ├── AGENTS.md              ← format rules (อ่านก่อนเขียนไฟล์ใดๆ ใน memory/)
-├── project_summary.md     ← slim core: run, tests, stack, env vars, 78 routers, DB schema, 6 views + ASK, known issues, plans
+├── project_summary.md     ← slim core: run, tests, stack, env vars, 78 routers, DB schema, 7 views + ASK, agent access (75 MCP tools · 27 ASK tools), known issues, plans
 ├── reference/
 │   ├── architecture.md         ← data flow, key files, accounting layer, views
 │   ├── api-endpoints.md        ← all endpoints + caching strategy + Next.js proxy routes
@@ -415,7 +431,8 @@ memory/
 │   ├── data-sources.md         ← where to look for data (read before searching)
 │   ├── question-research.md    ← how to answer an open question (signals, answer levels, assumptions)
 │   ├── thesis-tracking.md      ← tracked numbers: source, forecast vs actual, kill lines
-│   └── anti-thesis.md          ← step back: claims + negation, objections by angle, evidence-gated verdicts
+│   ├── anti-thesis.md          ← step back: claims + negation, objections by angle, evidence-gated verdicts
+│   └── thesis-interview.md     ← the agent questions the user: eight core questions, holding rules
 ├── plans/                 ← feature plans (active + completed/)
 └── sessions/              ← audit trail + reports
 ```

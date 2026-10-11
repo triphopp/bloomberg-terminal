@@ -90,15 +90,30 @@ attribution still works. `memory/reference/api-endpoints.md` lists every route.
 
 ## Tools
 
+75 tools (counted 2026-10-10: `grep -c "@mcp.tool" backend/mcp_server.py`).
+
 | Group | Tools |
 |---|---|
 | Theses (read) | `list_theses` · `get_thesis` · `notes_due` |
 | Theses (write) | `create_thesis` (always `draft`) · `update_thesis` (`reason` required) · `log_event` (NOTE/REVIEW/EVIDENCE/CHECKPOINT) · `add_note` · `update_note` · `link_trade` |
 | Portfolio | `get_positions` |
 | Trade history (read-only; start with coverage, totals come from stats) | `get_trade_coverage` · `get_trades` · `get_trade` · `get_trade_stats` · `get_option_trades` |
-| Research | `get_stock_data(kind=quote\|financials\|ratios\|estimates\|analyst\|earnings-calendar\|ownership\|management\|dividends\|pe-history\|quality\|sector\|sec-filings)` · `get_price_history` · `get_news` · `get_filings` |
+| Research | `get_stock_data(kind=quote\|financials\|ratios\|estimates\|analyst\|earnings-calendar\|ownership\|management\|dividends\|pe-history\|quality\|sector\|sec-filings)` · `get_price_history` · `get_news` · `get_filings` · `get_fiscal_data` (Fiscal.ai, needs `FISCAL_AI_API_KEY`, daily budget) · `get_google_trends` · `get_trending_searches` (context only) |
 | Analysis graphs | `graph_list` · `graph_get` · `graph_create` · `graph_update` |
 | Knowledge base | `zettel_search` · `zettel_list` · `zettel_get` · `zettel_create` · `zettel_update` · `zettel_link` · `zettel_add_source` · `zettel_attach` · `open_conflicts` · `resolve_conflict` · `zettel_by_source` |
+| Open questions (PORT → TOOLS → QUESTIONS) | read: `question_queue` · `question_list` · `question_tree` · `question_get` · `question_calendar` — write: `question_add` · `question_add_parent` · `question_set_effect` · `question_import` (a whole tree) · `question_claim` · `question_release` · `question_answer` (refused without evidence) · `assumption_check` · `question_date_add` · `question_date_update` · `question_date_link` |
+| Tracked numbers (PORT → TOOLS → TRACK) | read: `track_due` · `track_list` · `track_get` — write: `track_add` · `track_update` · `track_expect` (forecast, before the result) · `track_record` (the reading, with evidence) |
+| Anti-thesis (THESES → ANTI-THESIS) | read: `anti_board` · `anti_queue` — write: `anti_claim_add` · `anti_claim_update` · `anti_object` · `anti_none_found` · `anti_verdict` (a proposal) · `anti_to_question` · `anti_import` (a whole board) |
+| Specs — call before the matching work | `get_fundamental_spec` · `get_data_sources` · `get_question_spec` · `get_tracking_spec` · `get_antithesis_spec` · `get_interview_spec` |
+
+Each spec tool serves a file in `memory/reference/` (`fundamental-analysis.md`, `data-sources.md`,
+`question-research.md`, `thesis-tracking.md`, `anti-thesis.md`, `thesis-interview.md`), also exposed as resources
+`spec://fundamental-analysis` · `spec://data-sources` · `spec://question-research` ·
+`spec://thesis-tracking` · `spec://anti-thesis` · `spec://thesis-interview`. Edit the file, not the MCP.
+
+What an agent cannot do through any tool: accept an answer or drop a question, move a kill line,
+change a metric's role or retire it, accept a verdict or withdraw an objection, change a thesis'
+status or conviction unasked, delete anything, or run SQL. Those stay with the user in the UI.
 
 ### Analysis graphs
 
@@ -136,6 +151,15 @@ Prompts:
   propose (not apply) any status/conviction change.
 - `triage_conflicts(thesis_id?)` — work through unresolved contradictions, compare the
   sources rather than the wording, and propose a resolution for you to accept.
+- `investigate_questions` — answer what waits in the question queue by the question spec
+  (competing explanations, the signals each would leave, then the search).
+- `step_back` — argue against a thesis on purpose: claims, objections by angle, verdicts
+  (the anti-thesis spec).
+- `interview_thesis(thesis_id, news?)` — the agent questions you about a thesis until its rules
+  are explicit: who pays in the end, what ends it, what the stop measures, what it overlaps
+  with, the caps (the interview spec). It asks and works out what your rules imply; it does
+  not answer for you and writes nothing until told.
+- `fundamental_analysis` — the 12-section fundamental report (the fundamental spec).
 
 ## The knowledge base (Zettelkasten)
 
