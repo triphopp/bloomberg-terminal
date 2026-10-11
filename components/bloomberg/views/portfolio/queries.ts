@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
+import type { SigmaPayload } from "./day-context";
 import type { OptionLot } from "./tabs/OptionsTab";
 import type { Trade } from "./types";
 
@@ -118,6 +119,17 @@ export const portfolioQueries = {
         signal
       ),
     staleTime: 5 * 60_000,
+  }),
+
+  /** Daily sigma + 1-day VaR/CVaR per symbol / account / sub-port / book. Backend holds it 10 min. */
+  sigma: (currency: string, accountId: string) => ({
+    queryKey: ["portfolio", "sigma", currency, accountId] as const,
+    queryFn: ({ signal }: { signal?: AbortSignal }) =>
+      getJson<SigmaPayload>(
+        `/api/v2/portfolio/risk/sigma?base_currency=${currency}${accountId !== "all" ? `&account_id=${encodeURIComponent(accountId)}` : ""}`,
+        signal
+      ),
+    staleTime: 10 * 60_000,
   }),
 
   costOverrides: (accountId: string) => ({

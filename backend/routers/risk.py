@@ -1584,6 +1584,97 @@ def get_risk_metrics(
     return metrics
 
 
+# ── Daily sigma for POSITIONS ────────────────────────────────────────────────
+# Light on purpose: /metrics runs Monte Carlo + bootstrap and takes seconds;
+# this is two EWMA passes over closes the 5-minute frame cache already holds.
+
+_sigma_cache: TTLCache = TTLCache(ttl=600, maxsize=32)
+_sigma_miss: TTLCache = TTLCache(ttl=60, maxsize=32)   # failed pull, retried after a minute
+SIGMA_LOOKBACK = 252
+
+
+@router.get("/sigma")
+def get_position_sigma(
+    account_id: Optional[str] = Query(None),
+    base_currency: str = Query("THB"),
+    confidence: float = Query(0.95, ge=0.9, le=0.99),
+):
+    """Daily EWMA sigma per symbol / account / sub-port / book, with 1-day
+    VaR + CVaR — what PORT → POSITIONS needs to say whether today's move is
+    ordinary. Method and the two bases (price vs money): `port_sigma.py`.
+
+    Fixed for the day, as a risk desk sets it: weights are today's holdings at
+    the LAST CLOSE, not at the running price. A line that moved with the price
+    would shrink as the book fell, and a loss could never be said to have
+    passed it. It changes when a bar completes or a lot is bought or sold."""
+    import port_sigma
+    from sub_port import sub_port_of
+
+    base = report_currency(base_currency)
+    key = f"{account_id or 'all'}|{base}|{confidence:.2f}"
+    cached = _sigma_cache.get(key)
+    if cached is None:
+        cached = _sigma_miss.get(key)
+    if cached is not None:
+        return cached
+
+    open_lots = []
+    ccy: dict[str, str] = {}
+    for pos in _open_positions_priced(account_id):
+        yf_sym = _position_yf_symbol(pos)
+        if not yf_sym:
+            continue
+        open_lots.append((yf_sym, pos))
+        ccy.setdefault(yf_sym, trade_currency(pos))
+
+    symbols = list(ccy)
+    out = {
+        "base_currency": base, "confidence": confidence, "lambda": port_sigma.LAMBDA,
+        "lookback": SIGMA_LOOKBACK, "horizon_days": 1, "as_of": None, "excluded": [],
+        "symbols": {}, "accounts": {}, "sub_ports": {}, "total": None,
+        "note": "sigma_pct = price only (compare with day %); var/cvar include FX. "
+                "Weights and mv are at the last close: fixed for the day. "
+                "Options are not in these figures.",
+    }
+    if not symbols:
+        return out
+
+    close = _fetch_close_frame(symbols, SIGMA_LOOKBACK)
+    # The frame ends at the last completed bar (its download stops before
+    # today), so this is the price the day started from. A symbol Yahoo has no
+    # bars for falls back to its quote — it gets no sigma, only its weight.
+    lots, prices = [], {}
+    for yf_sym, pos in open_lots:
+        bars = close[yf_sym].dropna() if yf_sym in close.columns else []
+        price = float(bars.iloc[-1]) if len(bars) else pos.get("current_price")
+        if not price:
+            continue
+        native = float(price) * float(pos.get("volume") or 0)
+        lots.append({
+            "yf_symbol": yf_sym,
+            "account_id": pos["account_id"],
+            "sub_port": sub_port_of(pos.get("note")),
+            "value": convert_amount(native, trade_currency(pos), base),
+        })
+        prices[yf_sym] = float(price)
+    px, excluded = _aligned_returns(symbols, SIGMA_LOOKBACK, common_only=False, close=close)
+    if px.empty:
+        # Negative cache: without it every poll of an unreachable Yahoo is a
+        # fresh download (the frame cache keeps nothing on failure).
+        out["excluded"] = excluded
+        _sigma_miss.set(key, out)
+        return out
+    based, _ = _aligned_returns(symbols, SIGMA_LOOKBACK, ccy_map=ccy, base_currency=base,
+                                common_only=False, close=close)
+    cols = list(px.columns)
+    res = port_sigma.compute(lots, cols, px.values, based[cols].values, prices, confidence)
+    out.update(res)
+    out["excluded"] = excluded
+    out["as_of"] = px.index[-1].strftime("%Y-%m-%d")
+    _sigma_cache.set(key, out)
+    return out
+
+
 # ── CAPM / Jensen's alpha ────────────────────────────────────────────────────
 
 def _min_regression_days(lookback: int) -> int:
