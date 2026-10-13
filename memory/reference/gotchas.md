@@ -2558,3 +2558,24 @@ assign one when the item enters the list. To check: MutationObserver `childList`
   `/api/webull/status` → `verify_lock {since, until, reason}`. DEPTH shows `WEBULL HAS LOCKED VERIFICATION` with the
   button disabled until `until`. A refusal after the hour starts it over; a PENDING/NORMAL token deletes the file.
   Only that error code counts — other 417s stay `upstream`.
+
+## "all" is the personal book, not "no filter" (2026-10-13)
+
+Until this date `account_id = "all"` meant "leave the WHERE clause out", so any row in `portfolio_accounts` was part of
+every total: NAV, RISK, alerts, trade stats, AUDIT counts. A fund account (`portfolio_accounts.fund_id` set) would have
+been summed into the personal book the moment it was created. Now `backend/account_scope.py` is the only place that
+turns an `account_id` into a condition (`all` · `fund:<id>` · one account; `EVERY` only for code that splits by account
+itself, e.g. the NAV capture). The personal book is "not a fund account", not "an active personal account", so rows of
+deleted / inactive accounts still count as they did.
+
+- **Symptom of a miss:** a personal figure moves when a fund trade is entered. `pytest tests/test_fund_isolation.py`
+  reads every figure before and after a fund is added; `tests/test_account_scope_rule.py` fails on a hand-written
+  `account_id != "all"`.
+- **`get_summary(account_id=…)` always answers with a whole book** — one account gets the book it sits in, so callers
+  that look an account up in `summary["accounts"]` keep working.
+- **Stored labels are not filters:** `risk_budgets`, `risk_snapshots`, `var_forecasts`, `portfolio_nav_snapshots`,
+  `allocation_targets` key rows by `all` / `fund:<id>` / an account id (`account_scope.label`).
+- **Not done yet (plans/fund-book.md Step 3):** TRADE GUARD / MARGIN / CAL schedulers walk the personal book only.
+- **Two machines:** a peer on older code drops the `fund_id` column and sees a fund account as personal — no fund may
+  be created until every machine runs this code.
+

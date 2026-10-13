@@ -6,11 +6,14 @@ passing check. No database writes or market downloads happen here.
 """
 from __future__ import annotations
 
+import contextvars
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from statistics import median
+
+import account_scope
 from typing import Callable
 
 import dividend_check
@@ -58,8 +61,25 @@ def check(code, severity, scope):
     return register
 
 
+# Which accounts the running audit is about (set by run()). The checks read
+# whole tables; a row of another book — a fund's when the personal book is
+# audited, and the reverse — is not theirs to count (account_scope.py).
+_BOOK = contextvars.ContextVar("accounting_checks_book", default=None)
+
+
 def _rows(conn, table):
-    return [dict(r) for r in conn.execute(f"SELECT * FROM {table}")]
+    rows = [dict(r) for r in conn.execute(f"SELECT * FROM {table}")]
+    in_book = _BOOK.get()
+    if in_book is None:
+        return rows
+    key = "id" if table == "portfolio_accounts" else "account_id"
+    return [r for r in rows if key not in r or in_book(r[key])]
+
+
+def _current_statements(conn):
+    in_book = _BOOK.get()
+    return [s for s in accounting_statements.list_current(conn, every_book=True)
+            if in_book is None or in_book(s["account_id"])]
 
 
 def _number(value):
@@ -309,13 +329,13 @@ def cross_endpoint(ctx):
     }}
     cash = _rows(ctx.conn, "cash_ledger")
     for aid, s in scopes.items():
-        r = returns["total"] if aid == "all" else returns["accounts"].get(aid)
+        r = returns["total"] if aid == "all" else returns["accounts"].get(aid)  # scope-ok: key of the book total built above
         history = samples["histories"].get(aid, [])
         if not r or not history:
             yield Finding("C1_MISSING", "error", aid, None, "Missing return or NAV sample; reconciliation is incomplete.")
             continue
         h = history[-1]
-        invested = sum(_number(x["investment"]) for x in cash if x["account_id"] == aid or (aid == "all" and x["account_id"] in accounts))
+        invested = sum(_number(x["investment"]) for x in cash if x["account_id"] == aid or (aid == "all" and x["account_id"] in accounts))  # scope-ok: same key
         pairs = [
             ("invested: summary vs SQL", s["total_invested_base"], invested),
             ("invested: summary vs NAV", s["total_invested_base"], h["invested_capital"]),
@@ -360,7 +380,7 @@ def nav_validation(ctx):
 
 @check("R3", "warn", "account")
 def broker_statement_reconciliation(ctx):
-    statements = accounting_statements.list_current(ctx.conn)
+    statements = _current_statements(ctx.conn)
     if not statements:
         ctx.count("R3", 0, "skipped", "No dated broker statement with a source reference is recorded.")
         return
@@ -425,7 +445,7 @@ def unexplained_adjustments(ctx):
     for row in _rows(ctx.conn, "cash_adjustments"):
         if row.get("category") == "UNKNOWN":
             unknown[(row["account_id"], row["currency"])] += abs(dec(row["amount"]))
-    statements = accounting_statements.list_current(ctx.conn)
+    statements = _current_statements(ctx.conn)
     for (aid, currency), amount in unknown.items():
         ctx.count("R2")
         latest = next((r for r in statements if r["account_id"] == aid and r["currency"] == currency
@@ -450,10 +470,9 @@ def _read_switch_gates(conn, account_id, reconstructed_count, posted_count):
     A saved source reference is evidence supplied by the user, not proof that
     the broker issued the statement or that the balances reconcile.
     """
+    scope_sql, scope_params = account_scope.accounts_where(account_id)
     accounts = [r[0] for r in conn.execute(
-        "SELECT id FROM portfolio_accounts WHERE is_active=1" +
-        (" AND id=?" if account_id else ""), (account_id,) if account_id else ()
-    )]
+        f"SELECT id FROM portfolio_accounts WHERE is_active=1 AND {scope_sql}", scope_params)]
     cited = {s["account_id"] for s in accounting_statements.list_current(conn, account_id)}
     missing = [aid for aid in accounts if aid not in cited]
     return [
@@ -479,19 +498,37 @@ def run(conn, *, account_id=None, codes=None, today=None, endpoint_samples=None,
     unknown = set(selected) - REGISTRY.keys()
     if unknown:
         raise ValueError("Unknown accounting checks: " + ", ".join(sorted(unknown)))
-    if account_id and not conn.execute("SELECT 1 FROM portfolio_accounts WHERE id=?", (account_id,)).fetchone():
+    if account_scope.account_of(account_id) and not conn.execute("SELECT 1 FROM portfolio_accounts WHERE id=?", (account_id,)).fetchone():
         raise ValueError("Unknown account")
-    ctx = Context(conn, today or date.today().isoformat(), lb.report(conn), endpoint_samples, nav_validation, market)
+    # One account, the personal book (None) or a fund: findings about another
+    # book's accounts are not this book's findings (account_scope.py).
+    in_scope = account_scope.matcher(conn, account_id)
+    # The book the audit walks: the fund when a fund (or one of its accounts)
+    # is asked for, else the personal book — never the two together.
+    funds = account_scope.fund_account_ids(conn)
+    fund = account_scope.fund_of(account_id) or funds.get(account_id)
+    in_book = (lambda a: funds.get(a) == fund) if fund else (lambda a: a not in funds)
+    book = lb.report(conn)
+    book = {**book,
+            "events": [e for e in book["events"] if in_book(e.account_id)],
+            "issues": [i for i in book["issues"] if in_book(i.account_id)],
+            "cards": {k: v for k, v in book["cards"].items() if in_book(k[0])},
+            "cash_checks": [r for r in book["cash_checks"] if in_book(r["account_id"])]}
+    ctx = Context(conn, today or date.today().isoformat(), book, endpoint_samples, nav_validation, market)
     findings = []
-    for code in selected:
-        found = REGISTRY[code][0](ctx)
-        findings.extend(found or [])
-        ctx.count(code, 0)
-    findings = [f for f in findings if not account_id or f.account_id in (account_id, None, "-")]
+    token = _BOOK.set(in_book)
+    try:
+        for code in selected:
+            # Checks are generators: drain them while the book filter is set.
+            findings.extend(list(REGISTRY[code][0](ctx) or []))
+            ctx.count(code, 0)
+    finally:
+        _BOOK.reset(token)
+    findings = [f for f in findings if f.account_id in (None, "-", "all") or in_scope(f.account_id)]  # scope-ok: C1 label
     counts = {s: sum(f.severity == s for f in findings) for s in ("error", "warn", "info")}
-    reconstructed_count = sum(not account_id or e.account_id == account_id for e in ctx.book["events"])
-    posted_count = conn.execute("SELECT COUNT(*) FROM ledger_events" +
-        (" WHERE account_id=?" if account_id else ""), (account_id,) if account_id else ()).fetchone()[0]
+    reconstructed_count = sum(in_scope(e.account_id) for e in ctx.book["events"])
+    scope_sql, scope_params = account_scope.where(account_id)
+    posted_count = conn.execute(f"SELECT COUNT(*) FROM ledger_events WHERE {scope_sql}", scope_params).fetchone()[0]
     gates = _read_switch_gates(conn, account_id, reconstructed_count, posted_count)
     return {"as_of": datetime.now(timezone.utc).isoformat(), "source": "reconstructed",
             "account_id": account_id, "counts": counts, "checks": list(ctx.checks.values()),

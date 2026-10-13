@@ -13,6 +13,7 @@ import uuid
 from accounting_preflight import opening_balance, trade_dates
 from ledger_engine import dec
 import ledger_backfill as lb
+import account_scope
 
 
 def _positions(value):
@@ -133,12 +134,14 @@ def reconcile(conn, statement, *, events=None):
             "basis": "reconstructed legacy history before cash EDIT offsets"}
 
 
-def list_current(conn, account_id=None):
+def list_current(conn, account_id=None, every_book=False):
+    """Current statements of one book (account_scope.py); `every_book` is for
+    a caller that filters by book itself."""
     sql = """SELECT s.* FROM broker_statements s
         WHERE NOT EXISTS(SELECT 1 FROM broker_statements newer WHERE newer.supersedes_id=s.id)"""
     args = []
-    if account_id and account_id != "all":
-        sql += " AND s.account_id=?"
-        args.append(account_id)
+    if not every_book:
+        scope_sql, args = account_scope.where(account_id, "s.account_id")
+        sql += f" AND {scope_sql}"
     sql += " ORDER BY s.as_of DESC, s.account_id, s.created_at DESC"
     return [dict(row, positions=json.loads(row["holdings_json"])) for row in conn.execute(sql, args)]

@@ -25,6 +25,8 @@ import uuid
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
+import account_scope
+
 KINDS = ("STOP", "REBALANCE", "BUDGET", "OTHER")
 DECISIONS = ("HOLD", "FOLLOW", "CHANGE", "NOTE")
 DEFAULT_REVIEW_DAYS = 14
@@ -83,14 +85,24 @@ def _row(r) -> dict[str, Any]:
     return d
 
 
-def rebalance_holds(conn) -> dict[str, dict]:
+def rebalance_holds(conn, account_id: Optional[str] = None) -> dict[str, dict]:
     """symbol → the newest REBALANCE HOLD not ended by hand. Expiry by
     `review_on` is judged by the caller (rebalance.apply_holds) so an expired
     hold can still be shown as "ended — decide again"."""
     out: dict[str, dict] = {}
+    # One book's holds: a fund's decision to keep a name says nothing about
+    # the personal book holding the same name (account_scope.py).
+    book = account_scope.book_of(conn, account_id)
+    if book:
+        scope_sql, scope_params = account_scope.where(book)
+        scope_sql, scope_params = f"({scope_sql} OR account_id = ?)", [*scope_params, book]
+    else:
+        scope_sql, scope_params = account_scope.where(None)
+        scope_sql += " AND COALESCE(account_id, '') NOT LIKE 'fund:%'"
     for r in conn.execute(
         "SELECT * FROM risk_decisions WHERE kind = 'REBALANCE' AND decision = 'HOLD' "
-        "AND cleared_at IS NULL AND symbol IS NOT NULL ORDER BY created_at, rowid"
+        f"AND cleared_at IS NULL AND symbol IS NOT NULL AND {scope_sql} ORDER BY created_at, rowid",
+        scope_params,
     ).fetchall():
         out[r["symbol"]] = _row(r)
     return out
@@ -114,10 +126,19 @@ def list_decisions(
     limit: int = 200,
 ) -> list[dict]:
     clauses, params = [], []
-    if account_id and account_id != "all":
+    if account_scope.account_of(account_id):
         # Book-wide rows (no account) belong to every account's view.
-        clauses.append("(account_id = ? OR account_id IS NULL OR account_id = 'all')")
+        clauses.append("(account_id = ? OR account_id IS NULL OR account_id = 'all')")  # scope-ok: stored label
         params.append(account_id)
+    elif account_scope.fund_of(account_id):
+        # A fund: its accounts' rows and the rows written for the fund as a whole.
+        scope_sql, scope_params = account_scope.where(account_id)
+        clauses.append(f"({scope_sql} OR account_id = ?)")
+        params.extend([*scope_params, account_id])
+    else:
+        # The personal book: everything that is not a fund's.
+        scope_sql, _ = account_scope.where(None)
+        clauses.append(f"({scope_sql} AND COALESCE(account_id, '') NOT LIKE 'fund:%')")
     if kind:
         clauses.append("kind = ?")
         params.append(kind.upper())

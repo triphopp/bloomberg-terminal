@@ -15,6 +15,8 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+
+import account_scope
 from pydantic import BaseModel
 
 from sources import market_data
@@ -770,10 +772,17 @@ def resolve_symbol(q: str = Query(..., min_length=1), account_id: str = Query(..
 # ── Accounts ─────────────────────────────────────────────────────────────────
 
 @router.get("/accounts")
-def list_accounts():
+def list_accounts(account_id: Optional[str] = Query(None)):
+    """The accounts of one book: the personal accounts by default, a fund's
+    with `account_id=fund:<id>`. A fund account is never listed with the
+    personal ones (account_scope.py)."""
+    if not isinstance(account_id, str):
+        account_id = None
+    _scope_sql, _scope_params = account_scope.accounts_where(account_id)
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT * FROM portfolio_accounts WHERE is_active = 1 ORDER BY created_at"
+            f"SELECT * FROM portfolio_accounts WHERE is_active = 1 AND {_scope_sql} ORDER BY created_at",
+            _scope_params,
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -838,9 +847,9 @@ def list_trades(
     offset: int = Query(0),
 ):
     where, params = [], []
-    if account_id and account_id != "all":
-        where.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
     if win_loss:
         where.append("win_loss = ?")
         params.append(win_loss.upper())
@@ -1265,7 +1274,7 @@ def get_ledger_check(account_id: Optional[str] = None, codes: Optional[str] = No
     from accounting_checks import run
     try:
         with read_book(DB_PATH) as conn:
-            return run(conn, account_id=None if account_id == "all" else account_id,
+            return run(conn, account_id=None if account_scope.is_all(account_id) else account_id,
                        codes=[c.strip() for c in codes.split(",") if c.strip()] if codes else None)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1370,8 +1379,8 @@ def get_ledger_evidence(account_id: Optional[str] = None):
     from accounting_io import read_book
     import evidence_match
     with read_book(DB_PATH) as conn:
-        aid = None if account_id in (None, "", "all") else account_id
-        if aid and not conn.execute("SELECT 1 FROM portfolio_accounts WHERE id=?", (aid,)).fetchone():
+        aid = None if account_scope.is_all(account_id) else account_id
+        if aid and not account_scope.fund_of(aid) and not conn.execute("SELECT 1 FROM portfolio_accounts WHERE id=?", (aid,)).fetchone():
             raise HTTPException(status_code=404, detail="Unknown account")
         return evidence_match.run(conn, aid)
 
@@ -1425,7 +1434,7 @@ def get_ledger_statements(account_id: Optional[str] = None):
     from config import DB_PATH
 
     with read_book(DB_PATH) as conn:
-        if account_id and account_id != "all" and not conn.execute(
+        if account_scope.account_of(account_id) and not conn.execute(
             "SELECT 1 FROM portfolio_accounts WHERE id=?", (account_id,)
         ).fetchone():
             raise HTTPException(status_code=404, detail="Unknown account")
@@ -1479,9 +1488,19 @@ def list_audit_events(
     (db.init_audit_layer), so it includes imports, sells and anything a future
     endpoint does. UPDATE rows carry `changed` = {field: {old, new}}."""
     where, params = [], []
-    if account_id and account_id != "all":
+    if account_scope.account_of(account_id):
         where.append("(account_id = ? OR (table_name = 'portfolio_accounts' AND row_id = ?))")
         params += [account_id, account_id]
+    elif account_scope.fund_of(account_id):
+        _in_sql, _in_params = account_scope.where(account_id, "account_id")
+        _row_sql, _row_params = account_scope.where(account_id, "row_id")
+        where.append(f"({_in_sql} OR (table_name = 'portfolio_accounts' AND {_row_sql}))")
+        params += _in_params + _row_params
+    else:
+        # The personal book: nothing of a fund account, its own account row included.
+        _in_sql, _ = account_scope.where(None, "account_id")
+        _row_sql, _ = account_scope.where(None, "row_id")
+        where.append(f"{_in_sql} AND NOT (table_name = 'portfolio_accounts' AND NOT {_row_sql})")
     if table_name:
         where.append("table_name = ?")
         params.append(table_name)
@@ -1540,19 +1559,16 @@ def get_trade_audit_log(trade_id: str, limit: int = Query(50)):
 @router.get("/audit-log")
 def get_recent_audit_log(limit: int = Query(100), account_id: Optional[str] = Query(None)):
     with get_db() as conn:
-        if account_id and account_id != "all":
-            rows = conn.execute(
-                """SELECT l.* FROM trade_audit_log l
-                   JOIN trades t ON l.trade_id = t.id
-                   WHERE t.account_id = ?
-                   ORDER BY l.created_at DESC LIMIT ?""",
-                (account_id, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM trade_audit_log ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+        # LEFT JOIN: a log row whose trade was deleted names no account and
+        # stays in the personal book, as it did before scopes existed.
+        _scope_sql, _scope_params = account_scope.where(account_id, "t.account_id")
+        rows = conn.execute(
+            f"""SELECT l.* FROM trade_audit_log l
+                LEFT JOIN trades t ON l.trade_id = t.id
+                WHERE {_scope_sql}
+                ORDER BY l.created_at DESC LIMIT ?""",
+            (*_scope_params, limit),
+        ).fetchall()
     entries = []
     for r in rows:
         d = dict(r)
@@ -1579,13 +1595,10 @@ class CostOverrideIn(BaseModel):
 @router.get("/cost-overrides")
 def get_cost_overrides(account_id: Optional[str] = Query(None)):
     with get_db() as conn:
-        if account_id and account_id != "all":
-            rows = conn.execute(
-                "SELECT * FROM position_cost_overrides WHERE account_id = ?",
-                (account_id,)
-            ).fetchall()
-        else:
-            rows = conn.execute("SELECT * FROM position_cost_overrides").fetchall()
+        _scope_sql, _scope_params = account_scope.where(account_id)
+        rows = conn.execute(
+            f"SELECT * FROM position_cost_overrides WHERE {_scope_sql}", _scope_params
+        ).fetchall()
     return [dict(r) for r in rows]
 
 @router.get("/takeover")
@@ -1601,9 +1614,9 @@ def get_takeover(account_id: Optional[str] = Query(None), base_currency: str = Q
     """
     base_currency = report_currency(base_currency)
     where, params = ["acquisition_type = 'TRANSFER_IN'"], []
-    if account_id and account_id != "all":
-        where.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
     with get_db() as conn:
         rows = [dict(r) for r in conn.execute(
             f"SELECT * FROM trades WHERE {' AND '.join(where)} ORDER BY date_entry, symbol", params
@@ -1711,9 +1724,9 @@ def bulk_patch_sector(body: dict):
         for old_val, new_val in mappings.items():
             where = "sector = ?"
             params: list = [old_val]
-            if account_id:
-                where += " AND account_id = ?"
-                params.append(account_id)
+            _scope_sql, _scope_params = account_scope.and_where(account_id)
+            where += _scope_sql
+            params.extend(_scope_params)
             cur = conn.execute(f"UPDATE trades SET sector = ? WHERE {where}",
                                [new_val] + params)
             updated += cur.rowcount
@@ -2041,9 +2054,9 @@ def sell_all_lots(body: SellAllLotsIn):
 @router.get("/cash")
 def list_cash(account_id: Optional[str] = Query(None)):
     where, params = [], []
-    if account_id and account_id != "all":
-        where.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
     sql = "SELECT * FROM cash_ledger"
     if where:
         sql += " WHERE " + " AND ".join(where)
@@ -2155,11 +2168,8 @@ def delete_cash(entry_id: str):
 
 @router.get("/cash/adjustments")
 def list_cash_adjustments(account_id: Optional[str] = Query(None)):
-    sql = "SELECT * FROM cash_adjustments"
-    params: list = []
-    if account_id and account_id != "all":
-        sql += " WHERE account_id = ?"
-        params.append(account_id)
+    _scope_sql, params = account_scope.where(account_id)
+    sql = f"SELECT * FROM cash_adjustments WHERE {_scope_sql}"
     sql += " ORDER BY date DESC, created_at DESC"
     with get_db() as conn:
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
@@ -2179,7 +2189,7 @@ def reconcile_cash(body: CashReconcileIn):
             raise HTTPException(status_code=404, detail="Account not found")
     # Current cash INCLUDING earlier adjustments, so a second reconcile stacks
     # on the first instead of double-counting it.
-    summary = get_summary(base_currency=ccy)
+    summary = get_summary(base_currency=ccy, account_id=body.account_id)
     acct = next(
         (a for a in summary["accounts"] if a["account"]["id"] == body.account_id), None
     )
@@ -2227,9 +2237,9 @@ def list_dividends(
     base_currency: Optional[str] = Query(None),
 ):
     where, params = [], []
-    if account_id and account_id != "all":
-        where.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
     sql = "SELECT * FROM dividends"
     if where:
         sql += " WHERE " + " AND ".join(where)
@@ -2412,9 +2422,9 @@ def get_dividend_suggestions(account_id: Optional[str] = Query(None)):
     """
     where = ["win_loss = 'P'"]
     params = []
-    if account_id and account_id != "all":
-        where.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
 
     with get_db() as conn:
         rows = conn.execute(
@@ -2484,9 +2494,9 @@ def _open_positions_enriched(account_id: Optional[str], base_currency: str) -> d
     base_currency = report_currency(base_currency)
     where = ["win_loss = 'P'"]
     params = []
-    if account_id and account_id != "all":
-        where.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
 
     with get_db() as conn:
         rows = conn.execute(
@@ -2625,6 +2635,30 @@ def _pct(part: float, whole: float) -> float:
     return round(part / whole * 100, 2) if whole else 0.0
 
 
+def _allocation_target_scope(conn, account_id: Optional[str]):
+    """(the book's default key, test for a target row's `account_id`).
+
+    `allocation_targets.account_id` is a label: an account id, or the book the
+    target is a default for — 'all' for the personal book, 'fund:<id>' for a
+    fund. One account sees its own targets and its book's defaults; a whole
+    book sees its defaults and the targets of its accounts (account_scope.py).
+    """
+    book = account_scope.book_of(conn, account_id)
+    default = book or account_scope.ALL
+    one = account_scope.account_of(account_id)
+    if one:
+        return default, lambda label: label in (one, default)
+    member = account_scope.matcher(conn, book)
+
+    def in_scope(label) -> bool:
+        if label == default:
+            return True
+        if label == account_scope.ALL or str(label or "").startswith(account_scope.FUND_PREFIX):
+            return False
+        return member(label)
+    return default, in_scope
+
+
 @router.get("/allocation-detail")
 def get_allocation_detail(
     account_id: Optional[str] = Query(None),
@@ -2653,19 +2687,19 @@ def get_allocation_detail(
                 "SELECT account_id, symbol, avg_cost FROM position_cost_overrides"
             ).fetchall()
         }
+        target_default, target_in_scope = _allocation_target_scope(conn, account_id)
         target_rows = [
             dict(r)
             for r in conn.execute("SELECT * FROM allocation_targets").fetchall()
+            if target_in_scope(r["account_id"])
         ]
 
     scope_targets: dict[tuple[str, str], dict] = {}
     for t in target_rows:
-        if account_id and account_id != "all" and t["account_id"] not in (account_id, "all"):
-            continue
-        # An account-specific target beats the "all" default for the same key.
+        # An account-specific target beats the book's default for the same key.
         key = (t["scope"], str(t["key"]).upper())
         prev = scope_targets.get(key)
-        if prev is None or (prev["account_id"] == "all" and t["account_id"] != "all"):
+        if prev is None or (prev["account_id"] == target_default and t["account_id"] != target_default):
             scope_targets[key] = t
 
     # ── Fold lots into one row per symbol ────────────────────────────────────
@@ -2982,12 +3016,9 @@ class AllocationTargetIn(BaseModel):
 @router.get("/allocation-targets")
 def list_allocation_targets(account_id: Optional[str] = Query(None)):
     with get_db() as conn:
-        if account_id and account_id != "all":
-            rows = conn.execute(
-                "SELECT * FROM allocation_targets WHERE account_id IN (?, 'all')", (account_id,)
-            ).fetchall()
-        else:
-            rows = conn.execute("SELECT * FROM allocation_targets").fetchall()
+        _, in_scope = _allocation_target_scope(conn, account_id)
+        rows = [r for r in conn.execute("SELECT * FROM allocation_targets").fetchall()
+                if in_scope(r["account_id"])]
     return {"targets": [dict(r) for r in rows]}
 
 
@@ -3126,9 +3157,9 @@ def get_premarket(account_id: Optional[str] = Query(None)):
     """
     where = ["win_loss = 'P'"]
     params: list = []
-    if account_id and account_id != "all":
-        where.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
     with get_db() as conn:
         rows = conn.execute(
             f"SELECT symbol, resolved_symbol, market, account_id FROM trades "
@@ -3171,11 +3202,20 @@ def get_premarket(account_id: Optional[str] = Query(None)):
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 @router.get("/summary")
-def get_summary(base_currency: str = Query("THB")):
+def get_summary(base_currency: str = Query("THB"), account_id: Optional[str] = Query(None)):
+    """`account_id` picks the book: nothing / "all" = the personal accounts,
+    "fund:<id>" = that fund's accounts. The totals are sums over those
+    accounts only (account_scope.py)."""
     base_currency = report_currency(base_currency)
+    if not isinstance(account_id, str):   # called in-process: the Query default is not a value
+        account_id = None
     with get_db() as conn:
+        # Always a whole book: one account answers with the book it sits in,
+        # so a caller looking an account up finds it beside its siblings.
+        account_id = account_scope.book_of(conn, account_id)
+        _scope_sql, _scope_params = account_scope.accounts_where(account_id)
         accounts = [dict(r) for r in conn.execute(
-            "SELECT * FROM portfolio_accounts WHERE is_active = 1"
+            f"SELECT * FROM portfolio_accounts WHERE is_active = 1 AND {_scope_sql}", _scope_params
         ).fetchall()]
 
         year_start = f"{datetime.now().year}-01-01"
@@ -3340,14 +3380,14 @@ def get_summary(base_currency: str = Query("THB")):
     opt_ytd_closed: dict[str, int] = {}
     acct_ccy_map = {a["id"]: str(a.get("currency") or "THB").upper() for a in accounts}
     try:
-        for o in open_option_positions(None, base_currency):
+        for o in open_option_positions(account_scope.EVERY, base_currency):
             aid = o.get("account_id") or ""
             opt_mv[aid]     = opt_mv.get(aid, 0.0)     + float(o.get("market_value_base") or 0)
             opt_cost[aid]   = opt_cost.get(aid, 0.0)   + float(o.get("cost_basis_base") or 0)
             opt_unreal[aid] = opt_unreal.get(aid, 0.0) + float(o.get("unrealized_pnl_base") or 0)
             opt_delta[aid]  = opt_delta.get(aid, 0.0)  + float(o.get("delta_notional_base") or 0)
             opt_count[aid]  = opt_count.get(aid, 0) + 1
-        for o in closed_option_positions(None):
+        for o in closed_option_positions(account_scope.EVERY):
             aid = o.get("account_id") or ""
             opt_realized[aid] = opt_realized.get(aid, 0.0) + realized_option_pnl(o, base_currency)
             opt_realized_native[aid] = opt_realized_native.get(aid, 0.0) + realized_option_pnl(
@@ -3616,10 +3656,11 @@ def _capital_xirr(aid: Optional[str], base_currency: str, now: datetime) -> dict
     withdrawals (+), today's NAV (+). Blind to trade history, so a missing
     buy cannot distort it — but an opening balance booked at cost can: losses
     made before that date then look as if they happened after it."""
-    scope = aid if aid and aid != "all" else None
+    scope = account_scope.account_of(aid)
     with get_db() as conn:
+        _scope_sql, _scope_params = account_scope.accounts_where(aid)
         active = {r["id"] for r in conn.execute(
-            "SELECT id FROM portfolio_accounts WHERE is_active = 1")}
+            f"SELECT id FROM portfolio_accounts WHERE is_active = 1 AND {_scope_sql}", _scope_params)}
         rows = [dict(r) for r in conn.execute(
             "SELECT account_id, date, investment, note FROM cash_ledger")]
     rows = [r for r in rows if (r["account_id"] == scope if scope else r["account_id"] in active)]
@@ -3646,7 +3687,7 @@ def _capital_xirr(aid: Optional[str], base_currency: str, now: datetime) -> dict
                                  base_currency, date=a.get("date"))
             if d is not None and amt:
                 cf.append((d, -amt))
-    hist = get_nav_history(scope or "all", 3)
+    hist = get_nav_history(account_scope.label(aid), 3)
     if not cf or not hist:
         return {"xirr_capital_pct": None, "xirr_capital_flag": "no_ledger", "nav_now": None}
     nav = convert_amount(_to_float_or_zero(hist[-1].get("nav_with_cash")), "THB", base_currency)
@@ -3746,9 +3787,9 @@ def get_portfolio_returns(
     """
     base_currency = report_currency(base_currency)
     where, params = [], []
-    if account_id and account_id != "all":
-        where.append("t.account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "t.account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
     wsql = ("WHERE " + " AND ".join(where)) if where else ""
 
     with get_db() as conn:
@@ -3760,9 +3801,9 @@ def get_portfolio_returns(
         ).fetchall()]
 
         dwhere, dparams = [], []
-        if account_id and account_id != "all":
-            dwhere.append("d.account_id = ?")
-            dparams.append(account_id)
+        _scope_sql, _scope_params = account_scope.where(account_id, "d.account_id")
+        dwhere.append(_scope_sql)
+        dparams.extend(_scope_params)
         dsql = ("WHERE " + " AND ".join(dwhere)) if dwhere else ""
         divs = [dict(r) for r in conn.execute(
             "SELECT d.account_id, d.pay_date, d.ex_date, d.total_received, "
@@ -3953,7 +3994,7 @@ def get_portfolio_returns(
             logger.exception("capital XIRR failed for %s", aid)
             m = {**m, "xirr_capital_pct": None, "xirr_capital_flag": "error"}
         try:
-            m["periods"] = _period_returns(get_nav_history(aid or "all", 100000), base_currency)
+            m["periods"] = _period_returns(get_nav_history(account_scope.label(aid), 100000), base_currency)
         except Exception:
             logger.exception("period returns failed for %s", aid)
             m["periods"] = []
@@ -3974,7 +4015,9 @@ def get_portfolio_returns(
 def _maybe_capture_nav() -> None:
     """Capture today's portfolio NAV once per day (capture-on-view).
 
-    Writes one row per active account plus a global 'all' row, all in THB base.
+    Writes one row per active account, an 'all' row for the personal book and
+    a 'fund:<id>' row for each fund, all in THB base. A fund account is never
+    part of 'all' (account_scope.py).
     Cheap no-op if today's snapshot already exists. Never raises into callers.
     """
     try:
@@ -3989,7 +4032,7 @@ def _maybe_capture_nav() -> None:
             accounts = {
                 a["id"]: dict(a)
                 for a in conn.execute(
-                    "SELECT id, currency FROM portfolio_accounts WHERE is_active = 1"
+                    "SELECT id, currency, fund_id FROM portfolio_accounts WHERE is_active = 1"
                 ).fetchall()
             }
             if not accounts:
@@ -4068,7 +4111,7 @@ def _maybe_capture_nav() -> None:
         # Options mark to market into the same NAV — without this the curve
         # steps down by the whole option book the day a position is opened.
         try:
-            for o in open_option_positions(None, "THB"):
+            for o in open_option_positions(account_scope.EVERY, "THB"):
                 aid = o.get("account_id") or ""
                 if aid not in accounts:
                     continue
@@ -4077,7 +4120,7 @@ def _maybe_capture_nav() -> None:
                     _to_float_or_zero(o.get("market_value_base"))
                     - _to_float_or_zero(o.get("cost_basis_base"))
                 )
-            for o in closed_option_positions(None):
+            for o in closed_option_positions(account_scope.EVERY):
                 aid = o.get("account_id") or ""
                 if aid in accounts:
                     realized_map[aid] += realized_option_pnl(o, "THB")
@@ -4085,7 +4128,8 @@ def _maybe_capture_nav() -> None:
             logger.exception("option valuation failed; NAV snapshot is equities only")
 
         rows: list[tuple] = []
-        g = {"total": 0.0, "cost": 0.0, "unreal": 0.0, "real": 0.0, "inv": 0.0, "div": 0.0}
+        books: dict[str, dict[str, float]] = {account_scope.ALL: dict.fromkeys(
+            ("total", "cost", "unreal", "real", "inv", "div"), 0.0)}
         for aid, acc in accounts.items():
             realized = realized_map.get(aid, 0.0)
             invested = invested_map.get(aid, 0.0)          # already THB
@@ -4097,10 +4141,13 @@ def _maybe_capture_nav() -> None:
             # are stored alongside for context but do not inflate the asset value.
             total = c + u
             rows.append((aid, today, total, c, u, realized, invested, dividends))
+            book = (account_scope.FUND_PREFIX + acc["fund_id"]) if acc.get("fund_id") else account_scope.ALL
+            g = books.setdefault(book, dict.fromkeys(("total", "cost", "unreal", "real", "inv", "div"), 0.0))
             g["total"] += total; g["cost"] += c; g["unreal"] += u
             g["real"] += realized; g["inv"] += invested; g["div"] += dividends
-        rows.append(("all", today, g["total"], g["cost"], g["unreal"],
-                     g["real"], g["inv"], g["div"]))
+        for book, g in books.items():
+            rows.append((book, today, g["total"], g["cost"], g["unreal"],
+                         g["real"], g["inv"], g["div"]))
 
         with get_db() as conn:
             conn.executemany("""
@@ -4150,9 +4197,9 @@ def get_portfolio_rotation(
 
     base = report_currency(base_currency)
     where, params = [], []
-    if account_id and account_id != "all":
-        where.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
     sql = "SELECT * FROM trades" + (" WHERE " + " AND ".join(where) if where else "")
     with get_db() as conn:
         trades = [dict(r) for r in conn.execute(sql, params).fetchall()]
@@ -4191,7 +4238,8 @@ def get_nav_history(account_id: Optional[str] = Query(None), days: int = Query(3
     /summary, plus reconciliation offsets dated on or before that day — and
     `nav_with_cash`, the number that should NOT move when you trade.
     """
-    aid = account_id if (account_id and account_id != "all") else "all"
+    aid = account_scope.label(account_id)
+    one = account_scope.account_of(account_id)
     with get_db() as conn:
         rows = conn.execute(
             """SELECT snapshot_date, total_value, open_cost_basis, unrealized_pnl,
@@ -4201,12 +4249,15 @@ def get_nav_history(account_id: Optional[str] = Query(None), days: int = Query(3
                ORDER BY snapshot_date DESC LIMIT ?""",
             (aid, max(1, days)),
         ).fetchall()
-        active = {r["id"] for r in conn.execute(
-            "SELECT id FROM portfolio_accounts WHERE is_active = 1"
+        # The accounts this book is made of: the one named, or the active
+        # accounts of the personal book / of the fund.
+        _scope_sql, _scope_params = account_scope.accounts_where(account_id)
+        active = {one} if one else {r["id"] for r in conn.execute(
+            f"SELECT id FROM portfolio_accounts WHERE is_active = 1 AND {_scope_sql}", _scope_params
         ).fetchall()}
         adjustments = [
             a for a in _cash_adjustment_rows(conn)
-            if a["account_id"] == aid or (aid == "all" and a["account_id"] in active)
+            if a["account_id"] in active
         ]
         dividend_rows = [
             dict(d) for d in conn.execute(
@@ -4214,13 +4265,13 @@ def get_nav_history(account_id: Optional[str] = Query(None), days: int = Query(3
                           a.currency acc_currency
                    FROM dividends d JOIN portfolio_accounts a ON a.id = d.account_id"""
             ).fetchall()
-            if d["account_id"] == aid or (aid == "all" and d["account_id"] in active)
+            if d["account_id"] in active
         ]
         ledger_rows = [
             dict(r) for r in conn.execute(
                 "SELECT account_id, date, investment FROM cash_ledger"
             ).fetchall()
-            if r["account_id"] == aid or (aid == "all" and r["account_id"] in active)
+            if r["account_id"] in active
         ]
     # Invested capital is re-derived from TODAY's cash_ledger by date, for the
     # same reason as dividends below. The snapshot froze whatever the ledger
@@ -4447,14 +4498,14 @@ def get_analytics(account_id: Optional[str] = Query(None), base_currency: str = 
     threading.Thread(target=capture_daily_greeks, daemon=True).start()
     base_currency = report_currency(base_currency)
     where, params = ["t.win_loss != 'P'"], []
-    if account_id and account_id != "all":
-        where.append("t.account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "t.account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
     open_where = ["t.win_loss = 'P'"]
     open_params: list = []
-    if account_id and account_id != "all":
-        open_where.append("t.account_id = ?")
-        open_params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "t.account_id")
+    open_where.append(_scope_sql)
+    open_params.extend(_scope_params)
     with get_db() as conn:
         closed_rows = [dict(r) for r in conn.execute(
             "SELECT t.*, COALESCE(a.name, t.account_id) acc_name, "
@@ -4757,9 +4808,9 @@ def get_allocation_history(
 
     where_parts: list[str] = []
     params: list = []
-    if account_id and account_id != "all":
-        where_parts.append("t.account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "t.account_id")
+    where_parts.append(_scope_sql)
+    params.extend(_scope_params)
     with get_db() as conn:
         sql = """SELECT t.*, a.currency acc_currency FROM trades t
                  JOIN portfolio_accounts a ON t.account_id = a.id
