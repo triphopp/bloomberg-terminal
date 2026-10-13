@@ -237,7 +237,8 @@ Proxy: `app/api/v2/ledger/[[...path]]/route.ts` (GET/POST/PUT). Errors: `{code, 
 
 ## Portfolio v2 (`routers/portfolio_v2.py`)
 - `GET /api/v2/portfolio/resolve-symbol?q=X&account_id=Y` — resolve bare ticker → canonical provider symbols, filtered to account's markets (`markets` JSON col; default US+TH, crypto→CRYPTO); returns `{query, markets, matches:[{resolved_symbol, market, currency, name, exchange}]}`; TTLCache 1h, home-country ranked first (`plans/port-redesign.md` Step 1)
-- `GET /api/v2/portfolio/accounts` — list accounts (no default seed; users create their own)
+- `GET /api/v2/portfolio/accounts` — list accounts (no default seed; users create their own). Personal accounts by default; `?account_id=fund:<id>` lists a fund's (2026-10-13)
+- **`account_id` on every portfolio / risk / options / ledger / trade-history route (2026-10-13):** empty or `all` = the personal book (accounts with no `fund_id`), `fund:<id>` = that fund's accounts, else one account — `backend/account_scope.py`. `GET /summary` and `GET /api/v2/trade-history/coverage` take it too (they describe one book)
 - `POST /api/v2/portfolio/accounts` — create account (id, name, country, currency, account_type)
 - `PATCH /api/v2/portfolio/accounts/{id}` — update name/broker/is_active
 - `DELETE /api/v2/portfolio/accounts/{id}` — delete account (409 if it has trades; also clears its cash/dividends)

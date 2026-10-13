@@ -274,6 +274,7 @@ def test_book_stamp_follows_the_open_lots(tmp_path, monkeypatch):
 
     db = sqlite3.connect(tmp_path / "t.db")
     db.execute("CREATE TABLE trades (account_id, symbol, volume, win_loss)")
+    db.execute("CREATE TABLE portfolio_accounts (id, fund_id)")   # the scope reads which accounts are a fund's
     db.executemany("INSERT INTO trades VALUES (?, ?, ?, ?)",
                    [("dime", "INTC", 10, "P"), ("dime", "MU", 5, "P"), ("finansia", "AOT", 100, "P")])
 

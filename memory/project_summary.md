@@ -220,7 +220,9 @@ The count includes `zettel_fts` with its 4 FTS5 shadow tables. Re-count: `SELECT
 Core portfolio tables first; the full per-table notes follow.
 
 ```sql
-portfolio_accounts  (id, name, broker, country, currency, account_type, is_active, markets JSON, created_at, updated_at)
+portfolio_accounts  (id, name, broker, country, currency, account_type, is_active, markets JSON, fund_id, created_at, updated_at)
+                    -- fund_id (2026-10-13): NULL = personal account; set = the account belongs to that fund and is never part of
+                    --   `all`. Every `account_id` filter goes through backend/account_scope.py (all · fund:<id> · one account)
                     -- finansia (THB, sub-accounts 0153717 / 6065151 / 6065157 live in trades.note — leading "Finansia (id)" tag; AVCO pooled per sub-port, backend/sub_port.py), dime (USD), innovestx (THB crypto)
 trades              (id, account_id, symbol, sector, date_entry, date_exit, price_entry, price_exit,
                      price_stoploss, price_target, volume, amount, pnl_amount, win_loss W|L|P, pnl_percent,

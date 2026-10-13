@@ -37,6 +37,7 @@ from collections import deque
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+import account_scope
 import event_calendar as ec
 from db import get_db
 from persist_cache import PersistentStore
@@ -200,11 +201,14 @@ def company_universe(conn, by_symbol: dict[str, list[dict]]) -> dict[str, dict]:
             if t["instrument"] and t["status"] not in ("closed", "invalidated"):
                 sym = str(t.get("symbol") or "").upper()
                 add(t.get("resolved_symbol") or traded.get(sym) or sym, sym, False)
+    # Holdings of the personal book only: a fund's dates belong to the fund's
+    # own view (plans/fund-book.md, Step 3), never to this calendar by default.
+    personal, _ = account_scope.where(None)
     for sql in (
         "SELECT DISTINCT symbol, resolved_symbol FROM trades "
-        "WHERE win_loss = 'P' AND COALESCE(market, '') != 'CRYPTO'",
+        f"WHERE win_loss = 'P' AND COALESCE(market, '') != 'CRYPTO' AND {personal}",
         "SELECT DISTINCT underlying AS symbol, underlying AS resolved_symbol "
-        "FROM v_option_open_lots WHERE quantity != 0",
+        f"FROM v_option_open_lots WHERE quantity != 0 AND {personal}",
     ):
         try:
             for r in conn.execute(sql).fetchall():
@@ -501,11 +505,12 @@ def question_date_events(conn, by_id: dict[str, dict], by_symbol: dict[str, list
 def port_events(conn, by_symbol: dict[str, list[dict]], start: date, end: date) -> list[dict]:
     lo, hi = start.isoformat(), end.isoformat()
     out = []
+    personal, _ = account_scope.where(None)   # the personal book; see holdings above
     try:
         lots = conn.execute(
             "SELECT underlying, SUBSTR(expiry, 1, 10) AS expiry, option_type, strike, quantity "
             "FROM v_option_open_lots WHERE quantity != 0 AND SUBSTR(expiry, 1, 10) BETWEEN ? AND ? "
-            "ORDER BY expiry, underlying, strike", (lo, hi)).fetchall()
+            f"AND {personal} ORDER BY expiry, underlying, strike", (lo, hi)).fetchall()
     except sqlite3.OperationalError:
         lots = []
     groups: dict[tuple[str, str], list[str]] = {}
@@ -522,7 +527,8 @@ def port_events(conn, by_symbol: dict[str, list[dict]], start: date, end: date) 
         holds = conn.execute(
             "SELECT id, kind, symbol, yf_symbol, reason, review_on FROM risk_decisions "
             "WHERE decision = 'HOLD' AND cleared_at IS NULL AND COALESCE(review_on, '') != '' "
-            "AND SUBSTR(review_on, 1, 10) BETWEEN ? AND ?", (lo, hi)).fetchall()
+            f"AND SUBSTR(review_on, 1, 10) BETWEEN ? AND ? AND {personal} "
+            "AND COALESCE(account_id, '') NOT LIKE 'fund:%'", (lo, hi)).fetchall()
     except sqlite3.OperationalError:
         holds = []
     for r in holds:

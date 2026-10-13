@@ -68,7 +68,8 @@ def _connect(read_only: bool) -> sqlite3.Connection:
 
 def load(conn):
     accounts = {r["id"]: dict(r) for r in conn.execute(
-        "SELECT id, currency FROM portfolio_accounts WHERE is_active = 1")}
+        # the personal book: a fund is never part of 'all' (account_scope.py)
+        "SELECT id, currency FROM portfolio_accounts WHERE is_active = 1 AND fund_id IS NULL")}
     trades = []
     for r in conn.execute("SELECT * FROM trades"):
         t = dict(r)

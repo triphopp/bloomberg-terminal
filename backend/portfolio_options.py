@@ -46,6 +46,7 @@ from datetime import date, datetime, timedelta
 from typing import Iterable, Mapping, Optional
 
 from cache import TTLCache
+import account_scope
 from db import get_db
 from greeks import compute_greeks
 from portfolio_currency import convert_amount, normalize_currency, report_currency
@@ -336,9 +337,9 @@ def open_option_positions(
     """
     where = ["1=1"]
     params: list = []
-    if account_id and account_id != "all":
-        where.append("v.account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "v.account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
     with get_db() as conn:
         rows = conn.execute(
             "SELECT v.*, v.lot_id AS id, a.currency acc_currency, a.name acc_name "
@@ -359,9 +360,9 @@ def closed_option_positions(account_id: Optional[str] = None) -> list[dict]:
     """
     where = ["1=1"]
     params: list = []
-    if account_id and account_id != "all":
-        where.append("v.account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "v.account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
     with get_db() as conn:
         rows = conn.execute(
             "SELECT v.*, a.currency acc_currency, a.name acc_name "
@@ -454,7 +455,7 @@ def capture_daily_greeks(force: bool = False) -> int:
             ).fetchone():
                 return 0
 
-        lots = open_option_positions(None, "USD")
+        lots = open_option_positions(account_scope.EVERY, "USD")
         if not lots:
             return 0
 
@@ -569,9 +570,9 @@ def option_pnl_attribution(account_id: Optional[str] = None, days: int = 30) -> 
     since = (date.today() - timedelta(days=max(1, days))).isoformat()
     where = ["snapshot_date >= ?"]
     params: list = [since]
-    if account_id and account_id != "all":
-        where.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
 
     with get_db() as conn:
         rows = [dict(r) for r in conn.execute(

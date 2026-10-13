@@ -649,6 +649,9 @@ def init_portfolio_v2() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_order_ref ON trades(account_id, broker_order_ref) "
                      "WHERE broker_order_ref IS NOT NULL")
         _ensure_column(conn, "portfolio_accounts", "markets", "markets TEXT")
+        # NULL = a personal account. Set = the account belongs to that fund and is
+        # never part of the personal book (account_scope.py, plans/fund-book.md).
+        _ensure_column(conn, "portfolio_accounts", "fund_id", "fund_id TEXT")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS cash_ledger (
                 id            TEXT PRIMARY KEY,

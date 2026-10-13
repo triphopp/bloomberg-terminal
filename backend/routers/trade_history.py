@@ -39,6 +39,7 @@ from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
+import account_scope
 from db import get_db
 from portfolio_currency import convert_amount, realized_pnl_in_report, report_currency
 from sub_port import sub_port_of
@@ -202,39 +203,55 @@ def _shape(row: dict, today: date, detail: str = "full") -> dict:
     return out
 
 
-def _source(conn) -> dict:
+def _source(conn, scope: Optional[str] = None) -> dict:
     # updated_at is added by the sync layer; a database opened before it ran has only created_at.
     cols = {r[1] for r in conn.execute("PRAGMA table_info(trades)")}
     stamp = "COALESCE(updated_at, created_at)" if "updated_at" in cols else "created_at"
-    n, last = conn.execute(f"SELECT COUNT(*), MAX({stamp}) FROM trades").fetchone()
+    # The whole book the question sits in (one account → its book), never the
+    # rows of another book (account_scope.py).
+    scope_sql, scope_params = account_scope.where(account_scope.book_of(conn, scope))
+    n, last = conn.execute(
+        f"SELECT COUNT(*), MAX({stamp}) FROM trades WHERE {scope_sql}", scope_params).fetchone()
     return {"database": "SQLite portfolio.db", "table": "trades",
             "rows_in_table": n, "last_write_utc": last}
 
 
-def _accounts(conn) -> dict[str, dict]:
+def _accounts(conn, scope: Optional[str] = None) -> dict[str, dict]:
+    """The accounts of one book (account_scope.py): the personal book by
+    default — a fund's accounts are named only when the fund is asked for."""
+    acc_sql, acc_params = account_scope.accounts_where(scope)
     known = {r["id"]: dict(r) for r in conn.execute(
-        "SELECT id, name, currency FROM portfolio_accounts")}
-    for (acc,) in conn.execute("SELECT DISTINCT account_id FROM trades"):
+        f"SELECT id, name, currency FROM portfolio_accounts WHERE {acc_sql}", acc_params)}
+    trade_sql, trade_params = account_scope.where(scope)
+    for (acc,) in conn.execute(f"SELECT DISTINCT account_id FROM trades WHERE {trade_sql}", trade_params):
         known.setdefault(acc, {"id": acc, "name": acc, "currency": None})
     return known
 
 
 def _check_account(conn, account_id: Optional[str]) -> Optional[str]:
-    if not account_id or account_id == "all":
+    """The scope a filter names: None = the personal book, `fund:<id>` = a
+    fund, else one account. Anything unknown is 422, never an empty answer."""
+    if account_scope.is_all(account_id):
         return None
-    known = _accounts(conn)
+    if account_scope.fund_of(account_id):
+        if not _accounts(conn, account_id):
+            raise HTTPException(422, f"Unknown fund {account_id!r}: no account belongs to it.")
+        return account_id
+    known = _accounts(conn, account_id)
     if account_id not in known:
         raise HTTPException(
-            422, f"Unknown account_id {account_id!r}. Accounts: {', '.join(sorted(known))}")
+            422, f"Unknown account_id {account_id!r}. Accounts: {', '.join(sorted(_accounts(conn)))}")
     return account_id
 
 
-def _symbol_note(conn, symbol: str) -> Optional[str]:
+def _symbol_note(conn, symbol: str, scope: Optional[str] = None) -> Optional[str]:
     """Why a symbol filter found nothing — never traded, or traded but excluded
     by the other filters. The two must not read the same to a model."""
     sym = symbol.strip().upper()
     known: set[str] = set()
-    for a, b in conn.execute("SELECT DISTINCT UPPER(symbol), UPPER(COALESCE(resolved_symbol, '')) FROM trades"):
+    scope_sql, scope_params = account_scope.where(scope)
+    for a, b in conn.execute("SELECT DISTINCT UPPER(symbol), UPPER(COALESCE(resolved_symbol, '')) FROM trades "
+                             f"WHERE {scope_sql}", scope_params):
         known.update(x for x in (a, b) if x)
     if sym in known:
         return (f"{sym} has trades in the book, but none match the other filters "
@@ -258,9 +275,8 @@ def _select(conn, *, symbol=None, account_id=None, status="all", result=None,
         raise HTTPException(422, f"date_from {date_from} is after date_to {date_to}")
     sym = symbol.strip().upper() if symbol and symbol.strip() else None
 
-    where, params = [], []
-    if account_id:
-        where.append("account_id = ?"); params.append(account_id)
+    scope_sql, params = account_scope.where(account_id)
+    where = [scope_sql]
     if sym:
         where.append("(UPPER(symbol) = ? OR UPPER(COALESCE(resolved_symbol, '')) = ?)")
         params += [sym, sym]
@@ -357,8 +373,8 @@ def list_lots(*, symbol: Optional[str] = None, account_id: Optional[str] = None,
             strategy=strategy, sector=sector, sub_port=sub_port, market=market)
         notes = _date_notes(query)
         if not rows and query["symbol"]:
-            notes.append(_symbol_note(conn, query["symbol"]))
-        source = _source(conn)
+            notes.append(_symbol_note(conn, query["symbol"], query["account_id"]))
+        source = _source(conn, query["account_id"])
     rows.sort(key=_activity, reverse=(order == "newest"))
     page = rows[offset:offset + limit]
     end = offset + len(page)
@@ -441,7 +457,7 @@ def one_lot(trade_id: str) -> dict:
                 "SELECT id, volume, date_exit, win_loss FROM trades "
                 "WHERE account_id = ? AND broker_order_ref = ? AND id != ?",
                 (lot["account_id"], lot["broker_order_ref"], lot["id"]))]
-        source = _source(conn)
+        source = _source(conn, lot["account_id"])
     lot["fee_detail"] = _json(lot.get("fee_detail"))
     return {
         "as_of": _now(),
@@ -466,9 +482,8 @@ def _option_rows(conn, query: dict) -> tuple[list[dict], int]:
     """Closed option round trips shaped like a closed lot (as PORT → ANALYTICS
     folds them in). Second value: matches whose closing price was never
     recorded — left out, because unknown is not break-even."""
-    where, params = [], []
-    if query["account_id"]:
-        where.append("v.account_id = ?"); params.append(query["account_id"])
+    scope_sql, params = account_scope.where(query["account_id"], "v.account_id")
+    where = [scope_sql]
     if query["symbol"]:
         where.append("UPPER(v.underlying) = ?"); params.append(query["symbol"])
     lo, hi = query["date_from"] or "0000-00-00", query["date_to"] or "9999-99-99"
@@ -616,8 +631,8 @@ def lot_stats(*, group_by: str = "none", symbol: Optional[str] = None,
                 rows += opts
                 options_in = True
         if not rows and query["symbol"]:
-            notes.append(_symbol_note(conn, query["symbol"]))
-        source = _source(conn)
+            notes.append(_symbol_note(conn, query["symbol"], query["account_id"]))
+        source = _source(conn, query["account_id"])
 
         buckets: dict[tuple[str, str], list[dict]] = defaultdict(list)
         for r in rows:
@@ -696,9 +711,8 @@ def option_history(*, underlying: Optional[str] = None, account_id: Optional[str
     sym = underlying.strip().upper() if underlying and underlying.strip() else None
     with get_db() as conn:
         account_id = _check_account(conn, account_id)
-        where, params = [], []
-        if account_id:
-            where.append("account_id = ?"); params.append(account_id)
+        scope_sql, params = account_scope.where(account_id)
+        where = [scope_sql]
         if sym:
             where.append("UPPER(underlying) = ?"); params.append(sym)
         clause = " WHERE " + " AND ".join(where) if where else ""
@@ -763,20 +777,24 @@ def option_history(*, underlying: Optional[str] = None, account_id: Optional[str
 
 # ── coverage ─────────────────────────────────────────────────────────────────
 
-def coverage() -> dict:
+def coverage(account_id: Optional[str] = None) -> dict:
+    """What exists in one book — the personal book unless a fund is named."""
     with get_db() as conn:
+        account_id = _check_account(conn, account_id)
+        sc, sp = account_scope.where(account_id)
+        tsc, _ = account_scope.where(account_id, "t.account_id")
         rows = [dict(r) for r in conn.execute(
             "SELECT account_id, symbol, resolved_symbol, market, currency, win_loss, date_entry, "
-            "date_exit, strategy_name, sector, note FROM trades")]
-        names = _accounts(conn)
-        source = _source(conn)
-        opt_fills = conn.execute("SELECT COUNT(*) FROM option_trades").fetchone()[0]
-        opt_closed = conn.execute("SELECT COUNT(*) FROM v_option_realized").fetchone()[0]
-        opt_open = conn.execute("SELECT COUNT(*) FROM v_option_open_lots").fetchone()[0]
+            f"date_exit, strategy_name, sector, note FROM trades WHERE {sc}", sp)]
+        names = _accounts(conn, account_id)
+        source = _source(conn, account_id)
+        opt_fills = conn.execute(f"SELECT COUNT(*) FROM option_trades WHERE {sc}", sp).fetchone()[0]
+        opt_closed = conn.execute(f"SELECT COUNT(*) FROM v_option_realized WHERE {sc}", sp).fetchone()[0]
+        opt_open = conn.execute(f"SELECT COUNT(*) FROM v_option_open_lots WHERE {sc}", sp).fetchone()[0]
         opt_under = [r[0] for r in conn.execute(
             "SELECT DISTINCT UPPER(c.underlying) FROM option_trades t "
-            "JOIN option_contracts c ON c.contract_id = t.contract_id ORDER BY 1")]
-        dividends = conn.execute("SELECT COUNT(*) FROM dividends").fetchone()[0]
+            f"JOIN option_contracts c ON c.contract_id = t.contract_id WHERE {tsc} ORDER BY 1", sp)]
+        dividends = conn.execute(f"SELECT COUNT(*) FROM dividends WHERE {sc}", sp).fetchone()[0]
 
     def _span(group: list[dict]) -> dict:
         entries = sorted(str(r["date_entry"])[:10] for r in group if r.get("date_entry"))
@@ -841,8 +859,8 @@ def coverage() -> dict:
 # ── endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("/coverage")
-def get_coverage():
-    return coverage()
+def get_coverage(account_id: Optional[str] = Query(None)):
+    return coverage(account_id)
 
 
 @router.get("/trades")

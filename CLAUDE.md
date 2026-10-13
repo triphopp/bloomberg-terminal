@@ -103,6 +103,7 @@ be negative-cached, or "empty = expired" re-fires them on every request.
 ## Rules
 - Never fetch Yahoo Finance directly from Next.js — always go through the Python backend
 - Never reintroduce `@upstash/redis`, `yahoo-finance2`, or any top-level scheduler singleton
+- **Which accounts a request is about is decided in `backend/account_scope.py` and nowhere else** (2026-10-13): `account_id` empty / `all` = the personal book (accounts with no `fund_id`), `fund:<id>` = one fund's accounts, anything else = that account. Never write `account_id != "all"` or skip the WHERE clause for "all" — use `account_scope.where()` / `and_where()` / `accounts_where()` / `matcher()`. A fund's money must never be summed into the personal book. `tests/test_account_scope_rule.py` fails on a hand-written test (a stored label is marked `# scope-ok: <reason>`); a new endpoint that takes `account_id` goes into `PROBES` of `tests/test_fund_isolation.py`. Plan: `memory/plans/fund-book.md`
 - Backend is modular: `main.py` (app init) + `config.py` + `db.py` + `routers/*.py`
 - State lives in Jotai atoms (`components/bloomberg/atoms/index.ts`) + React Query for server data
 - Native `<select>` menus must use the app-wide popup palette in `styles/globals.css` (`color-scheme` plus explicit `<option>` foreground/background, with light/forced-colors variants). Do not style only the closed select with light text on a transparent background: Windows can render its popup with a light system background. Verify new selectors in DCF/IV-style panels on Windows and Mac when available.

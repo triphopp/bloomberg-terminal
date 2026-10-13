@@ -10,6 +10,8 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+import account_scope
+
 from analytics.svi import fit_raw_svi
 
 from analytics.sd_bands import (
@@ -182,9 +184,9 @@ async def compute_payoff(body: PayoffIn):
 async def list_option_trades(account_id: str | None = Query(None), limit: int = Query(200)):
     """Every execution, newest first, with the greeks captured at each one."""
     where, params = ["1=1"], []
-    if account_id and account_id != "all":
-        where.append("t.account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "t.account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
     params.append(max(1, limit))
     with get_db() as conn:
         rows = conn.execute(
@@ -1068,10 +1070,8 @@ async def _capture_trade_greeks(conn, trade_id: str, underlying: str, expiry: st
 async def list_option_positions(account_id: str | None = Query(None), status: str = "open"):
     """Open lots (status='open') or realized matches (anything else)."""
     if status == "open":
-        where, params = ["1=1"], []
-        if account_id:
-            where.append("account_id = ?")
-            params.append(account_id)
+        _scope_sql, params = account_scope.where(account_id)
+        where = [_scope_sql]
         with get_db() as conn:
             rows = conn.execute(
                 f"SELECT *, lot_id AS id FROM v_option_open_lots "
@@ -1080,10 +1080,8 @@ async def list_option_positions(account_id: str | None = Query(None), status: st
             ).fetchall()
         return [dict(r) for r in rows]
 
-    where, params = ["1=1"], []
-    if account_id:
-        where.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, params = account_scope.where(account_id)
+    where = [_scope_sql]
     with get_db() as conn:
         rows = conn.execute(
             f"SELECT * FROM v_option_realized WHERE {' AND '.join(where)} "
@@ -1823,13 +1821,10 @@ async def get_portfolio_greeks(
     - expiry timeline
     """
     with get_db() as conn:
-        if account_id:
-            rows = conn.execute(
-                "SELECT *, lot_id AS id FROM v_option_open_lots WHERE account_id = ?",
-                (account_id,),
-            ).fetchall()
-        else:
-            rows = conn.execute("SELECT *, lot_id AS id FROM v_option_open_lots").fetchall()
+        _scope_sql, _scope_params = account_scope.where(account_id)
+        rows = conn.execute(
+            f"SELECT *, lot_id AS id FROM v_option_open_lots WHERE {_scope_sql}", _scope_params
+        ).fetchall()
 
     positions = [dict(r) for r in rows]
     if not positions:

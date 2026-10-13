@@ -15,6 +15,7 @@ import yfinance as yf  # yf.download with start/end dates — migrate when downl
 
 from fastapi import APIRouter, Query
 
+import account_scope
 from db import get_db
 from portfolio_currency import (
     realized_pnl_in_report,
@@ -60,9 +61,9 @@ def get_equity_curve(
     """Build equity curve from closed trades' realized P&L."""
     where = ["date_exit IS NOT NULL", "win_loss != 'P'"]
     params: list = []
-    if account_id != "all":
-        where.append("t.account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "t.account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
     if date_from:
         where.append("t.date_exit >= ?")
         params.append(date_from)
@@ -123,9 +124,8 @@ def get_equity_curve(
         open_rows = conn.execute(
             "SELECT t.*, a.currency AS acc_currency "
             "FROM trades t JOIN portfolio_accounts a ON t.account_id = a.id "
-            "WHERE t.win_loss = 'P'" +
-            (" AND t.account_id = ?" if account_id != "all" else ""),
-            [account_id] if account_id != "all" else [],
+            "WHERE t.win_loss = 'P'" + account_scope.and_where(account_id, "t.account_id")[0],
+            account_scope.and_where(account_id, "t.account_id")[1],
         ).fetchall()
     for r in open_rows:
         row = dict(r)
@@ -274,8 +274,7 @@ def get_holdings_timeline(
     base_currency: str = Query("THB"),
 ):
     """Monthly snapshot of open holdings grouped by sector/account/symbol."""
-    where_acct = " AND t.account_id = ?" if account_id != "all" else ""
-    params = [account_id] if account_id != "all" else []
+    where_acct, params = account_scope.and_where(account_id, "t.account_id")
 
     with get_db() as conn:
         rows = conn.execute(
@@ -428,9 +427,9 @@ def get_distribution(
     """Histogram of trade P&L distribution."""
     where = ["date_exit IS NOT NULL", "win_loss != 'P'"]
     params: list = []
-    if account_id != "all":
-        where.append("t.account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "t.account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
 
     with get_db() as conn:
         rows = conn.execute(

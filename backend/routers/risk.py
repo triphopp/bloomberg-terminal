@@ -18,6 +18,8 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 from fastapi import APIRouter, Query
+
+import account_scope
 from pydantic import BaseModel, Field
 
 from cache import TTLCache
@@ -1442,9 +1444,9 @@ def _open_positions_priced(account_id: Optional[str]) -> list[dict]:
     """Open lots (win_loss 'P') with `current_price` filled from the batch quote."""
     where = ["win_loss = 'P'"]
     params = []
-    if account_id and account_id != "all":
-        where.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
 
     with get_db() as conn:
         rows = conn.execute(
@@ -1485,7 +1487,7 @@ def _option_exposure(account_id: Optional[str], base: str) -> dict[str, tuple[fl
     out: dict[str, tuple[float, str, str]] = {}
     try:
         from portfolio_options import open_option_positions, option_currency
-        lots = open_option_positions(None if account_id in (None, "all") else account_id, base)
+        lots = open_option_positions(account_id, base)
     except Exception:
         return out
     for lot in lots:
@@ -1500,7 +1502,7 @@ def _option_exposure(account_id: Optional[str], base: str) -> dict[str, tuple[fl
 
 def _risk_extras(account_id: Optional[str], base: str, summ: Optional[dict] = None):
     """(cash, option exposure) for `_compute_portfolio_risk`'s NAV basis."""
-    cash = _guard_cash(account_id if account_id not in (None, "all") else None, base, summ)
+    cash = _guard_cash(account_id, base, summ)
     return float(cash or 0.0), _option_exposure(account_id, base)
 
 
@@ -1517,7 +1519,7 @@ def get_risk_metrics(
 
     try:
         from routers.portfolio_v2 import get_summary
-        summ = get_summary(base_currency=base_currency)
+        summ = get_summary(base_currency=base_currency, account_id=account_id)
     except Exception:
         summ = None
     cash, opt = _risk_extras(account_id, base_currency, summ)
@@ -1552,8 +1554,8 @@ def get_risk_metrics(
             daemon=True,
         ).start()
 
-    # Add account breakdown if "all"
-    if not account_id or account_id == "all":
+    # Add account breakdown for a whole book (the personal book or a fund)
+    if not account_scope.account_of(account_id):
         account_breakdown = {}
         acct_groups = {}
         for pos in positions:
@@ -2016,9 +2018,9 @@ def get_capm(
     """
     where_open = ["win_loss = 'P'"]
     params: list = []
-    if account_id and account_id != "all":
-        where_open.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "account_id")
+    where_open.append(_scope_sql)
+    params.extend(_scope_params)
 
     with get_db() as conn:
         rows = conn.execute(
@@ -2181,7 +2183,7 @@ def get_capm(
         "portfolio": _capm_for(positions, (returns or {}).get("total")),
     }
 
-    if not account_id or account_id == "all":
+    if not account_scope.account_of(account_id):
         groups: dict[str, list[dict]] = {}
         for pos in positions:
             groups.setdefault(pos["account_id"], []).append(pos)
@@ -2200,7 +2202,7 @@ def get_risk_history(
     days: int = Query(30),
 ):
     """30-day EWS signal history for heatmap visualization."""
-    acc = account_id if (account_id and account_id != "all") else "all"
+    acc = account_scope.label(account_id)
     with get_db() as conn:
         rows = conn.execute("""
             SELECT snapshot_date, today_return_pct, breach_count,
@@ -2228,7 +2230,7 @@ def export_risk_history(
 ):
     """Export full EWS history as CSV or JSON for offline analysis."""
     from fastapi.responses import PlainTextResponse
-    acc = account_id if (account_id and account_id != "all") else "all"
+    acc = account_scope.label(account_id)
     with get_db() as conn:
         rows = conn.execute("""
             SELECT snapshot_date, today_return_pct, breach_count,
@@ -2301,9 +2303,9 @@ def get_risk_parity_allocation(
     """Compute Risk Parity (ERC) optimal weights vs current weights."""
     where = ["win_loss = 'P'"]
     params = []
-    if account_id and account_id != "all":
-        where.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
 
     with get_db() as conn:
         rows = conn.execute(
@@ -2455,7 +2457,7 @@ def get_risk_balance(
     if level not in BALANCE_LEVELS:
         raise HTTPException(status_code=400, detail=f"level must be one of {BALANCE_LEVELS}")
     base = report_currency(base_currency)
-    scope = account_id if account_id and account_id != "all" else None
+    scope = None if account_scope.is_all(account_id) else account_id
     budget = _risk_budget_saved(scope)
     saved = budget.of(level)
     key = (f"{scope or 'all'}:{base}:{lookback}:{cash}:{_mc_book_stamp(scope)}:{level}:{target}:"
@@ -2617,9 +2619,9 @@ def stress_test(
 
     where = ["win_loss = 'P'"]
     params = []
-    if account_id and account_id != "all":
-        where.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
 
     with get_db() as conn:
         rows = conn.execute(
@@ -2693,9 +2695,9 @@ def _guard_lots(account_id: Optional[str], open_only: bool) -> tuple[list[dict],
     where, params = ["t.win_loss = 'P'" if open_only else "t.win_loss != 'P'"], []
     if not open_only:
         where.append("t.price_exit > 0")
-    if account_id and account_id != "all":
-        where.append("t.account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "t.account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
     with get_db() as conn:
         rows = conn.execute(
             "SELECT t.*, a.currency acc_currency FROM trades t "
@@ -2739,9 +2741,9 @@ def _guard_overrides(account_id: Optional[str], active_only: bool = True) -> lis
     clauses, params = [], []
     if active_only:
         clauses.append("cleared_at IS NULL")
-    if account_id and account_id != "all":
-        clauses.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "account_id")
+    clauses.append(_scope_sql)
+    params.extend(_scope_params)
     if clauses:
         q += " WHERE " + " AND ".join(clauses)
     with get_db() as conn:
@@ -2759,10 +2761,10 @@ def _guard_cash(account_id: Optional[str], base: str, summ: Optional[dict] = Non
     if summ is None:
         try:
             from routers.portfolio_v2 import get_summary
-            summ = get_summary(base_currency=base)
+            summ = get_summary(base_currency=base, account_id=account_id)
         except Exception:
             return None
-    if not account_id or account_id == "all":
+    if not account_scope.account_of(account_id):
         v = summ.get("total_cash_base")
         return float(v) if v is not None else None
     for a in summ.get("accounts") or []:
@@ -2787,7 +2789,7 @@ def _guard_nav_drawdown(account_id: Optional[str], base: str) -> Optional[float]
     failed = False
     try:
         from routers.portfolio_v2 import get_nav_index
-        d = get_nav_index(account_id=account_id if account_id != "all" else None,
+        d = get_nav_index(account_id=None if account_scope.is_all(account_id) else account_id,
                           days=365, benchmark="SPY", base_currency=base)
         idx = [float(p["port_index"]) for p in d.get("points") or []
                if p.get("port_index") is not None]
@@ -2988,7 +2990,7 @@ def get_guard_size(
         import broker_fees
         fee_fn = None
         profile = None
-        if account_id and account_id != "all":
+        if account_scope.account_of(account_id):
             with get_db() as conn:
                 profile = broker_fees.profile_for(conn, account_id, ccy)
         if profile:
@@ -3356,9 +3358,7 @@ def _mc_book_stamp(account_id: Optional[str]) -> str:
     next run instead of waiting out the 10 minutes."""
     import hashlib
 
-    where, params = "", []
-    if account_id:
-        where, params = " AND account_id = ?", [account_id]
+    where, params = account_scope.and_where(account_id)
     with get_db() as conn:
         rows = [tuple(r) for r in conn.execute(
             "SELECT account_id, symbol, ROUND(SUM(volume), 7) FROM trades "
@@ -3389,7 +3389,7 @@ def _mc_inputs(account_id: Optional[str], base: str, fresh: bool = False) -> dic
     positions = _open_positions_priced(account_id)
     try:
         from routers.portfolio_v2 import get_summary
-        summ = get_summary(base_currency=base)
+        summ = get_summary(base_currency=base, account_id=account_id)
     except Exception:
         summ = None
     cash, opt = _risk_extras(account_id, base, summ)
@@ -3510,7 +3510,7 @@ def get_monte_carlo(
     import port_mc
 
     base = report_currency(base_currency)
-    scope = account_id if account_id and account_id != "all" else None
+    scope = None if account_scope.is_all(account_id) else account_id
     inp = _mc_inputs(scope, base, fresh)
     if not inp.get("symbols"):
         return {"holdings": [], "note": inp.get("note", "no open positions"),
@@ -3574,9 +3574,7 @@ def _rebalance_rules():
 
 def _rebalance_dates(account_id: Optional[str]) -> tuple[dict, dict]:
     """symbol → first open-lot entry date, symbol → last sell date (closed lots)."""
-    acct, params = "", []
-    if account_id and account_id != "all":
-        acct, params = " AND account_id = ?", [account_id]
+    acct, params = account_scope.and_where(account_id)
     with get_db() as conn:
         first = {r["s"]: r["d"] for r in conn.execute(
             "SELECT UPPER(symbol) s, MIN(date_entry) d FROM trades "
@@ -3644,7 +3642,7 @@ def _rebalance_plan(account_id: Optional[str], fresh: bool = False) -> dict:
     # the same decision in ALL.
     import risk_journal
     with get_db() as conn:
-        holds = risk_journal.rebalance_holds(conn)
+        holds = risk_journal.rebalance_holds(conn, account_id)
     out = rebalance.apply_holds(out, holds, today)
     out["base_currency"] = "THB"
     _rebal_cache.set(key, out)
@@ -3815,7 +3813,7 @@ def get_bear_paths(
     import bear_paths
 
     base = report_currency(base_currency)
-    scope = account_id if account_id and account_id != "all" else None
+    scope = None if account_scope.is_all(account_id) else account_id
     inp = _mc_inputs(scope, base, fresh)
     if not inp.get("symbols"):
         return {"horizons": [], "note": inp.get("note", "no open positions"),
@@ -3859,7 +3857,7 @@ def _risk_book(account_id: Optional[str], base_currency: str) -> dict:
     positions = _open_positions_priced(account_id)
     try:
         from routers.portfolio_v2 import get_summary
-        summ = get_summary(base_currency=base)
+        summ = get_summary(base_currency=base, account_id=account_id)
     except Exception:
         summ = None
     cash, opt = _risk_extras(account_id, base, summ)
@@ -4139,7 +4137,7 @@ def _record_var_forecast(account_id: str = "all", confidence: float = 0.95) -> O
             (today, account_id),
         ).fetchone():
             return None
-    positions = _open_positions_priced(None if account_id == "all" else account_id)
+    positions = _open_positions_priced(account_id)
     cash, opt = _risk_extras(account_id, "THB")
     m = _compute_portfolio_risk(positions, 252, confidence, "THB", cash_base=cash, extra_exposure=opt)
     assets = m.get("assets") or []
