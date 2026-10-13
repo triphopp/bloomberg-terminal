@@ -83,6 +83,7 @@ memory/
 | [Request optimization](plans/completed/request-optimization.md) | ✅ done 2026-09-28 |
 | [Central DB — Postgres primary + local mirrors](plans/central-db-cloud-primary.md) | 🔄 P0 done (PR #71); mac adopt pending; next P1 version/outbox on SQLite |
 | [Chart render performance](plans/chart-render-perf.md) | 📋 planning — tick O(1), columns, chunked history, cache tiers |
+| [Chart indicator engine (columnar, phase 1)](plans/chart-indicator-engine.md) | 🔄 code complete 2026-10-12, PR open — typed columns, kernels, tail-only output; busy chart tick 10.8 ms → 0.5 ms at 10,000 bars |
 | [Unified Trade Entry](plans/unified-trade-entry.md) | 🔄 ENTRY รวมหุ้น + option, สลิป option OCR |
 | [PORT Ledger v2 — wallet, period close, SHADOW projection](plans/port-ledger-v2.md) | 🔄 in progress 2026-09-29 — cash/entry redesign |
 | [PORT Accounting Ledger](plans/port-accounting-ledger.md) | 🔄 reconstructed preview + checks; no posted journal / read switch |

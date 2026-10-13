@@ -60,6 +60,12 @@ export { IntervalPicker, TimeframeControls, TimeframeRow } from "./TimeframeRow"
 export type { TimeframeRowProps } from "./TimeframeRow";
 export { useAnchoredPanel } from "./useAnchoredPanel";
 
+// Indicator engine — typed columns in, the chart builds the points
+// (rules 7–10 in indicators/index.ts)
+export { barColumns } from "./columns.ts";
+export type { BarColumns, BarsDelta } from "./columns.ts";
+export { columnar } from "./series-columns.ts";
+
 // Types
 export type {
   OhlcvBar,
@@ -76,6 +82,7 @@ export type {
   IndicatorRegistryEntry,
   IndicatorParam,
   IndicatorSeriesOutput,
+  SeriesColumns,
   HeatmapColumn,
   HeatmapColorScale,
   HeatmapRowLabel,

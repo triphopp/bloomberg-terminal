@@ -28,6 +28,34 @@
  *     key (WeakMap on `data`) misses every time. See bollinger-fit.ts.
  *  6. A deliberate exception carries `// perf-ok: <reason>` — the test then
  *     lets it through, and a reviewer can see why.
+ *
+ * ── The columnar engine (2026-10-12) ───────────────────────────────────────
+ *
+ * The arithmetic was never the cost: at 10,000 bars an EMA spent 14 µs on it
+ * and 200 µs pulling `close` out of the bar objects and building a point per
+ * bar — after which the chart compared every point with the previous tick's
+ * to send one. So an indicator now works in typed columns end to end:
+ *
+ *  7. Read the bars through the shared column view (../columns.ts — `bars.close`
+ *     is a Float64Array built once per bar array for every indicator). Never
+ *     `data.map((d) => d.close)`.
+ *  8. Return `SeriesColumns` — `...columnar((bars, config) => [...])` from
+ *     ../series-columns.ts gives the indicator both `columns` and `compute`.
+ *     Numeric cores take and return Float64Array, NaN = no value
+ *     (../kernels.ts, ../rolling.ts). The chart builds the points, and on a
+ *     live tick only the last one or two.
+ *  9. Set `causal: true` ONLY when slot i depends on bars 0..i and the config,
+ *     nothing else — the chart then sends the tail without looking at the
+ *     rest. Leave it off when in doubt: the columns are compared instead
+ *     (a loop over typed arrays), which is nearly as fast and cannot be wrong.
+ *     Not causal: anything fitted on the whole history, a colour that depends
+ *     on the next bar, a value placed on an earlier bar, "does any bar have
+ *     volume". `__tests__/refill.test.ts` pins the list and replays ticks
+ *     through every columnar indicator.
+ * 10. An indicator that repaints or carries labels (zigzag, S/D zones) or is a
+ *     heatmap keeps plain `compute()` and the point-by-point path.
+ *
+ * `npm run bench:chart` prints what a tick costs each indicator.
  */
 
 import { BB_VOLUME_PARAMS } from "../bb-volume-overlay.ts";

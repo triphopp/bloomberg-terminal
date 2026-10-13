@@ -18,13 +18,14 @@
  * except cc and yz ignores gaps entirely.
  */
 
-import type { ChartIndicator, IndicatorFactory, IndicatorSeriesOutput, OhlcvBar } from "../types";
+import { columnar } from "../series-columns.ts";
+import type { ChartIndicator, IndicatorFactory, SeriesColumns } from "../types";
 import {
   RV_ESTIMATOR_OPTIONS,
   RV_ESTIMATOR_SHORT,
   type RvEstimator,
-  calcRealizedVol,
-  inferPeriodsPerYear,
+  periodsPerYear,
+  realizedVol,
 } from "./rv-core.ts";
 
 const LINE_COLORS = ["#26c6da", "#ffa726", "#ab47bc"]; // fast, slow, long
@@ -63,35 +64,32 @@ export const createRealizedVol: IndicatorFactory = (overrides = {}) => {
     ],
     config: { fast, slow, long, estimator },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
+    ...columnar((bars, config) => {
       const est = normEstimator(config.estimator);
       const windows = [config.fast as number, config.slow as number, config.long as number];
-      const ppy = inferPeriodsPerYear(data);
+      const ppy = periodsPerYear(bars);
       const scaleId = `realized-vol-${est}`;
 
-      const series: IndicatorSeriesOutput[] = [];
+      const series: SeriesColumns[] = [];
       windows.forEach((period, idx) => {
         if (!Number.isFinite(period) || period < 2) return; // 0 = line disabled
-        const rv = calcRealizedVol(data, Math.round(period), est, ppy);
-        const points = [];
-        for (let i = 0; i < data.length; i++) {
-          const v = rv[i];
-          if (v == null) continue;
-          points.push({ time: data[i].time, value: v });
-        }
         series.push({
           id: `${scaleId}-${Math.round(period)}`,
           label: `RV ${Math.round(period)}`,
           type: "line",
           color: LINE_COLORS[idx],
           lineWidth: idx === 0 ? 1 : 2,
-          data: points,
+          values: realizedVol(bars, Math.round(period), est, ppy),
+          from: 0,
+          emit: "valued",
           priceScaleId: scaleId,
         });
       });
 
       return series;
-    },
+    }),
+    // Not `causal`: the annualisation factor is inferred from the first 200
+    // bar gaps, so on a short history a new bar can rescale every point.
   };
 
   return indicator;

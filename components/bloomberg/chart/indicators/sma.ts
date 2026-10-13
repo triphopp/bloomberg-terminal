@@ -2,15 +2,14 @@
  * SMA (Simple Moving Average) Indicator
  */
 
+import { boxed } from "../kernels.ts";
 import { rollingMean } from "../rolling.ts";
-import type { ChartIndicator, IndicatorFactory, IndicatorSeriesOutput, OhlcvBar } from "../types";
+import { columnar } from "../series-columns.ts";
+import type { ChartIndicator, IndicatorFactory } from "../types";
 
 /** Null during warm-up; NaN where the window holds a NaN (as the plain loop gave). */
 export function calcSMA(values: number[], period: number): (number | null)[] {
-  const mean = rollingMean(values, period);
-  const result: (number | null)[] = new Array(values.length);
-  for (let i = 0; i < values.length; i++) result[i] = i < period - 1 ? null : mean[i];
-  return result;
+  return boxed(rollingMean(values, period), period - 1);
 }
 
 export const createSMA: IndicatorFactory = (overrides = {}) => {
@@ -50,12 +49,9 @@ export const createSMA: IndicatorFactory = (overrides = {}) => {
     ],
     config: { period, color },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
+    ...columnar((bars, config) => {
       const p = config.period as number;
       const c = config.color as string;
-      const closes = data.map((d) => d.close);
-      const smaValues = calcSMA(closes, p);
-
       return [
         {
           id: `sma-${p}-line`,
@@ -63,13 +59,15 @@ export const createSMA: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: c,
           lineWidth: 1,
-          data: data.flatMap((d, i) => {
-            const v = smaValues[i];
-            return v == null ? [] : [{ time: d.time, value: v }];
-          }),
+          values: rollingMean(bars.close, p),
+          // Every bar from the first full window on — a window holding a NaN
+          // sends a NaN point, as the boxed version did.
+          from: p - 1,
+          emit: "all",
         },
       ];
-    },
+    }),
+    causal: true,
   };
 
   return indicator;

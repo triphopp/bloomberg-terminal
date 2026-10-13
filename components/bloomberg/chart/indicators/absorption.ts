@@ -19,53 +19,56 @@
  * in the middle of nowhere is usually just noise.
  */
 
+import type { BarColumns } from "../columns.ts";
 import { SortedWindow } from "../rolling.ts";
-import type {
-  ChartIndicator,
-  HistogramDataPoint,
-  IndicatorFactory,
-  IndicatorSeriesOutput,
-  OhlcvBar,
-} from "../types";
+import { columnar } from "../series-columns.ts";
+import type { ChartIndicator, IndicatorFactory } from "../types";
 
 const VOL_MULT = 1.5; // volume ≥ 1.5× median = abnormal effort
 const RANGE_MULT = 0.9; // range ≤ 0.9× median = compressed result
 const COMP_CAP = 5; // cap compression so zero-range bars don't explode the scale
 
-interface AbsorptionPoint {
-  score: number;
-  flagged: boolean;
-  bullish: boolean; // close in upper half → selling absorbed
+interface AbsorptionColumns {
+  score: Float64Array;
+  /** 1 where the bar has a score. */
+  scored: Uint8Array;
+  /** Index into `PALETTE`: unflagged · selling absorbed · buying absorbed. */
+  kind: Uint8Array;
 }
 
-function calcAbsorption(data: OhlcvBar[], window: number): (AbsorptionPoint | null)[] {
-  const result: (AbsorptionPoint | null)[] = new Array(data.length).fill(null);
+/** Unflagged bars render dim; a flagged one by which side was absorbed. */
+const PALETTE = ["rgba(120,120,120,0.30)", "#26a69a", "#ef5350"] as const;
+
+function calcAbsorption(bars: BarColumns, window: number): AbsorptionColumns {
+  const n = bars.length;
+  const { high, low, close, volume } = bars;
+  const score = new Float64Array(n).fill(Number.NaN);
+  const scored = new Uint8Array(n);
+  const kind = new Uint8Array(n);
 
   // Positive volumes / ranges of bars [i - window, i), kept sorted as the
   // window slides — the median is a lookup, not a sort per bar.
   const vols = new SortedWindow(window);
   const ranges = new SortedWindow(window);
-  const volAt = (j: number) => data[j].volume ?? 0;
-  const rangeAt = (j: number) => data[j].high - data[j].low;
-  for (let j = 0; j < Math.min(window, data.length); j++) {
-    if (volAt(j) > 0) vols.insert(volAt(j));
+  const rangeAt = (j: number) => high[j] - low[j];
+  for (let j = 0; j < Math.min(window, n); j++) {
+    if (volume[j] > 0) vols.insert(volume[j]);
     if (rangeAt(j) > 0) ranges.insert(rangeAt(j));
   }
 
-  for (let i = window; i < data.length; i++) {
+  for (let i = window; i < n; i++) {
     if (i > window) {
       // Slide: bar i-1 enters, bar i-1-window leaves.
-      const inV = volAt(i - 1);
+      const inV = volume[i - 1];
       const inR = rangeAt(i - 1);
-      const outV = volAt(i - 1 - window);
+      const outV = volume[i - 1 - window];
       const outR = rangeAt(i - 1 - window);
       if (outV > 0) vols.remove(outV);
       if (outR > 0) ranges.remove(outR);
       if (inV > 0) vols.insert(inV);
       if (inR > 0) ranges.insert(inR);
     }
-    const bar = data[i];
-    const vol = bar.volume ?? 0;
+    const vol = volume[i];
     if (vol <= 0) continue;
 
     if (vols.size < window / 2 || ranges.size < window / 2) continue;
@@ -74,18 +77,20 @@ function calcAbsorption(data: OhlcvBar[], window: number): (AbsorptionPoint | nu
     const medRange = ranges.median();
     if (medVol <= 0 || medRange <= 0) continue;
 
-    const range = bar.high - bar.low;
+    const range = rangeAt(i);
     const volX = vol / medVol;
     const comp = range > 0 ? Math.min(COMP_CAP, medRange / range) : COMP_CAP;
-    const score = volX * comp;
 
     const flagged = volX >= VOL_MULT && range <= medRange * RANGE_MULT;
-    const closePos = range > 0 ? (bar.close - bar.low) / range : 0.5;
+    // Close in the upper half → selling absorbed (bullish).
+    const closePos = range > 0 ? (close[i] - low[i]) / range : 0.5;
 
-    result[i] = { score, flagged, bullish: closePos >= 0.5 };
+    score[i] = volX * comp;
+    scored[i] = 1;
+    kind[i] = flagged ? (closePos >= 0.5 ? 1 : 2) : 0;
   }
 
-  return result;
+  return { score, scored, kind };
 }
 
 export const createAbsorption: IndicatorFactory = (overrides = {}) => {
@@ -112,29 +117,23 @@ export const createAbsorption: IndicatorFactory = (overrides = {}) => {
     ],
     config: { window },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
+    ...columnar((bars, config) => {
       const w = config.window as number;
-      const values = calcAbsorption(data, w);
-
-      const points: HistogramDataPoint[] = [];
-      for (let i = 0; i < data.length; i++) {
-        const v = values[i];
-        if (v == null) continue;
-        let color: string;
-        if (v.flagged) color = v.bullish ? "#26a69a" : "#ef5350";
-        else color = "rgba(120,120,120,0.30)";
-        points.push({ time: data[i].time, value: v.score, color });
-      }
+      const { score, scored, kind } = calcAbsorption(bars, w);
 
       return [
         {
           id: "absorption-hist",
           label: "Absorption",
           type: "histogram",
-          data: points,
+          values: score,
+          from: 0,
+          emit: scored,
+          colors: kind,
+          palette: PALETTE,
         },
       ];
-    },
+    }),
   };
 
   return indicator;

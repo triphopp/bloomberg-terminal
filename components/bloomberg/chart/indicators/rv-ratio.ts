@@ -16,21 +16,18 @@
  * the ratio is unit-free — comparable across symbols and timeframes.
  */
 
-import type {
-  ChartIndicator,
-  HistogramDataPoint,
-  IndicatorFactory,
-  IndicatorSeriesOutput,
-  OhlcvBar,
-  SeriesDataPoint,
-} from "../types";
+import { columnar } from "../series-columns.ts";
+import type { ChartIndicator, IndicatorFactory } from "../types";
 import {
   RV_ESTIMATOR_OPTIONS,
   RV_ESTIMATOR_SHORT,
   type RvEstimator,
-  calcRealizedVol,
-  inferPeriodsPerYear,
+  periodsPerYear,
+  realizedVol,
 } from "./rv-core.ts";
+
+/** Bar colours by index: in between · expansion · compression. */
+const RATIO_PALETTE = ["rgba(120,144,156,0.45)", "#ff9800", "#26c6da"] as const;
 
 function normEstimator(v: unknown): RvEstimator {
   const s = String(v ?? "yz") as RvEstimator;
@@ -82,28 +79,32 @@ export const createRVRatio: IndicatorFactory = (overrides = {}) => {
     ],
     config: { fast, slow, expansion, compression, estimator },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
+    ...columnar((bars, config) => {
       const f = Math.round(config.fast as number);
       const s = Math.round(config.slow as number);
       const hi = config.expansion as number;
       const lo = config.compression as number;
       const est = normEstimator(config.estimator);
       const scaleId = `rv-ratio-${est}-${f}-${s}`;
+      const n = bars.length;
 
-      const ppy = inferPeriodsPerYear(data);
-      const rvFast = calcRealizedVol(data, f, est, ppy);
-      const rvSlow = calcRealizedVol(data, s, est, ppy);
+      const ppy = periodsPerYear(bars);
+      const rvFast = realizedVol(bars, f, est, ppy);
+      const rvSlow = realizedVol(bars, s, est, ppy);
 
-      const bars: HistogramDataPoint[] = [];
-      const refLine: SeriesDataPoint[] = [];
-      for (let i = 0; i < data.length; i++) {
+      const ratios = new Float64Array(n).fill(Number.NaN);
+      const has = new Uint8Array(n);
+      const zones = new Uint8Array(n);
+      const refLine = new Float64Array(n).fill(Number.NaN);
+      for (let i = 0; i < n; i++) {
         const a = rvFast[i];
         const b = rvSlow[i];
-        if (a == null || b == null || b === 0) continue;
+        if (Number.isNaN(a) || Number.isNaN(b) || b === 0) continue;
         const ratio = a / b;
-        const color = ratio >= hi ? "#ff9800" : ratio <= lo ? "#26c6da" : "rgba(120,144,156,0.45)";
-        bars.push({ time: data[i].time, value: ratio, color });
-        refLine.push({ time: data[i].time, value: 1 });
+        ratios[i] = ratio;
+        has[i] = 1;
+        zones[i] = ratio >= hi ? 1 : ratio <= lo ? 2 : 0;
+        refLine[i] = 1;
       }
 
       return [
@@ -111,7 +112,11 @@ export const createRVRatio: IndicatorFactory = (overrides = {}) => {
           id: `${scaleId}-hist`,
           label: `RV ${f}/${s}`,
           type: "histogram",
-          data: bars,
+          values: ratios,
+          from: 0,
+          emit: has,
+          colors: zones,
+          palette: RATIO_PALETTE,
           priceScaleId: scaleId,
         },
         {
@@ -120,11 +125,14 @@ export const createRVRatio: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "rgba(158,158,158,0.5)",
           lineWidth: 1,
-          data: refLine,
+          values: refLine,
+          from: 0,
+          emit: has,
           priceScaleId: scaleId,
         },
       ];
-    },
+    }),
+    // Not `causal` — see realized-vol.ts.
   };
 
   return indicator;

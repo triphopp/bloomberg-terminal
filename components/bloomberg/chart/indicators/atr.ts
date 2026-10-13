@@ -3,6 +3,8 @@
  * ATR alone has no direction. The green/red rule is a configurable heuristic,
  * evaluated causally; a still-forming candle may change before its close.
  */
+import { type BarColumns, barColumns } from "../columns.ts";
+import { columnar } from "../series-columns.ts";
 import type { IndicatorFactory, IndicatorParam, OhlcvBar } from "../types";
 
 export const ATR_REGIME_COLORS = {
@@ -109,58 +111,94 @@ export function validAtrInputs(config: Record<string, unknown>): boolean {
   });
 }
 
-const cache = new WeakMap<readonly OhlcvBar[], Map<string, AtrRegimePoint[]>>();
+const STATES = ["accumulate", "avoid", "unknown"] as const;
+
+/**
+ * The regime as columns, one slot per bar. NaN stands for "not known yet" in
+ * the number columns (none of them can be NaN otherwise: a bar that passes
+ * the validity check has finite prices and a positive close); the two flags
+ * are 1 / 0 / -1 for true / false / unknown.
+ */
+export interface AtrRegimeColumns {
+  atr: Float64Array;
+  atrPercent: Float64Array;
+  baselinePercent: Float64Array;
+  thresholdPercent: Float64Array;
+  thresholdAbsolute: Float64Array;
+  ema: Float64Array;
+  lowVolatility: Int8Array;
+  uptrend: Int8Array;
+  /** Index into `STATES`: accumulate · avoid · unknown. */
+  state: Uint8Array;
+}
+
+const columnsCache = new WeakMap<BarColumns, Map<string, AtrRegimeColumns>>();
 
 /** O(N), cached by immutable bars + settings. No future or full-sample statistics. */
-export function calcAtrRegime(
-  data: readonly OhlcvBar[],
+export function atrRegimeColumns(
+  bars: BarColumns,
   overrides: Record<string, unknown> = {}
-): AtrRegimePoint[] {
+): AtrRegimeColumns {
   const config = resolveAtrConfig(overrides);
   const key = JSON.stringify(config);
-  const cached = cache.get(data)?.get(key);
+  const cached = columnsCache.get(bars)?.get(key);
   if (cached) return cached;
   const { period, lookback, maxRatio, trendPeriod, slopeBars } = config;
-  const points: AtrRegimePoint[] = [];
-  let previousClose: number | null = null;
-  let atr: number | null = null;
-  let ema: number | null = null;
+  const n = bars.length;
+  const { high: highs, low: lows, close: closes } = bars;
+  const atrs = new Float64Array(n);
+  const atrPercents = new Float64Array(n);
+  const baselines = new Float64Array(n);
+  const thresholds = new Float64Array(n);
+  const thresholdAbsolutes = new Float64Array(n);
+  const emas = new Float64Array(n);
+  const lowVolatilities = new Int8Array(n);
+  const uptrends = new Int8Array(n);
+  const states = new Uint8Array(n);
+  // NaN = none yet, in every running value below.
+  let previousClose = Number.NaN;
+  let atr = Number.NaN;
+  let ema = Number.NaN;
   let validBars = 0;
   let trSeed = 0;
   let emaSeed = 0;
   let baselineSum = 0;
   let baselineCount = 0;
-  for (let i = 0; i < data.length; i++) {
-    const { time, high, low, close } = data[i];
-    const previousAtr = points[i - 1]?.atrPercent;
-    const expiredAtr = points[i - lookback - 1]?.atrPercent;
-    if (previousAtr != null) {
+  for (let i = 0; i < n; i++) {
+    const high = highs[i];
+    const low = lows[i];
+    const close = closes[i];
+    const previousAtr = i >= 1 ? atrPercents[i - 1] : Number.NaN;
+    const expiredAtr = i - lookback - 1 >= 0 ? atrPercents[i - lookback - 1] : Number.NaN;
+    if (!Number.isNaN(previousAtr)) {
       baselineSum += previousAtr;
       baselineCount++;
     }
-    if (expiredAtr != null) {
+    if (!Number.isNaN(expiredAtr)) {
       baselineSum -= expiredAtr;
       baselineCount--;
     }
-    const baselinePercent = baselineCount === lookback ? Math.max(0, baselineSum / lookback) : null;
+    const baselinePercent =
+      baselineCount === lookback ? Math.max(0, baselineSum / lookback) : Number.NaN;
     const valid =
-      [high, low, close].every(Number.isFinite) &&
+      Number.isFinite(high) &&
+      Number.isFinite(low) &&
+      Number.isFinite(close) &&
       close > 0 &&
       low > 0 &&
       high >= low &&
       high >= close &&
       low <= close;
     if (valid) {
-      const tr =
-        previousClose == null
-          ? high - low
-          : Math.max(high - low, Math.abs(high - previousClose), Math.abs(low - previousClose));
+      const tr = Number.isNaN(previousClose)
+        ? high - low
+        : Math.max(high - low, Math.abs(high - previousClose), Math.abs(low - previousClose));
       validBars++;
-      if (atr == null) {
+      if (Number.isNaN(atr)) {
         trSeed += tr;
         if (validBars === period) atr = trSeed / period;
       } else atr = (atr * (period - 1) + tr) / period;
-      if (ema == null) {
+      if (Number.isNaN(ema)) {
         emaSeed += close;
         if (validBars === trendPeriod) ema = emaSeed / trendPeriod;
       } else ema += (2 / (trendPeriod + 1)) * (close - ema);
@@ -168,50 +206,116 @@ export function calcAtrRegime(
     } else {
       // An unknown candle breaks the recursive history. Reseed both averages;
       // do not turn missing OHLC into a low-volatility accumulation signal.
-      previousClose = null;
-      atr = null;
-      ema = null;
+      previousClose = Number.NaN;
+      atr = Number.NaN;
+      ema = Number.NaN;
       validBars = 0;
       trSeed = 0;
       emaSeed = 0;
     }
-    const atrPercent = atr == null ? null : (100 * atr) / close;
-    const thresholdPercent = baselinePercent == null ? null : baselinePercent * maxRatio;
-    const oldEma = points[i - slopeBars]?.ema;
-    const uptrend = ema == null || oldEma == null ? null : close > ema && ema > oldEma;
+    const atrPercent = Number.isNaN(atr) ? Number.NaN : (100 * atr) / close;
+    const thresholdPercent = Number.isNaN(baselinePercent)
+      ? Number.NaN
+      : baselinePercent * maxRatio;
+    const oldEma = i - slopeBars >= 0 ? emas[i - slopeBars] : Number.NaN;
+    const uptrend =
+      Number.isNaN(ema) || Number.isNaN(oldEma) ? -1 : close > ema && ema > oldEma ? 1 : 0;
     const lowVolatility =
-      atrPercent == null ||
-      thresholdPercent == null ||
-      baselinePercent == null ||
-      baselinePercent <= 1e-12
-        ? null
-        : atrPercent <= thresholdPercent;
-    const state =
-      lowVolatility == null || uptrend == null
-        ? "unknown"
-        : lowVolatility && uptrend
-          ? "accumulate"
-          : "avoid";
-    points.push({
-      time,
-      atr,
-      atrPercent,
-      baselinePercent,
-      thresholdPercent,
-      thresholdAbsolute:
-        valid && thresholdPercent != null ? (thresholdPercent * close) / 100 : null,
-      ema,
-      uptrend,
-      lowVolatility,
-      state,
-    });
+      Number.isNaN(atrPercent) || Number.isNaN(thresholdPercent) || baselinePercent <= 1e-12
+        ? -1
+        : atrPercent <= thresholdPercent
+          ? 1
+          : 0;
+    atrs[i] = atr;
+    atrPercents[i] = atrPercent;
+    baselines[i] = baselinePercent;
+    thresholds[i] = thresholdPercent;
+    thresholdAbsolutes[i] =
+      valid && !Number.isNaN(thresholdPercent) ? (thresholdPercent * close) / 100 : Number.NaN;
+    emas[i] = ema;
+    uptrends[i] = uptrend;
+    lowVolatilities[i] = lowVolatility;
+    states[i] = lowVolatility === -1 || uptrend === -1 ? 2 : lowVolatility && uptrend ? 0 : 1;
   }
+  const result: AtrRegimeColumns = {
+    atr: atrs,
+    atrPercent: atrPercents,
+    baselinePercent: baselines,
+    thresholdPercent: thresholds,
+    thresholdAbsolute: thresholdAbsolutes,
+    ema: emas,
+    lowVolatility: lowVolatilities,
+    uptrend: uptrends,
+    state: states,
+  };
+  const entries = columnsCache.get(bars) ?? new Map<string, AtrRegimeColumns>();
+  if (entries.size >= 8) entries.clear();
+  entries.set(key, result);
+  columnsCache.set(bars, entries);
+  return result;
+}
+
+const orNull = (v: number): number | null => (Number.isNaN(v) ? null : v);
+const flag = (v: number): boolean | null => (v === -1 ? null : v === 1);
+
+function pointAt(time: string | number, c: AtrRegimeColumns, i: number): AtrRegimePoint {
+  return {
+    time,
+    atr: orNull(c.atr[i]),
+    atrPercent: orNull(c.atrPercent[i]),
+    baselinePercent: orNull(c.baselinePercent[i]),
+    thresholdPercent: orNull(c.thresholdPercent[i]),
+    thresholdAbsolute: orNull(c.thresholdAbsolute[i]),
+    ema: orNull(c.ema[i]),
+    uptrend: flag(c.uptrend[i]),
+    lowVolatility: flag(c.lowVolatility[i]),
+    state: STATES[c.state[i]],
+  };
+}
+
+const cache = new WeakMap<readonly OhlcvBar[], Map<string, AtrRegimePoint[]>>();
+
+/** `atrRegimeColumns` as one object per bar, cached by immutable bars + settings. */
+export function calcAtrRegime(
+  data: readonly OhlcvBar[],
+  overrides: Record<string, unknown> = {}
+): AtrRegimePoint[] {
+  const key = JSON.stringify(resolveAtrConfig(overrides));
+  const cached = cache.get(data)?.get(key);
+  if (cached) return cached;
+  const bars = barColumns(data);
+  const columns = atrRegimeColumns(bars, overrides);
+  const points: AtrRegimePoint[] = new Array(bars.length);
+  for (let i = 0; i < points.length; i++) points[i] = pointAt(bars.times[i], columns, i);
   const entries = cache.get(data) ?? new Map<string, AtrRegimePoint[]>();
   if (entries.size >= 8) entries.clear();
   entries.set(key, points);
   cache.set(data, entries);
   return points;
 }
+
+/**
+ * The regime of the newest bar alone — what a readout needs, without an
+ * object per bar. Shares the chart's own computation when both look at the
+ * same bars.
+ */
+export function latestAtrRegime(
+  data: readonly OhlcvBar[],
+  overrides: Record<string, unknown> = {}
+): AtrRegimePoint | undefined {
+  const bars = barColumns(data);
+  const last = bars.length - 1;
+  return last < 0 ? undefined : pointAt(bars.times[last], atrRegimeColumns(bars, overrides), last);
+}
+
+/** Line colours by index; the last entry hides the segment that runs into a gap. */
+const LINE_PALETTE = [
+  ATR_REGIME_COLORS.accumulate,
+  ATR_REGIME_COLORS.avoid,
+  ATR_REGIME_COLORS.unknown,
+  "transparent",
+] as const;
+const THRESHOLD_PALETTE = ["#657582", "transparent"] as const;
 
 export const createATR: IndicatorFactory = (overrides = {}) => {
   const config = resolveAtrConfig(overrides);
@@ -227,10 +331,27 @@ export const createATR: IndicatorFactory = (overrides = {}) => {
     minBars: period,
     params: ATR_REGIME_PARAMS,
     config: { period, lookback, trendPeriod, slopeBars, maxRatio, display },
-    compute(data, settings) {
+    ...columnar((bars, settings) => {
       const resolved = resolveAtrConfig(settings);
       const percent = resolved.display === "percent";
-      const points = calcAtrRegime(data, settings);
+      const c = atrRegimeColumns(bars, settings);
+      const n = bars.length;
+      const { atr, thresholdPercent } = c;
+
+      // Native line rendering skips whitespace and joins valued points.
+      // Color belongs to the outgoing segment: hide it before a gap.
+      const lineColors = new Uint8Array(n);
+      const thresholdValues = new Float64Array(n);
+      const thresholdColors = new Uint8Array(n);
+      const chosen = percent ? thresholdPercent : c.thresholdAbsolute;
+      for (let i = 0; i < n; i++) {
+        const gapNext = i + 1 < n && Number.isNaN(atr[i + 1]);
+        lineColors[i] = gapNext ? 3 : c.state[i];
+        thresholdValues[i] = Number.isNaN(atr[i]) ? Number.NaN : chosen[i];
+        thresholdColors[i] =
+          gapNext || (i + 1 < n && Number.isNaN(thresholdPercent[i + 1])) ? 1 : 0;
+      }
+
       return [
         {
           id: "atr-regime-line",
@@ -239,19 +360,12 @@ export const createATR: IndicatorFactory = (overrides = {}) => {
           color: ATR_REGIME_COLORS.unknown,
           lineWidth: 2,
           priceScaleId: "atr-regime",
-          data: points.map((point, index) => {
-            const value = percent ? point.atrPercent : point.atr;
-            // Native line rendering skips whitespace and joins valued points.
-            // Color belongs to the outgoing segment: hide it before a gap.
-            const beforeGap = index + 1 < points.length && points[index + 1].atr == null;
-            return value == null
-              ? { time: point.time }
-              : {
-                  time: point.time,
-                  value,
-                  color: beforeGap ? "transparent" : ATR_REGIME_COLORS[point.state],
-                };
-          }),
+          values: percent ? c.atrPercent : atr,
+          from: 0,
+          emit: "valued",
+          whitespace: true,
+          colors: lineColors,
+          palette: LINE_PALETTE,
         },
         {
           id: "atr-regime-threshold",
@@ -260,16 +374,16 @@ export const createATR: IndicatorFactory = (overrides = {}) => {
           color: "#657582",
           lineWidth: 1,
           priceScaleId: "atr-regime",
-          data: points.map((point, index) => {
-            const value = percent ? point.thresholdPercent : point.thresholdAbsolute;
-            const next = points[index + 1];
-            const beforeGap = next && (next.atr == null || next.thresholdPercent == null);
-            return value == null || point.atr == null
-              ? { time: point.time }
-              : { time: point.time, value, color: beforeGap ? "transparent" : "#657582" };
-          }),
+          values: thresholdValues,
+          from: 0,
+          emit: "valued",
+          whitespace: true,
+          colors: thresholdColors,
+          palette: THRESHOLD_PALETTE,
         },
       ];
-    },
+    }),
+    // Not `causal`: a point's colour depends on whether the NEXT bar is a gap,
+    // so a last bar turning invalid recolours the point before it.
   };
 };
