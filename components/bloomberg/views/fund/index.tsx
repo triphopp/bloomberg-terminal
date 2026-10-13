@@ -14,19 +14,33 @@ import { useAskContext } from "../../ask";
 import { isDarkModeAtom } from "../../atoms";
 import { bloombergColors } from "../../lib/theme-config";
 import { type Colors, fmtAmt, fmtPx, fmtQty } from "../portfolio/helpers";
+import { portfolioQueries } from "../portfolio/queries";
+import { AnalyticsTab } from "../portfolio/tabs/AnalyticsTab";
 import { ImportTab } from "../portfolio/tabs/ImportTab";
 import { OpenPositionsTab } from "../portfolio/tabs/OpenPositionsTab";
+import { RiskTab } from "../portfolio/tabs/RiskTab";
 import { TradeLogTab } from "../portfolio/tabs/TradeLogTab";
+import type { Summary } from "../portfolio/types";
 import { DepositsPage } from "./DepositsPage";
 import { type Ccy, type FundDetail, type MembersView, displayRate, fundApi, num } from "./api";
 
-type Page = "members" | "deposits" | "holdings" | "trades" | "entry" | "setup";
+type Page =
+  | "members"
+  | "deposits"
+  | "holdings"
+  | "trades"
+  | "entry"
+  | "analytics"
+  | "risk"
+  | "setup";
 const PAGES: { id: Page; label: string }[] = [
   { id: "members", label: "MEMBERS" },
   { id: "deposits", label: "DEPOSITS" },
   { id: "holdings", label: "HOLDINGS" },
   { id: "trades", label: "TRADES" },
   { id: "entry", label: "ENTRY" },
+  { id: "analytics", label: "ANALYTICS" },
+  { id: "risk", label: "RISK" },
   { id: "setup", label: "SETUP" },
 ];
 const FUND_KEY = "bloomberg_fund_selected";
@@ -104,7 +118,18 @@ export function FundView() {
     enabled: !!id,
     staleTime: 30_000,
   });
-  const refresh = () => qc.invalidateQueries({ queryKey: ["fund"] });
+  // The fund's own summary (its accounts only) for the ANALYTICS page.
+  const summaryQ = useQuery({
+    ...portfolioQueries.summary(
+      shownPref || active?.base_currency || "THB",
+      id ? `fund:${id}` : undefined
+    ),
+    enabled: !!id && page === "analytics",
+  });
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["fund"] });
+    qc.invalidateQueries({ queryKey: ["portfolio"] });
+  };
 
   const detail = detailQ.data;
   const scope = detail?.scope ?? (id ? `fund:${id}` : "");
@@ -132,6 +157,7 @@ export function FundView() {
 
   const base = active.base_currency;
   const shown: Ccy = shownPref || base;
+  const summary = (summaryQ.data as Summary | undefined) ?? null;
   const thbPerUsd = detail?.value.thb_per_usd ?? membersQ.data?.value.thb_per_usd ?? null;
   const rate = displayRate(base, shown, thbPerUsd);
   return (
@@ -260,6 +286,12 @@ export function FundView() {
           ) : (
             <ImportTab colors={colors} variant="manual" book={scope} />
           ))}
+        {/* PORT's own screens, given the fund's scope: every figure is the
+            fund's alone (backend/account_scope.py). */}
+        {page === "analytics" && scope && (
+          <AnalyticsTab accountId={scope} currency={shown} summary={summary} colors={colors} />
+        )}
+        {page === "risk" && scope && <RiskTab accountId={scope} currency={shown} colors={colors} />}
         {page === "setup" && detail && (
           <SetupPage colors={colors} detail={detail} onChanged={refresh} />
         )}

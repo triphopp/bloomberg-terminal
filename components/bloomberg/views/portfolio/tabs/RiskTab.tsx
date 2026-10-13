@@ -13,7 +13,16 @@ import {
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { riskSubTabRequestAtom } from "../../../atoms";
-import { type Colors, fmt, fmtAmt, fmtPx, fmtQty, pnlColor } from "../helpers";
+import {
+  type Colors,
+  fmt,
+  fmtAmt,
+  fmtPx,
+  fmtQty,
+  fundScopeOf,
+  isBookScope,
+  pnlColor,
+} from "../helpers";
 import { BearPathPanel, BearPathStrip, useBearTilt } from "../ui/BearPathPanel";
 import { CotCrowdingPanel } from "../ui/CotCrowdingPanel";
 import { DecisionJournalPanel } from "../ui/DecisionJournalPanel";
@@ -456,7 +465,11 @@ export function RiskTab({
             onTilt={setBearTilt}
             onOpen={() => go("mc")}
           />
-          <MarginCard scope="port" accountId={accountId} colors={colors} />
+          {/* Margin is kept per account and its overview lists the personal
+              accounts: a fund's book has neither yet. */}
+          {!fundScopeOf(accountId) && (
+            <MarginCard scope="port" accountId={accountId} colors={colors} />
+          )}
           <TradeGuardCard accountId={accountId} currency={currency} colors={colors} />
           <DecisionJournalPanel accountId={accountId} colors={colors} />
         </div>
@@ -1329,7 +1342,7 @@ function OverviewSection({
 
       <EWSHistorySection accountId={accountId} colors={colors} />
 
-      {accountId === "all" && metrics.account_breakdown && (
+      {isBookScope(accountId) && metrics.account_breakdown && (
         <div className="rounded" style={{ border: `1px solid ${colors.border}` }}>
           <button
             aria-pressed={acctOpen}
