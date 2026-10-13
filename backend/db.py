@@ -2655,6 +2655,101 @@ def init_cot_schema() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_cot_positions_code ON cot_positions(code, report_date)")
 
 
+def init_fund_schema() -> None:
+    """Fund book (plans/fund-book.md): a pooled fund kept apart from the
+    personal book. The fund's holdings, cash and dividends live in the ordinary
+    tables under accounts whose `portfolio_accounts.fund_id` is the fund; these
+    tables hold what only a fund has — who put money in, and what each deposit
+    bought of the fund.
+
+    Amounts are decimal text, as in ledger_events. Deposits are append-only: a
+    correction is a row with `reverses_id`, never an UPDATE. Shares and status
+    are derived on read — there is no status column.
+
+    NOT in sync.config.SYNC_TABLES yet: a peer on older code keeps ops for a
+    table it does not know and never applies them (reference/gotchas.md). Add
+    them once every machine runs this code.
+    """
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS funds (
+                id            TEXT PRIMARY KEY,
+                name          TEXT NOT NULL,
+                base_currency TEXT NOT NULL DEFAULT 'THB',
+                unit_par      TEXT NOT NULL DEFAULT '10',
+                broker_note   TEXT DEFAULT '',
+                agreement_ref TEXT DEFAULT '',
+                is_active     INTEGER NOT NULL DEFAULT 1,
+                created_at    TEXT DEFAULT (datetime('now')),
+                updated_at    TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS fund_members (
+                id         TEXT PRIMARY KEY,
+                fund_id    TEXT NOT NULL REFERENCES funds(id),
+                name       TEXT NOT NULL,
+                contact    TEXT DEFAULT '',
+                joined_on  TEXT,
+                left_on    TEXT,
+                note       TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(fund_id, name)
+            )
+        """)
+        # One row per deposit. `unit_price` is the fund's value per unit just
+        # BEFORE the money arrived (nav_before / units_before), frozen here
+        # with how it was obtained — it is never recomputed.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS fund_contributions (
+                id             TEXT PRIMARY KEY,
+                fund_id        TEXT NOT NULL REFERENCES funds(id),
+                member_id      TEXT NOT NULL REFERENCES fund_members(id),
+                account_id     TEXT NOT NULL,
+                date           TEXT NOT NULL,
+                amount         TEXT NOT NULL,
+                currency       TEXT NOT NULL,
+                fx_rate        TEXT NOT NULL DEFAULT '1',
+                amount_base    TEXT NOT NULL,
+                nav_before     TEXT,
+                units_before   TEXT NOT NULL,
+                unit_price     TEXT NOT NULL,
+                units_issued   TEXT NOT NULL,
+                price_source   TEXT NOT NULL,
+                price_reason   TEXT DEFAULT '',
+                evidence_ref   TEXT DEFAULT '',
+                cash_ledger_id TEXT,
+                entered_by     TEXT NOT NULL DEFAULT 'user',
+                reverses_id    TEXT UNIQUE REFERENCES fund_contributions(id),
+                note           TEXT DEFAULT '',
+                created_at     TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fund_contrib_fund ON fund_contributions(fund_id, date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fund_contrib_member ON fund_contributions(member_id)")
+        # How results are shared, as dated rows: a change is a new row and the
+        # old one stays (plans/fund-book.md D3, O5).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS fund_split_rules (
+                id             TEXT PRIMARY KEY,
+                fund_id        TEXT NOT NULL REFERENCES funds(id),
+                effective_from TEXT NOT NULL,
+                basis          TEXT NOT NULL,
+                reason         TEXT DEFAULT '',
+                created_at     TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fund_rules ON fund_split_rules(fund_id, effective_from)")
+        for table in ("fund_contributions", "fund_split_rules"):
+            conn.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS {table}_no_update BEFORE UPDATE ON {table}
+                BEGIN SELECT RAISE(ABORT, '{table} is append-only: write a new row'); END""")
+            conn.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS {table}_no_delete BEFORE DELETE ON {table}
+                BEGIN SELECT RAISE(ABORT, '{table} is append-only: write a new row'); END""")
+
+
 def init_guard_schema() -> None:
     """TRADE GUARD tables (backend/trade_guard.py). Before init_sync_layer():
     guard_overrides is synced."""
