@@ -75,10 +75,18 @@ export type TakeoverScope = {
 };
 
 export const portfolioQueries = {
-  summary: (currency: string) => ({
-    queryKey: ["portfolio", "summary", currency] as const,
+  /** `book` = a fund scope (`fund:<id>`); without it, the personal book. */
+  summary: (currency: string, book?: string) => ({
+    queryKey: book
+      ? (["portfolio", "summary", currency, book] as const)
+      : (["portfolio", "summary", currency] as const),
     queryFn: ({ signal }: { signal?: AbortSignal }) =>
-      getJson<unknown>(`/api/v2/portfolio/summary?base_currency=${currency}`, signal),
+      getJson<unknown>(
+        `/api/v2/portfolio/summary?base_currency=${currency}${
+          book ? `&account_id=${encodeURIComponent(book)}` : ""
+        }`,
+        signal
+      ),
     staleTime: 60_000,
   }),
 

@@ -1,6 +1,7 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
+import { fundScopeOf, isBookScope } from "../helpers";
 import { portfolioQueries } from "../queries";
 import type { Summary, Trade } from "../types";
 import { type NavBreakdown, navBreakdown, weightPct } from "../weights";
@@ -21,14 +22,15 @@ export function equityMarketValue(p: Trade): number | null {
  */
 export function usePortfolioNav(accountId: string, currency: "THB" | "USD") {
   const { data: open } = useQuery(portfolioQueries.openPositions(currency, accountId));
-  const { data: summaryRaw } = useQuery(portfolioQueries.summary(currency));
+  // The summary of the book on screen: a fund's own, never the personal one.
+  const { data: summaryRaw } = useQuery(portfolioQueries.summary(currency, fundScopeOf(accountId)));
   const summary = (summaryRaw as Summary | undefined) ?? null;
 
   return useMemo(() => {
     const cash =
       summary == null
         ? null
-        : accountId === "all"
+        : isBookScope(accountId)
           ? summary.total_cash_base
           : summary.accounts.find((a) => a.account.id === accountId)?.cash_base;
     const breakdown: NavBreakdown | null = open
