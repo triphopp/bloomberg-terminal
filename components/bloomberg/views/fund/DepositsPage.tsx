@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { type Colors, fmtAmt, fmtPx, fmtQty } from "../portfolio/helpers";
 import { NumInput } from "../portfolio/ui/NumInput";
+import { type AttachedSlip, SlipBox } from "./SlipBox";
 import {
   type Contribution,
   type ContributionIn,
@@ -55,6 +56,9 @@ export function DepositsPage({
   const [preview, setPreview] = useState<Contribution | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // The transfer slip the deposit is made with (optional): its fields as the
+  // user left them go with the deposit.
+  const [slip, setSlip] = useState<AttachedSlip | null>(null);
   const [reversing, setReversing] = useState<string | null>(null);
   const [reverseReason, setReverseReason] = useState("");
 
@@ -79,6 +83,7 @@ export function DepositsPage({
     ...(manual ? { unit_price: unitPrice, price_reason: reason } : {}),
     evidence_ref: evidence,
     note,
+    ...(slip ? { slip: { sha256: slip.sha256, bank: slip.bank, ...slip.fields } } : {}),
   });
   const ready = !!member && !!account && !!date && Number(amount) > 0;
 
@@ -104,6 +109,7 @@ export function DepositsPage({
         setReason("");
         setManual(false);
         setPreview(null);
+        setSlip(null);
         listQ.refetch();
         onChanged();
       } else {
@@ -159,6 +165,22 @@ export function DepositsPage({
       <div className="text-[10px] font-bold mb-1" style={{ color: colors.accent }}>
         รับเงินเข้า
       </div>
+      <SlipBox
+        colors={colors}
+        fundId={fund.id}
+        slip={slip}
+        onChange={(next, filled) => {
+          setSlip(next);
+          setPreview(null);
+          setErr("");
+          // A freshly read slip fills the form; the user still checks it.
+          if (filled) {
+            if (filled.amount) setAmount(filled.amount);
+            if (filled.date) setDate(filled.date);
+            if (filled.ref) setEvidence(filled.ref);
+          }
+        }}
+      />
       <div className="flex flex-wrap items-end gap-2">
         <label className={label}>
           <span style={dim}>สมาชิก</span>
@@ -372,6 +394,26 @@ export function DepositsPage({
                     {r.price_reason && !isReversal ? ` — ${r.price_reason}` : ""}
                   </td>
                   <td className="px-2 py-1">
+                    {r.slip && (
+                      <a
+                        href={fundApi.slipImage(fund.id, r.slip.sha256)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline mr-1"
+                        style={{ color: colors.accentBlue }}
+                        title={[
+                          r.slip.transferred_at?.replace("T", " "),
+                          r.slip.from_name &&
+                            `จาก ${r.slip.from_name} ${r.slip.from_account ?? ""}`,
+                          r.slip.to_name && `ไปยัง ${r.slip.to_name} ${r.slip.to_account ?? ""}`,
+                          r.slip.memo && `บันทึก: ${r.slip.memo}`,
+                        ]
+                          .filter(Boolean)
+                          .join("\n")}
+                      >
+                        สลิป{r.slip.from_name ? ` · ${r.slip.from_name}` : ""}
+                      </a>
+                    )}
                     {[r.evidence_ref, r.note].filter(Boolean).join(" · ")}
                     {r.reversed && " (ถูกกลับรายการแล้ว)"}
                   </td>

@@ -16,6 +16,8 @@ adds what only a fund has — members, deposits and the units they bought.
     POST /api/v2/fund/{id}/contributions       a deposit → units at that day's value
     POST /api/v2/fund/{id}/contributions/preview     the same sums, nothing written
     POST /api/v2/fund/{id}/contributions/{cid}/reverse
+    POST /api/v2/fund/{id}/slips/read          a bank transfer slip → its fields (local OCR)
+    GET  /api/v2/fund/{id}/slips/{sha}/image   the slip image a deposit cites
     POST /api/v2/fund/{id}/split-rule
 
 Agents may read; every write is the user's (403 for an agent actor). Errors
@@ -27,7 +29,8 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import fund as fund_core
@@ -147,6 +150,10 @@ class ContributionIn(BaseModel):
     price_reason: str = ""
     evidence_ref: str = ""
     note: str = ""
+    # The bank slip this deposit was made with: {sha256 (from /slips/read),
+    # transferred_at, ref_code, from_name, from_account, to_name, to_account,
+    # amount, memo, bank} as the user confirmed them.
+    slip: Optional[dict] = None
 
 
 class ReverseIn(BaseModel):
@@ -296,7 +303,7 @@ def _contribute(fund_id: str, body: ContributionIn, *, write: bool) -> dict:
                 amount=body.amount, currency=body.currency, fx_rate=body.fx_rate,
                 nav_before=str(nav) if nav is not None else None, price_source=source,
                 manual_unit_price=body.unit_price, price_reason=body.price_reason,
-                evidence_ref=body.evidence_ref, note=body.note, actor=current_actor())
+                evidence_ref=body.evidence_ref, note=body.note, actor=current_actor(), slip=body.slip)
             if not write:
                 raise _Preview(row)
             return row
@@ -333,3 +340,63 @@ def reverse_contribution(fund_id: str, contribution_id: str, body: ReverseIn):
             return fund_core.reverse(conn, fund_id, contribution_id, reason=body.reason, actor=current_actor())
     except fund_core.FundError as exc:
         _refuse(exc)
+
+
+# ── transfer slips (fund_slips.py) ───────────────────────────────────────────
+
+@router.post("/{fund_id}/slips/read")
+def read_slip(fund_id: str, file: UploadFile = File(...)):
+    """A bank transfer slip → what it says, for the deposit form to show and
+    the user to check. The image is kept on this machine; nothing is recorded
+    against the fund until a deposit is saved with it. `duplicates` = standing
+    deposits that already cite this image or this bank reference."""
+    _user_only()
+    import fund_slips
+    try:
+        with get_db() as conn:
+            fund_core.get_fund(conn, fund_id)
+    except fund_core.FundError as exc:
+        _refuse(exc)
+    data = file.file.read(fund_slips.MAX_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=422, detail={"code": "empty_file", "detail": "Empty file"})
+    if len(data) > fund_slips.MAX_BYTES:
+        raise HTTPException(status_code=413, detail={"code": "too_large", "detail": "Image larger than 12 MB"})
+    from PIL import UnidentifiedImageError
+    try:
+        out = fund_slips.read(data)
+    except UnidentifiedImageError as exc:
+        raise HTTPException(status_code=422, detail={
+            "code": "not_an_image", "detail": "Not a readable image (PNG / JPG / WEBP)"}) from exc
+    except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
+        # The picture could not be read by the machine — it can still be kept
+        # and its fields typed by hand.
+        sha = fund_slips.save_image(data, {"unread": list(fund_slips.FIELDS), "error": str(exc)})
+        out = {"sha256": sha, "reading": {**dict.fromkeys(fund_slips.FIELDS), "currency": "THB", "bank": None,
+                                          "says_complete": False, "unread": list(fund_slips.FIELDS),
+                                          "error": f"OCR engine unavailable: {exc}"}}
+    out["reading"].pop("ocr", None)          # the raw tokens stay in the sidecar file
+    with get_db() as conn:
+        out["duplicates"] = fund_slips.standing_use(
+            conn, fund_id, sha=out["sha256"], ref_code=out["reading"].get("ref_code"))
+    return out
+
+
+@router.get("/{fund_id}/slips/{sha}/image")
+def slip_image(fund_id: str, sha: str):
+    import fund_slips
+    with get_db() as conn:
+        known = conn.execute("SELECT 1 FROM fund_slips WHERE fund_id = ? AND sha256 = ?", (fund_id, sha)).fetchone()
+    found = fund_slips.image_path(sha)
+    if found is None:
+        raise HTTPException(status_code=404, detail={"code": "no_image", "detail": "No such slip image on this machine"})
+    # An uploaded-but-unsaved slip is shown too (the form previews it), but
+    # only under a fund that exists.
+    if not known:
+        try:
+            with get_db() as conn:
+                fund_core.get_fund(conn, fund_id)
+        except fund_core.FundError as exc:
+            _refuse(exc)
+    path, media = found
+    return FileResponse(path, media_type=media, headers={"Cache-Control": "private, max-age=3600"})

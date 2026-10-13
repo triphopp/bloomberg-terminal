@@ -190,8 +190,11 @@ def contributions(conn, fund_id: str, member_id: Optional[str] = None) -> list[d
         args.append(member_id)
     rows = [dict(r) for r in conn.execute(sql + " ORDER BY date, created_at, rowid", args)]
     reversed_ids = {r["reverses_id"] for r in rows if r["reverses_id"]}
+    import fund_slips
+    slips = fund_slips.for_contributions(conn, fund_id)
     for r in rows:
         r["reversed"] = r["id"] in reversed_ids
+        r["slip"] = slips.get(r["id"])
     return rows
 
 
@@ -227,8 +230,12 @@ def contribute(conn, fund_id: str, *, member_id: str, account_id: str, date: str
                currency: Optional[str] = None, fx_rate=None, nav_before=None,
                price_source: str = "live", manual_unit_price=None, price_reason: str = "",
                evidence_ref: str = "", note: str = "", actor: str = "user",
-               today: Optional[str] = None) -> dict:
+               today: Optional[str] = None, slip: Optional[dict] = None) -> dict:
     """Record a member's deposit and issue its units, in the caller's transaction.
+
+    `slip` = the bank transfer slip it was made with (`{sha256, ...fields}`,
+    fund_slips.py): recorded with the deposit, and refused when that slip
+    already backs another standing deposit or shows a different amount.
 
     `nav_before` is the fund's value in its base currency just before this
     money arrived — live for a deposit dated today, the stored snapshot for an
@@ -322,8 +329,17 @@ def contribute(conn, fund_id: str, *, member_id: str, account_id: str, date: str
         "evidence_ref, cash_ledger_id, entered_by, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (row_id, fund_id, member_id, account_id, day, str(_q(amt, MONEY)), ccy, str(rate), str(amount_base),
          str(nav) if nav is not None else None, str(before), str(price), str(units), source,
-         (price_reason or "").strip(), evidence_ref or "", cash_id, actor or "user", note or ""))
-    return dict(conn.execute("SELECT * FROM fund_contributions WHERE id = ?", (row_id,)).fetchone())
+         (price_reason or "").strip(),
+         evidence_ref or (str((slip or {}).get("ref_code") or "").strip()), cash_id, actor or "user", note or ""))
+    row = dict(conn.execute("SELECT * FROM fund_contributions WHERE id = ?", (row_id,)).fetchone())
+    if slip:
+        import fund_slips
+        try:
+            row["slip"] = fund_slips.attach(conn, fund_id, row, slip, actor=actor)
+        except ValueError as exc:
+            code, detail = exc.args
+            raise FundError(409 if code == "slip_already_used" else 422, code, detail)
+    return row
 
 
 def reverse(conn, fund_id: str, contribution_id: str, *, reason: str, actor: str = "user",

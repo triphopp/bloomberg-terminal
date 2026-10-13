@@ -275,6 +275,11 @@ fund_contributions  (id, fund_id, member_id, account_id, date, amount, currency,
                      entered_by, reverses_id UNIQUE, note, created_at)
                     -- 2026-10-13 fund book. Decimal text; APPEND-ONLY (triggers): a correction is a row with reverses_id and
                     --   negative amount / units. unit_price = fund value per unit BEFORE the money arrived, frozen here.
+fund_slips          (id, fund_id, contribution_id UNIQUE, sha256, image_file, bank, transferred_at, ref_code, from_name, from_account,
+                     to_name, to_account, amount, currency, memo, reading_json, entered_by, created_at)
+                    -- 2026-10-13: the bank transfer slip a deposit was made with — fields as the user confirmed them + the raw
+                    --   reading; the image is a file in backend/evidence/fund-slips/<sha256>.<ext> (gitignored, machine-local,
+                    --   NOT synced). Append-only. One slip (same image or same ref_code) backs one standing deposit.
 fund_split_rules    (id, fund_id, effective_from, basis CAPITAL, reason, created_at)  -- dated rows, append-only; latest on or before a day wins
                     -- fund* tables are machine-local, NOT in SYNC_TABLES until every machine runs this code
 risk_snapshots      (account_id, snapshot_date, portfolio_value, breach_count, ensemble_signal, vol_regime, risk_score, ews, regime_label, …)
