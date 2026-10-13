@@ -18,7 +18,7 @@ import { ImportTab } from "../portfolio/tabs/ImportTab";
 import { OpenPositionsTab } from "../portfolio/tabs/OpenPositionsTab";
 import { TradeLogTab } from "../portfolio/tabs/TradeLogTab";
 import { DepositsPage } from "./DepositsPage";
-import { type FundDetail, type MembersView, fundApi, num } from "./api";
+import { type Ccy, type FundDetail, type MembersView, displayRate, fundApi, num } from "./api";
 
 type Page = "members" | "deposits" | "holdings" | "trades" | "entry" | "setup";
 const PAGES: { id: Page; label: string }[] = [
@@ -30,10 +30,13 @@ const PAGES: { id: Page; label: string }[] = [
   { id: "setup", label: "SETUP" },
 ];
 const FUND_KEY = "bloomberg_fund_selected";
+const SHOWN_KEY = "bloomberg_fund_currency";
 
-const money = (v: string | null | undefined) => {
+// `rate` turns the fund's base currency into the one on screen (1 = the same,
+// null = today's rate is unknown, so nothing is shown rather than a wrong figure).
+const money = (v: string | null | undefined, rate: number | null = 1) => {
   const n = num(v);
-  return n == null ? "—" : fmtAmt(n);
+  return n == null || rate == null ? "—" : fmtAmt(n * rate);
 };
 const units = (v: string | null | undefined) => {
   const n = num(v);
@@ -64,6 +67,25 @@ export function FundView() {
       /* private window: the choice lasts for this visit */
     }
   }, [fundId]);
+
+  // The currency figures are SHOWN in. The fund's own currency never changes:
+  // units, shares and every stored amount stay in it. "" = the fund's own.
+  const [shownPref, setShownPref] = useState<Ccy | "">(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      const v = localStorage.getItem(SHOWN_KEY);
+      return v === "THB" || v === "USD" ? v : "";
+    } catch {
+      return "";
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(SHOWN_KEY, shownPref);
+    } catch {
+      /* private window */
+    }
+  }, [shownPref]);
 
   const fundsQ = useQuery({ queryKey: ["fund", "list"], queryFn: fundApi.list, staleTime: 60_000 });
   const funds = fundsQ.data?.funds ?? [];
@@ -109,6 +131,9 @@ export function FundView() {
     );
 
   const base = active.base_currency;
+  const shown: Ccy = shownPref || base;
+  const thbPerUsd = detail?.value.thb_per_usd ?? membersQ.data?.value.thb_per_usd ?? null;
+  const rate = displayRate(base, shown, thbPerUsd);
   return (
     <div className="flex flex-col h-full" style={{ background: "#000", color: colors.text }}>
       {/* The band: which book is on screen. Blue, where PORT has none. */}
@@ -134,10 +159,42 @@ export function FundView() {
           <span>{active.name.toUpperCase()}</span>
         )}
         <span className="font-normal">สมุดแยกจากพอร์ตส่วนตัว · ไม่ถูกรวมใน PORT</span>
-        <span className="ml-auto font-normal">สกุลเงินของกอง {base}</span>
+        <span className="ml-auto flex items-center gap-1 font-normal">
+          <span>สกุลเงินของกอง {base} · แสดงเป็น</span>
+          {(["THB", "USD"] as const).map((c) => (
+            <button
+              key={c}
+              type="button"
+              aria-pressed={shown === c}
+              onClick={() => setShownPref(c)}
+              className="px-1 font-bold"
+              style={
+                shown === c ? { background: "#000", color: colors.accentBlue } : { color: "#000" }
+              }
+            >
+              {c}
+            </button>
+          ))}
+        </span>
       </div>
 
-      <ValueStrip colors={colors} detail={detail} members={membersQ.data} base={base} />
+      <ValueStrip
+        colors={colors}
+        detail={detail}
+        members={membersQ.data}
+        shown={shown}
+        rate={rate}
+      />
+      {shown !== base && (
+        <div
+          className="shrink-0 px-2 py-0.5 text-[10px] border-b"
+          style={{ borderColor: colors.border, color: colors.accentWarn }}
+        >
+          {rate == null
+            ? `ไม่มีอัตราแลกเปลี่ยนของวันนี้ จึงแสดงเป็น ${shown} ไม่ได้`
+            : `แสดงเป็น ${shown} ด้วยอัตราวันนี้ (${fmtAmt(thbPerUsd ?? 0)} บาทต่อ 1 USD) ทุกตัวเลขรวมถึงเงินต้น · ตัวเลขที่บันทึก หน่วย และสัดส่วนยังคิดเป็น ${base}`}
+        </div>
+      )}
 
       <div
         className="shrink-0 flex items-center border-b px-1"
@@ -173,6 +230,7 @@ export function FundView() {
             view={membersQ.data}
             loading={membersQ.isLoading}
             error={membersQ.error as Error | null}
+            rate={rate}
             onChanged={refresh}
           />
         )}
@@ -187,13 +245,13 @@ export function FundView() {
         {page === "holdings" && scope && (
           <OpenPositionsTab
             accountId={scope}
-            currency={base}
+            currency={shown}
             colors={colors}
             onOpenThesis={() => {}}
           />
         )}
         {page === "trades" && scope && (
-          <TradeLogTab accountId={scope} currency={base} colors={colors} />
+          <TradeLogTab accountId={scope} currency={shown} colors={colors} />
         )}
         {page === "entry" &&
           scope &&
@@ -252,26 +310,34 @@ function ValueStrip({
   colors,
   detail,
   members,
-  base,
-}: { colors: Colors; detail?: FundDetail; members?: MembersView; base: string }) {
+  shown,
+  rate,
+}: {
+  colors: Colors;
+  detail?: FundDetail;
+  members?: MembersView;
+  shown: Ccy;
+  rate: number | null;
+}) {
   const v = detail?.value;
-  const price = num(members?.unit_price);
+  const basePrice = num(members?.unit_price);
+  const price = basePrice == null || rate == null ? null : basePrice * rate;
   return (
     <div className="shrink-0 border-b" style={{ borderColor: colors.border }}>
       <div className="flex flex-wrap items-stretch">
         <Cell
           colors={colors}
-          label={`มูลค่ากอง (${base})`}
-          value={money(v?.nav)}
+          label={`มูลค่ากอง (${shown})`}
+          value={money(v?.nav, rate)}
           title="ของที่ถือตามราคาตลาด + options + เงินสด"
         />
-        <Cell colors={colors} label="ของที่ถือ" value={money(v?.holdings)} />
+        <Cell colors={colors} label="ของที่ถือ" value={money(v?.holdings, rate)} />
         <Cell
           colors={colors}
           label={v?.cash_is_estimate ? "เงินสด (ประมาณ)" : "เงินสด"}
-          value={money(v?.cash)}
+          value={money(v?.cash, rate)}
         />
-        <Cell colors={colors} label="เงินต้นรวม" value={money(detail?.capital)} />
+        <Cell colors={colors} label="เงินต้นรวม" value={money(detail?.capital, rate)} />
         <Cell colors={colors} label="หน่วยทั้งหมด" value={units(detail?.units)} />
         <Cell
           colors={colors}
@@ -306,6 +372,7 @@ function MembersPage({
   view,
   loading,
   error,
+  rate,
   onChanged,
 }: {
   colors: Colors;
@@ -313,6 +380,7 @@ function MembersPage({
   view?: MembersView;
   loading: boolean;
   error: Error | null;
+  rate: number | null;
   onChanged: () => void;
 }) {
   const [name, setName] = useState("");
@@ -358,11 +426,11 @@ function MembersPage({
           {rows.map((m) => (
             <tr key={m.id} style={{ borderBottom: `1px solid ${colors.borderFaint}` }}>
               <td className="px-2 py-1">{m.name}</td>
-              <td className={td}>{money(m.capital)}</td>
+              <td className={td}>{money(m.capital, rate)}</td>
               <td className={td} style={{ color: colors.accent }}>
                 {pct(m.capital_share_pct)}
               </td>
-              <td className={td}>{money(m.value_by_capital)}</td>
+              <td className={td}>{money(m.value_by_capital, rate)}</td>
               <td className={td} style={{ color: colors.textSecondary }}>
                 {units(m.units)}
               </td>
@@ -370,19 +438,19 @@ function MembersPage({
                 {pct(m.units_share_pct)}
               </td>
               <td className={td} style={{ color: colors.textSecondary }}>
-                {money(m.value_by_units)}
+                {money(m.value_by_units, rate)}
               </td>
             </tr>
           ))}
           {rows.length > 0 && (
             <tr style={{ color: colors.textSecondary }}>
               <td className="px-2 py-1">รวม</td>
-              <td className={td}>{money(view?.capital_total)}</td>
+              <td className={td}>{money(view?.capital_total, rate)}</td>
               <td className={td} />
-              <td className={td}>{money(view?.nav)}</td>
+              <td className={td}>{money(view?.nav, rate)}</td>
               <td className={td}>{units(view?.units_total)}</td>
               <td className={td} />
-              <td className={td}>{money(view?.nav)}</td>
+              <td className={td}>{money(view?.nav, rate)}</td>
             </tr>
           )}
         </tbody>

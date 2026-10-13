@@ -26,6 +26,18 @@ export interface FundValue {
   nav: string | null;
   unpriced: string[];
   cash_is_estimate: boolean;
+  /** Today's THB per 1 USD — for showing the fund in the other currency. */
+  thb_per_usd: number | null;
+}
+
+export type Ccy = "THB" | "USD";
+
+/** Multiplier that turns a figure in the fund's base currency into `shown`,
+ *  at today's rate. 1 when they are the same; null when the rate is unknown. */
+export function displayRate(base: string, shown: Ccy, thbPerUsd: number | null | undefined) {
+  if (base === shown) return 1;
+  if (!thbPerUsd || thbPerUsd <= 0) return null;
+  return base === "THB" ? 1 / thbPerUsd : thbPerUsd;
 }
 
 export interface FundDetail extends Fund {
