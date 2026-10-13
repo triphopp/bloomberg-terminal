@@ -98,6 +98,15 @@ def run_once() -> dict:
     from db import get_db
     from routers.risk import _guard_snapshot
 
+    # The day's NAV row for every book. It used to be written only when
+    # ANALYTICS was opened; a fund prices a back-dated deposit from it, so a
+    # day nobody looked must still have one. Once a day, never fails the tick.
+    try:
+        from routers.portfolio_v2 import _maybe_capture_nav
+        _maybe_capture_nav()
+    except Exception:  # noqa: BLE001
+        logger.warning("trade guard: NAV capture failed", exc_info=True)
+
     with get_db() as conn:
         has_open = conn.execute("SELECT 1 FROM trades WHERE win_loss = 'P' LIMIT 1").fetchone()
     if not has_open:

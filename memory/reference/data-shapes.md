@@ -2098,3 +2098,22 @@ thesis_count, note_id?, question_id?}`. Anything rendering `snapshot` genericall
 Every `*_pct` is null under 60 days of prices. `mv` / `*_amt` are at the last close (holdings × last completed bar), so
 they hold still through the day — the UI multiplies `*_pct` by its own start-of-day value (MV now − today's P&L). z-score of a row = `day_pct / sigma_eff_pct`; of a group = its day P&L ÷
 the value it started the day at ÷ `sigma_pct`. TS types: `views/portfolio/day-context.ts`.
+
+## Fund book (`/api/v2/fund`) — 2026-10-13
+
+```
+GET /{id}/members → {fund_id, base_currency, split_basis: "CAPITAL", capital_total, units_total, nav|null, unit_price|null,
+                     value: {holdings, options, cash, nav|null, unpriced[], cash_is_estimate},
+                     members: [{id, name, contact, joined_on, left_on, note,
+                                capital, capital_share_pct, units, units_share_pct,
+                                value_by_capital|null, value_by_units|null}]}
+GET /{id}/nav     → {base_currency, holdings, options, cash, nav|null, unpriced[], units, capital, unit_price|null, unit_par}
+contribution row  → {id, fund_id, member_id, account_id, date, amount, currency, fx_rate, amount_base, nav_before|null,
+                     units_before, unit_price, units_issued, price_source: par|live|snapshot|manual, price_reason,
+                     evidence_ref, cash_ledger_id, entered_by, reverses_id|null, note, created_at, reversed: bool}
+```
+
+All money and unit fields are **decimal strings** (parse, never `Number()` blindly for sums — the server sends the totals).
+`capital_share_pct` is what results are shared by; `units_share_pct` is the comparison. `value_by_*` are null when the
+fund cannot be valued (`value.unpriced` names why). A reversal is its own row: negative `amount` / `units_issued`,
+`reverses_id` set; the original shows `reversed: true`.

@@ -4023,12 +4023,6 @@ def _maybe_capture_nav() -> None:
     try:
         today = datetime.now().strftime("%Y-%m-%d")
         with get_db() as conn:
-            if conn.execute(
-                "SELECT 1 FROM portfolio_nav_snapshots WHERE snapshot_date = ? LIMIT 1",
-                (today,),
-            ).fetchone():
-                return
-
             accounts = {
                 a["id"]: dict(a)
                 for a in conn.execute(
@@ -4036,6 +4030,16 @@ def _maybe_capture_nav() -> None:
                 ).fetchall()
             }
             if not accounts:
+                return
+            # Done for today when every book has its row. "Any row exists" was
+            # enough while there was one book; a fund created after the
+            # morning's capture would otherwise have no value for its first
+            # day, and its first deposit could not be priced later.
+            have = {r[0] for r in conn.execute(
+                "SELECT account_id FROM portfolio_nav_snapshots WHERE snapshot_date = ?", (today,))}
+            books = {account_scope.ALL} | {
+                account_scope.FUND_PREFIX + a["fund_id"] for a in accounts.values() if a.get("fund_id")}
+            if books <= have:
                 return
 
             closed_rows = [
