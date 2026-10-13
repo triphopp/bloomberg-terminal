@@ -17,7 +17,7 @@ import {
 } from "recharts";
 // Charts below the fold mount when scrolled near — see LazyResponsiveContainer.
 import { LazyResponsiveContainer as ResponsiveContainer } from "../../../ui/LazyResponsiveContainer";
-import { type Colors, fmtAmt, fmtAxis, pnlColor } from "../helpers";
+import { type Colors, fmtAmt, fmtAxis, isBookScope, pnlColor } from "../helpers";
 import type { Dividend, Summary, Trade } from "../types";
 import { AccBadge } from "../ui/AccBadge";
 import { AllocationBasisCard } from "../ui/AllocationBasisCard";
@@ -1221,8 +1221,9 @@ export function AnalyticsTab({
   }, [dividends, divPeriod]);
 
   const accStats = summary?.accounts ?? [];
-  const filteredStats =
-    accountId === "all" ? accStats : accStats.filter((a) => a.account.id === accountId);
+  const filteredStats = isBookScope(accountId)
+    ? accStats
+    : accStats.filter((a) => a.account.id === accountId);
 
   // Capital snapshot — backend has already normalized every component to the active report currency.
   const capital = useMemo(() => {
@@ -1785,7 +1786,7 @@ export function AnalyticsTab({
               color={pnlColor(capital.realized)}
               title="Realized P&L ÷ invested — closed-trade skill only, excludes unrealized"
             />
-            {summary?.total_ytd_realized_base != null && accountId === "all" && (
+            {summary?.total_ytd_realized_base != null && isBookScope(accountId) && (
               <LedgerRow
                 colors={colors}
                 label="YTD REALIZED"

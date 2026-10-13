@@ -68,6 +68,17 @@ export function subPortLabel(p: Trade): string | null {
 
 export type Colors = typeof bloombergColors.dark;
 
+/** The `accountId` a tab gets is one of three things (backend/account_scope.py):
+ *  "all" = the personal book, "fund:<id>" = a fund's book, else one account.
+ *  A tab that means "the whole book, not one account" asks this — testing
+ *  `accountId === "all"` alone treats a fund as if it were a single account. */
+export const isBookScope = (accountId: string | null | undefined): boolean =>
+  !accountId || accountId === "all" || accountId.startsWith("fund:");
+
+/** The fund scope of an `accountId`, or undefined for the personal book / one account. */
+export const fundScopeOf = (accountId: string | null | undefined): string | undefined =>
+  accountId?.startsWith("fund:") ? accountId : undefined;
+
 // The Python backend does a synchronous cloud-sync pull at import time, so on a
 // cold machine boot it can take tens of seconds to bind its port while Next is
 // already serving. A one-shot fetch that lands in that window gets a 503 from

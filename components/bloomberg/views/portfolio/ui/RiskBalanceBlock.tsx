@@ -30,7 +30,7 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { useState } from "react";
 
 import type { Colors } from "../helpers";
-import { fmtAmt, fmtQty } from "../helpers";
+import { fmtAmt, fmtQty, isBookScope } from "../helpers";
 import { NumInput } from "./NumInput";
 import { Shell } from "./WhatIfSimPanel";
 
@@ -148,7 +148,7 @@ export function RiskBalanceBlock({
   const [mode, setMode] = useState<Mode>("rebalance");
   const [picked, setPicked] = useState<Level>("symbol");
   // Targets per account only exist where there are accounts to compare.
-  const level: Level = picked === "account" && accountId !== "all" ? "symbol" : picked;
+  const level: Level = picked === "account" && !isBookScope(accountId) ? "symbol" : picked;
   // null = as much new money as the full plan takes.
   const [cash, setCash] = useState<number | null>(null);
   // Whose target: the user's own numbers, or the same share for every part.
@@ -225,7 +225,7 @@ export function RiskBalanceBlock({
   const levelRow = (
     <div className="flex items-center gap-3 flex-wrap" style={{ fontSize: 9.5 }}>
       <span style={{ color: colors.textSecondary }}>ตั้งเป้าที่</span>
-      {LEVELS.filter((l) => !l.allOnly || accountId === "all").map((l) => (
+      {LEVELS.filter((l) => !l.allOnly || isBookScope(accountId)).map((l) => (
         <button
           aria-pressed={level === l.id}
           type="button"
