@@ -330,3 +330,10 @@ def test_money_never_moves_between_the_two_books_in_one_transfer(fx):
     for book in (None, "all", f"fund:{fx.fid}"):
         r = client.post("/api/v2/portfolio/cash/transfer", json={**body, **({"book": book} if book else {})})
         assert r.status_code == 409 and r.json()["detail"]["code"] == "cross_book"
+
+
+def test_the_value_carries_todays_rate_for_display_in_the_other_currency(fx):
+    _deposit(fx, fx.a, 100000)
+    v = fx.api.get_nav(fx.fid)
+    assert v["base_currency"] == "THB" and v["thb_per_usd"] == 35.0
+    assert fx.api.list_members(fx.fid)["value"]["thb_per_usd"] == 35.0

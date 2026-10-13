@@ -58,7 +58,7 @@ def value_now(fund: dict) -> dict:
     cash. `nav` is None when a holding has no price — a value that leaves a
     position out is not a value, and the positions that could not be priced
     are named."""
-    from routers.portfolio_v2 import _open_positions_enriched, get_summary
+    from routers.portfolio_v2 import _get_thb_per_usd, _open_positions_enriched, get_summary
 
     scope, base = fund_core.scope_of(fund["id"]), fund["base_currency"]
     data = _open_positions_enriched(scope, base)
@@ -81,7 +81,11 @@ def value_now(fund: dict) -> dict:
     nav = None if unpriced else holdings + options + cash
     return {"base_currency": base, "holdings": str(holdings), "options": str(options), "cash": str(cash),
             "nav": str(nav) if nav is not None else None, "unpriced": sorted(set(unpriced)),
-            "cash_is_estimate": bool(summary.get("cash_is_estimate"))}
+            "cash_is_estimate": bool(summary.get("cash_is_estimate")),
+            # Today's rate, for a screen that shows the fund in the other
+            # currency. A display aid only: units, shares and every stored
+            # figure stay in the base currency.
+            "thb_per_usd": data.get("thb_per_usd") or _get_thb_per_usd()}
 
 
 def value_on(fund: dict, day: str) -> Optional[Decimal]:

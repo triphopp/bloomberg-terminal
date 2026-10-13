@@ -2103,7 +2103,7 @@ the value it started the day at ÷ `sigma_pct`. TS types: `views/portfolio/day-c
 
 ```
 GET /{id}/members → {fund_id, base_currency, split_basis: "CAPITAL", capital_total, units_total, nav|null, unit_price|null,
-                     value: {holdings, options, cash, nav|null, unpriced[], cash_is_estimate},
+                     value: {holdings, options, cash, nav|null, unpriced[], cash_is_estimate, thb_per_usd},
                      members: [{id, name, contact, joined_on, left_on, note,
                                 capital, capital_share_pct, units, units_share_pct,
                                 value_by_capital|null, value_by_units|null}]}
@@ -2117,3 +2117,5 @@ All money and unit fields are **decimal strings** (parse, never `Number()` blind
 `capital_share_pct` is what results are shared by; `units_share_pct` is the comparison. `value_by_*` are null when the
 fund cannot be valued (`value.unpriced` names why). A reversal is its own row: negative `amount` / `units_issued`,
 `reverses_id` set; the original shows `reversed: true`.
+`value.thb_per_usd` (2026-10-13) = today's rate, only for SHOWING the fund in the other currency (FUND band → THB / USD):
+the view multiplies every money figure by one rate (`displayRate` in `views/fund/api.ts`); units, shares and stored amounts stay in the base currency.
