@@ -2579,3 +2579,18 @@ deleted / inactive accounts still count as they did.
 - **Two machines:** a peer on older code drops the `fund_id` column and sees a fund account as personal — no fund may
   be created until every machine runs this code.
 
+## A write names its book (2026-10-13) — `backend/book_guard.py`
+
+Every POST / PUT / PATCH on `/api/v2/portfolio/*`, `/api/options/*` and `/api/v2/ledger/*` whose JSON body names an
+account (`account_id`, `from_account_id`, `to_account_id`) is checked against `body.book`: absent / `all` = the account
+must be personal, `fund:<id>` = it must belong to that fund. Mismatch → **409 `wrong_book`**; a fund account and a
+personal one in one body (a transfer) → **409 `cross_book`**. `book` rides in the body because the Next.js proxies
+forward bodies, not headers.
+
+- **Symptom:** a save from a new form fails with 409 on a fund account → the form did not send `book`
+  (`ImportTab` takes a `book` prop; see how it adds it to the trade body).
+- A form's default account (`BLANK_FORM.account_id = "finansia"`) is why the check is on the server: the fund's ENTRY
+  must never fall back to a personal account while its list loads (`ImportTab` starts with no accounts when `book` is set).
+- Writes that address a row by id (edit / sell a lot) are not checked — they act on a row found in a scoped list.
+- `detail` of these refusals is an object; a form that renders `d.detail` directly crashes React. Read `d.detail.detail`.
+

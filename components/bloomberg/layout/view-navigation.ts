@@ -8,7 +8,8 @@ export type TerminalView =
   | "portfolio"
   | "tail"
   | "bonds"
-  | "calendar";
+  | "calendar"
+  | "fund";
 
 const views = new Set<TerminalView>([
   "market",
@@ -19,6 +20,7 @@ const views = new Set<TerminalView>([
   "tail",
   "bonds",
   "calendar",
+  "fund",
 ]);
 
 export function viewFromSearch(search: string): TerminalView | null {

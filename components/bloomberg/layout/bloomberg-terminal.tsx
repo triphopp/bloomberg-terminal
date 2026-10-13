@@ -69,6 +69,10 @@ const CalendarView = dynamic(() => import("../views/calendar").then((m) => m.Cal
   loading: () => <ViewSkeleton />,
 });
 
+const FundView = dynamic(() => import("../views/fund").then((m) => m.FundView), {
+  loading: () => <ViewSkeleton />,
+});
+
 // Quick ASK drawer — pulls in the answer renderer, so only once it is opened.
 const AskDock = dynamic(() => import("../ask").then((m) => m.AskDock), { ssr: false });
 
@@ -79,6 +83,7 @@ const MemoPortfolio = memo(PortfolioView);
 const MemoTailRisk = memo(TailRiskView);
 const MemoBond = memo(BondView);
 const MemoCalendar = memo(CalendarView);
+const MemoFund = memo(FundView);
 
 function BloombergTerminal() {
   const {
@@ -94,6 +99,7 @@ function BloombergTerminal() {
     handleTailView,
     handleBondView,
     handleCalendarView,
+    handleFundView,
     handleHelpClick,
   } = useTerminalUI();
   const [urlReady, setUrlReady] = useState(false);
@@ -207,6 +213,7 @@ function BloombergTerminal() {
       href: viewHref("calendar"),
       onClick: handleCalendarView,
     },
+    { id: "fund", label: "FUND", shortcut: "7", href: viewHref("fund"), onClick: handleFundView },
   ];
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
@@ -239,6 +246,7 @@ function BloombergTerminal() {
     { key: "4", action: handlePortfolioView, description: "Portfolio" },
     { key: "5", action: handleTailView, description: "Tail Risk Monitor" },
     { key: "6", action: handleCalendarView, description: "Calendar (macro · company · thesis)" },
+    { key: "7", action: handleFundView, description: "Fund (pooled book, apart from PORT)" },
     { key: "h", action: () => setCurrentView("heatmap"), description: "Heatmap (last market)" },
     { key: "p", action: handlePortfolioView, description: "Portfolio" },
     {
@@ -286,6 +294,7 @@ function BloombergTerminal() {
     tail: "TAIL RISK MONITOR",
     bonds: "BOND MONITOR · PRICE · SUPPLY · CREDIT CONDITIONS",
     calendar: "CALENDAR · MACRO · COMPANY · THESIS",
+    fund: "FUND · POOLED BOOK · APART FROM PORT",
   };
 
   // ── Shared header (filter bar + key indicators merged in) ─────────────────
@@ -371,6 +380,8 @@ function BloombergTerminal() {
         return <MemoBond />;
       case "calendar":
         return <MemoCalendar />;
+      case "fund":
+        return <MemoFund />;
       default:
         return <MarketView isDarkMode={isDarkMode} />;
     }

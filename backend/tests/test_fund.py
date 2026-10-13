@@ -291,3 +291,42 @@ def test_an_agent_reads_but_does_not_record_money(fx):
     assert client.post("/api/v2/fund", json={"name": "x"}, headers=agent).status_code == 403
     assert client.post(f"/api/v2/fund/{fx.fid}/contributions", json=body).status_code == 201
     assert client.get("/api/v2/fund/nope").status_code == 404
+
+
+# ── a write lands in the book it was typed in (book_guard.py) ────────────────
+
+def _client(fx):
+    import book_guard
+    importlib.reload(book_guard)
+    importlib.reload(fx.pv2)
+    app = FastAPI()
+    app.include_router(fx.pv2.router)
+    return TestClient(app)
+
+
+def test_a_fund_account_takes_writes_only_from_the_fund_book(fx):
+    client = _client(fx)
+    cash = {"date": TODAY, "flow_type": "DEPOSIT", "amount": 10}
+    r = client.post("/api/v2/portfolio/cash", json={**cash, "account_id": "kongsi-th"})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "wrong_book"
+    r = client.post("/api/v2/portfolio/cash", json={**cash, "account_id": "kongsi-th", "book": "fund:other"})
+    assert r.status_code == 409
+    r = client.post("/api/v2/portfolio/cash", json={**cash, "account_id": "kongsi-th", "book": f"fund:{fx.fid}"})
+    assert r.status_code == 201
+
+
+def test_a_personal_account_refuses_a_write_typed_in_the_fund_view(fx):
+    client = _client(fx)
+    cash = {"date": TODAY, "flow_type": "DEPOSIT", "amount": 10, "account_id": "mine"}
+    r = client.post("/api/v2/portfolio/cash", json={**cash, "book": f"fund:{fx.fid}"})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "wrong_book"
+    assert client.post("/api/v2/portfolio/cash", json=cash).status_code == 201
+    assert client.post("/api/v2/portfolio/cash", json={**cash, "book": "all"}).status_code == 201
+
+
+def test_money_never_moves_between_the_two_books_in_one_transfer(fx):
+    client = _client(fx)
+    body = {"from_account_id": "mine", "to_account_id": "kongsi-th", "date": TODAY, "amount": 100}
+    for book in (None, "all", f"fund:{fx.fid}"):
+        r = client.post("/api/v2/portfolio/cash/transfer", json={**body, **({"book": book} if book else {})})
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "cross_book"
