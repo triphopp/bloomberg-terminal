@@ -1,9 +1,11 @@
 import { PYTHON_API as API } from "@/lib/constants";
 import { NextResponse } from "next/server";
 
-export async function GET() {
+// `?account_id=fund:<id>` lists a fund's accounts; none = the personal ones.
+export async function GET(req: Request) {
   try {
-    const r = await fetch(`${API}/api/v2/portfolio/accounts`, {
+    const qs = new URL(req.url).searchParams.toString();
+    const r = await fetch(`${API}/api/v2/portfolio/accounts${qs ? `?${qs}` : ""}`, {
       signal: AbortSignal.timeout(10_000),
     });
     const d = await r.json();

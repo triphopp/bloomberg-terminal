@@ -79,7 +79,7 @@ export const toolsThesisIdAtom = atomWithStorage<string>("bloomberg_tools_thesis
 
 // View state atoms
 export const currentViewAtom = atom<
-  "market" | "news" | "heatmap" | "stock" | "portfolio" | "tail" | "bonds" | "calendar"
+  "market" | "news" | "heatmap" | "stock" | "portfolio" | "tail" | "bonds" | "calendar" | "fund"
 >("market");
 
 // PORT top tab another component asks to open (the TRADE GUARD status chip →

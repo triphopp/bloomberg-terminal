@@ -7,10 +7,11 @@ from datetime import date, datetime, timedelta
 from typing import Any, Literal, Optional, Sequence
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 
 import account_scope
+from book_guard import book_guard
 
 from analytics.svi import fit_raw_svi
 
@@ -35,7 +36,7 @@ from sources import market_data
 from sources.errors import UpstreamRateLimited, recently_rate_limited
 import us_session
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(book_guard)])
 
 _options_chain_cache = TTLCache(ttl=300, maxsize=100)
 _options_surface_cache = TTLCache(ttl=600, maxsize=100)

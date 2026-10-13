@@ -69,9 +69,14 @@ export function ImportTab({
   colors,
   variant = "full",
   optionPrefill = null,
+  book,
 }: {
   colors: Colors;
   variant?: "full" | "manual" | "excel";
+  /** The book this form writes into: unset = the personal book, `fund:<id>`
+   *  = that fund (FUND view). Only that book's accounts are offered and every
+   *  save says which book it was typed in — the server refuses a mismatch. */
+  book?: string;
   /** OPTIONS → ADD / CLOSE lands here with the contract filled in. */
   optionPrefill?: (OptionEntryPrefill & { seq: number }) | null;
 }) {
@@ -90,16 +95,17 @@ export function ImportTab({
   useEffect(() => {
     if (optionPrefill) setInstrument("option");
   }, [optionPrefill?.seq]);
-  const [accounts, setAccounts] = useState<Account[]>(FALLBACK_ACCOUNTS);
+  // A fund never falls back to the personal accounts: no list, no account.
+  const [accounts, setAccounts] = useState<Account[]>(book ? [] : FALLBACK_ACCOUNTS);
 
   useEffect(() => {
-    fetch("/api/v2/portfolio/accounts")
+    fetch(`/api/v2/portfolio/accounts${book ? `?account_id=${encodeURIComponent(book)}` : ""}`)
       .then((r) => r.json())
       .then((d) => {
-        if (Array.isArray(d) && d.length) setAccounts(d);
+        if (Array.isArray(d) && (d.length || book)) setAccounts(d);
       })
       .catch(() => {});
-  }, []);
+  }, [book]);
 
   // ── Excel state ──
   const [dragOver, setDragOver] = useState(false);
@@ -459,6 +465,7 @@ export function ImportTab({
     try {
       const picked = resolve.status === "resolved" ? resolve.picked : null;
       const body: Record<string, unknown> = {
+        ...(book ? { book } : {}),
         account_id: form.account_id,
         symbol: form.symbol.toUpperCase(),
         resolved_symbol: picked?.resolved_symbol ?? null,
@@ -504,7 +511,9 @@ export function ImportTab({
       });
       const d = await r.json();
       if (!r.ok) {
-        setSaveErr(d.detail || d.error || "Save failed");
+        // A refusal can be `{detail: {code, detail}}` (wrong book) — show its sentence.
+        const why = typeof d.detail === "object" && d.detail ? d.detail.detail : d.detail;
+        setSaveErr(String(why || d.error || "Save failed"));
         return;
       }
       setSaveOk(true);
@@ -672,7 +681,8 @@ export function ImportTab({
             {/* What is being entered: instrument, then side */}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
               <div className="flex items-center gap-3">
-                {(["stock", "option"] as const).map((k) => (
+                {/* Options are not entered for a fund yet (plans/fund-book.md). */}
+                {(book ? (["stock"] as const) : (["stock", "option"] as const)).map((k) => (
                   <button
                     aria-pressed={instrument === k}
                     type="button"

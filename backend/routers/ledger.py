@@ -10,14 +10,15 @@ from __future__ import annotations
 from typing import Optional
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Depends
 from pydantic import BaseModel, Field
 
 import account_scope
+from book_guard import book_guard
 import ledger
 from db import get_db
 
-router = APIRouter(prefix="/api/v2/ledger")
+router = APIRouter(prefix="/api/v2/ledger", dependencies=[Depends(book_guard)])
 
 
 class LedgerCorrectionMiddleware:

@@ -14,9 +14,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Depends
 
 import account_scope
+from book_guard import book_guard
 from pydantic import BaseModel
 
 from sources import market_data
@@ -53,7 +54,7 @@ from portfolio_currency import (
 # ── Price cache — TTL 60s per symbol, THB rate TTL 120s ──────────────────────
 _price_cache: TTLCache = TTLCache(ttl=60,  maxsize=300)
 
-router = APIRouter(prefix="/api/v2/portfolio")
+router = APIRouter(prefix="/api/v2/portfolio", dependencies=[Depends(book_guard)])
 
 logger = logging.getLogger("api.portfolio_v2")
 
