@@ -192,7 +192,7 @@ def port_book(account_id: str) -> tuple[mg.Book, dict]:
     stocks = [mg.StockLine(k, a["symbol"], a["qty"], a["price"], a["usd"], k) for k, a in agg.items() if a["qty"]]
     options, opt_missing = _option_lines(data.get("options") or [], ccy)
 
-    summary = get_summary(base_currency=ccy)
+    summary = get_summary(base_currency=ccy, account_id=account_id)
     row = next((a for a in summary.get("accounts", []) if a["account"]["id"] == account_id), None)
     cash = float(row["cash_base"]) if row else 0.0
     meta = {

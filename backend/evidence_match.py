@@ -27,6 +27,7 @@ from itertools import combinations
 from zoneinfo import ZoneInfo
 
 import ledger_backfill as lb
+import account_scope
 
 DISPLAY_TZ = "Asia/Bangkok"
 _BKK = ZoneInfo(DISPLAY_TZ)
@@ -70,10 +71,8 @@ def _load_fills(conn, account_id=None) -> list[dict]:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(broker_executions)")}
     sql = "SELECT * FROM broker_executions WHERE " + (
         "instrument_type = 'STOCK'" if "instrument_type" in cols else "1=1")
-    args: tuple = ()
-    if account_id:
-        sql += " AND account_id=?"
-        args = (account_id,)
+    scope_sql, args = account_scope.where(account_id)
+    sql += f" AND {scope_sql}"
     out = []
     for r in conn.execute(sql + " ORDER BY executed_at_local", args):
         r = dict(r)
@@ -204,8 +203,11 @@ def _match_symbol(fills: list[dict], events: list) -> list[dict]:
 def run(conn, account_id: str | None = None) -> dict:
     fills = _load_fills(conn, account_id)
     events, _issues = lb.build_events(conn)
+    in_scope = account_scope.matcher(conn, account_id)
     book = defaultdict(list)
     for e in events:
+        if not in_scope(e.account_id):
+            continue
         if e.type in ("BUY", "SELL") and not e.note.startswith("option"):
             book[(e.account_id, (e.symbol or "").upper())].append(e)
 

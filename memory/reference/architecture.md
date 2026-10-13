@@ -283,3 +283,19 @@ fallen key claim never changes the thesis. MCP: `anti_board` / `anti_queue` / `a
 `anti_object` / `anti_none_found` / `anti_verdict` / `anti_to_question` / `anti_import` + `get_antithesis_spec`
 (serves `memory/reference/anti-thesis.md`) + prompt `step_back`. The interview (`get_interview_spec` · prompt `interview_thesis`, serves `memory/reference/thesis-interview.md`) has no router and no table: the agent questions the user and the rules land in `thesis_notes`, `questions`, `track_metrics` and `anti_*`. ASK reads it with `get_antithesis`
 (`ask_research.py`, private tool). UI: PORT → TOOLS → THESES → ANTI-THESIS, label from `/api/v2/antithesis/counts`.
+
+## Fund book (2026-10-13) — plans/fund-book.md
+
+A pooled fund lives in the same database as the personal book and never mixes with it. Two layers:
+
+1. **Scope** (`backend/account_scope.py`, Step 0): `account_id` empty / `all` = accounts with no `fund_id` (the personal
+   book), `fund:<id>` = that fund's accounts, else one account. Every portfolio / risk / options / ledger /
+   trade-history filter goes through it, so every existing tool works on a fund by passing its scope.
+2. **Fund rows** (`backend/fund.py` + `routers/fund.py`, Step 1): members, deposits, split rule. A deposit records
+   who / how much / when, the units it bought at the fund's value per unit just before the money arrived, and writes
+   the one `cash_ledger` row that puts the money in the fund's book. Valuation reuses `_open_positions_enriched` +
+   `get_summary` with the fund scope; a past day comes from `portfolio_nav_snapshots` row `fund:<id>` (captured daily by
+   the guard scheduler tick and on view).
+
+Capital decides how results are shared (no time weighting); units are the performance measure and the comparison.
+Not built yet: the FUND view, distributions, policy, the investor document (plan Steps 2–7).

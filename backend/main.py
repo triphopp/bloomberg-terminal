@@ -61,6 +61,7 @@ from db import (
     init_thesis_schema,
     init_guard_schema,
     init_margin_schema,
+    init_fund_schema,
     init_zettel_schema,
     init_questions_schema,
     init_tracking_schema,
@@ -78,7 +79,7 @@ from analytics.regime_v2 import ensure_v2_fresh
 from contextlib import asynccontextmanager
 
 from analytics.bc_calibration import ensure_calibrated
-from routers import market, stock, options, pins, clippings, news, news_watchlist, news_ai, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, bonds, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, questions, tracking, antithesis, graphs, reads, series, ir_stress, market_state, dcf, discover, market_heatmap, cot, stream, google_trends, fiscal_ai, trade_history, webull, cycle as cycle_router
+from routers import market, stock, options, pins, clippings, news, news_watchlist, news_ai, social, macro, global_yields, rates, crisis, sovereign, portfolio, portfolio_v2, backtest_v2, fx, crypto, etf, footprint, central_banks, polymarket, polymarket_stock, company_filings, bot, screener, config_router, circuit_breaker, listing_gate, sectors, risk, allocation, country_rotation, sector, sec, sec_v2, bonds, regime, rotation, alerts, alert_rules, ticker, analytics, fear_greed, tail_risk, paper_trading, providers, sync_router, watchlist_signals, theses, zettel, questions, tracking, antithesis, graphs, reads, series, ir_stress, market_state, dcf, discover, market_heatmap, cot, stream, google_trends, fiscal_ai, trade_history, webull, fund, cycle as cycle_router
 from routers import health as upstream_health_router
 from routers import chart_drawings
 from routers import changes as changes_router
@@ -137,6 +138,7 @@ init_portfolio_v2()
 init_thesis_schema()   # must precede init_sync_layer(): it adds updated_at + triggers
 init_guard_schema()    # same: guard_overrides is synced
 init_margin_schema()   # same: margin_settings is synced
+init_fund_schema()     # fund book: members, deposits, split rules (not synced yet — plans/fund-book.md)
 init_zettel_schema()   # same ordering reason as the thesis schema above
 init_questions_schema()  # after zettel (answers cite it); must precede init_sync_layer()
 init_tracking_schema()   # after questions (a miss opens one); must precede init_sync_layer()
@@ -278,6 +280,7 @@ app.include_router(stream.router, tags=["Stream"])
 app.include_router(google_trends.router, tags=["Google Trends"])
 app.include_router(fiscal_ai.router, tags=["Fiscal.ai"])
 app.include_router(trade_history.router, tags=["Trade History"])
+app.include_router(fund.router, tags=["Fund"])
 app.include_router(webull.router, tags=["Webull"])
 
 

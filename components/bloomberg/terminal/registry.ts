@@ -178,6 +178,15 @@ const NAV: CommandDef[] = [
       return { kind: "navigate", view: "calendar" };
     },
   },
+  {
+    name: "FUND",
+    group: "nav",
+    description: "Go to the Fund (the pooled book, kept apart from Portfolio)",
+    handler: (_, ctx) => {
+      ctx.setView("fund");
+      return { kind: "navigate", view: "fund" };
+    },
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

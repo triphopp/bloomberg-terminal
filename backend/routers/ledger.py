@@ -10,13 +10,15 @@ from __future__ import annotations
 from typing import Optional
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Depends
 from pydantic import BaseModel, Field
 
+import account_scope
+from book_guard import book_guard
 import ledger
 from db import get_db
 
-router = APIRouter(prefix="/api/v2/ledger")
+router = APIRouter(prefix="/api/v2/ledger", dependencies=[Depends(book_guard)])
 
 
 class LedgerCorrectionMiddleware:
@@ -232,11 +234,13 @@ def _write(fn):
 
 # ── accounts / wallets ───────────────────────────────────────────────────────
 @router.get("/accounts")
-def list_accounts():
+def list_accounts(account_id: Optional[str] = None):
+    """Accounts of one book: personal by default, `fund:<id>` for a fund (account_scope.py)."""
+    acc_sql, acc_args = account_scope.accounts_where(account_id)
     with get_db() as conn:
         out = []
         for a in conn.execute("SELECT id, name, currency, ledger_mode, ledger_cutover, ledger_cutover_at FROM portfolio_accounts "
-                              "ORDER BY name"):
+                              f"WHERE {acc_sql} ORDER BY name", acc_args):
             item = {**dict(a), "wallets": ledger.wallets(conn, a["id"]),
                     "balances": ledger.balances(conn, a["id"]), "rules": ledger.wallet_rules(conn, a["id"])}
             if a["ledger_mode"] != "LEGACY":

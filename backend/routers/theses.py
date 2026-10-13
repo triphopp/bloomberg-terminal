@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from actor import capture_actor, current_actor
+import account_scope
 from config import THESES_DIR
 from db import get_db
 from sync.config import device_id
@@ -301,9 +302,9 @@ def list_theses(
     if status:
         where.append("status = ?")
         params.append(status)
-    if account_id and account_id != "all":
-        where.append("account_id = ?")
-        params.append(account_id)
+    _scope_sql, _scope_params = account_scope.where(account_id, "account_id")
+    where.append(_scope_sql)
+    params.extend(_scope_params)
 
     sql = "SELECT * FROM theses"
     if where:

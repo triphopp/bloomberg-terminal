@@ -31,6 +31,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Iterable, Optional
+import account_scope
 
 _NS = uuid.UUID("0b7d6a3e-5c1f-4e8a-9d2b-7a4c3e1f9b60")
 
@@ -203,10 +204,8 @@ def _label_key(text: str) -> str:
 
 
 def wallet_rules(conn, account_id: Optional[str] = None) -> list[dict]:
-    sql, args = "SELECT * FROM ledger_wallet_rules", ()
-    if account_id:
-        sql += " WHERE account_id = ?"
-        args = (account_id,)
+    scope_sql, args = account_scope.where(account_id)
+    sql = f"SELECT * FROM ledger_wallet_rules WHERE {scope_sql}"
     return [dict(r) for r in conn.execute(sql + " ORDER BY account_id, symbol_pattern", args)]
 
 
@@ -675,11 +674,10 @@ def get_event(conn, event_id: str) -> dict:
 
 def _reversed_ids(conn, account_id: Optional[str] = None) -> set[str]:
     sql = "SELECT reverses_id FROM ledger_events WHERE type = 'REVERSAL'"
-    args: tuple = ()
-    if account_id:
-        sql += " AND account_id = ?"
-        args = (account_id,)
-    return {r[0] for r in conn.execute(sql, args)}
+    # Not a book listing: with no account this is every reversal there is,
+    # whichever book — the guard against reversing an event twice.
+    scope_sql, args = account_scope.and_where(account_id or account_scope.EVERY)
+    return {r[0] for r in conn.execute(sql + scope_sql, args)}
 
 
 def qty_delta(e: dict) -> Decimal:
@@ -765,11 +763,11 @@ def fee_trueup(conn, event_id: str, posted_fee, *, evidence_ref: Optional[str] =
 def events(conn, account_id: Optional[str] = None, *, wallet: Optional[str] = None,
            date_from: Optional[str] = None, date_to: Optional[str] = None,
            limit: int = 500) -> list[dict]:
-    sql, args = "SELECT * FROM ledger_events WHERE 1=1", []
-    for col, val in (("account_id", account_id), ("wallet", wallet)):
-        if val:
-            sql += f" AND {col} = ?"
-            args.append(val)
+    scope_sql, args = account_scope.where(account_id)
+    sql = f"SELECT * FROM ledger_events WHERE {scope_sql}"
+    if wallet:
+        sql += " AND wallet = ?"
+        args.append(wallet)
     if date_from:
         sql += " AND book_date >= ?"
         args.append(date_from)
@@ -789,10 +787,8 @@ def balances(conn, account_id: Optional[str] = None, as_of: Optional[str] = None
     """Cash per (account, wallet, currency) = Σ net_cash with book_date ≤ as_of."""
     sums: dict[tuple, Decimal] = defaultdict(Decimal)
     counts: dict[tuple, int] = defaultdict(int)
-    sql, args = "SELECT account_id, wallet, currency, net_cash FROM ledger_events WHERE 1=1", []
-    if account_id:
-        sql += " AND account_id = ?"
-        args.append(account_id)
+    scope_sql, args = account_scope.where(account_id)
+    sql = f"SELECT account_id, wallet, currency, net_cash FROM ledger_events WHERE {scope_sql}"
     if as_of:
         sql += " AND book_date <= ?"
         args.append(_day(as_of))
@@ -897,10 +893,8 @@ def reopen_period(conn, *, account_id: str, wallet: str, reason: str,
 
 
 def closes(conn, account_id: Optional[str] = None) -> list[dict]:
-    sql, args = "SELECT * FROM ledger_period_close", ()
-    if account_id:
-        sql += " WHERE account_id = ?"
-        args = (account_id,)
+    scope_sql, args = account_scope.where(account_id)
+    sql = f"SELECT * FROM ledger_period_close WHERE {scope_sql}"
     return [dict(r) for r in conn.execute(sql + " ORDER BY created_at DESC", args)]
 
 
@@ -1150,7 +1144,10 @@ _OCC = re.compile(r"^[A-Z. ]{1,6}\d{6}[CP]\d{8}$")
 def check(conn, account_id: Optional[str] = None, *, stale_fee_days: int = 7,
           as_of: Optional[str] = None) -> dict:
     today = _day(as_of) if as_of else _today()
-    accs = [account_id] if account_id else [r["id"] for r in conn.execute("SELECT id FROM portfolio_accounts")]
+    one = account_scope.account_of(account_id)
+    acc_sql, acc_args = account_scope.accounts_where(account_id)
+    accs = [one] if one else [r["id"] for r in conn.execute(
+        f"SELECT id FROM portfolio_accounts WHERE {acc_sql}", acc_args)]
     findings: list[dict] = []
 
     def add(code, severity, acc, message, evidence=None, wallet=None):

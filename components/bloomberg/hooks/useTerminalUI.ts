@@ -42,6 +42,10 @@ export function useTerminalUI() {
     setCurrentView("calendar");
   }, [setCurrentView]);
 
+  const handleFundView = useCallback(() => {
+    setCurrentView("fund");
+  }, [setCurrentView]);
+
   // Other UI handlers
   const handleCancelClick = useCallback(() => {
     console.log("Cancel clicked");
@@ -88,6 +92,7 @@ export function useTerminalUI() {
     handleTailView,
     handleBondView,
     handleCalendarView,
+    handleFundView,
     handleCancelClick,
     handleNewClick,
     handleBlancClick,
