@@ -74,6 +74,39 @@ export interface MembersView {
   members: FundMember[];
 }
 
+/** What a bank transfer slip says — as read, then as the user confirmed it. */
+export interface SlipFields {
+  transferred_at: string | null;
+  ref_code: string | null;
+  from_name: string | null;
+  from_account: string | null;
+  to_name: string | null;
+  to_account: string | null;
+  amount: string | null;
+  memo: string | null;
+}
+
+export interface SlipReading extends SlipFields {
+  bank: string | null;
+  currency: string;
+  says_complete: boolean;
+  /** Fields the reader could not find — to be typed from the picture. */
+  unread: (keyof SlipFields)[];
+  error?: string;
+}
+
+export interface SlipRead {
+  sha256: string;
+  reading: SlipReading;
+  /** Standing deposits that already cite this picture or this bank reference. */
+  duplicates: { contribution_id: string; date: string; amount: string; currency: string }[];
+}
+
+export interface KeptSlip extends SlipFields {
+  sha256: string;
+  bank: string | null;
+}
+
 export interface Contribution {
   id: string;
   member_id: string;
@@ -96,6 +129,7 @@ export interface Contribution {
   created_at: string;
   reversed: boolean;
   preview?: boolean;
+  slip?: KeptSlip | null;
 }
 
 export interface ContributionIn {
@@ -109,6 +143,7 @@ export interface ContributionIn {
   price_reason?: string;
   evidence_ref?: string;
   note?: string;
+  slip?: { sha256: string; bank?: string | null } & SlipFields;
 }
 
 const BASE = "/api/v2/fund";
@@ -150,6 +185,13 @@ export const fundApi = {
     post<Contribution>(`/${id}/contributions/preview`, body),
   contribute: (id: string, body: ContributionIn) =>
     post<Contribution>(`/${id}/contributions`, body),
+  /** A slip image → its fields (OCR on this machine). The first one can take a while. */
+  readSlip: (id: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return call<SlipRead>(`/${id}/slips/read`, { method: "POST", body: form });
+  },
+  slipImage: (id: string, sha: string) => `${BASE}/${id}/slips/${sha}/image`,
   reverse: (id: string, contributionId: string, reason: string) =>
     post<Contribution>(`/${id}/contributions/${contributionId}/reverse`, { reason }),
 };

@@ -337,3 +337,127 @@ def test_the_value_carries_todays_rate_for_display_in_the_other_currency(fx):
     v = fx.api.get_nav(fx.fid)
     assert v["base_currency"] == "THB" and v["thb_per_usd"] == 35.0
     assert fx.api.list_members(fx.fid)["value"]["thb_per_usd"] == 35.0
+
+
+# ── transfer slips: where the money came from (fund_slips.py) ────────────────
+
+def _slip_tokens():
+    """The layout of a bank app's "transfer complete" slip, with made-up people."""
+    from slip_ocr.layout import Token
+    rows = [
+        ("SCB", 360, 73, 566, 157), ("โอนเงินสำเร็จ", 310, 273, 599, 343),
+        ("29 ก.ย. 2569 - 20:32", 235, 384, 674, 433),
+        ("รหัสอ้างอิง:", 17, 462, 245, 523), ("202609290TESTrefCODE1234x", 233, 470, 896, 524),
+        ("จาก", 53, 644, 145, 689), ("นางสาว", 523, 643, 698, 694), ("ทดสอบ ก.", 694, 644, 859, 696),
+        ("XXX-Xxx111-1", 575, 729, 858, 780),
+        ("ไปยัง", 48, 884, 163, 950), ("นาย ผู้จัดการ ทดสอบ", 330, 888, 863, 954),
+        ("XXX-XXx222-2", 575, 985, 858, 1038),
+        ("จำนวนเงิน", 52, 1147, 266, 1209), ("10,000.00", 632, 1152, 860, 1213),
+        ("บันทึกช่วยจำ", 53, 1311, 317, 1373), ("กองทุน", 44, 1389, 156, 1459),
+        ("ผู้รับเงินสามารถสแกนคิว", 55, 1589, 543, 1643),
+    ]
+    return [Token(*r) for r in rows]
+
+
+def test_a_transfer_slip_is_read_into_its_fields():
+    import fund_slips
+    r = fund_slips.parse_transfer(_slip_tokens())
+    assert r["transferred_at"] == "2026-09-29T20:32"          # พ.ศ. 2569 → 2026
+    assert r["ref_code"] == "202609290TESTrefCODE1234x"
+    assert (r["from_name"], r["from_account"]) == ("นางสาว ทดสอบ ก.", "xxx-xxx111-1")
+    assert (r["to_name"], r["to_account"]) == ("นาย ผู้จัดการ ทดสอบ", "xxx-xxx222-2")
+    assert (r["amount"], r["currency"], r["memo"], r["bank"]) == ("10000.00", "THB", "กองทุน", "SCB")
+    assert r["says_complete"] is True and r["unread"] == []
+
+
+def test_a_slip_it_cannot_read_says_what_is_missing():
+    import fund_slips
+    from slip_ocr.layout import Token
+    r = fund_slips.parse_transfer([Token("hello", 0, 0, 50, 20), Token("12 ม.ค. 2569 09:05", 0, 40, 200, 60)])
+    assert r["transferred_at"] == "2026-01-12T09:05" and r["amount"] is None and r["says_complete"] is False
+    assert set(r["unread"]) == {"ref_code", "from_name", "from_account", "to_name", "to_account", "amount"}
+
+
+def _saved_slip(fx, content=b"\x89PNG fake slip one"):
+    import fund_slips
+    importlib.reload(fund_slips)
+    reading = fund_slips.parse_transfer(_slip_tokens())
+    sha = fund_slips.save_image(content, reading)
+    return fund_slips, {"sha256": sha, **{k: reading[k] for k in fund_slips.FIELDS}, "bank": reading["bank"]}
+
+
+def test_a_deposit_keeps_the_slip_it_was_made_with(fx):
+    fs, slip = _saved_slip(fx)
+    row = _deposit(fx, fx.a, 10000, slip=slip)
+    assert row["evidence_ref"] == slip["ref_code"]                 # the bank reference becomes the evidence
+    kept = fx.api.list_contributions(fx.fid)["contributions"][0]["slip"]
+    assert kept["sha256"] == slip["sha256"] and kept["from_name"] == "นางสาว ทดสอบ ก."
+    assert kept["to_account"] == "xxx-xxx222-2" and kept["amount"] == "10000.00"
+    assert kept["transferred_at"] == "2026-09-29T20:32" and "reading_json" not in kept
+    path, media = fs.image_path(slip["sha256"])
+    assert path.is_file() and media == "image/png" and "evidence" in path.parts and "fund-slips" in path.parts
+
+
+def test_one_slip_backs_one_deposit(fx):
+    _, slip = _saved_slip(fx)
+    first = _deposit(fx, fx.a, 10000, slip=slip)
+    with pytest.raises(HTTPException) as e:
+        _deposit(fx, fx.b, 10000, slip=slip)                       # the same picture again
+    assert e.value.status_code == 409 and _code(e) == "slip_already_used"
+    _, again = _saved_slip(fx, content=b"\x89PNG a second screenshot of the same transfer")
+    with pytest.raises(HTTPException) as e:
+        _deposit(fx, fx.b, 10000, slip=again)                      # another picture, same bank reference
+    assert _code(e) == "slip_already_used"
+    assert len(fx.api.list_contributions(fx.fid)["contributions"]) == 1
+    # once the wrong deposit is reversed, the slip is free to back the right one
+    fx.api.reverse_contribution(fx.fid, first["id"], fx.api.ReverseIn(reason="booked to the wrong member"))
+    assert _deposit(fx, fx.b, 10000, slip=slip)["slip"]["sha256"] == slip["sha256"]
+
+
+def test_the_slip_and_the_deposit_are_the_same_money(fx):
+    _, slip = _saved_slip(fx)
+    with pytest.raises(HTTPException) as e:
+        _deposit(fx, fx.a, 12000, slip=slip)
+    assert e.value.status_code == 422 and _code(e) == "slip_amount_differs"
+    with pytest.raises(HTTPException) as e:
+        _deposit(fx, fx.a, 10000, slip={"sha256": "0" * 64, "amount": "10000"})
+    assert _code(e) == "unknown_slip"
+    assert fx.api.list_contributions(fx.fid)["contributions"] == []    # nothing half-written
+    with fx.db.get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM cash_ledger WHERE account_id = 'kongsi-th'").fetchone()[0] == 0
+
+
+def test_a_preview_checks_the_slip_and_keeps_nothing(fx):
+    _, slip = _saved_slip(fx)
+    out = fx.api.preview_contribution(fx.fid, fx.api.ContributionIn(
+        member_id=fx.a, account_id="kongsi-th", date=TODAY, amount="10000", slip=slip))
+    assert out["preview"] is True and out["slip"]["ref_code"] == slip["ref_code"]
+    with fx.db.get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM fund_slips").fetchone()[0] == 0
+
+
+def test_the_slip_routes_upload_once_and_serve_the_image(fx, monkeypatch):
+    import fund_slips
+    importlib.reload(fund_slips)
+    from slip_ocr import ocr
+    monkeypatch.setattr(ocr, "read", lambda data: _slip_tokens())
+    app = FastAPI()
+    app.include_router(fx.api.router)
+    client = TestClient(app)
+    png = b"\\x89PNG fake".decode("unicode_escape").encode("latin-1")
+    r = client.post(f"/api/v2/fund/{fx.fid}/slips/read", files={"file": ("slip.png", png, "image/png")})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["reading"]["amount"] == "10000.00" and body["duplicates"] == [] and "ocr" not in body["reading"]
+    sha = body["sha256"]
+    img = client.get(f"/api/v2/fund/{fx.fid}/slips/{sha}/image")
+    assert img.status_code == 200 and img.content == png and img.headers["content-type"] == "image/png"
+    assert client.get(f"/api/v2/fund/{fx.fid}/slips/{'f' * 64}/image").status_code == 404
+    agent = {"X-Thesis-Actor": "agent:test"}
+    assert client.post(f"/api/v2/fund/{fx.fid}/slips/read", files={"file": ("s.png", png, "image/png")},
+                       headers=agent).status_code == 403
+    slip = {"sha256": sha, **{k: body["reading"][k] for k in fund_slips.FIELDS}}
+    dep = {"member_id": fx.a, "account_id": "kongsi-th", "date": TODAY, "amount": "10000", "slip": slip}
+    assert client.post(f"/api/v2/fund/{fx.fid}/contributions", json=dep).status_code == 201
+    again = client.post(f"/api/v2/fund/{fx.fid}/slips/read", files={"file": ("slip.png", png, "image/png")})
+    assert [d["amount"] for d in again.json()["duplicates"]] == ["10000.00"]

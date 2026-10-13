@@ -2119,3 +2119,16 @@ fund cannot be valued (`value.unpriced` names why). A reversal is its own row: n
 `reverses_id` set; the original shows `reversed: true`.
 `value.thb_per_usd` (2026-10-13) = today's rate, only for SHOWING the fund in the other currency (FUND band → THB / USD):
 the view multiplies every money figure by one rate (`displayRate` in `views/fund/api.ts`); units, shares and stored amounts stay in the base currency.
+
+### Fund deposit slip (2026-10-13)
+
+```
+POST /api/v2/fund/{id}/slips/read → {sha256, duplicates: [{contribution_id, date, amount, currency, …}],
+   reading: {transferred_at "2026-09-29T20:32"|null, ref_code, from_name, from_account "xxx-xxx435-2", to_name, to_account,
+             amount "10000.00"|null, memo, bank "SCB"|null, currency "THB", says_complete: bool, unread: [field…], error?}}
+contribution row += slip: {id, contribution_id, sha256, bank, transferred_at, ref_code, from_name, from_account,
+                           to_name, to_account, amount, currency, memo, created_at} | null
+```
+A reading is a suggestion (names are often a letter off): the form shows it beside the picture and what is saved is what
+the user left in the fields. Thai Buddhist years are converted (2569 → 2026). `to_*` is recorded as the slip says and
+not judged — a member may pay the manager or a broker account directly.

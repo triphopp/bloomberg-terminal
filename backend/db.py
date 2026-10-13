@@ -2741,7 +2741,34 @@ def init_fund_schema() -> None:
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_fund_rules ON fund_split_rules(fund_id, effective_from)")
-        for table in ("fund_contributions", "fund_split_rules"):
+        # The bank transfer slip a deposit was made with (fund_slips.py): the
+        # fields as the user confirmed them, the raw reading, and the hash of
+        # the image kept in evidence/fund-slips/. One row per deposit.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS fund_slips (
+                id              TEXT PRIMARY KEY,
+                fund_id         TEXT NOT NULL REFERENCES funds(id),
+                contribution_id TEXT NOT NULL UNIQUE REFERENCES fund_contributions(id),
+                sha256          TEXT NOT NULL,
+                image_file      TEXT,
+                bank            TEXT,
+                transferred_at  TEXT,
+                ref_code        TEXT,
+                from_name       TEXT,
+                from_account    TEXT,
+                to_name         TEXT,
+                to_account      TEXT,
+                amount          TEXT,
+                currency        TEXT DEFAULT 'THB',
+                memo            TEXT,
+                reading_json    TEXT,
+                entered_by      TEXT NOT NULL DEFAULT 'user',
+                created_at      TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fund_slips_sha ON fund_slips(fund_id, sha256)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fund_slips_ref ON fund_slips(fund_id, ref_code)")
+        for table in ("fund_contributions", "fund_split_rules", "fund_slips"):
             conn.execute(f"""
                 CREATE TRIGGER IF NOT EXISTS {table}_no_update BEFORE UPDATE ON {table}
                 BEGIN SELECT RAISE(ABORT, '{table} is append-only: write a new row'); END""")
