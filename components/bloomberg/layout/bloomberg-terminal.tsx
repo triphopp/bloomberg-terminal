@@ -205,6 +205,9 @@ function BloombergTerminal() {
       href: viewHref("portfolio"),
       onClick: handlePortfolioView,
     },
+    // Beside PORT on purpose: the two books sit next to each other. The key
+    // stays 7 — TAIL and CAL keep the numbers they have always had.
+    { id: "fund", label: "FUND", shortcut: "7", href: viewHref("fund"), onClick: handleFundView },
     { id: "tail", label: "TAIL", shortcut: "5", href: viewHref("tail"), onClick: handleTailView },
     {
       id: "calendar",
@@ -213,7 +216,6 @@ function BloombergTerminal() {
       href: viewHref("calendar"),
       onClick: handleCalendarView,
     },
-    { id: "fund", label: "FUND", shortcut: "7", href: viewHref("fund"), onClick: handleFundView },
   ];
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
