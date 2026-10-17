@@ -83,7 +83,7 @@ Added 2026-10-08: `webull_scheduler.py` — fourth ruleless alert source beside 
 | `3` / `b` | bonds | BOND | `views/bonds/` (MARKET · CONDITIONS) |
 | `4` / `p` | portfolio | PORT | `views/portfolio-view.tsx` → `views/portfolio/` |
 | `5` / `t` | tail | TAIL | `views/tail-risk-view.tsx` + `views/tail/` |
-| `6` | calendar | CAL | `views/calendar/` (`/api/calendar`, no table of its own) |
+| `6` | calendar | CAL | `views/calendar/` (`/api/calendar`, no table of its own; GOOGLE → `/api/gcal/*`, `gcal_sync.py`) |
 | `h` | heatmap | — (command `heatmap(MARKET)`) | `views/heatmap-view.tsx` |
 
 **No nav button:** `stock-view.tsx` (atom value `stock`; opened from global search / heatmap / watchlist click), `volatility-view.tsx` (exported, unused).

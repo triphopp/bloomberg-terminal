@@ -258,6 +258,18 @@ was too far for something read daily). To send the user somewhere from anywhere:
 add another request atom. ASK reads it as `get_page_data("calendar", "events")`.
 `pytest tests/test_calendar_feed.py` · `npm run test:views`.
 
+**Google Calendar (2026-10-11)** — CAL → GOOGLE pushes the same events, one way, into a "Bloomberg Terminal" calendar in
+the user's Google account (`backend/gcal_sync.py`, `routers/gcal.py`, `/api/gcal/*`). Still no table: the Google event id
+is a hash of the CAL id and a body hash rides in `extendedProperties.private`, so a pass writes only what changed and
+deletes only events of ours. Nothing comes back from Google — an edit made there is overwritten; never add a write path
+from Google into theses or questions. Scope `calendar.app.created` (the app sees only its own calendar) — do not widen
+it without the user. The refresh token stays outside the repo (app-data / `GCAL_TOKEN_DIR`, refused inside it), never
+logged or returned; the calendar id (not a credential) goes through `<SYNC_DIR>/google-calendar/` so a second machine
+uses the same calendar. PORT is off by default — it is the book. Passes ride the calendar scheduler tick and cost
+**no request when nothing changed** (fingerprint vs `mirror.json`; Google re-read every `GCAL_RECHECK_S`), else one
+incremental `events.list` (`syncToken`) + writes 50 per batch — keep new Google calls inside `_batch`, not one per event.
+Client id/secret in `backend/.env` (steps in `.env.example`). `pytest tests/test_gcal_sync.py`.
+
 ## Trade history for agents — MCP `get_trade*` (2026-10-08)
 
 Past trades are rows in SQLite (`trades`, one row per lot; options in `option_trades` + matches). An agent reads them

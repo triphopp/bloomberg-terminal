@@ -12,7 +12,8 @@ the event belongs to, which is what the alert links to.
 UNIQUE(rule_id, symbol, bar_time) with bar_time = "<date>#<event hash>" makes
 it one row per event however often the scan runs; a date that moves is a new
 event. A reminder whose day has passed is acknowledged here — nobody should
-have to dismiss yesterday. `CALENDAR_SCAN_INTERVAL=0` disables (default 1800 s).
+have to dismiss yesterday. `CALENDAR_SCAN_INTERVAL=0` disables (default 1800 s) —
+the Google Calendar push (`gcal_sync.run_if_connected`) rides the same tick.
 """
 from __future__ import annotations
 
@@ -78,7 +79,11 @@ def run_once() -> dict:
     if written:
         logger.info("calendar: %d reminder(s): %s", len(written),
                     ", ".join(f"{a['symbol']} {a['rule_id']}" for a in written))
-    return {"events": len(written), "pending": payload["sources"].get("company", {}).get("pending", [])}
+    # The same tick pushes the calendar to Google when this machine is connected (gcal_sync.py).
+    import gcal_sync
+    gcal = gcal_sync.run_if_connected()
+    return {"events": len(written), "pending": payload["sources"].get("company", {}).get("pending", []),
+            "gcal": gcal}
 
 
 def _loop(interval: int) -> None:

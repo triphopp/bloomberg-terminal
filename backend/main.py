@@ -88,6 +88,7 @@ from routers.chart_drawings import init_chart_drawings_schema
 from routers import dev as dev_router
 from routers import margin as margin_router
 from routers import calendar_feed as calendar_router
+from routers import gcal as gcal_router
 from routers import ledger as ledger_router
 import ledger as ledger_core
 import sync
@@ -266,6 +267,7 @@ app.include_router(fear_greed.router)
 app.include_router(tail_risk.router)
 app.include_router(cycle_router.router)
 app.include_router(calendar_router.router, tags=["Calendar"])
+app.include_router(gcal_router.router, tags=["Calendar"])
 app.include_router(upstream_health_router.router)
 app.include_router(paper_trading.router, tags=["Paper Trading"])
 app.include_router(providers.router, tags=["Providers"])
