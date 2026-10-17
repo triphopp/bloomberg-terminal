@@ -3,6 +3,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\win\install-startup-task.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\win\install-startup-task.ps1 -Uninstall
 #   powershell -ExecutionPolicy Bypass -File scripts\win\install-startup-task.ps1 -Status
+#   powershell -ExecutionPolicy Bypass -File scripts\win\install-startup-task.ps1 -Prod -Reload
 #
 # A scheduled task rather than the Run key, because it can do three things the
 # Run key cannot: wait for the desktop to settle before starting, restart the
@@ -15,6 +16,8 @@
 param(
     [switch]$Uninstall,
     [switch]$Status,
+    [switch]$Prod,     # next start instead of next dev (needs npm run build)
+    [switch]$Reload,   # keep backend auto-reload under -Prod
     [int]$DelaySeconds = 30
 )
 
@@ -64,9 +67,14 @@ if (-not (Test-Path $Exe)) {
 
 # --no-browser: logging in should bring the stack up quietly in the tray, not
 # throw a browser window at you. --root pins the repo even if the exe is later
-# moved or the working directory is somewhere odd.
+# moved or the working directory is somewhere odd. -Prod / -Reload pass the
+# launcher flags through, so re-running this does not undo a --prod set-up.
+$launcherArgs = "--no-browser"
+if ($Prod)   { $launcherArgs += " --prod" }
+if ($Reload) { $launcherArgs += " --reload" }
+$launcherArgs += " --root `"$RepoRoot`""
 $action = New-ScheduledTaskAction -Execute $Exe `
-    -Argument "--no-browser --root `"$RepoRoot`"" `
+    -Argument $launcherArgs `
     -WorkingDirectory $RepoRoot
 
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
@@ -87,7 +95,7 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal -Force | Out-Null
 
 Write-Host "Registered '$TaskName'." -ForegroundColor Green
-Write-Host "  Runs   : $Exe --no-browser --root `"$RepoRoot`""
+Write-Host "  Runs   : $Exe $launcherArgs"
 Write-Host "  When   : at log-on, ${DelaySeconds}s delay, restarted up to 3x if it dies"
 Write-Host ""
 Write-Host "The Run-key entry is a separate mechanism -- if you enabled the tray's" -ForegroundColor DarkGray
