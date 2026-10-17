@@ -2493,6 +2493,7 @@ hand then. The local `research/graphs/`, the `graphs` table and `/api/v2/graphs`
 **Cause:** state of that one `next dev` (Turbopack) run, not code — the same routes were 200 before the 10:10 start and 56/56 were 404 after it. Why that start went wrong is not known.
 **Fix:** restart the frontend (tray, or kill the `next dev` node process — the launcher respawns it in ~4 s). `.next` did not need deleting.
 **Check first:** `curl -s -o NUL -w "%{http_code}" "http://localhost:9318/api/v2/portfolio/risk/guard/size?symbol=AAPL&account_id=x"` vs the same path on 9317 — 404 HTML on one and 200 on the other = this.
+**Again 2026-10-17, wider:** after the 18:34 launcher start **every** `/api/v2/**` route was 404 (even `portfolio/accounts`, 3 segments) while `/api/*` outside v2 was 200 → PORT sat on "WAITING FOR BACKEND…" though the backend was fine. Fixed by killing the `next dev` tree **and** moving `.next/dev` aside (`dev.stale-20261017`); the launcher respawned it and v2 answered 200 in ~3 s. User-visible report is "backend broken, PORT won't open" — probe 9318 vs 9317 before touching the backend.
 
 ## Start-up acknowledges every alert that has no rule row (2026-10-08)
 `alerts/schema.py::create_alert_tables` runs at every backend start and acks `alert_events` whose `rule_id` is not in
