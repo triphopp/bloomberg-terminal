@@ -319,11 +319,27 @@ static BOOL startupEnabled(void)
     return found;
 }
 
+/* The entry starts the launcher the way it is running now: written as bare
+ * `--no-browser`, ticking the tray item on a `--prod` launcher silently put
+ * the next log-on back on `next dev` (~1.6 GB). */
 static BOOL startupInstall(void)
 {
-    wchar_t exe[MAX_PATH], value[MAX_PATH + 32];
+    wchar_t exe[MAX_PATH], value[MAX_PATH + 160];
     GetModuleFileNameW(NULL, exe, MAX_PATH);
-    _snwprintf(value, ARRAYSIZE(value), L"\"%s\" --no-browser", exe);
+    _snwprintf(value, ARRAYSIZE(value), L"\"%s\" --no-browser%s%s%s",
+               exe,
+               g_prod ? L" --prod" : L"",
+               g_reloadArg == TRUE ? L" --reload"
+                   : g_reloadArg == FALSE ? L" --no-reload" : L"",
+               g_localOnly ? L" --local-only" : L"");
+    value[ARRAYSIZE(value) - 1] = 0;
+    if (g_backendPort != 9317 || g_frontendPort != 9318) {
+        size_t n = wcslen(value);
+        _snwprintf(value + n, ARRAYSIZE(value) - n,
+                   L" --backend-port %d --frontend-port %d",
+                   g_backendPort, g_frontendPort);
+        value[ARRAYSIZE(value) - 1] = 0;
+    }
 
     HKEY k;
     if (RegCreateKeyExW(HKEY_CURRENT_USER, RUNKEY_PATH, 0, NULL, 0,

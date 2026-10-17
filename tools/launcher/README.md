@@ -80,7 +80,11 @@ rewritten to `https://` before it ever reaches the dev server and fails. Use
 
 The start-up registration runs the exe with `--no-browser`, so logging into
 Windows brings the terminal up quietly in the tray rather than throwing a
-browser window at you.
+browser window at you. It also keeps the mode the launcher is running in —
+`--prod`, an explicit `--reload` / `--no-reload`, `--local-only` and
+non-default ports — so ticking the tray item on a `--prod` launcher does not
+put the next log-on back on `next dev`. The scheduled-task script takes the
+same choice as `-Prod` / `-Reload`.
 
 ## Backend edits: auto-reload + the stale-backend banner (2026-09-25)
 
