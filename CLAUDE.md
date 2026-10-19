@@ -167,6 +167,19 @@ re-loop the last k bars per bar), no `Math.max(...arr)`, no `shift()` in loops, 
 closed-bar content (not array identity). Exceptions need `// perf-ok: <reason>`. Same rules for
 `lib/volume-stats.ts`, `lib/volume-events.ts`, `lib/bb-volume.ts`.
 
+**Columnar engine (2026-10-12)** — an indicator works in typed columns end to end (rules 7–10 in the same header):
+it reads the bars through the shared `barColumns(data)` view (`chart/columns.ts`; never `data.map(d => d.close)`),
+returns `SeriesColumns` through `...columnar((bars, config) => [...])` (`chart/series-columns.ts` — this gives it
+both `columns` and `compute`), and keeps its arithmetic in `Float64Array` kernels with NaN = no value
+(`chart/kernels.ts`, `chart/rolling.ts`). The chart builds the points, and on a live tick only the last one or two
+(`series-data.ts` `setSeriesColumns`, `refill.ts`). **`causal: true` only when slot i depends on bars 0..i and the
+config, nothing else** — the chart then sends the tail unchecked; leave it off when in doubt (the columns are
+compared instead, nearly as fast, and cannot be wrong). Indicators that repaint or carry labels (zigzag, S/D zones)
+and heatmaps keep plain `compute()`. No drawn value may change: every columnar indicator is held to its previous
+implementation by `chart/__tests__/indicator-equivalence.test.ts` (references in `__tests__/legacy/`), and
+`refill.test.ts` replays ticks through all of them and pins the causal set. `npm run bench:chart` prints what a tick
+costs each indicator. `backend/alerts/operands.py` mirrors nine of them — a changed kernel must keep the same bits.
+
 ## Looking for data → `memory/reference/data-sources.md` FIRST (2026-09-29)
 
 Before searching for any data (macro, country, rates, company, news), open

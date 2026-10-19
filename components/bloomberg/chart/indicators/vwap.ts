@@ -16,53 +16,71 @@
  * genuine support/resistance rather than chart folklore.
  */
 
-import type { ChartIndicator, IndicatorFactory, IndicatorSeriesOutput, OhlcvBar } from "../types";
+import type { BarColumns } from "../columns.ts";
+import { columnar } from "../series-columns.ts";
+import type { ChartIndicator, IndicatorFactory, SeriesColumns } from "../types";
 
 const SESSION_GAP_SEC = 4 * 60 * 60;
 
-interface VWAPPoint {
-  vwap: number | null;
-  sd: number | null;
+interface VWAPColumns {
+  /** NaN until the session has traded any volume. */
+  vwap: Float64Array;
+  sd: Float64Array;
 }
 
-function calcVWAP(data: OhlcvBar[]): VWAPPoint[] {
+function calcVWAP(bars: BarColumns): VWAPColumns {
+  const n = bars.length;
+  const { times, high, low, close, volume } = bars;
+  const vwap = new Float64Array(n);
+  const sd = new Float64Array(n);
   let cumTPV = 0; // Σ typical price × volume
   let cumTP2V = 0; // Σ typical price² × volume
   let cumVol = 0;
   let prevTime: number | null = null;
-  const result: VWAPPoint[] = [];
 
-  for (const bar of data) {
+  for (let i = 0; i < n; i++) {
+    const time = times[i];
     // Session reset on intraday gap (daily string times never reset → anchored VWAP)
-    if (
-      typeof bar.time === "number" &&
-      prevTime !== null &&
-      bar.time - prevTime > SESSION_GAP_SEC
-    ) {
-      cumTPV = 0;
-      cumTP2V = 0;
-      cumVol = 0;
+    if (typeof time === "number") {
+      if (prevTime !== null && time - prevTime > SESSION_GAP_SEC) {
+        cumTPV = 0;
+        cumTP2V = 0;
+        cumVol = 0;
+      }
+      prevTime = time;
     }
-    if (typeof bar.time === "number") prevTime = bar.time;
 
-    const vol = bar.volume ?? 0;
+    const vol = volume[i];
     if (vol > 0) {
-      const tp = (bar.high + bar.low + bar.close) / 3;
+      const tp = (high[i] + low[i] + close[i]) / 3;
       cumTPV += tp * vol;
       cumTP2V += tp * tp * vol;
       cumVol += vol;
     }
 
     if (cumVol > 0) {
-      const vwap = cumTPV / cumVol;
-      const variance = Math.max(0, cumTP2V / cumVol - vwap * vwap);
-      result.push({ vwap, sd: Math.sqrt(variance) });
+      const v = cumTPV / cumVol;
+      const variance = Math.max(0, cumTP2V / cumVol - v * v);
+      vwap[i] = v;
+      sd[i] = Math.sqrt(variance);
     } else {
-      result.push({ vwap: null, sd: null });
+      vwap[i] = Number.NaN;
+      sd[i] = Number.NaN;
     }
   }
 
-  return result;
+  return { vwap, sd };
+}
+
+/** `vwap + mult·sd` where that is a finite number, NaN (no point) elsewhere. */
+function band(points: VWAPColumns, mult: number): Float64Array {
+  const { vwap, sd } = points;
+  const out = new Float64Array(vwap.length);
+  for (let i = 0; i < out.length; i++) {
+    const v = mult === 0 ? vwap[i] : vwap[i] + mult * sd[i];
+    out[i] = Number.isFinite(v) ? v : Number.NaN;
+  }
+  return out;
 }
 
 export const createVWAP: IndicatorFactory = (overrides = {}) => {
@@ -93,24 +111,21 @@ export const createVWAP: IndicatorFactory = (overrides = {}) => {
     ],
     config: { color, bands },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
+    ...columnar((bars, config) => {
       const c = config.color as string;
       const showBands = config.bands as boolean;
-      const points = calcVWAP(data);
+      const points = calcVWAP(bars);
 
-      const line = (pick: (p: VWAPPoint) => number | null) =>
-        data
-          .map((d, i) => ({ time: d.time, value: pick(points[i]) as number }))
-          .filter((d) => d.value != null && Number.isFinite(d.value));
-
-      const out: IndicatorSeriesOutput[] = [
+      const out: SeriesColumns[] = [
         {
           id: "vwap-line",
           label: "VWAP",
           type: "line",
           color: c,
           lineWidth: 2,
-          data: line((p) => p.vwap),
+          values: band(points, 0),
+          from: 0,
+          emit: "valued",
         },
       ];
 
@@ -130,13 +145,18 @@ export const createVWAP: IndicatorFactory = (overrides = {}) => {
             type: "line",
             color: `${c}${b.alpha}`,
             lineWidth: 1,
-            data: line((p) => (p.vwap != null && p.sd != null ? p.vwap + b.mult * p.sd : null)),
+            values: band(points, b.mult),
+            from: 0,
+            emit: "valued",
           });
         }
       }
 
       return out;
-    },
+    }),
+    // Cumulative from the start of the range (or of the session): a tick moves
+    // only the last point.
+    causal: true,
   };
 
   return indicator;

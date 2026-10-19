@@ -34,7 +34,8 @@
 ```bash
 cd backend && python -m pytest -q -p no:cacheprovider --basetemp=<scratch dir>   # backend/pytest.ini: tests/ + slip_ocr/tests/ — 1936 collected 2026-10-09 (collect only; 10 of them = test_port_sigma on the port-sigma branch). Last full run 2026-10-08: 1831 of 1832 pass, known issue 17 aside
 npm run typecheck      # tsc --noEmit — clean (also run by the pre-commit hook and CI)
-npm run test:chart     # 356 pass (2026-10-09, incl. SD zones + Ichimoku)
+npm run test:chart     # 426 pass (2026-10-12: 360 + 66 for the columnar indicator engine — equivalence, kernels, tick replay)
+npm run bench:chart    # not a test: prints what one live tick costs each chart indicator at 1,250 / 10,000 / 50,000 bars
 npm run test:session   # 156 pass (2026-10-09)
 npm run test:views     # 63 pass (2026-10-09; 7 of them = day-context on the port-sigma branch)
 npm run test:alerts    # 44 pass
@@ -643,6 +644,7 @@ Rule (memory/AGENTS.md §6b): a new plan adds a `- [ ]` line here; a finished pl
 - [x] **Chart Compare and Price Scaling** — done 2026-09-26; COMPARE icon, `compare(A,B,...)` ≤10, `<unit>_scaling` chart units (`plans/completed/chart-compare-and-scaling.md`)
 - [ ] **Central DB (Postgres primary + local mirrors)** — Postgres orders every write (future multi-user), SQLite mirror per machine pulled by change_seq, offline outbox with version-checked replay + conflict review; replaces multi-writer Drive merge. P0 (`db.connect`, `adopt_db_copy.py`) done (`plans/central-db-cloud-primary.md`)
 - [ ] **Chart render performance** — tick path O(1) (series.update + incremental indicators), columnar Float64Array bars, chunked history by calendar block, cache tiers FE L1/L2 (React Query + IndexedDB) · BE L1/L2 (bytes LRU + SQLite `price_bars`), LOD decimation (`plans/chart-render-perf.md`)
+- [ ] **Chart indicator engine (columnar, phase 1)** — one `Float64Array` column view per bar array shared by every indicator, typed kernels, `SeriesColumns` + `columnar()`, tail-only `update()` (`causal` flag, otherwise typed-array comparison), candle series on the bars' delta; 19 of 22 indicators converted, no drawn value changed (equivalence tests vs `__tests__/legacy/`). Busy chart per tick at 10,000 bars 10.8 ms → 0.5 ms (`npm run bench:chart`). Code complete 2026-10-12, PR open (`plans/chart-indicator-engine.md`)
 - [ ] **Quote stream visibility budget** — global symbol budget + priority by what's on screen (focus/visible/mounted, LRU, lazy eviction), coverage event, REST gated by viewport (`plans/quote-stream-visibility-budget.md`)
 - [x] **Quote stream sharding** — done 2026-09-26; Yahoo WS 100-symbol/conn cap → async shards ≤90 each + direct proto decode (6× less CPU/tick) (`plans/completed/quote-stream-sharding.md`)
 - [x] **BB Volume Overlay** — done 2026-09-26; volume ในกรอบ BB (spike/delta est./vol/rvol/events/profile ต่อเดือน), σ วัดจาก volume เอง, params ใน BB settings (`plans/completed/bb-volume-overlay.md`)

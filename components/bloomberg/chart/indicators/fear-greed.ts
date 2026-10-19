@@ -9,23 +9,30 @@
  * the parent component (stock-view / market-view) via updateIndicatorConfig().
  */
 
-import type {
-  ChartIndicator,
-  IndicatorFactory,
-  OhlcvBar,
-  IndicatorSeriesOutput,
-  HistogramDataPoint,
-  SeriesDataPoint,
-} from "../types";
+import { columnar } from "../series-columns.ts";
+import type { ChartIndicator, IndicatorFactory, SeriesColumns } from "../types";
 
 // ── Zone colors ───────────────────────────────────────────────────────────────
 
+const ZONE_PALETTE = [
+  "#CC2200", // extreme fear — red
+  "#CC6600", // fear         — orange
+  "#999900", // neutral      — olive
+  "#00AA44", // greed        — green
+  "#007733", // extreme greed — dark green
+] as const;
+
+/** Index into `ZONE_PALETTE`. */
+function zone(value: number): number {
+  if (value < 25) return 0;
+  if (value < 45) return 1;
+  if (value < 55) return 2;
+  if (value < 75) return 3;
+  return 4;
+}
+
 export function fearGreedZoneColor(value: number): string {
-  if (value < 25) return "#CC2200";   // extreme fear — red
-  if (value < 45) return "#CC6600";   // fear         — orange
-  if (value < 55) return "#999900";   // neutral      — olive
-  if (value < 75) return "#00AA44";   // greed        — green
-  return "#007733";                   // extreme greed — dark green
+  return ZONE_PALETTE[zone(value)];
 }
 
 export function fearGreedZoneName(value: number): string {
@@ -40,16 +47,16 @@ export function fearGreedZoneName(value: number): string {
 
 export const createFearGreed: IndicatorFactory = (_overrides = {}) => {
   const indicator: ChartIndicator = {
-    id:          "fear-greed",
-    name:        "Fear & Greed",
-    category:    "custom",
-    type:        "pane",
+    id: "fear-greed",
+    name: "Fear & Greed",
+    category: "custom",
+    type: "pane",
     description: "Fear & Greed Index (VIX + momentum + safe-haven + junk bonds + breadth)",
-    minBars:     1,
-    params:      [],
-    config:      { preloadedData: [] },
+    minBars: 1,
+    params: [],
+    config: { preloadedData: [] },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
+    ...columnar((bars, config) => {
       const rawData = config.preloadedData as Array<{ time: string; value: number }> | undefined;
       if (!rawData || rawData.length === 0) return [];
 
@@ -57,58 +64,74 @@ export const createFearGreed: IndicatorFactory = (_overrides = {}) => {
       const lookup = new Map<string, number>();
       for (const d of rawData) lookup.set(d.time, d.value);
 
-      const fgHist:  HistogramDataPoint[] = [];
-      const fgLine:  SeriesDataPoint[]    = [];
+      const n = bars.length;
+      const { times } = bars;
+      const values = new Float64Array(n).fill(Number.NaN);
+      const has = new Uint8Array(n);
+      const zones = new Uint8Array(n);
+      let found = 0;
 
-      for (const bar of data) {
+      for (let i = 0; i < n; i++) {
         // Normalise bar time to YYYY-MM-DD for lookup
-        let dateStr: string;
-        if (typeof bar.time === "number") {
-          dateStr = new Date(bar.time * 1000).toISOString().slice(0, 10);
-        } else {
-          dateStr = (bar.time as string).slice(0, 10);
-        }
+        const time = times[i];
+        const dateStr =
+          typeof time === "number"
+            ? new Date(time * 1000).toISOString().slice(0, 10)
+            : time.slice(0, 10);
 
         const val = lookup.get(dateStr);
         if (val == null) continue;
 
-        fgHist.push({ time: bar.time, value: val, color: fearGreedZoneColor(val) });
-        fgLine.push({ time: bar.time, value: val });
+        values[i] = val;
+        has[i] = 1;
+        zones[i] = zone(val);
+        found++;
       }
 
-      if (fgLine.length === 0) return [];
+      if (found === 0) return [];
 
       const scaleId = "fear-greed";
-      const times   = fgLine.map(d => d.time);
 
       // Horizontal reference lines at zone boundaries
-      const refLine = (id: string, v: number, color: string): IndicatorSeriesOutput => ({
-        id,
-        label:        String(v),
-        type:         "line",
-        color,
-        lineWidth:    1,
-        data:         times.map(t => ({ time: t, value: v })),
-        priceScaleId: scaleId,
-      });
+      const refLine = (id: string, v: number, color: string): SeriesColumns => {
+        const level = new Float64Array(n).fill(Number.NaN);
+        for (let i = 0; i < n; i++) if (has[i] === 1) level[i] = v;
+        return {
+          id,
+          label: String(v),
+          type: "line",
+          color,
+          lineWidth: 1,
+          values: level,
+          from: 0,
+          emit: has,
+          priceScaleId: scaleId,
+        };
+      };
 
       return [
         // Colored histogram bars
         {
-          id:           "fg-histogram",
-          label:        "F&G",
-          type:         "histogram",
-          data:         fgHist,
+          id: "fg-histogram",
+          label: "F&G",
+          type: "histogram",
+          values,
+          from: 0,
+          emit: has,
+          colors: zones,
+          palette: ZONE_PALETTE,
           priceScaleId: scaleId,
         },
         // Smoothed line overlay
         {
-          id:           "fg-line",
-          label:        "F&G Line",
-          type:         "line",
-          color:        "rgba(255,255,255,0.6)",
-          lineWidth:    1,
-          data:         fgLine,
+          id: "fg-line",
+          label: "F&G Line",
+          type: "line",
+          color: "rgba(255,255,255,0.6)",
+          lineWidth: 1,
+          values,
+          from: 0,
+          emit: has,
           priceScaleId: scaleId,
         },
         // Zone boundary lines
@@ -118,7 +141,7 @@ export const createFearGreed: IndicatorFactory = (_overrides = {}) => {
         refLine("fg-ref-55", 55, "#00AA44"),
         refLine("fg-ref-75", 75, "#007733"),
       ];
-    },
+    }),
   };
 
   return indicator;

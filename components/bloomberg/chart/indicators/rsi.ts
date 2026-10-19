@@ -5,23 +5,45 @@
  * Default period: 14
  */
 
-import type { ChartIndicator, IndicatorFactory, IndicatorSeriesOutput, OhlcvBar } from "../types";
+import { constant } from "../kernels.ts";
+import { columnar } from "../series-columns.ts";
+import type { ChartIndicator, IndicatorFactory } from "../types";
 import type { RsiState } from "./rsiInverse";
 
+export interface RsiColumns {
+  /** NaN before `from`. */
+  rsi: Float64Array;
+  /** Wilder's averages behind each value — filled only when asked for. */
+  avgGain: Float64Array;
+  avgLoss: Float64Array;
+  /** First index with a value (`period`); the length when there is none. */
+  from: number;
+}
+
+const NO_STATE = new Float64Array(0);
+
 /**
- * RSI plus the smoothing state that produced it.
+ * RSI plus, on request, the smoothing state that produced it.
  *
  * The value alone is not enough for anything that has to run the indicator
  * backwards: RSI is `100 · avgGain / (avgGain + avgLoss)`, so the series
  * preserves the ratio and discards the magnitude. Recovering "what close would
  * put RSI at 70 tomorrow" needs `avgLoss` on its own, not just the ratio, so
- * the state travels with the series rather than being recomputed later — a
+ * the state comes out of the same pass rather than being recomputed later — a
  * second pass would have to reproduce this exact seed and data window to agree.
  */
-function calcRSIState(closes: number[], period: number): (RsiState | null)[] {
-  if (closes.length < period + 1) return new Array(closes.length).fill(null);
+export function rsiColumns(
+  closes: ArrayLike<number>,
+  period: number,
+  withState = false
+): RsiColumns {
+  const n = closes.length;
+  const from = n < period + 1 ? n : period;
+  const rsi = new Float64Array(n).fill(Number.NaN, 0, from);
+  const gains = withState ? new Float64Array(n).fill(Number.NaN, 0, from) : NO_STATE;
+  const losses = withState ? new Float64Array(n).fill(Number.NaN, 0, from) : NO_STATE;
+  if (from === n) return { rsi, avgGain: gains, avgLoss: losses, from };
 
-  const result: (RsiState | null)[] = new Array(period).fill(null);
   let avgGain = 0;
   let avgLoss = 0;
 
@@ -38,11 +60,14 @@ function calcRSIState(closes: number[], period: number): (RsiState | null)[] {
   // finite RS of 100 and pushed it through the formula, landing on 99.0099 —
   // one bar reading a whole point below what every later bar in the same state
   // reports. Short-circuit here the way the smoothed loop below does.
-  const rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
-  result.push({ rsi, avgGain, avgLoss });
+  rsi[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  if (withState) {
+    gains[period] = avgGain;
+    losses[period] = avgLoss;
+  }
 
   // Smoothed
-  for (let i = period + 1; i < closes.length; i++) {
+  for (let i = period + 1; i < n; i++) {
     const diff = closes[i] - closes[i - 1];
     const gain = diff > 0 ? diff : 0;
     const loss = diff < 0 ? Math.abs(diff) : 0;
@@ -50,10 +75,23 @@ function calcRSIState(closes: number[], period: number): (RsiState | null)[] {
     avgGain = (avgGain * (period - 1) + gain) / period;
     avgLoss = (avgLoss * (period - 1) + loss) / period;
 
-    const rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
-    result.push({ rsi, avgGain, avgLoss });
+    rsi[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    if (withState) {
+      gains[i] = avgGain;
+      losses[i] = avgLoss;
+    }
   }
 
+  return { rsi, avgGain: gains, avgLoss: losses, from };
+}
+
+/** `rsiColumns` with its state, one object per bar: `null` during warm-up. */
+function calcRSIState(closes: number[], period: number): (RsiState | null)[] {
+  const c = rsiColumns(closes, period, true);
+  const result: (RsiState | null)[] = new Array(closes.length).fill(null);
+  for (let i = c.from; i < closes.length; i++) {
+    result[i] = { rsi: c.rsi[i], avgGain: c.avgGain[i], avgLoss: c.avgLoss[i] };
+  }
   return result;
 }
 
@@ -74,10 +112,17 @@ export const RSI_COLORS = {
   mid: "#666666",
 } as const;
 
+const ZONE_PALETTE = [RSI_COLORS.neutral, RSI_COLORS.overbought, RSI_COLORS.oversold] as const;
+
+/** Index into `ZONE_PALETTE`: at or beyond a level takes that level's colour. */
+function rsiZone(value: number, overbought: number, oversold: number): number {
+  if (value >= overbought) return 1;
+  if (value <= oversold) return 2;
+  return 0;
+}
+
 export function rsiZoneColor(value: number, overbought: number, oversold: number): string {
-  if (value >= overbought) return RSI_COLORS.overbought;
-  if (value <= oversold) return RSI_COLORS.oversold;
-  return RSI_COLORS.neutral;
+  return ZONE_PALETTE[rsiZone(value, overbought, oversold)];
 }
 
 export const createRSI: IndicatorFactory = (overrides = {}) => {
@@ -113,20 +158,16 @@ export const createRSI: IndicatorFactory = (overrides = {}) => {
     ],
     config: { period, overbought: 70, oversold: 30 },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
+    ...columnar((bars, config) => {
       const p = config.period as number;
       const ob = config.overbought as number;
       const os = config.oversold as number;
-      const closes = data.map((d) => d.close);
-      const rsiStates = calcRSIState(closes, p);
+      const n = bars.length;
+      const { rsi, from } = rsiColumns(bars.close, p);
       const scaleId = `rsi-${p}`;
 
-      const rsiLine = data
-        .map((d, i) => ({ time: d.time, value: rsiStates[i]?.rsi as number }))
-        .filter((d) => d.value != null)
-        .map((d) => ({ ...d, color: rsiZoneColor(d.value, ob, os) }));
-
-      const times = rsiLine.map((d) => d.time);
+      const zones = new Uint8Array(n);
+      for (let i = from; i < n; i++) zones[i] = rsiZone(rsi[i], ob, os);
 
       // Reference levels first: later series paint on top, and the RSI line is
       // the thing to read. Refills match series by position, so this order is
@@ -139,7 +180,9 @@ export const createRSI: IndicatorFactory = (overrides = {}) => {
           color: RSI_COLORS.mid,
           lineWidth: 1,
           lineStyle: "dotted",
-          data: times.map((t) => ({ time: t, value: 50 })),
+          values: constant(n, 50, from),
+          from,
+          emit: "all",
           priceScaleId: scaleId,
         },
         {
@@ -149,7 +192,9 @@ export const createRSI: IndicatorFactory = (overrides = {}) => {
           color: RSI_COLORS.obLevel,
           lineWidth: 1,
           lineStyle: "dashed",
-          data: times.map((t) => ({ time: t, value: ob })),
+          values: constant(n, ob, from),
+          from,
+          emit: "all",
           priceScaleId: scaleId,
         },
         {
@@ -159,7 +204,9 @@ export const createRSI: IndicatorFactory = (overrides = {}) => {
           color: RSI_COLORS.osLevel,
           lineWidth: 1,
           lineStyle: "dashed",
-          data: times.map((t) => ({ time: t, value: os })),
+          values: constant(n, os, from),
+          from,
+          emit: "all",
           priceScaleId: scaleId,
         },
         {
@@ -169,11 +216,17 @@ export const createRSI: IndicatorFactory = (overrides = {}) => {
           color: RSI_COLORS.neutral,
           lineWidth: 2,
           lastValueVisible: true,
-          data: rsiLine,
+          values: rsi,
+          from,
+          emit: "all",
+          colors: zones,
+          palette: ZONE_PALETTE,
           priceScaleId: scaleId,
         },
       ];
-    },
+    }),
+    // The zone colour of a point is a function of that point's own value.
+    causal: true,
   };
 
   return indicator;

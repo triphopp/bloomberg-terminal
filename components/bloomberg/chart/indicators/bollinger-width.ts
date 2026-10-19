@@ -19,16 +19,9 @@
  * (e.g. flow, %B, price structure).
  */
 
-import { rollingVariance } from "../rolling.ts";
-import type {
-  ChartIndicator,
-  HistogramDataPoint,
-  IndicatorFactory,
-  IndicatorSeriesOutput,
-  OhlcvBar,
-  SeriesDataPoint,
-} from "../types";
-import { calcSMA } from "./sma.ts";
+import { rollingMean, rollingVariance } from "../rolling.ts";
+import { columnar } from "../series-columns.ts";
+import type { ChartIndicator, IndicatorFactory } from "../types";
 
 // Squeeze flagging needs enough BBW history to be meaningful; below this the
 // trailing low is too easy to touch and every early bar would light up.
@@ -38,14 +31,10 @@ const MIN_SQUEEZE_OBS = 30;
 // only ever mark the single lowest bar.
 const SQUEEZE_TOL = 1.05;
 
-/** Population σ about the window mean, null during warm-up. */
-function calcStdDev(values: number[], period: number): (number | null)[] {
-  const { variance } = rollingVariance(values, period, 0);
-  const result: (number | null)[] = new Array(values.length);
-  for (let i = 0; i < values.length; i++)
-    result[i] = i < period - 1 ? null : Math.sqrt(variance[i]);
-  return result;
-}
+const WIDTH_PALETTE = [
+  "rgba(120,144,156,0.45)", // normal width — muted blue-grey
+  "#ff9800", // squeeze
+] as const;
 
 export const createBollingerWidth: IndicatorFactory = (overrides = {}) => {
   const period = (overrides.period as number) ?? 20;
@@ -90,39 +79,40 @@ export const createBollingerWidth: IndicatorFactory = (overrides = {}) => {
     ],
     config: { period, stdDev, lookback },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
+    ...columnar((bars, config) => {
       const p = config.period as number;
       const sd = config.stdDev as number;
       const lb = config.lookback as number;
+      const n = bars.length;
 
-      const closes = data.map((d) => d.close);
-      const sma = calcSMA(closes, p);
-      const stdDevValues = calcStdDev(closes, p);
-
-      // BBW aligned to data indices (null during warm-up).
-      const bbw: (number | null)[] = new Array(data.length).fill(null);
-      for (let i = 0; i < data.length; i++) {
-        const m = sma[i];
-        const s = stdDevValues[i];
-        if (m == null || s == null || m === 0) continue;
-        bbw[i] = (2 * sd * s) / Math.abs(m);
-      }
+      // The mean from its own running sum and σ from the variance pass — two
+      // passes, as before: their means differ in the last bits.
+      const sma = rollingMean(bars.close, p);
+      const { variance } = rollingVariance(bars.close, p, 0);
 
       const scaleId = `bb-width-${p}-${sd}`;
-      const widthPoints: HistogramDataPoint[] = [];
-      const floorPoints: SeriesDataPoint[] = [];
+      // A bar has a width from the first full window on, unless the mean is
+      // exactly zero. Masks rather than NaN: a window holding a broken print
+      // has a NaN width, and that bar was always sent.
+      const from = Math.max(0, Math.ceil(p - 1));
+      const width = new Float64Array(n).fill(Number.NaN);
+      const hasWidth = new Uint8Array(n);
+      const squeezed = new Uint8Array(n);
+      const floors = new Float64Array(n).fill(Number.NaN);
+      const hasFloor = new Uint8Array(n);
 
-      // Trailing low of the last `lb` non-null BBW values: monotone deque of
-      // their values (non-decreasing head→tail) and their ordinal among the
-      // non-null ones, so each value enters and leaves once — O(1) per bar.
-      const dqVal = new Float64Array(data.length);
-      const dqOrd = new Int32Array(data.length);
+      // Trailing low of the last `lb` widths: monotone deque of their values
+      // (non-decreasing head→tail) and their ordinal among the bars that have
+      // one, so each value enters and leaves once — O(1) per bar.
+      const dqVal = new Float64Array(n);
+      const dqOrd = new Int32Array(n);
       let head = 0;
       let tail = 0;
       let seen = 0;
-      for (let i = 0; i < data.length; i++) {
-        const w = bbw[i];
-        if (w == null) continue;
+      for (let i = from; i < n; i++) {
+        const m = sma[i];
+        if (m === 0) continue;
+        const w = (2 * sd * Math.sqrt(variance[i])) / Math.abs(m);
         while (tail > head && dqVal[tail - 1] >= w) tail--;
         dqVal[tail] = w;
         dqOrd[tail++] = seen;
@@ -130,13 +120,14 @@ export const createBollingerWidth: IndicatorFactory = (overrides = {}) => {
         while (dqOrd[head] <= seen - 1 - lb) head++;
         const filled = Math.min(seen, lb);
 
-        let color = "rgba(120,144,156,0.45)"; // normal width — muted blue-grey
         if (filled >= Math.min(lb, MIN_SQUEEZE_OBS)) {
           const floor = dqVal[head];
-          floorPoints.push({ time: data[i].time, value: floor });
-          if (w <= floor * SQUEEZE_TOL) color = "#ff9800"; // squeeze
+          floors[i] = floor;
+          hasFloor[i] = 1;
+          if (w <= floor * SQUEEZE_TOL) squeezed[i] = 1;
         }
-        widthPoints.push({ time: data[i].time, value: w, color });
+        width[i] = w;
+        hasWidth[i] = 1;
       }
 
       return [
@@ -144,7 +135,11 @@ export const createBollingerWidth: IndicatorFactory = (overrides = {}) => {
           id: `${scaleId}-hist`,
           label: "BB Width",
           type: "histogram",
-          data: widthPoints,
+          values: width,
+          from,
+          emit: hasWidth,
+          colors: squeezed,
+          palette: WIDTH_PALETTE,
           priceScaleId: scaleId,
         },
         {
@@ -153,11 +148,15 @@ export const createBollingerWidth: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#26c6da",
           lineWidth: 1,
-          data: floorPoints,
+          values: floors,
+          from,
+          emit: hasFloor,
           priceScaleId: scaleId,
         },
       ];
-    },
+    }),
+    // Width, floor and squeeze colour of a bar all look back only.
+    causal: true,
   };
 
   return indicator;

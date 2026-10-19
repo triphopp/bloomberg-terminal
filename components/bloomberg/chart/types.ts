@@ -11,8 +11,9 @@
 
 import type { AlertLabel, IndicatorOutput } from "@/lib/alerts/labels";
 import type { IChartApi, ISeriesApi, SeriesType } from "lightweight-charts";
+import type { BarColumns } from "./columns";
 
-export type { AlertLabel, IndicatorOutput };
+export type { AlertLabel, BarColumns, IndicatorOutput };
 
 // ── OHLCV Bar ────────────────────────────────────────────────────────────────
 
@@ -233,6 +234,36 @@ export interface IndicatorSeriesOutput {
   heatmap?: HeatmapSpec;
 }
 
+/**
+ * One output series as typed columns — the form the chart works in.
+ *
+ * `values` has one slot per bar, at the bar's own time. The chart builds point
+ * objects from it only when it needs them: all of them for a `setData`, the
+ * last one or two on a live tick (chart/series-data.ts `setSeriesColumns`).
+ * `IndicatorSeriesOutput` is this with every point already built
+ * (chart/series-columns.ts `toSeriesOutput`).
+ */
+export interface SeriesColumns
+  extends Omit<IndicatorSeriesOutput, "data" | "type" | "labels" | "heatmap"> {
+  type: Exclude<IndicatorSeriesType, "heatmap">;
+  /** One slot per bar. */
+  values: Float64Array;
+  /** Slots before this never carry a point (the warm-up). */
+  from: number;
+  /**
+   * Which slots at or after `from` carry a point:
+   *  - "all"     every one — a NaN value goes out as a NaN point;
+   *  - "valued"  those whose value is not NaN;
+   *  - a mask    those where it is 1.
+   */
+  emit: "all" | "valued" | Uint8Array;
+  /** A slot at or after `from` without a point is sent as whitespace `{ time }`. */
+  whitespace?: boolean;
+  /** Per-point colour: `palette[colors[i]]`. Both or neither. */
+  colors?: Uint8Array;
+  palette?: readonly string[];
+}
+
 // ── Indicator Plugin Interface ───────────────────────────────────────────────
 
 export interface ChartIndicator {
@@ -264,6 +295,31 @@ export interface ChartIndicator {
    */
   // biome-ignore lint/suspicious/noExplicitAny: config values are indicator-specific, intentionally untyped
   compute(data: OhlcvBar[], config: Record<string, any>): IndicatorSeriesOutput[];
+
+  /**
+   * The same series as `compute`, as typed columns over the shared column view
+   * of the bars (chart/columns.ts). When present the chart calls this instead
+   * and builds only the points it sends. Define both at once with
+   * `columnar()` from chart/series-columns.ts — `compute` is then this, with
+   * every point built.
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: config values are indicator-specific, intentionally untyped
+  columns?(bars: BarColumns, config: Record<string, any>): SeriesColumns[];
+
+  /**
+   * A change to the last bar, or a new bar, never changes an earlier output
+   * point: slot i is a function of bars 0..i and the config, nothing else.
+   *
+   * The chart then sends the last one or two points on a tick without looking
+   * at the rest. Without it a columnar indicator is still sent tail-only, after
+   * its columns have been compared with the previous ones — so leave this off
+   * when in doubt. It is false for anything that reads the whole array (a fit,
+   * an inferred bar spacing, "does any bar have volume"), looks ahead (a colour
+   * that depends on the next bar), or repaints. A function when the answer
+   * depends on the config.
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: config values are indicator-specific, intentionally untyped
+  causal?: boolean | ((config: Record<string, any>) => boolean);
 
   /** Minimum bars required before this indicator can produce output */
   minBars: number;

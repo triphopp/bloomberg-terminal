@@ -37,13 +37,8 @@
  */
 
 import { type VolBaseline, type VolMode, volumeRatio, volumeZ } from "../../lib/volume-stats.ts";
-import type {
-  ChartIndicator,
-  HistogramDataPoint,
-  IndicatorFactory,
-  IndicatorSeriesOutput,
-  OhlcvBar,
-} from "../types";
+import { columnar } from "../series-columns.ts";
+import type { ChartIndicator, IndicatorFactory, OhlcvBar } from "../types";
 
 export const RVOL_BASELINES: { value: VolBaseline; label: string }[] = [
   { value: "median", label: "Median (robust)" },
@@ -66,17 +61,20 @@ const ABNORMAL = "#ff9800";
 /** Dry-up gets its own colour: it is a setup, not a weaker version of a spike. */
 const DRY_UP = "#7e57c2";
 
-function ratioColor(v: number): string {
-  if (v >= 2) return ABNORMAL;
-  if (v >= 1) return NOTABLE;
-  return DIM;
+const PALETTE = [DIM, NOTABLE, ABNORMAL, DRY_UP] as const;
+
+/** Indices into `PALETTE`. */
+function ratioColor(v: number): number {
+  if (v >= 2) return 2;
+  if (v >= 1) return 1;
+  return 0;
 }
 
-function zColor(v: number): string {
-  if (v >= 2.5) return ABNORMAL;
-  if (v >= 1.5) return NOTABLE;
-  if (v <= -1) return DRY_UP;
-  return DIM;
+function zColor(v: number): number {
+  if (v >= 2.5) return 2;
+  if (v >= 1.5) return 1;
+  if (v <= -1) return 3;
+  return 0;
 }
 
 export const createRVOL: IndicatorFactory = (overrides = {}) => {
@@ -119,21 +117,29 @@ export const createRVOL: IndicatorFactory = (overrides = {}) => {
     ],
     config: { lookback, baseline, scale, mode },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
+    ...columnar((bars, config) => {
       const opts = {
         lookback: config.lookback as number,
         baseline: (config.baseline as VolBaseline) ?? "median",
         mode: (config.mode as VolMode) ?? "bar",
       };
       const asZ = ((config.scale as string) ?? "ratio") === "z";
+      // The statistics are lib/volume-stats.ts's, on the bars themselves —
+      // shared with the BB volume overlay and the volume-event classifier.
+      const data = bars.bars as OhlcvBar[];
       const series = asZ ? volumeZ(data, opts) : volumeRatio(data, opts);
       const color = asZ ? zColor : ratioColor;
+      const n = bars.length;
 
-      const points: HistogramDataPoint[] = [];
-      for (let i = 0; i < data.length; i++) {
+      const values = new Float64Array(n).fill(Number.NaN);
+      const has = new Uint8Array(n);
+      const colors = new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
         const v = series[i];
         if (v == null) continue;
-        points.push({ time: data[i].time, value: v, color: color(v) });
+        values[i] = v;
+        has[i] = 1;
+        colors[i] = color(v);
       }
 
       return [
@@ -141,10 +147,14 @@ export const createRVOL: IndicatorFactory = (overrides = {}) => {
           id: asZ ? "rvol-z-hist" : "rvol-hist",
           label: asZ ? "VOL Z" : "RVOL",
           type: "histogram",
-          data: points,
+          values,
+          from: 0,
+          emit: has,
+          colors,
+          palette: PALETTE,
         },
       ];
-    },
+    }),
   };
 
   return indicator;

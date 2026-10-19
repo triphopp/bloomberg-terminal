@@ -5,59 +5,46 @@
  * Default: kPeriod=14, dPeriod=3, smooth=3
  */
 
-import { rollingMax, rollingMin } from "../rolling.ts";
-import type { ChartIndicator, IndicatorFactory, IndicatorSeriesOutput, OhlcvBar } from "../types";
-import { calcSMA } from "./sma.ts";
+import type { BarColumns } from "../columns.ts";
+import { rollingMax, rollingMean, rollingMin } from "../rolling.ts";
+import { columnar } from "../series-columns.ts";
+import type { ChartIndicator, IndicatorFactory } from "../types";
+
+interface StochasticColumns {
+  k: Float64Array;
+  d: Float64Array;
+  /** First index %K / %D has a value at. */
+  kFrom: number;
+  dFrom: number;
+}
 
 function calcStochastic(
-  data: OhlcvBar[],
+  bars: BarColumns,
   kPeriod: number,
   dPeriod: number,
   smooth: number
-): { k: (number | null)[]; d: (number | null)[] } {
-  const rawK: (number | null)[] = new Array(data.length).fill(null);
-  const highs = new Float64Array(data.length);
-  const lows = new Float64Array(data.length);
-  for (let i = 0; i < data.length; i++) {
-    highs[i] = data[i].high;
-    lows[i] = data[i].low;
-  }
-  const hh = rollingMax(highs, kPeriod);
-  const ll = rollingMin(lows, kPeriod);
+): StochasticColumns {
+  const n = bars.length;
+  const { low, close } = bars;
+  const hh = rollingMax(bars.high, kPeriod);
+  const ll = rollingMin(low, kPeriod);
 
-  for (let i = kPeriod - 1; i < data.length; i++) {
+  const rawFrom = kPeriod - 1;
+  const rawK = new Float64Array(n).fill(Number.NaN, 0, Math.min(Math.max(0, rawFrom), n));
+  for (let i = Math.max(0, rawFrom); i < n; i++) {
     const range = hh[i] - ll[i];
-    rawK[i] = range === 0 ? 50 : ((data[i].close - ll[i]) / range) * 100;
+    rawK[i] = range === 0 ? 50 : ((close[i] - ll[i]) / range) * 100;
   }
 
-  // Smooth %K with SMA
-  const rawKValues = rawK.filter((v) => v != null) as number[];
-  const smoothedK = calcSMA(rawKValues, smooth);
-
-  // Align smoothed K back
-  const kLine: (number | null)[] = new Array(data.length).fill(null);
-  let ki = 0;
-  for (let i = 0; i < data.length; i++) {
-    if (rawK[i] != null) {
-      kLine[i] = smoothedK[ki] ?? null;
-      ki++;
-    }
-  }
+  // Smooth %K with SMA — of the raw line, which begins after its own warm-up
+  const kFrom = rawFrom + smooth - 1;
+  const k = rollingMean(rawK, smooth, rawFrom);
 
   // %D = SMA of %K
-  const kValues = kLine.filter((v) => v != null) as number[];
-  const dValues = calcSMA(kValues, dPeriod);
+  const dFrom = kFrom + dPeriod - 1;
+  const d = rollingMean(k, dPeriod, kFrom);
 
-  const dLine: (number | null)[] = new Array(data.length).fill(null);
-  let di = 0;
-  for (let i = 0; i < data.length; i++) {
-    if (kLine[i] != null) {
-      dLine[i] = dValues[di] ?? null;
-      di++;
-    }
-  }
-
-  return { k: kLine, d: dLine };
+  return { k, d, kFrom, dFrom };
 }
 
 export const createStochastic: IndicatorFactory = (overrides = {}) => {
@@ -95,12 +82,12 @@ export const createStochastic: IndicatorFactory = (overrides = {}) => {
     ],
     config: { kPeriod, dPeriod, smooth },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
+    ...columnar((bars, config) => {
       const kp = config.kPeriod as number;
       const dp = config.dPeriod as number;
       const sm = config.smooth as number;
 
-      const { k, d } = calcStochastic(data, kp, dp, sm);
+      const { k, d, kFrom, dFrom } = calcStochastic(bars, kp, dp, sm);
 
       return [
         {
@@ -109,10 +96,9 @@ export const createStochastic: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#2196f3",
           lineWidth: 1,
-          data: data.flatMap((bar, i) => {
-            const v = k[i];
-            return v == null ? [] : [{ time: bar.time, value: v }];
-          }),
+          values: k,
+          from: kFrom,
+          emit: "all",
           priceScaleId: "stoch",
         },
         {
@@ -121,14 +107,14 @@ export const createStochastic: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "#ff9800",
           lineWidth: 1,
-          data: data.flatMap((bar, i) => {
-            const v = d[i];
-            return v == null ? [] : [{ time: bar.time, value: v }];
-          }),
+          values: d,
+          from: dFrom,
+          emit: "all",
           priceScaleId: "stoch",
         },
       ];
-    },
+    }),
+    causal: true,
   };
 
   return indicator;

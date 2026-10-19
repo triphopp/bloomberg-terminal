@@ -7,7 +7,7 @@ import { BollingerFitSummary } from "./BollingerFitSummary";
 import { type ColorKeyItem, bbVolumeColorKey, readBbVolumeSettings } from "./bb-volume-overlay";
 import { resolveBollingerParameters } from "./bollinger-fit";
 import { INDICATOR_REGISTRY } from "./indicators";
-import { ATR_REGIME_COLORS, calcAtrRegime, validAtrInputs } from "./indicators/atr";
+import { ATR_REGIME_COLORS, latestAtrRegime, validAtrInputs } from "./indicators/atr";
 import type { ChartColors, ChartIndicator, IndicatorRegistryEntry, OhlcvBar } from "./types";
 
 interface IndicatorPickerProps {
@@ -274,7 +274,7 @@ export function IndicatorPicker({
   const chips = activeIndicators.map((ind) => {
     const isBB = bollingerEntryId(ind) != null;
     const isATR = ind.id === "atr-regime";
-    const atr = isATR ? calcAtrRegime(data, ind.config).at(-1) : null;
+    const atr = isATR ? latestAtrRegime(data, ind.config) : null;
     const accent = isATR
       ? ATR_REGIME_COLORS[atr?.state ?? "unknown"]
       : (colors.accent ?? colors.positive);
@@ -691,7 +691,7 @@ export function IndicatorPicker({
                                     (ind) => ind.id === "atr-regime"
                                   );
                                   const latest = active
-                                    ? calcAtrRegime(data, active.config).at(-1)
+                                    ? latestAtrRegime(data, active.config)
                                     : null;
                                   if (!latest) return null;
                                   return (

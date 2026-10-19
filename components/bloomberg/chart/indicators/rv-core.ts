@@ -29,6 +29,7 @@
  * 5m chart and a daily one.
  */
 
+import { type BarColumns, barColumns } from "../columns.ts";
 import { SortedWindow, rollingMean, rollingVariance } from "../rolling.ts";
 import type { OhlcvBar } from "../types";
 
@@ -82,12 +83,30 @@ function median(xs: number[]): number {
  * absolute.
  */
 export function inferPeriodsPerYear(data: OhlcvBar[]): number {
+  return periodsPerYear(barColumns(data));
+}
+
+const ppyCache = new WeakMap<BarColumns, number>();
+
+/** `inferPeriodsPerYear` on the shared column view — once per bar array, however many RV panes read it. */
+export function periodsPerYear(bars: BarColumns): number {
+  const hit = ppyCache.get(bars);
+  if (hit !== undefined) return hit;
+  const { times } = bars;
   const gaps: number[] = [];
-  for (let i = 1; i < data.length && gaps.length < 200; i++) {
-    const dt = toSeconds(data[i].time) - toSeconds(data[i - 1].time);
+  let prev = times.length > 0 ? toSeconds(times[0]) : Number.NaN;
+  for (let i = 1; i < times.length && gaps.length < 200; i++) {
+    const t = toSeconds(times[i]);
+    const dt = t - prev;
+    prev = t;
     if (Number.isFinite(dt) && dt > 0) gaps.push(dt);
   }
-  const dt = median(gaps);
+  const ppy = fromMedianGap(median(gaps));
+  ppyCache.set(bars, ppy);
+  return ppy;
+}
+
+function fromMedianGap(dt: number): number {
   if (!Number.isFinite(dt)) return TRADING_DAYS;
 
   const day = 86_400;
@@ -101,95 +120,148 @@ export function inferPeriodsPerYear(data: OhlcvBar[]): number {
 // ── Per-bar variance contributions ───────────────────────────────────────────
 //
 // Each estimator is expressed as a per-bar quantity so a rolling window is a
-// plain moving average of it. Index i is aligned to data[i]; entries that need
-// a previous bar are NaN at i = 0.
+// plain moving average of it. Index i is aligned to the bars; entries that need
+// a previous bar are NaN at i = 0. Every term is NaN where it is not finite.
 
 const ln = Math.log;
 
-function ccTerms(data: OhlcvBar[]): number[] {
-  const out = new Array<number>(data.length).fill(Number.NaN);
-  for (let i = 1; i < data.length; i++) {
-    const r = ln(data[i].close / data[i - 1].close);
+function ccTerms(bars: BarColumns): Float64Array {
+  const { close } = bars;
+  const out = new Float64Array(bars.length).fill(Number.NaN);
+  for (let i = 1; i < out.length; i++) {
+    const r = ln(close[i] / close[i - 1]);
     if (Number.isFinite(r)) out[i] = r * r;
   }
   return out;
 }
 
-function parkinsonTerms(data: OhlcvBar[]): number[] {
+function parkinsonTerms(bars: BarColumns): Float64Array {
+  const { high, low } = bars;
   const k = 1 / (4 * Math.LN2);
-  return data.map((b) => {
-    const hl = ln(b.high / b.low);
-    return Number.isFinite(hl) ? k * hl * hl : Number.NaN;
-  });
+  const out = new Float64Array(bars.length);
+  for (let i = 0; i < out.length; i++) {
+    const hl = ln(high[i] / low[i]);
+    out[i] = Number.isFinite(hl) ? k * hl * hl : Number.NaN;
+  }
+  return out;
 }
 
-function gkTerms(data: OhlcvBar[]): number[] {
+function gkTerms(bars: BarColumns): Float64Array {
+  const { open, high, low, close } = bars;
   const c2 = 2 * Math.LN2 - 1;
-  return data.map((b) => {
-    const hl = ln(b.high / b.low);
-    const co = ln(b.close / b.open);
+  const out = new Float64Array(bars.length);
+  for (let i = 0; i < out.length; i++) {
+    const hl = ln(high[i] / low[i]);
+    const co = ln(close[i] / open[i]);
     const v = 0.5 * hl * hl - c2 * co * co;
-    return Number.isFinite(v) ? v : Number.NaN;
-  });
+    out[i] = Number.isFinite(v) ? v : Number.NaN;
+  }
+  return out;
 }
 
-function rsTerms(data: OhlcvBar[]): number[] {
-  return data.map((b) => {
-    const hc = ln(b.high / b.close);
-    const ho = ln(b.high / b.open);
-    const lc = ln(b.low / b.close);
-    const lo = ln(b.low / b.open);
+function rsTerms(bars: BarColumns): Float64Array {
+  const { open, high, low, close } = bars;
+  const out = new Float64Array(bars.length);
+  for (let i = 0; i < out.length; i++) {
+    const hc = ln(high[i] / close[i]);
+    const ho = ln(high[i] / open[i]);
+    const lc = ln(low[i] / close[i]);
+    const lo = ln(low[i] / open[i]);
     const v = hc * ho + lc * lo;
-    return Number.isFinite(v) ? v : Number.NaN;
-  });
+    out[i] = Number.isFinite(v) ? v : Number.NaN;
+  }
+  return out;
 }
 
 /** Overnight log return, ln(open_t / close_{t-1}). NaN at i = 0. */
-function overnightTerms(data: OhlcvBar[]): number[] {
-  const out = new Array<number>(data.length).fill(Number.NaN);
-  for (let i = 1; i < data.length; i++) {
-    const r = ln(data[i].open / data[i - 1].close);
+function overnightTerms(bars: BarColumns): Float64Array {
+  const { open, close } = bars;
+  const out = new Float64Array(bars.length).fill(Number.NaN);
+  for (let i = 1; i < out.length; i++) {
+    const r = ln(open[i] / close[i - 1]);
     if (Number.isFinite(r)) out[i] = r;
   }
   return out;
 }
 
 /** Open-to-close log return, ln(close_t / open_t). */
-function openCloseTerms(data: OhlcvBar[]): number[] {
-  return data.map((b) => {
-    const r = ln(b.close / b.open);
-    return Number.isFinite(r) ? r : Number.NaN;
-  });
+function openCloseTerms(bars: BarColumns): Float64Array {
+  const { open, close } = bars;
+  const out = new Float64Array(bars.length);
+  for (let i = 0; i < out.length; i++) {
+    const r = ln(close[i] / open[i]);
+    out[i] = Number.isFinite(r) ? r : Number.NaN;
+  }
+  return out;
+}
+
+interface RvTerms {
+  /** cc / parkinson / gk / rs: the per-bar variance. yz: Rogers-Satchell. */
+  main: Float64Array;
+  /** yz only. */
+  overnight?: Float64Array;
+  openClose?: Float64Array;
 }
 
 /**
- * Rolling annualised realized volatility, in PERCENT, aligned to `data`.
- * Null during warm-up or wherever a bar's inputs are unusable.
+ * The terms depend on the bars and the estimator, not on the window — an RV
+ * pane draws three windows from them, and RV rank / ratio on the same chart
+ * read them again. One set per bar array.
+ */
+const termsCache = new WeakMap<BarColumns, Map<RvEstimator, RvTerms>>();
+
+function rvTerms(bars: BarColumns, estimator: RvEstimator): RvTerms {
+  let byEstimator = termsCache.get(bars);
+  if (!byEstimator) {
+    byEstimator = new Map();
+    termsCache.set(bars, byEstimator);
+  }
+  let terms = byEstimator.get(estimator);
+  if (!terms) {
+    terms =
+      estimator === "yz"
+        ? { main: rsTerms(bars), overnight: overnightTerms(bars), openClose: openCloseTerms(bars) }
+        : {
+            main:
+              estimator === "cc"
+                ? ccTerms(bars)
+                : estimator === "parkinson"
+                  ? parkinsonTerms(bars)
+                  : estimator === "gk"
+                    ? gkTerms(bars)
+                    : rsTerms(bars),
+          };
+    byEstimator.set(estimator, terms);
+  }
+  return terms;
+}
+
+/**
+ * Rolling annualised realized volatility, in PERCENT, one slot per bar. NaN
+ * during warm-up or wherever a bar's inputs are unusable.
  *
  * Yang-Zhang needs three windowed variances rather than one moving average,
  * so it takes its own branch; the other four are a moving average of their
  * per-bar variance contribution.
  */
-export function calcRealizedVol(
-  data: OhlcvBar[],
+export function realizedVol(
+  bars: BarColumns,
   period: number,
   estimator: RvEstimator,
   periodsPerYear: number
-): (number | null)[] {
-  const n = data.length;
-  const out = new Array<number | null>(n).fill(null);
+): Float64Array {
+  const n = bars.length;
+  const out = new Float64Array(n).fill(Number.NaN);
   if (period < 2 || n === 0) return out;
   const ann = Math.sqrt(periodsPerYear) * 100;
+  const terms = rvTerms(bars, estimator);
 
-  if (estimator === "yz") {
-    const on = overnightTerms(data);
-    const oc = openCloseTerms(data);
-    const rs = rsTerms(data);
+  if (terms.overnight && terms.openClose) {
     // k minimises the variance of the combined estimator (Yang & Zhang 2000).
     const k = 0.34 / (1.34 + (period + 1) / (period - 1));
-    const varOn = rollingVariance(on, period, 1).variance;
-    const varOc = rollingVariance(oc, period, 1).variance;
-    const meanRs = rollingMean(rs, period);
+    const varOn = rollingVariance(terms.overnight, period, 1).variance;
+    const varOc = rollingVariance(terms.openClose, period, 1).variance;
+    const meanRs = rollingMean(terms.main, period);
     for (let i = 0; i < n; i++) {
       const vOn = varOn[i];
       const vOc = varOc[i];
@@ -202,22 +274,33 @@ export function calcRealizedVol(
     return out;
   }
 
-  const terms =
-    estimator === "cc"
-      ? ccTerms(data)
-      : estimator === "parkinson"
-        ? parkinsonTerms(data)
-        : estimator === "gk"
-          ? gkTerms(data)
-          : rsTerms(data);
-
-  const meanTerms = rollingMean(terms, period);
+  const meanTerms = rollingMean(terms.main, period);
   for (let i = 0; i < n; i++) {
     const variance = meanTerms[i];
     if (!Number.isFinite(variance) || !(variance > 0)) continue;
     out[i] = Math.sqrt(variance) * ann;
   }
   return out;
+}
+
+/** NaN → null: the boxed form of a column whose values are never NaN themselves. */
+function nullable(values: Float64Array): (number | null)[] {
+  const out: (number | null)[] = new Array(values.length);
+  for (let i = 0; i < out.length; i++) out[i] = Number.isNaN(values[i]) ? null : values[i];
+  return out;
+}
+
+/**
+ * `realizedVol` of a bar array, boxed: null during warm-up or wherever a
+ * bar's inputs are unusable.
+ */
+export function calcRealizedVol(
+  data: OhlcvBar[],
+  period: number,
+  estimator: RvEstimator,
+  periodsPerYear: number
+): (number | null)[] {
+  return nullable(realizedVol(barColumns(data), period, estimator, periodsPerYear));
 }
 
 /**
@@ -230,7 +313,18 @@ export function rollingPercentRank(
   lookback: number,
   minObs: number
 ): (number | null)[] {
-  const out = new Array<number | null>(values.length).fill(null);
+  const typed = new Float64Array(values.length);
+  for (let i = 0; i < typed.length; i++) typed[i] = values[i] ?? Number.NaN;
+  return nullable(percentRank(typed, lookback, minObs));
+}
+
+/** `rollingPercentRank` on a column: NaN in for "no value", NaN out for "no rank". */
+export function percentRank(
+  values: ArrayLike<number>,
+  lookback: number,
+  minObs: number
+): Float64Array {
+  const out = new Float64Array(values.length).fill(Number.NaN);
   if (lookback < 1) return out;
   // Sorted copy of the window for the rank, plus insertion order (a ring) to
   // know which value leaves — O(log k) search + one memmove per bar instead
@@ -240,7 +334,7 @@ export function rollingPercentRank(
   let ringStart = 0;
   for (let i = 0; i < values.length; i++) {
     const v = values[i];
-    if (v == null || !Number.isFinite(v)) continue;
+    if (!Number.isFinite(v)) continue;
     const size = sorted.size;
     if (size >= minObs) out[i] = (sorted.countBelow(v) / size) * 100;
     if (size === lookback) {

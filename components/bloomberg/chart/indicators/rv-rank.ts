@@ -14,21 +14,15 @@
  * rank says a move is coming, not which way.
  */
 
-import type {
-  ChartIndicator,
-  HistogramDataPoint,
-  IndicatorFactory,
-  IndicatorSeriesOutput,
-  OhlcvBar,
-  SeriesDataPoint,
-} from "../types";
+import { columnar } from "../series-columns.ts";
+import type { ChartIndicator, IndicatorFactory } from "../types";
 import {
   RV_ESTIMATOR_OPTIONS,
   RV_ESTIMATOR_SHORT,
   type RvEstimator,
-  calcRealizedVol,
-  inferPeriodsPerYear,
-  rollingPercentRank,
+  percentRank,
+  periodsPerYear,
+  realizedVol,
 } from "./rv-core.ts";
 
 /** Below this many prior observations a percentile is meaningless, so plot nothing. */
@@ -43,11 +37,14 @@ function normEstimator(v: unknown): RvEstimator {
   return RV_ESTIMATOR_SHORT[s] ? s : "yz";
 }
 
-function zoneColor(rank: number): string {
-  if (rank >= EXTREME_ZONE) return "#ef5350";
-  if (rank >= HIGH_ZONE) return "#ff9800";
-  if (rank <= LOW_ZONE) return "#26c6da";
-  return "rgba(120,144,156,0.45)";
+const ZONE_PALETTE = ["rgba(120,144,156,0.45)", "#26c6da", "#ff9800", "#ef5350"] as const;
+
+/** Index into `ZONE_PALETTE`: mid · compressed · high · extreme. */
+function zone(rank: number): number {
+  if (rank >= EXTREME_ZONE) return 3;
+  if (rank >= HIGH_ZONE) return 2;
+  if (rank <= LOW_ZONE) return 1;
+  return 0;
 }
 
 export const createRVRank: IndicatorFactory = (overrides = {}) => {
@@ -83,22 +80,26 @@ export const createRVRank: IndicatorFactory = (overrides = {}) => {
     ],
     config: { period, lookback, estimator },
 
-    compute(data: OhlcvBar[], config): IndicatorSeriesOutput[] {
+    ...columnar((bars, config) => {
       const p = Math.round(config.period as number);
       const lb = Math.round(config.lookback as number);
       const est = normEstimator(config.estimator);
       const scaleId = `rv-rank-${est}-${p}`;
+      const n = bars.length;
 
-      const rv = calcRealizedVol(data, p, est, inferPeriodsPerYear(data));
-      const ranks = rollingPercentRank(rv, lb, MIN_RANK_OBS);
+      const rv = realizedVol(bars, p, est, periodsPerYear(bars));
+      const ranks = percentRank(rv, lb, MIN_RANK_OBS);
 
-      const bars: HistogramDataPoint[] = [];
-      const midline: SeriesDataPoint[] = [];
-      for (let i = 0; i < data.length; i++) {
+      const zones = new Uint8Array(n);
+      const midline = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
         const r = ranks[i];
-        if (r == null) continue;
-        bars.push({ time: data[i].time, value: r, color: zoneColor(r) });
-        midline.push({ time: data[i].time, value: 50 });
+        if (Number.isNaN(r)) {
+          midline[i] = Number.NaN;
+          continue;
+        }
+        zones[i] = zone(r);
+        midline[i] = 50;
       }
 
       return [
@@ -106,7 +107,11 @@ export const createRVRank: IndicatorFactory = (overrides = {}) => {
           id: `${scaleId}-hist`,
           label: `RV Rank ${p}`,
           type: "histogram",
-          data: bars,
+          values: ranks,
+          from: 0,
+          emit: "valued",
+          colors: zones,
+          palette: ZONE_PALETTE,
           priceScaleId: scaleId,
         },
         {
@@ -115,11 +120,14 @@ export const createRVRank: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: "rgba(158,158,158,0.5)",
           lineWidth: 1,
-          data: midline,
+          values: midline,
+          from: 0,
+          emit: "valued",
           priceScaleId: scaleId,
         },
       ];
-    },
+    }),
+    // Not `causal` — see realized-vol.ts.
   };
 
   return indicator;
