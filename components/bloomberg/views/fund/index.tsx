@@ -266,6 +266,7 @@ export function FundView() {
             fund={detail}
             members={membersQ.data?.members ?? []}
             onChanged={refresh}
+            onOpenEntry={() => setPage("entry")}
           />
         )}
         {page === "holdings" && scope && (

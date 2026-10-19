@@ -24,6 +24,7 @@ import { ResearchTab } from "./tabs/research";
 import { TrackBadges, TrackingTab, useTrackCounts } from "./tabs/tracking";
 import type { Account, Summary } from "./types";
 import type { OptionEntryPrefill } from "./ui/OptionEntryForm";
+import type { TransferHint } from "./ui/SlipReader";
 import { SummaryBar } from "./ui/SummaryBar";
 
 type TopTab = "portfolio" | "analytics" | "risk" | "tools";
@@ -127,6 +128,12 @@ export function PortfolioView() {
   const [optionPrefill, setOptionPrefill] = useState<(OptionEntryPrefill & { seq: number }) | null>(
     null
   );
+  // A bank transfer slip read on ENTRY → CASH with the form pre-filled; seq makes a repeat refill.
+  const [cashPrefill, setCashPrefill] = useState<(TransferHint & { seq: number }) | null>(null);
+  const openCashFromSlip = (h: TransferHint) => {
+    setCashPrefill({ ...h, seq: Date.now() });
+    setPortfolioSub("cash");
+  };
   const openOptionEntry = (p: OptionEntryPrefill) => {
     setOptionPrefill({ ...p, seq: Date.now() });
     setPortfolioSub("entry");
@@ -610,10 +617,20 @@ export function PortfolioView() {
               <TradeLogTab accountId={activeAccount} currency={currency} colors={colors} />
             )}
             {topTab === "portfolio" && portfolioSub === "cash" && (
-              <CashTab accountId={activeAccount} summary={summary} colors={colors} />
+              <CashTab
+                accountId={activeAccount}
+                summary={summary}
+                colors={colors}
+                prefill={cashPrefill}
+              />
             )}
             {topTab === "portfolio" && portfolioSub === "entry" && (
-              <ImportTab colors={colors} variant="manual" optionPrefill={optionPrefill} />
+              <ImportTab
+                colors={colors}
+                variant="manual"
+                optionPrefill={optionPrefill}
+                onTransferSlip={openCashFromSlip}
+              />
             )}
 
             {topTab === "analytics" && (

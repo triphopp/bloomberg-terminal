@@ -42,7 +42,15 @@ export function DepositsPage({
   fund,
   members,
   onChanged,
-}: { colors: Colors; fund: FundDetail; members: FundMember[]; onChanged: () => void }) {
+  onOpenEntry,
+}: {
+  colors: Colors;
+  fund: FundDetail;
+  members: FundMember[];
+  onChanged: () => void;
+  /** A broker order slip was dropped on the slip box → the fund's ENTRY page. */
+  onOpenEntry?: () => void;
+}) {
   const [memberId, setMemberId] = useState("");
   const [accountId, setAccountId] = useState("");
   const [date, setDate] = useState(today);
@@ -169,6 +177,7 @@ export function DepositsPage({
         colors={colors}
         fundId={fund.id}
         slip={slip}
+        onOpenEntry={onOpenEntry}
         onChange={(next, filled) => {
           setSlip(next);
           setPreview(null);
