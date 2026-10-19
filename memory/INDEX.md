@@ -55,6 +55,7 @@ memory/
 
 | Plan | สถานะ |
 |------|--------|
+| [Google Calendar sync](plans/google-calendar-sync.md) | 🔄 started 2026-10-11 — CAL → a "Bloomberg Terminal" calendar in the user's Google account over the Calendar API (one way, `calendar.app.created` scope, no new table) |
 | [Unified calendar](plans/completed/unified-calendar.md) | ✅ done 2026-10-08 — the CAL view (`6`): macro, company, thesis and book dates on one grid (`calendar_feed.py`, no new table), reminders `cal:<KIND>` → thesis; found on the way: [start-up sweep acks TRADE GUARD / MARGIN alerts](reports/alert-orphan-sweep-risk-report.md) |
 | [ASK — chat on every view](../components/bloomberg/ask/index.ts) | ✅ merged 2026-10-06 (PRs #90, #91) — providers, read-only tools, HISTORY files on Drive / app-data with pin · trash · restore, resumed-conversation dating, `search_sessions` / `read_session`; [LAN trust report](reports/ask-lan-trust-risk-report.md) |
 | [IV snapshot session date](reports/iv-snapshot-sync-conflicts-risk-report.md) | ✅ fixed 2026-10-06 (PR #93) — `us_session.py`; 61 sync conflicts resolved; re-dating old rows still open |

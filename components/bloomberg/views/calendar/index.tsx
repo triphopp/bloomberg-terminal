@@ -10,6 +10,7 @@ import { bloombergColors } from "../../lib/theme-config";
 import type { Colors } from "../portfolio/helpers";
 import type { AddDraft } from "./AddEventForm";
 import { CAT_COLOR, CAT_LABEL, DayPanel } from "./DayPanel";
+import { GooglePanel, useGcalStatus } from "./GooglePanel";
 import {
   CATEGORIES,
   type CalFilter,
@@ -34,6 +35,7 @@ import type { CalCategory, CalEvent, CalPayload } from "./types";
 
 const FILTER_KEY = "bloomberg_calendar_filter";
 const VIEW_KEY = "bloomberg_calendar_view";
+const GOOGLE_KEY = "bloomberg_calendar_google";
 /** Lines a grid cell shows before "+N" — the rest is in the day panel. */
 const CELL_LINES = 4;
 
@@ -131,6 +133,15 @@ export function CalendarView() {
     }
   });
   const [adding, setAdding] = useState<AddDraft | null>(null);
+  const [googleOpen, setGoogleOpen] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return localStorage.getItem(GOOGLE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const { data: gcal } = useGcalStatus(googleOpen);
 
   useEffect(() => {
     try {
@@ -146,6 +157,13 @@ export function CalendarView() {
       /* ignore */
     }
   }, [view]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(GOOGLE_KEY, googleOpen ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [googleOpen]);
 
   const goTo = useCallback((day: string) => {
     const p = parts(day);
@@ -463,6 +481,24 @@ export function CalendarView() {
         <span className="flex-1" />
         <button
           type="button"
+          aria-pressed={googleOpen}
+          className={`${chip} flex items-center gap-1`}
+          style={on(googleOpen)}
+          title={
+            gcal?.connected ? "เชื่อม Google Calendar แล้ว — เปิดแผงตั้งค่า" : "ส่งปฏิทินนี้ขึ้น Google Calendar"
+          }
+          onClick={() => setGoogleOpen((v) => !v)}
+        >
+          {gcal?.connected && (
+            <span
+              className="h-1.5 w-1.5 rounded-full"
+              style={{ background: gcal.last_sync && !gcal.last_sync.ok ? "#f87171" : "#4ade80" }}
+            />
+          )}
+          GOOGLE
+        </button>
+        <button
+          type="button"
           className={chip}
           style={{ color: colors.accent }}
           onClick={() => setAdding({ date: selected, title: "", thesisId: filter.thesisId })}
@@ -480,6 +516,8 @@ export function CalendarView() {
           {isFetching ? "…" : "↻"}
         </button>
       </div>
+
+      {googleOpen && <GooglePanel colors={colors} />}
 
       {/* Kinds under the chosen scope — switch one off to drop it from the grid */}
       {kinds.length > 0 && (
