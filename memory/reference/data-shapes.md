@@ -2125,7 +2125,11 @@ the view multiplies every money figure by one rate (`displayRate` in `views/fund
 ```
 POST /api/v2/fund/{id}/slips/read → {sha256, duplicates: [{contribution_id, date, amount, currency, …}],
    reading: {transferred_at "2026-09-29T20:32"|null, ref_code, from_name, from_account "xxx-xxx435-2", to_name, to_account,
-             amount "10000.00"|null, memo, bank "SCB"|null, currency "THB", says_complete: bool, unread: [field…], error?}}
+             amount "10000.00"|null, memo, bank "SCB"|null, currency "THB", says_complete: bool, unread: [field…], error?,
+             kind: "transfer"|"trade"|"unknown"}}          (2026-10-19: "trade" = a broker order slip, fields left empty)
+POST /api/v2/portfolio/slip/read (a bank transfer slip, 2026-10-19) → {slip_kind: "transfer", form: null, status ok|review,
+   transfer: {…the fields above, bank, unread}, transfer_hint: {flow_type "DEPOSIT"|"WITHDRAW"|null, account_id|null,
+   date "2026-10-19"|null, amount, ref_code}}          (TS: TransferSlip / TransferHint in views/portfolio/ui/SlipReader.tsx)
 contribution row += slip: {id, contribution_id, sha256, bank, transferred_at, ref_code, from_name, from_account,
                            to_name, to_account, amount, currency, memo, created_at} | null
 ```

@@ -7,6 +7,11 @@ fill. A person still presses SAVE — the engine only removes the typing.
 
     read_slip(image_bytes, fee_schedule=None)    OCR + parse + validate + map, one call
     parse_tokens(tokens, fee_schedule=None)      the same without OCR (tests, other OCR engines)
+    classify(tokens)                             "trade" | "transfer" | None — what kind of slip it is
+
+Every result says `slip_kind`. A bank transfer slip (money in / out) is not a
+trade: it comes back with `transfer` (its fields) and no `form`, so the host
+can send it to cash instead of refusing it.
 
 Self-contained: imports nothing from the host app. Fee rates are the host's
 business — pass `fee_schedule` (see validate.FeeSchedule) to get the
@@ -15,7 +20,8 @@ business — pass `fee_schedule` (see validate.FeeSchedule) to get the
 Layers, each replaceable on its own:
     ocr.py        image → Token list (rapidocr/ONNX, easyocr fallback; local, in a worker process)
     layout.py     Token list → label/value lookups (Thai-tolerant fuzzy labels)
-    parsers/      one module per broker layout; `detect` picks the first that claims it
+    parsers/      one module per broker layout; `detect` picks the first that claims it;
+                  bank_transfer.py = a bank's transfer slip (asked after every trade layout)
     thai_date.py  "25 ก.ย. 69 - 20:45 น." → 2026-09-25T20:45
     validate.py   qty × price = value, value + fees = order amount, fee schedule, dates
     mapping.py    slip → ENTRY form fields (NY trade date, exact price, fee total)
@@ -26,22 +32,43 @@ import hashlib
 
 from .layout import Token
 from .mapping import to_form
-from .parsers import detect
+from .parsers import bank_transfer, detect
 from .validate import FeeSchedule, validate
 
 ENGINE_VERSION = "slip-ocr/1"
 
 
-__all__ = ["ENGINE_VERSION", "FeeSchedule", "Token", "parse_tokens", "read_slip", "read_slips", "stack"]
+__all__ = ["ENGINE_VERSION", "FeeSchedule", "Token", "classify", "parse_tokens", "read_slip", "read_slips", "stack"]
+
+SUPPORTED = "Dime order detail (US stocks, US options), bank transfer slip (SCB layout)"
+
+
+def classify(tokens: list[Token]) -> str | None:
+    """What a slip is, before anything is read out of it: "trade" (a broker
+    order slip), "transfer" (a bank's money-in / money-out slip) or None. The
+    trade layouts are asked first — an order slip can mention a bank."""
+    if detect(tokens) is not None:
+        return "trade"
+    if bank_transfer.claims(tokens):
+        return "transfer"
+    return None
 
 
 def parse_tokens(tokens: list[Token], fee_schedule: FeeSchedule | None = None) -> dict:
     parser = detect(tokens)
+    if parser is None and bank_transfer.claims(tokens):
+        transfer = bank_transfer.parse(tokens)
+        return {
+            "engine": ENGINE_VERSION, "slip_kind": "transfer", "broker": None,
+            "status": "review" if transfer["unread"] else "ok",
+            "slip": None, "checks": [], "form": None, "transfer": transfer,
+            "warnings": ["Bank transfer slip — money in / out, not a trade: book it in CASH"],
+        }
     if parser is None:
         return {
-            "engine": ENGINE_VERSION, "broker": None, "status": "fail",
+            "engine": ENGINE_VERSION, "slip_kind": None, "broker": None, "status": "fail",
             "slip": None, "checks": [], "form": None,
-            "warnings": ["Unrecognised slip layout — supported: Dime order detail (US stocks, US options)"],
+            "warnings": [f"Unrecognised slip layout — supported: {SUPPORTED}"],
         }
     slip = parser.parse(tokens)
     slip.setdefault("kind", "stock")
@@ -49,7 +76,7 @@ def parse_tokens(tokens: list[Token], fee_schedule: FeeSchedule | None = None) -
     form, warnings = getattr(parser, "to_form", to_form)(slip, checks)
     status = _status(slip, checks)
     return {
-        "engine": ENGINE_VERSION, "broker": slip["broker"], "status": status,
+        "engine": ENGINE_VERSION, "slip_kind": "trade", "broker": slip["broker"], "status": status,
         "slip": slip, "checks": checks, "form": form, "warnings": warnings,
     }
 

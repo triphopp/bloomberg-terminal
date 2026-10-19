@@ -14,6 +14,12 @@ Layout, top to bottom:
     บัญชีชำระเงิน   Dime! USD 80000472719   (a sell slip: บัญชีรับเงิน — Dime! USD / Dime! FCD)
     เลขที่คำสั่ง     STKBMF2026092501454 1145317   (wraps onto two lines)
 
+A market order sized in shares (2026-10-19, "ซื้อ SKHU / 600 หุ้น") prints the
+quantity under the header instead of a จำนวนหุ้น column, and the total under
+ยอดที่ต้องชำระ (a sell: ยอดที่ได้รับ) instead of the big number; the chip may be
+two words ("NYSE Arca" = ARCA). A promo line "คุณได้รับอัตราค่าคอมมิชชันพิเศษ
+0.10%" sits above the fee rows and must not be taken for the commission label.
+
 The price shown is rounded; value = qty × true price. See validate.py.
 """
 from __future__ import annotations
@@ -31,6 +37,9 @@ DISPLAY_TZ = "Asia/Bangkok"
 _EXCHANGES = ("NASDAQ", "NYSE", "ARCA", "AMEX", "BATS", "OTC")
 _SYMBOL = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 _ORDER_REF = re.compile(r"[A-Z]{3,}\d{8,}")
+_SHARES = re.compile(r"^\s*([\d,]+(?:\.\d+)?)\s*หุ้น\s*$")
+# The promo line above the fee rows mentions ค่าคอมมิชชัน too.
+_PROMO = ("พิเศษ", "อัตรา", "คุณได้รับ")
 
 
 def claims(tokens: list[Token]) -> bool:
@@ -73,16 +82,21 @@ def _header(tokens: list[Token]) -> tuple[dict, dict, dict]:
         rest = re.sub(r"^[฀-๿\s]+", "", t.text).strip().upper()
         cand = rest.split()[0] if rest else ""
         if not _SYMBOL.match(cand):
-            nxt = same_row(tokens, t)
-            cand = nxt[0].text.strip().upper() if nxt else ""
+            # The symbol's box can start inside the side word's ("ซื้อ" ends at
+            # x 166, ") SKHU" starts at 150), so the row is taken by centre.
+            nxt = sorted((r for r in tokens if r is not t and abs(r.cy - t.cy) <= t.h * 0.7
+                          and (r.x0 + r.x1) / 2 > t.x1), key=lambda r: r.x0)
+            # OCR can lead the symbol with a stray mark: ") SKHU".
+            cand = re.sub(r"^[^A-Z0-9]+", "", nxt[0].text.strip().upper()) if nxt else ""
         if _SYMBOL.match(cand) and cand not in _EXCHANGES:
             symbol = _field(cand, t)
         for r in same_row(tokens, t):
-            u = re.sub(r"[^A-Z]", "", r.text.upper())
-            for ex in _EXCHANGES:
-                # OCR reads the chip's Q as O ("NASDAO"): allow one letter off.
-                if len(u) == len(ex) and sum(a != b for a, b in zip(u, ex)) <= 1:
-                    exch = _field(ex, r)
+            # "NYSE Arca" is ARCA: every word is tried, the last match wins.
+            for u in (re.sub(r"[^A-Z]", "", w) for w in r.text.upper().split()):
+                for ex in _EXCHANGES:
+                    # OCR reads the chip's Q as O ("NASDAO"): allow one letter off.
+                    if len(u) == len(ex) and sum(a != b for a, b in zip(u, ex)) <= 1:
+                        exch = _field(ex, r)
         break
     return side, symbol, exch
 
@@ -129,9 +143,27 @@ def parse(tokens: list[Token]) -> dict:
                 break
 
     side_y = next((t.cy for t in tokens if side["raw"] and t.text == side["raw"]), None)
+    if quantity["value"] is None:
+        # Shares-sized order: "600 หุ้น" under the header.
+        for t in sorted(tokens, key=lambda t: t.y0):
+            if px_lab is not None and t.cy >= px_lab.cy:
+                break
+            m = _SHARES.match(t.text)
+            if m and (side_y is None or t.cy > side_y):
+                q = parse_number(m.group(1))
+                if q is not None:
+                    quantity = _field(str(q), t)
+                    break
     order_amount, oc = _order_amount(tokens, side_y, px_lab)
+    if order_amount["value"] is None:
+        total_lab = find_label(tokens, "ยอดที่ต้องชำระ", "ยอดที่ได้รับ")
+        for t in below(tokens, total_lab) if total_lab else []:
+            amt, c = parse_money(t.text)
+            if amt is not None:
+                order_amount, oc = _field(str(amt), t), c
+                break
     gross, gc = _money_right(tokens, "มูลค่าหุ้น")
-    commission, _ = _money_right(tokens, "ค่าคอมมิชชัน", "ค่าคอม")
+    commission, _ = _money_right(tokens, "ค่าคอมมิชชัน", "ค่าคอม", exclude=_PROMO)
     vat, _ = _money_right(tokens, "ภาษีมูลค่าเพิ่ม", "vat")
     sec_fee, _ = _money_right(tokens, "sec fee", "ค่าธรรมเนียม sec", "ค่าธรรมเนียมก.ล.ต.สหรัฐ")
     taf_fee, _ = _money_right(tokens, "taf", "ค่าธรรมเนียม finra", "finra taf")

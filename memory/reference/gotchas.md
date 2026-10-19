@@ -2598,3 +2598,20 @@ forward bodies, not headers.
 - Writes that address a row by id (edit / sell a lot) are not checked — they act on a row found in a scoped list.
 - `detail` of these refusals is an object; a form that renders `d.detail` directly crashes React. Read `d.detail.detail`.
 
+
+## "Slip OCR does not work" = the parser refused the slip, not the OCR (2026-10-19)
+Report: slip OCR not working, by Ctrl+V and by drop. The OCR engine was fine (`/api/v2/portfolio/slip/status` →
+`ocr_loaded: true, rapidocr:PP-OCRv5-th`; a read took 1.4–2.2 s). Each slip box knew ONE layout and refused the other:
+PORT → ENTRY read only Dime order slips, so an SCB transfer slip came back `"Unrecognised slip layout — supported: Dime
+order detail"`; FUND → DEPOSITS read only bank transfers and had no paste handler. Fix: `slip_ocr.classify(tokens)` →
+`trade` | `transfer` | None, trade layouts asked first (`slip_ocr/parsers/bank_transfer.py` holds the transfer parser,
+moved out of `fund_slips.py`). ENTRY turns a transfer into `slip_kind: "transfer"` + `transfer_hint` → CASH pre-filled;
+FUND answers `reading.kind: "trade"` for an order slip and points to ENTRY. **Debug order next time:** `slip/status`,
+then the response's `warnings` / `slip_kind` — a "fail" with OCR tokens > 0 is a layout question, not an engine one.
+`pytest` in the Claude sandbox needs `--basetemp <scratch>` (the default temp dir gives WinError 5).
+**Second cause, same day — a Dime layout variant** (market order sized in shares, "ซื้อ SKHU / 600 หุ้น"): FAIL "Quantity
+or price not read" although OCR read every line. Quantity sits under the header (no จำนวนหุ้น column), the total under
+ยอดที่ต้องชำระ, the chip is two words ("NYSE Arca" = ARCA), a promo line "…ค่าคอมมิชชันพิเศษ 0.10%" won the commission
+label, and the symbol's OCR box (") SKHU") starts inside the side word's so `same_row` (x0 > anchor.x1 − 5) dropped it.
+Fixed in `parsers/dime.py`; fixture `dime_buy_shares_market_rapidocr.json`. A new FAIL on a real slip: dump the tokens
+first (`ocr.read` → y, x, text) — every miss so far was geometry or a label, never recognition.

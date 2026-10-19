@@ -9,6 +9,7 @@ import { ConfirmDeleteModal } from "../modals/ConfirmDeleteModal";
 import type { CashEntry, CashFlowForm, CashFlowType, Dividend, Summary, Trade } from "../types";
 import { LedgerFilterBar } from "../ui/LedgerFilterBar";
 import { NumInput } from "../ui/NumInput";
+import type { TransferHint } from "../ui/SlipReader";
 import { SubPortSelect } from "../ui/SubPortSelect";
 import { LedgerWalletStrip } from "../ui/ledger-client";
 
@@ -37,7 +38,14 @@ export function CashTab({
   accountId,
   summary,
   colors,
-}: { accountId: string; summary?: Summary | null; colors: Colors }) {
+  prefill = null,
+}: {
+  accountId: string;
+  summary?: Summary | null;
+  colors: Colors;
+  /** A bank transfer slip read on ENTRY: open ADD CASH FLOW with it filled in. */
+  prefill?: (TransferHint & { seq: number }) | null;
+}) {
   const [cash, setCash] = useState<CashEntry[]>([]);
   const [dividends, setDivs] = useState<Dividend[]>([]);
   const [reinvestTrades, setReinvestTrades] = useState<Trade[]>([]);
@@ -164,6 +172,32 @@ export function CashTab({
     fetchSuggestions(ac.signal);
     return () => ac.abort();
   }, [fetchSuggestions]);
+
+  // The slip's guess (DEPOSIT / WITHDRAW, which account) is shown pre-picked,
+  // never saved — the person checks it against the slip and presses SAVE.
+  const [fromSlip, setFromSlip] = useState<(TransferHint & { seq: number }) | null>(null);
+  useEffect(() => {
+    if (!prefill) return;
+    setSubTab("cash");
+    setEditId(null);
+    setCashError(null);
+    setCashForm({
+      ...BLANK_CASH,
+      account_id: prefill.account_id ?? "",
+      date: prefill.date ?? "",
+      flow_type: prefill.flow_type ?? "DEPOSIT",
+      amount: Math.abs(Number(prefill.amount) || 0),
+    });
+    setFromSlip(prefill);
+    setShowForm(true);
+  }, [prefill]);
+  // Drop the slip note once the form closes (SAVE / CANCEL) — not on mount,
+  // where the form starts closed in the same render the prefill opens it.
+  const [formWasOpen, setFormWasOpen] = useState(false);
+  if (showForm !== formWasOpen) {
+    setFormWasOpen(showForm);
+    if (!showForm) setFromSlip(null);
+  }
 
   const applySuggestion = useCallback((s: (typeof suggestions)[0]) => {
     setSubTab("dividends");
@@ -732,6 +766,13 @@ export function CashTab({
           <div className="text-[9px] font-bold mb-1.5" style={{ color: colors.accent }}>
             {editId ? "EDIT CASH FLOW" : "ADD CASH FLOW"}
           </div>
+          {fromSlip && !editId && (
+            <div className="text-[9px] mb-1.5" style={{ color: "#fbbf24" }}>
+              จากสลิปโอนเงิน{fromSlip.ref_code ? ` ${fromSlip.ref_code}` : ""} —{" "}
+              {fromSlip.flow_type ? "ทิศทางเดาจากชื่อบนสลิป" : "สลิปไม่บอกว่าเงินเข้าหรือออก"}
+              {fromSlip.account_id ? "" : " · ไม่รู้ว่าเป็นบัญชีไหน"} — ตรวจ ACCOUNT / TYPE ก่อนบันทึก
+            </div>
+          )}
           <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
             <div>
               <label
@@ -782,6 +823,7 @@ export function CashTab({
                     <button
                       type="button"
                       key={t}
+                      aria-pressed={on}
                       data-frame
                       onClick={() => setCashForm((f) => ({ ...f, flow_type: t }))}
                       className="flex-1 text-[9px] py-[3px] font-bold border"

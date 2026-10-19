@@ -138,3 +138,16 @@ def test_rounded_shown_price_is_derived_from_value():
     # COST 2.0751791 × 914.11 = 1,896.94 but the slip says 1,896.96 → the
     # fewest-decimals price that reproduces it, nearest value / qty
     assert _validate_price("2.0751791", "914.11", "1896.96") == "914.12"
+
+
+def test_a_shares_sized_market_order_reads_whole():
+    """2026-10-19 layout: "ซื้อ SKHU / 600 หุ้น" header, total under ยอดที่ต้องชำระ,
+    "NYSE Arca" chip, a commission promo line above the fee rows, and the symbol's
+    OCR box starting inside the side word's (") SKHU")."""
+    out = parse_tokens(_tokens(Path(__file__).parent / "fixtures" / "dime_buy_shares_market_rapidocr.json"))
+    f = {k: v["value"] for k, v in out["slip"]["fields"].items()}
+    assert out["status"] == "ok", out["checks"]
+    assert (f["side"], f["symbol"], f["exchange"], f["quantity"]) == ("BUY", "SKHU", "ARCA", "600")
+    assert (f["price"], f["gross_value"], f["commission"], f["vat"], f["order_amount"]) == (
+        "13.08", "7853.76", "7.80", "0.55", "7862.11")
+    assert out["form"]["price_entry"] == "13.0896" and out["form"]["fee_entry"] == "8.35"

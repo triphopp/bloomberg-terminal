@@ -4,9 +4,11 @@
 // machine reads it (OCR on this computer), and the fields are shown beside the
 // picture to be checked and corrected. What is saved is what the user left in
 // the fields, with the picture kept as evidence. A reading is a suggestion —
-// names in particular are often a letter off.
+// names in particular are often a letter off. A broker ORDER slip (Dime) is
+// told apart by the reader and not attached: it belongs in ENTRY.
+// Ctrl+V a screenshot anywhere on the page works as well as drag / attach.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Colors } from "../portfolio/helpers";
 import { type SlipFields, type SlipRead, fundApi } from "./api";
 
@@ -43,24 +45,37 @@ export function SlipBox({
   fundId,
   slip,
   onChange,
+  onOpenEntry,
 }: {
   colors: Colors;
   fundId: string;
   slip: AttachedSlip | null;
   onChange: (slip: AttachedSlip | null, filled?: SlipFill) => void;
+  /** A broker order slip was dropped here: open the fund's ENTRY page. */
+  onOpenEntry?: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [orderSlip, setOrderSlip] = useState(false);
   const [over, setOver] = useState(false);
 
   const read = async (file: File | undefined) => {
     if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setErr("ไม่ใช่รูปภาพ — ใช้ PNG / JPG / WEBP");
+      return;
+    }
     setBusy(true);
     setErr("");
+    setOrderSlip(false);
     try {
       const out = await fundApi.readSlip(fundId, file);
       const r = out.reading;
+      if (r.kind === "trade") {
+        setOrderSlip(true);
+        return;
+      }
       const fields: SlipFields = {
         transferred_at: r.transferred_at,
         ref_code: r.ref_code,
@@ -94,6 +109,27 @@ export function SlipBox({
       if (fileRef.current) fileRef.current.value = "";
     }
   };
+
+  const readRef = useRef(read);
+  readRef.current = read;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  // Ctrl+V a screenshot anywhere while DEPOSITS is open, as on PORT → ENTRY.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (busyRef.current) return;
+      const item = Array.from(e.clipboardData?.items ?? []).find((i) =>
+        i.type.startsWith("image/")
+      );
+      const file = item?.getAsFile();
+      if (file) {
+        e.preventDefault();
+        void readRef.current(file);
+      }
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, []);
 
   const dim = { color: colors.textSecondary };
   const input = "px-2 py-1 text-[11px] border bg-transparent";
@@ -148,12 +184,27 @@ export function SlipBox({
             ? "กำลังอ่านสลิป… (ครั้งแรกอาจใช้เวลาสักครู่)"
             : slip
               ? "ระบบอ่านให้แล้ว — ตรวจทุกช่องเทียบกับรูปก่อนบันทึก แก้ได้ทุกช่อง"
-              : "ลากรูปมาวาง หรือกดแนบ · อ่านบนเครื่องนี้ ไม่ส่งออกไปที่ใด · ไม่แนบก็บันทึกเงินเข้าได้"}
+              : "ลากรูปมาวาง · Ctrl+V · หรือกดแนบ · อ่านบนเครื่องนี้ ไม่ส่งออกไปที่ใด · ไม่แนบก็บันทึกเงินเข้าได้"}
         </span>
       </div>
       {err && (
         <div className="mt-1 text-[11px]" style={{ color: colors.negative }}>
           {err}
+        </div>
+      )}
+      {orderSlip && (
+        <div className="mt-1 text-[11px]" style={{ color: "#fbbf24" }}>
+          รูปนี้เป็นสลิปคำสั่งซื้อขาย ไม่ใช่สลิปโอนเงิน — ไม่ได้แนบกับเงินเข้า
+          {onOpenEntry && (
+            <button
+              type="button"
+              className="ml-2 font-bold hover:opacity-75"
+              style={{ color: colors.accent }}
+              onClick={onOpenEntry}
+            >
+              → บันทึกที่ ENTRY
+            </button>
+          )}
         </div>
       )}
 

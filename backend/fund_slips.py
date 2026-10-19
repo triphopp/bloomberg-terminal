@@ -17,10 +17,12 @@ member's deposit can carry the transfer slip it was made with:
 Who the money went to is recorded as the slip says and is not judged: a member
 may pay the fund's manager, or pay into a broker account directly.
 
-The parser is written against the layout of a Thai bank app's "transfer
-complete" slip (label on the left, value on the right; SCB is the one it was
-built from). A slip it cannot read still comes back with what it found and a
-list of what it did not — the form is then typed by hand.
+The parser (slip_ocr/parsers/bank_transfer.py) is written against the layout
+of a Thai bank app's "transfer complete" slip (label on the left, value on the
+right; SCB is the one it was built from). A slip it cannot read still comes
+back with what it found and a list of what it did not — the form is then typed
+by hand. A broker ORDER slip (Dime) is told apart first and refused here with
+`kind: "trade"`: it belongs in ENTRY, not in a deposit.
 """
 from __future__ import annotations
 
@@ -33,29 +35,17 @@ from pathlib import Path
 from typing import Optional
 
 from config import DB_PATH
-from slip_ocr.layout import Token, find_label, label_score, parse_number, same_row
-from slip_ocr.thai_date import parse_thai_datetime
+from slip_ocr import classify
+from slip_ocr.parsers import bank_transfer
 
-PARSER_VERSION = "fund-slip/1"
+PARSER_VERSION = bank_transfer.PARSER_VERSION
 MAX_BYTES = 12 * 1024 * 1024
-FIELDS = ("transferred_at", "ref_code", "from_name", "from_account", "to_name", "to_account", "amount", "memo")
+FIELDS = bank_transfer.FIELDS
+parse_transfer = bank_transfer.parse
 
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _EXT = {b"RIFF": ".webp", b"\x89PNG": ".png", b"\xff\xd8\xff": ".jpg", b"GIF8": ".gif"}
 _MEDIA = {".webp": "image/webp", ".png": "image/png", ".jpg": "image/jpeg", ".gif": "image/gif"}
-# A masked account as banks print it: xxx-xxx435-2. OCR mixes the case of the x.
-_ACCOUNT = re.compile(r"^(?=.*\d)(?=.*[xX])[xX\d][xX\d\- ]{5,}$")
-_REF = re.compile(r"[A-Za-z0-9]{12,}")
-_TIME = re.compile(r"\d{1,2}\s*[:.]\s*\d{2}")
-_BANKS = ("SCB", "KBANK", "K PLUS", "KRUNGTHAI", "KTB", "BBL", "BANGKOK BANK", "KRUNGSRI", "TTB", "GSB", "UOB", "KKP")
-_LABELS = {
-    "ref": ("รหัสอ้างอิง", "เลขที่รายการ", "เลขที่อ้างอิง"),
-    "from": ("จาก",),
-    "to": ("ไปยัง", "ไปที่"),
-    "amount": ("จำนวนเงิน", "จำนวน"),
-    "memo": ("บันทึกช่วยจำ", "บันทึก"),
-    "done": ("โอนเงินสำเร็จ", "รายการสำเร็จ", "ทำรายการสำเร็จ"),
-}
 
 
 def slip_dir() -> Path:
@@ -63,93 +53,6 @@ def slip_dir() -> Path:
 
 
 # ── reading ──────────────────────────────────────────────────────────────────
-
-def _text(tokens: list[Token]) -> str:
-    return " ".join(t.text.strip() for t in sorted(tokens, key=lambda t: t.x0) if t.text.strip())
-
-
-def _block(tokens: list[Token], top: Token, bottom: Optional[Token]) -> list[Token]:
-    """Tokens from the row of `top` down to just above `bottom`."""
-    lo = top.cy - top.h * 0.7
-    hi = (bottom.cy - bottom.h * 0.7) if bottom else float("inf")
-    return [t for t in tokens if t is not top and lo <= t.cy < hi]
-
-
-def _party(tokens: list[Token], label: Token, nxt: Optional[Token]) -> tuple[Optional[str], Optional[str]]:
-    """(name, masked account) of the party a label introduces: the name on the
-    label's row, the account in the rows under it."""
-    block = _block(tokens, label, nxt)
-    accounts = [t for t in block if _ACCOUNT.match(t.text.strip())]
-    row = [t for t in same_row(tokens, label) if t not in accounts]
-    name = _text(row) or None
-    account = accounts[0].text.strip().lower() if accounts else None
-    return name, account
-
-
-def parse_transfer(tokens: list[Token]) -> dict:
-    """What a transfer slip says. Every field is None when it was not found;
-    `unread` lists those, so the caller can say what still has to be typed."""
-    labels = {k: find_label(tokens, *v, min_score=0.85) for k, v in _LABELS.items()}
-    order = sorted((t for t in labels.values() if t is not None), key=lambda t: t.cy)
-
-    def after(key: str) -> Optional[Token]:
-        tok = labels.get(key)
-        if tok is None:
-            return None
-        later = [t for t in order if t.cy > tok.cy + tok.h * 0.5]
-        return later[0] if later else None
-
-    out: dict = dict.fromkeys(FIELDS)
-
-    for tok in sorted(tokens, key=lambda t: t.cy):
-        if _TIME.search(tok.text):
-            when = parse_thai_datetime(tok.text)
-            if when:
-                out["transferred_at"] = when.isoformat(timespec="minutes")
-                break
-
-    if labels["ref"] is not None:
-        ref = labels["ref"]
-        # The value's box often starts under the end of the label's, so the
-        # row is taken by height alone rather than "right of the label".
-        row = [t for t in tokens if t is not ref and abs(t.cy - ref.cy) <= ref.h * 0.7]
-        m = _REF.search(_text(row).replace(" ", ""))
-        if m:
-            out["ref_code"] = m.group(0)
-    if out["ref_code"] is None:      # the label and its value read as one token
-        for tok in tokens:
-            if any(label_score(tok.text, lab) >= 0.85 for lab in _LABELS["ref"]):
-                m = _REF.search(tok.text)
-                if m:
-                    out["ref_code"] = m.group(0)
-
-    if labels["from"] is not None:
-        out["from_name"], out["from_account"] = _party(tokens, labels["from"], after("from"))
-    if labels["to"] is not None:
-        out["to_name"], out["to_account"] = _party(tokens, labels["to"], after("to"))
-
-    if labels["amount"] is not None:
-        amount = parse_number(_text(same_row(tokens, labels["amount"])))
-        if amount is not None and amount > 0:
-            out["amount"] = str(amount)
-
-    if labels["memo"] is not None:
-        memo = labels["memo"]
-        under = [t for t in tokens if t is not memo and memo.cy + memo.h * 0.6 < t.cy <= memo.cy + memo.h * 2.4]
-        inline = same_row(tokens, memo)
-        out["memo"] = _text(inline or under) or None
-
-    joined = " ".join(t.text for t in tokens).upper()
-    bank = next((b for b in _BANKS if re.search(rf"(?<![A-Z]){re.escape(b)}(?![A-Z])", joined)), None)
-    return {
-        **out,
-        "bank": bank,
-        "currency": "THB",
-        "says_complete": labels["done"] is not None,
-        "unread": [f for f in FIELDS if f != "memo" and out[f] is None],
-        "parser": PARSER_VERSION,
-    }
-
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -189,10 +92,19 @@ def image_path(sha: str) -> Optional[tuple[Path, str]]:
 
 
 def read(data: bytes) -> dict:
-    """OCR + parse one image, keep it, and return `{sha256, reading}`."""
+    """OCR + parse one image, keep it, and return `{sha256, reading}`.
+    `reading.kind` = what the slip is (slip_ocr.classify): "transfer" is read
+    into the deposit's fields; "trade" (a broker order slip) is not — the
+    image is still kept, the fields stay empty and `unread` lists them all."""
     from slip_ocr import ocr
     tokens = ocr.read(data)
-    reading = parse_transfer(tokens)
+    kind = classify(tokens)
+    if kind == "trade":
+        reading = {**dict.fromkeys(FIELDS), "bank": None, "currency": "THB", "says_complete": False,
+                   "unread": [f for f in FIELDS if f != "memo"], "parser": PARSER_VERSION}
+    else:
+        reading = parse_transfer(tokens)
+    reading["kind"] = kind or "unknown"
     reading["ocr"] = {"backend": ocr.BACKEND, "tokens": [
         {"text": t.text, "box": [round(t.x0), round(t.y0), round(t.x1), round(t.y1)], "conf": round(t.conf, 3)}
         for t in tokens]}

@@ -56,8 +56,35 @@ export interface OptionSlipForm {
   note: string;
 }
 
+/** A bank transfer slip (slip_ocr/parsers/bank_transfer.py): money in / out, not a trade. */
+export interface TransferSlip {
+  transferred_at: string | null;
+  ref_code: string | null;
+  from_name: string | null;
+  from_account: string | null;
+  to_name: string | null;
+  to_account: string | null;
+  amount: string | null;
+  memo: string | null;
+  bank: string | null;
+  unread: string[];
+}
+
+/** What CASH is pre-filled with — a guess from the names on the slip; the person confirms. */
+export interface TransferHint {
+  flow_type: "DEPOSIT" | "WITHDRAW" | null;
+  account_id: string | null;
+  date: string | null;
+  amount: string | null;
+  ref_code: string | null;
+}
+
 export interface SlipResult {
   engine: string;
+  /** What the slip is: a broker order, a bank transfer, or neither. */
+  slip_kind?: "trade" | "transfer" | null;
+  transfer?: TransferSlip;
+  transfer_hint?: TransferHint;
   broker: string | null;
   status: "ok" | "review" | "fail";
   form: SlipForm | OptionSlipForm | null;
@@ -82,10 +109,13 @@ export function SlipReader({
   colors,
   onFill,
   onPages,
+  onTransfer,
   resetSeq = 0,
 }: {
   colors: Colors;
   onFill: (r: SlipResult) => void;
+  /** A bank transfer slip was read: hand it to CASH. Unset = say where it goes instead. */
+  onTransfer?: (hint: TransferHint) => void;
   /** The screenshots being read, so ENTRY can show them beside the form. */
   onPages?: (files: File[]) => void;
   /** Bumped by ENTRY after SAVE / CLEAR: the next image starts a new order. */
@@ -311,7 +341,43 @@ export function SlipReader({
         </div>
       )}
 
-      {result && (
+      {result?.slip_kind === "transfer" && result.transfer && (
+        <div className="text-[9px] font-mono space-y-0.5">
+          <div className="font-bold" style={{ color: "#fbbf24" }}>
+            สลิปโอนเงิน{result.transfer.bank ? ` ${result.transfer.bank}` : ""} — เงินเข้า / ออก
+            ไม่ใช่คำสั่งซื้อขาย
+          </div>
+          <div style={{ color: colors.textSecondary }}>
+            {result.transfer.transferred_at?.replace("T", " ") ?? "—"} ·{" "}
+            {result.transfer.amount ?? "?"} THB · {result.transfer.from_name ?? "?"} →{" "}
+            {result.transfer.to_name ?? "?"}
+            {result.transfer.ref_code ? ` · ${result.transfer.ref_code}` : ""}
+          </div>
+          {onTransfer && result.transfer_hint ? (
+            <button
+              type="button"
+              className="font-bold hover:opacity-75"
+              style={{ color: colors.accent }}
+              onClick={() => result.transfer_hint && onTransfer(result.transfer_hint)}
+            >
+              → CASH ·{" "}
+              {result.transfer_hint.flow_type === "DEPOSIT"
+                ? "+ DEPOSIT"
+                : result.transfer_hint.flow_type === "WITHDRAW"
+                  ? "− WITHDRAW"
+                  : "เลือก DEPOSIT / WITHDRAW"}
+              {result.transfer_hint.account_id ? ` · ${result.transfer_hint.account_id}` : ""}{" "}
+              (ตรวจก่อนบันทึก)
+            </button>
+          ) : (
+            <div style={{ color: colors.textSecondary }}>
+              เงินเข้ากองทุนบันทึกที่ FUND → DEPOSITS (แนบสลิปนี้ที่นั่น)
+            </div>
+          )}
+        </div>
+      )}
+
+      {result && result.slip_kind !== "transfer" && (
         <div className="text-[9px] font-mono space-y-0.5">
           <div>
             <span style={{ color: statusColor }} className="font-bold">

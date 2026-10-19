@@ -23,6 +23,7 @@ import {
   type SlipForm,
   SlipReader,
   type SlipResult,
+  type TransferHint,
   isOptionSlip,
 } from "../ui/SlipReader";
 import { SubPortSelect } from "../ui/SubPortSelect";
@@ -70,6 +71,7 @@ export function ImportTab({
   variant = "full",
   optionPrefill = null,
   book,
+  onTransferSlip,
 }: {
   colors: Colors;
   variant?: "full" | "manual" | "excel";
@@ -79,6 +81,8 @@ export function ImportTab({
   book?: string;
   /** OPTIONS → ADD / CLOSE lands here with the contract filled in. */
   optionPrefill?: (OptionEntryPrefill & { seq: number }) | null;
+  /** A bank transfer slip dropped on ENTRY → CASH, pre-filled. */
+  onTransferSlip?: (hint: TransferHint) => void;
 }) {
   const [mode, setMode] = useState<"excel" | "manual">(variant === "manual" ? "manual" : "excel");
   const [side, setSide] = useState<"buy" | "sell">("buy");
@@ -675,6 +679,7 @@ export function ImportTab({
               colors={colors}
               onFill={fillFromSlip}
               onPages={setSlipPages}
+              onTransfer={onTransferSlip}
               resetSeq={slipResetSeq}
             />
 

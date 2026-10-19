@@ -92,6 +92,8 @@ export interface SlipReading extends SlipFields {
   says_complete: boolean;
   /** Fields the reader could not find — to be typed from the picture. */
   unread: (keyof SlipFields)[];
+  /** What the picture is (slip_ocr.classify): only a "transfer" is read into the deposit. */
+  kind?: "transfer" | "trade" | "unknown";
   error?: string;
 }
 
