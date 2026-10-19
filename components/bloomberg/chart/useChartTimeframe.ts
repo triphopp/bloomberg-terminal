@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { BarInterval, TimePeriod } from "./types";
 import { INTERVAL_DEFAULT_RANGE, INTERVAL_VALID_RANGES } from "./types.ts";
 
@@ -55,6 +55,33 @@ export const PERIOD_TO_YF: Record<TimePeriod, string> = {
 export interface ChartTimeframeOptions {
   defaultPeriod?: TimePeriod;
   defaultInterval?: BarInterval;
+  /** localStorage key — when set, the timeframe survives a view switch and a reload. */
+  storageKey?: string;
+}
+
+interface StoredTimeframe {
+  timePeriod: TimePeriod;
+  barInterval: BarInterval;
+  handPeriod: TimePeriod;
+}
+
+function readStoredTimeframe(key: string | undefined): StoredTimeframe | null {
+  if (!key || typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as Partial<StoredTimeframe>;
+    const p = v.timePeriod;
+    const iv = v.barInterval;
+    if (!p || !iv || !TIME_PERIODS.includes(p) || !BAR_INTERVALS.includes(iv)) return null;
+    // A stored pair that the rules no longer allow is repaired, not trusted.
+    const legal = applyInterval(iv, p);
+    const hand =
+      v.handPeriod && TIME_PERIODS.includes(v.handPeriod) ? v.handPeriod : legal.timePeriod;
+    return { ...legal, handPeriod: hand };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -109,10 +136,26 @@ export function applyInterval(
 }
 
 export function useChartTimeframe(options?: ChartTimeframeOptions) {
-  const [timePeriod, setTimePeriod] = useState<TimePeriod>(options?.defaultPeriod ?? "1y");
-  const [barInterval, setBarInterval] = useState<BarInterval>(options?.defaultInterval ?? "1d");
+  const storageKey = options?.storageKey;
+  const [stored] = useState(() => readStoredTimeframe(storageKey));
+  const [timePeriod, setTimePeriod] = useState<TimePeriod>(
+    stored?.timePeriod ?? options?.defaultPeriod ?? "1y"
+  );
+  const [barInterval, setBarInterval] = useState<BarInterval>(
+    stored?.barInterval ?? options?.defaultInterval ?? "1d"
+  );
   // Last period chosen by hand — survives an interval forcing another one.
-  const handPeriodRef = useRef<TimePeriod>(options?.defaultPeriod ?? "1y");
+  const handPeriodRef = useRef<TimePeriod>(stored?.handPeriod ?? options?.defaultPeriod ?? "1y");
+
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      const v: StoredTimeframe = { timePeriod, barInterval, handPeriod: handPeriodRef.current };
+      localStorage.setItem(storageKey, JSON.stringify(v));
+    } catch {
+      /* storage full / blocked — the timeframe just isn't remembered */
+    }
+  }, [storageKey, timePeriod, barInterval]);
 
   const handlePeriodChange = useCallback(
     (p: TimePeriod, chartType: "area" | "candle" = "candle") => {

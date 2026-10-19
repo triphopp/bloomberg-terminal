@@ -1540,7 +1540,11 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     isIntraday: heatmapIsIntraday,
     handlePeriodChange: handleHeatmapPeriod,
     handleIntervalChange: handleHeatmapInterval,
-  } = useChartTimeframe({ defaultPeriod: "3m", defaultInterval: "1d" });
+  } = useChartTimeframe({
+    defaultPeriod: "3m",
+    defaultInterval: "1d",
+    storageKey: "bloomberg_mkt_chart_timeframe",
+  });
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
