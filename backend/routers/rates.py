@@ -263,26 +263,28 @@ def _fetch_jp() -> tuple[list[dict], str, bool]:
 @router.get("/api/rates/curve")
 def rates_curve():
     """Full US Treasury + JGB curves as flat tick rows for the TICK DATA board."""
-    cached = _cache.get("rates:curve")
-    if cached is not None:
-        return cached
+    def build() -> dict:
+        us, us_error = _fetch_us()
+        jp, jp_source, jp_stale = _fetch_jp()
+        return {
+            "us": us,
+            "jp": jp,
+            "usError": us_error,
+            "jpSource": jp_source,
+            "jpStale": jp_stale,
+            "asOf": datetime.utcnow().isoformat() + "Z",
+        }
 
-    us, us_error = _fetch_us()
-    jp, jp_source, jp_stale = _fetch_jp()
-
-    data = {
-        "us": us,
-        "jp": jp,
-        "usError": us_error,
-        "jpSource": jp_source,
-        "jpStale": jp_stale,
-        "asOf": datetime.utcnow().isoformat() + "Z",
-    }
-    _cache.set("rates:curve", data)
-    return data
+    # Daily series: a copy up to 36 h old (dated by `asOf` and each row's own
+    # date) answers at once while the refresh runs — the cold pull took 43 s.
+    return _cache.get_or_refresh(
+        "rates:curve", build, max_stale=36 * 3600, persist="rates_curve",
+        valid=lambda d: bool(d.get("us")) or bool(d.get("jp")),
+    )
 
 
 @router.delete("/api/rates/curve")
 def clear_rates_cache():
     _cache.clear()
+    _cache.drop_persisted("rates_curve")
     return {"cleared": True}

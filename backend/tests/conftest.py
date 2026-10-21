@@ -46,3 +46,13 @@ def _no_real_gcal_token(tmp_path, monkeypatch):
     """No test reads or writes this machine's Google Calendar token (gcal_sync.py):
     the calendar scheduler's tick calls gcal_sync.run_if_connected()."""
     monkeypatch.setenv("GCAL_TOKEN_DIR", str(tmp_path / "gcal-token"))
+
+
+@pytest.fixture(autouse=True)
+def _no_real_persisted_cache(tmp_path, monkeypatch):
+    """TTLCache.get_or_refresh(persist=...) keeps last-good copies in
+    backend/cache/. A test's stubbed quotes written there were served to the
+    real app after its next restart (swr_tick_custom_IXG.pkl, 2026-10-21), and a
+    real copy read back would answer a test instead of its stub."""
+    import cache
+    monkeypatch.setattr(cache, "PERSIST_DIR", tmp_path / "persisted-cache")

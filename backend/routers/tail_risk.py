@@ -1350,7 +1350,13 @@ def get_signals():  # sync: blocking requests/yfinance — FastAPI runs it in a 
                 "data_health": {"ok": False, "degraded": ["all"], "indices": []},
             }
 
-    return _cache.get_or_set("signals", build)
+    # Stale-while-revalidate: the compute takes 6 s warm and minutes while Yahoo
+    # is slow, and the ribbon on every view asks for it. The payload carries
+    # its own `ts`, so a copy kept across a restart says how old it is.
+    return _cache.get_or_refresh(
+        "signals", build, max_stale=12 * 3600, persist="tail_signals",
+        valid=lambda d: bool(d.get("ok")),
+    )
 
 
 # ─── Macro context ────────────────────────────────────────────────────────────
