@@ -9,14 +9,15 @@ from __future__ import annotations
 import json as _json
 import math
 import os
-import threading
-import time
 from typing import Any
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 from fastapi import APIRouter, Query
+
+from cache import TTLCache
+from market_requests import collect
+from market_snapshots import history_future
 from analytics.regime_calibration import (
     RMTCalibrator, get_mrs, _heuristic_corr_label,
     _train_in_background, _training_state, model_age_days, needs_training,
@@ -40,48 +41,69 @@ SECTORS = [
     {"symbol": "XLC",  "name": "Comm Services",   "abbr": "COMM"},
 ]
 
-PERIOD_MAP: dict[str, tuple[str, str]] = {
-    "1m": ("1mo",  "1d"),
-    "3m": ("3mo",  "1d"),
-    "6m": ("6mo",  "1d"),
-    "1y": ("1y",   "1d"),
-    "2y": ("2y",   "1wk"),
-}
 
-_cache: dict[str, tuple[float, Any]] = {}
-_lock = threading.Lock()
 _TTL = 300
+#: Endpoint results are served up to this old while a refresh runs (and kept
+#: on disk across a restart): the cold pull took 93–115 s on 2026-10-21.
+_MAX_STALE = 12 * 3600
+_cache = TTLCache(ttl=_TTL, maxsize=64)
 
 
-def _get_cached(key: str, factory):
-    now = time.time()
-    with _lock:
-        if key in _cache and now - _cache[key][0] < _TTL:
-            return _cache[key][1]
-    val = factory()
-    with _lock:
-        _cache[key] = (now, val)
-    return val
+def _ok(value: Any) -> bool:
+    return value is not None and not (isinstance(value, dict) and value.get("error"))
+
+
+def _get_cached(key: str, factory, *, persist: bool = True):
+    """Stale-while-revalidate (cache.get_or_refresh). A failed compute is never
+    stored over a good result."""
+    return _cache.get_or_refresh(
+        key, factory, max_stale=_MAX_STALE,
+        persist=key.replace(":", "_") if persist else None, valid=_ok,
+    )
+
+
+def _sector_closes() -> pd.DataFrame | None:
+    """Daily closes of the 11 sector ETFs over 2y — ONE pull shared by every
+    period, mode and endpoint here.
+
+    Was one `yf.download` per period (trend asked for 4 at once, correlation a
+    5th): ~55 Yahoo calls outside the shared pool for the same 11 series. Now
+    `history_future` — the throttled, coalesced pool, and the same 2y/1d key the
+    watchlist scan and RISK already read, so a sector ETF on the watchlist is
+    fetched once for both."""
+    symbols = [s["symbol"] for s in SECTORS]
+    # 45 s: only a cold start with nothing on disk waits here; later
+    # refreshes run behind a served copy.
+    frames, statuses = collect({s: history_future(s, "2y", "1d", ttl=900) for s in symbols},
+                               timeout=45)
+    if any(st["status"] == "pending" for st in statuses.values()):
+        return None  # still loading — not a 9-sector answer to cache
+    closes = {s: df["Close"] for s, df in frames.items() if "Close" in df}
+    if len(closes) < 3:
+        return None
+    return pd.concat(closes, axis=1).sort_index()
+
+
+_PERIOD_MONTHS = {"1m": 1, "3m": 3, "6m": 6, "1y": 12}
 
 
 def _fetch_returns(period: str) -> pd.DataFrame | None:
-    yf_period, interval = PERIOD_MAP.get(period, ("3mo", "1d"))
-    symbols = [s["symbol"] for s in SECTORS]
+    """Returns for one window, cut from the shared 2y daily closes. "2y" is
+    weekly (W-FRI last close), as it was when Yahoo was asked for 1wk bars."""
     try:
-        raw = yf.download(
-            symbols, period=yf_period, interval=interval,
-            auto_adjust=True, progress=False, threads=True,
-        )
-        if isinstance(raw.columns, pd.MultiIndex):
-            closes = raw["Close"]
-        else:
-            closes = raw
-        available = [s for s in symbols if s in closes.columns]
-        if len(available) < 3:
+        closes = _sector_closes()
+        if closes is None:
             return None
-        ret = closes[available].pct_change().dropna()
+        if period == "2y":
+            closes = closes.resample("W-FRI").last()
+        else:
+            months = _PERIOD_MONTHS.get(period, 3)
+            start = closes.index[-1] - pd.DateOffset(months=months)
+            closes = closes[closes.index >= start]
+        ret = closes.pct_change().dropna()
         return ret if len(ret) >= 10 else None
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — None = "insufficient data" upstream
+        print(f"[regime] returns {period}: {type(exc).__name__}: {exc}")
         return None
 
 
@@ -270,18 +292,13 @@ def get_regime_trend(
         re-fetching data.
         """
         # Try to adapt from full correlation cache first (free — already computed)
-        full = _cache.get(f"regime:{period}:{mode}")
-        if full and isinstance(full, tuple) and len(full) == 2:
-            cached_val = full[1]
-            if isinstance(cached_val, dict):
-                if "score" in cached_val:
-                    return cached_val  # already the compact form
-                if "regime_score" in cached_val:
-                    return {
-                        "score": cached_val["regime_score"],
-                        "label": cached_val["regime_label"],
-                        "color": cached_val["regime_color"],
-                    }
+        cached_val = _cache.peek(f"regime:{period}:{mode}")
+        if isinstance(cached_val, dict) and "regime_score" in cached_val:
+            return {
+                "score": cached_val["regime_score"],
+                "label": cached_val["regime_label"],
+                "color": cached_val["regime_color"],
+            }
 
         # Otherwise compute fresh with own cache key
         def compute():
@@ -301,7 +318,7 @@ def get_regime_trend(
                 score, label, color, *_ = _regime_avg_corr(matrix, len(syms))
             return {"score": score, "label": label, "color": color}
 
-        result = _get_cached(f"regime:score:{period}:{mode}", compute)
+        result = _get_cached(f"regime:score:{period}:{mode}", compute, persist=False)
         return result if result else {"score": 0.0, "label": "N/A", "color": "#888"}
 
     periods_list = ["1m", "3m", "6m", "1y"]
