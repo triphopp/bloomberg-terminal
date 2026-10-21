@@ -50,6 +50,7 @@ import {
   probColor,
   useStockPredictionSummaries,
 } from "../hooks/useStockPredictions";
+import { useVisibleSymbols } from "../hooks/useVisibleSymbols";
 import { useWatchlistQuotes, useWatchlistSparklines } from "../hooks/useWatchlistData";
 import {
   type TrendState,
@@ -1297,6 +1298,7 @@ const CompactWatchRow = memo(function CompactWatchRow({
     >
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: row click is a shortcut; the symbol opens from the keyboard via the context menu and the TABLE view */}
       <tr
+        data-wl-sym={pin.symbol}
         className="cursor-pointer hover:bg-[#111]"
         style={{
           borderBottom: "1px solid #111",
@@ -1650,6 +1652,10 @@ export const PinnedAssets = memo(function PinnedAssets({
   // All groups share per-symbol queries. Metadata edits/reordering do not refetch.
   const symbolKey = [...new Set(pins.map((p) => p.symbol))].sort().join(",");
   const signalSymbols = useMemo(() => (symbolKey ? symbolKey.split(",") : []), [symbolKey]);
+  // Rows on screen (± one screen) get live ticks, the 60 s poll and Polymarket;
+  // the rest stay rendered (ASK reads them) and refresh slowly.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const visibleSymbols = useVisibleSymbols(rootRef, !collapsed);
   const {
     quotes,
     loading: loadingQuotes,
@@ -1659,20 +1665,27 @@ export const PinnedAssets = memo(function PinnedAssets({
     cached: quotesCached,
     cachedAgeMs: quotesCachedAgeMs,
     refresh: fetchQuotes,
-  } = useWatchlistQuotes(signalSymbols, !collapsed);
+  } = useWatchlistQuotes(signalSymbols, !collapsed, visibleSymbols);
   const {
     signals,
     isLoading: signalsLoading,
     errors: signalErrors,
     cached: signalsCached,
   } = useWatchlistSignals(signalSymbols, !collapsed);
-  const predictionSymbols = useMemo(
-    () => signalSymbols.filter((s) => /^[A-Z][A-Z.\-]{0,5}$/.test(s) && !s.includes(".")),
-    [signalSymbols]
-  );
+  // Polymarket is shown only by the TABLE view; sorting by PM needs every row,
+  // otherwise only the rows on screen are searched (1.4–4 s per 10 symbols).
+  const pmShown = viewMode === "table" || sortKey === "pm";
+  const predictionSymbols = useMemo(() => {
+    const eligible = signalSymbols.filter(
+      (s) => /^[A-Z][A-Z.\-]{0,5}$/.test(s) && !s.includes(".")
+    );
+    if (sortKey === "pm" || visibleSymbols === null) return eligible;
+    const onScreen = new Set(visibleSymbols);
+    return eligible.filter((s) => onScreen.has(s));
+  }, [signalSymbols, sortKey, visibleSymbols]);
   const { summaries: pmSummaries, errors: pmErrors } = useStockPredictionSummaries(
     predictionSymbols,
-    !collapsed
+    !collapsed && pmShown
   );
 
   // ── CRUD Handlers ─────────────────────────────────────────────────────────
@@ -2182,7 +2195,13 @@ export const PinnedAssets = memo(function PinnedAssets({
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="border" style={{ borderColor: colors.border, background: "#000" }}>
+    <div
+      ref={rootRef}
+      // how many rows get live data (useVisibleSymbols); "all" until measured
+      data-wl-live={visibleSymbols === null ? "all" : visibleSymbols.length}
+      className="border"
+      style={{ borderColor: colors.border, background: "#000" }}
+    >
       {/* ── Section header ── */}
       <div
         className="flex flex-wrap items-center gap-1 px-1 py-0.5 border-b"
@@ -2572,6 +2591,7 @@ export const PinnedAssets = memo(function PinnedAssets({
                           handleSymbolClick(pin.symbol, e);
                         }
                       }}
+                      data-wl-sym={pin.symbol}
                       draggable
                       onDragStart={() => setDragIdx(visualIdx)}
                       onDragOver={(e) => {
@@ -3093,6 +3113,7 @@ export const PinnedAssets = memo(function PinnedAssets({
                             onRemove={() => handleDeletePin(pin.id)}
                           >
                             <tr
+                              data-wl-sym={pin.symbol}
                               draggable
                               onDragStart={() => setDragIdx(visualIdx)}
                               onDragOver={(e) => {

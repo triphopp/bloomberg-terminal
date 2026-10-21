@@ -37,8 +37,23 @@ export function useMarketQueryResults<T>(
       if (timer) clearTimeout(timer);
     };
   }, [observer]);
+  usePrefetchLoop(options, pollMs);
+
+  // Never pair a previous symbol set's results with the new symbol keys.
+  return (
+    snapshot.observer === observer ? snapshot.results : observer.getCurrentResult()
+  ) as QueryObserverResult<T>[];
+}
+
+/**
+ * One poll pass over `options` every `pollMs` (prefetch joins work in flight
+ * and skips fresh data). Separate from the observers so one list can be
+ * watched while its parts poll at different rates. Pass memoized options.
+ */
+export function usePrefetchLoop<T>(options: QueryObserverOptions<T>[], pollMs: number | false) {
+  const client = useQueryClient();
   useEffect(() => {
-    if (!pollMs) return;
+    if (!pollMs || options.length === 0) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
@@ -57,9 +72,4 @@ export function useMarketQueryResults<T>(
       if (timer) clearTimeout(timer);
     };
   }, [client, options, pollMs]);
-
-  // Never pair a previous symbol set's results with the new symbol keys.
-  return (
-    snapshot.observer === observer ? snapshot.results : observer.getCurrentResult()
-  ) as QueryObserverResult<T>[];
 }

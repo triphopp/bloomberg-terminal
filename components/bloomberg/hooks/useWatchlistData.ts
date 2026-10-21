@@ -1,6 +1,6 @@
 "use client";
 
-import { useMarketQueryResults } from "./useMarketQueryResults";
+import { useMarketQueryResults, usePrefetchLoop } from "./useMarketQueryResults";
 
 import {
   type StockQuote,
@@ -22,7 +22,18 @@ import { cachedRows, useSnapshotSave, useSnapshotSeed } from "./useWatchlistSnap
 
 const quoteKey = (symbol: string) => quoteQueryOptions(symbol).queryKey;
 
-export function useWatchlistQuotes(symbols: string[], enabled = true) {
+/** Off-screen rows: their quote is still refreshed — sorting by LAST / CHG / VOL reads it. */
+const OFFSCREEN_POLL_MS = 300_000;
+
+/**
+ * `liveSymbols` — the rows on screen (useVisibleSymbols); only they get stream
+ * ticks and the 60 s poll, the rest refresh every 5 min. null = all live.
+ */
+export function useWatchlistQuotes(
+  symbols: string[],
+  enabled = true,
+  liveSymbols: string[] | null = null
+) {
   const live = useAtomValue(isRealTimeEnabledAtom);
   const client = useQueryClient();
   const key = [...new Set(symbols.map((s) => s.trim().toUpperCase()))].sort().join(",");
@@ -68,12 +79,25 @@ export function useWatchlistQuotes(symbols: string[], enabled = true) {
   );
   // Symbols that should be ticking, from the cached quotes: open session, or
   // not loaded yet (conservative). All ticking on the stream → poll backs off.
-  const openSymbols = unique.filter((s) => {
+  const liveKey = liveSymbols
+    ? ((all) => liveSymbols.filter((s) => all.has(s)).join(","))(new Set(unique))
+    : key;
+  const liveUnique = useMemo(() => (liveKey ? liveKey.split(",") : []), [liveKey]);
+  const [liveOptions, restOptions] = useMemo(() => {
+    const isLive = new Set(liveUnique);
+    return [
+      options.filter((_, i) => isLive.has(unique[i])),
+      options.filter((_, i) => !isLive.has(unique[i])),
+    ];
+  }, [options, unique, liveUnique]);
+  const openSymbols = liveUnique.filter((s) => {
     const q = client.getQueryData<StockQuote>(quoteQueryOptions(s).queryKey);
     return !q || q.marketState == null || isOpenMarketState(q.marketState);
   });
   const pollMs = useStreamPollInterval(openSymbols, enabled ? (live ? 60_000 : 300_000) : false);
-  const results = useMarketQueryResults(options, pollMs);
+  const results = useMarketQueryResults(options);
+  usePrefetchLoop(liveOptions, pollMs);
+  usePrefetchLoop(restOptions, enabled ? OFFSCREEN_POLL_MS : false);
   const combined = useMemo(() => combine(results), [combine, results]);
   useSnapshotSave("quotes", unique, results, seeded);
 
@@ -88,7 +112,7 @@ export function useWatchlistQuotes(symbols: string[], enabled = true) {
     },
     [client]
   );
-  useQuoteStream(unique, onTicks, enabled);
+  useQuoteStream(liveUnique, onTicks, enabled);
   return {
     ...combined,
     total: unique.length,
