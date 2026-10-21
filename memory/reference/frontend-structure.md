@@ -226,6 +226,7 @@ components/bloomberg/
 │   ├── useStockData.ts
 │   ├── useWatchlistSignals.ts   ← batch daily technical scan for the watchlist
 │   ├── useWatchlistSnapshot.ts  ← seed/save WATCHLIST quotes + signals from localStorage (first paint)
+│   ├── useVisibleSymbols.ts     ← WATCHLIST rows on screen (+12 either side) → which get live data
 │   ├── useRatesCurve.ts         ← /api/rates → UST + JGB curves for the TICK DATA board (`RateRowData`)
 │   ├── useFxTicks.ts            ← /api/fx overview for the TICK DATA FX section (`FxPair`)
 │   ├── useAiMarketAnalysis.ts
@@ -479,6 +480,8 @@ components/bloomberg/
 | `views/portfolio/weights.ts` | `navBreakdown` `weightPct` `fmtWeight`; types `NavInputs` `NavBreakdown` — pure % of NAV maths (NAV = equity MV + option MV + cash). Tests: `npm run test:views` |
 | `views/portfolio/ui/usePortfolioNav.ts` | `usePortfolioNav(accountId, currency)` → `{ breakdown, pct }` (reads openPositions + summary query caches); `equityMarketValue(trade)` |
 | `views/tail/macro-context.tsx` | `useMacroContext()` `EventStrip` `MacroPanel` `KIND_COLOR`; types `MacroEvent` `EventKind` `MacroContextData` |
+| `hooks/useVisibleSymbols.ts` | `useVisibleSymbols(rootRef, enabled)` → sorted symbols of `[data-wl-sym]` rows in view (viewport IntersectionObserver, rows found by MutationObserver, ±12 rows buffer, 250 ms settle); `null` = not measured = all. WATCHLIST root shows the count as `data-wl-live` |
+| `hooks/useMarketQueryResults.ts` `usePrefetchLoop` | poll pass over a subset of options at its own rate (WATCHLIST: on-screen 60 s, off-screen 5 min) |
 | `hooks/useWatchlistSnapshot.ts` | `useSnapshotSeed` (stored values into the query cache before the observers subscribe, with their real fetch time; `alwaysRefetch` for quotes), `useSnapshotSave` (10 s throttle + `pagehide`), `cachedRows` → `{ cached, cachedAgeMs }` for the WATCHLIST strip |
 | `lib/watchlist-snapshot.ts` | pure: `readSnapshot`, `writeSnapshot` (`localStorage["bloomberg_watchlist_snapshot_v1_<quotes\|signals>"]`, ≤ 400 items, ≤ 4 days), `reviveQuote` (re-derives `isCurrentSession` from `quoteDate` + exchange date), `dateInZone` |
 | `hooks/useWatchlistSignals.ts` | `useWatchlistSignals(symbols)` → `{ signals, errors, isLoading, cached, cachedAgeMs, refetch }`; types `WatchlistSignal`, `TrendState`, `RsiState`, `MacdState`, `BreakoutState` |

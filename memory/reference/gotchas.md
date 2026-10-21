@@ -2652,4 +2652,14 @@ old · updating`) and the first watchlist quote fetch is lite (`fetchQuoteFirstP
 a stream tick patches a seeded quote — fresh `dataUpdatedAt`, so React Query never refetches it — and `patchQuote`
 computes CHG from the stored `regularMarketPreviousClose`, which on a snapshot from an earlier day is the wrong day's
 close. Seeded quotes are therefore invalidated (`alwaysRefetch`) so the lite fetch always runs on mount.
+**Follow-up — WATCHLIST data by visibility (2026-10-21).** Every row stays rendered (ASK's `read_screen` reads the DOM
+text; Ctrl+F; group drag-and-drop), so no virtualization: at 34 rows the list was 230 of 1,721 DOM nodes with no long
+task. What scales with the list is per-symbol data, so only rows on screen ±12 (`useVisibleSymbols`) get stream ticks
+and the 60 s poll; the rest poll every 5 min (sort by LAST/CHG/VOL still reads them). Polymarket summaries are fetched
+only when shown — TABLE view or sort by PM (it used to search for every symbol in every view, 1.4–4 s per 10) — and
+then only for rows on screen unless sorting by PM. Two traps hit while building it: rows are REMOUNTED when the table's
+shape changes, so the observer must find rows with a MutationObserver (an observer on a detached row reports "off
+screen"); and an explicit scroll-container root picked at mount went stale — use the viewport root (it clips by
+scrolling ancestors) and buffer by rows, not `rootMargin`. The Claude Browser pane stops rendering when hidden
+(`requestAnimationFrame` count 0): IntersectionObserver results there are meaningless — check `rAF` first.
 
