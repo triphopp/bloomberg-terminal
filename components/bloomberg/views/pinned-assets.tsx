@@ -1360,6 +1360,14 @@ const CompactWatchRow = memo(function CompactWatchRow({
   );
 });
 
+/** "3m old" / "2h old" / "1d old" — age of the oldest cached row on the strip. */
+function fmtCachedAge(ms: number): string {
+  const m = Math.max(0, Math.round(ms / 60_000));
+  if (m < 60) return `${m}m old`;
+  const h = Math.round(m / 60);
+  return h < 48 ? `${h}h old` : `${Math.round(h / 24)}d old`;
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 /**
@@ -1606,6 +1614,27 @@ export const PinnedAssets = memo(function PinnedAssets({
       }
     };
 
+    // Paint the last known list at once. Every row's quote and signal request
+    // waits for this symbol list, and the DB answer can sit behind the rest of
+    // a page load (a browser opens six connections per host). The DB result
+    // replaces it a moment later, and only that result is saved back
+    // (the saveToLS effect waits for syncStatus "ok").
+    if (pins.length === 0) {
+      try {
+        const lsPins = localStorage.getItem(LS_PINS);
+        if (lsPins) {
+          const lsGroups = localStorage.getItem(LS_GROUPS);
+          const lsTags = localStorage.getItem(LS_TAGS);
+          setGroups(lsGroups ? JSON.parse(lsGroups) : [DEFAULT_GROUP]);
+          setPins(applySavedOrder(JSON.parse(lsPins)));
+          setTags(lsTags ? JSON.parse(lsTags) : []);
+          const savedSortKey = localStorage.getItem(LS_SORT_KEY);
+          if (savedSortKey) restoreSort(savedSortKey);
+        }
+      } catch {
+        /* unreadable copy — wait for the DB */
+      }
+    }
     loadFromDB();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1627,12 +1656,15 @@ export const PinnedAssets = memo(function PinnedAssets({
     errors: quoteErrors,
     loaded: quotesLoaded,
     total: quoteTotal,
+    cached: quotesCached,
+    cachedAgeMs: quotesCachedAgeMs,
     refresh: fetchQuotes,
   } = useWatchlistQuotes(signalSymbols, !collapsed);
   const {
     signals,
     isLoading: signalsLoading,
     errors: signalErrors,
+    cached: signalsCached,
   } = useWatchlistSignals(signalSymbols, !collapsed);
   const predictionSymbols = useMemo(
     () => signalSymbols.filter((s) => /^[A-Z][A-Z.\-]{0,5}$/.test(s) && !s.includes(".")),
@@ -2422,6 +2454,7 @@ export const PinnedAssets = memo(function PinnedAssets({
               permanent "PRICES 17/17 · SIGNALS 17/17" cost a row for nothing. */}
           {quoteTotal > 0 &&
             (quotesLoaded < quoteTotal ||
+              quotesCached > 0 ||
               Object.keys(quoteErrors).length > 0 ||
               signalErrors.length > 0 ||
               pmErrors.length > 0) && (
@@ -2431,10 +2464,19 @@ export const PinnedAssets = memo(function PinnedAssets({
               >
                 <span>
                   PRICES {quotesLoaded}/{quoteTotal}
+                  {quotesCached > 0 && (
+                    <span
+                      style={{ color: "#f59e0b" }}
+                      title="Shown from this browser's last session until the fresh quote arrives"
+                    >
+                      {` · ${quotesCached} cached ${fmtCachedAge(quotesCachedAgeMs)}`}
+                    </span>
+                  )}
                   {loadingQuotes ? " · updating" : ""}
                 </span>
                 <span>
                   SIGNALS {Object.keys(signals).length}/{quoteTotal}
+                  {signalsCached > 0 && signalsLoading ? ` · ${signalsCached} cached` : ""}
                   {signalsLoading ? " · updating" : ""}
                 </span>
                 {(Object.keys(quoteErrors).length > 0 ||

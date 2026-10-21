@@ -4,6 +4,7 @@ import { useMarketQueryResults } from "./useMarketQueryResults";
 
 import {
   type StockQuote,
+  fetchQuoteFirstPaint,
   marketRetry,
   marketRetryDelay,
   quoteQueryOptions,
@@ -15,7 +16,11 @@ import { useCallback, useMemo } from "react";
 import { isRealTimeEnabledAtom } from "../atoms";
 import { patchQuote } from "../lib/live-quotes";
 import { isOpenMarketState } from "../lib/stream-cadence";
+import { reviveQuote } from "../lib/watchlist-snapshot";
 import { type QuoteTick, useQuoteStream, useStreamPollInterval } from "./useQuoteStream";
+import { cachedRows, useSnapshotSave, useSnapshotSeed } from "./useWatchlistSnapshot";
+
+const quoteKey = (symbol: string) => quoteQueryOptions(symbol).queryKey;
 
 export function useWatchlistQuotes(symbols: string[], enabled = true) {
   const live = useAtomValue(isRealTimeEnabledAtom);
@@ -26,12 +31,29 @@ export function useWatchlistQuotes(symbols: string[], enabled = true) {
     () =>
       unique.map((symbol) => ({
         ...quoteQueryOptions(symbol),
+        // Price first, fundamentals behind (fetchQuoteFirstPaint): a cold
+        // backend answers lite quotes in one batched call.
+        queryFn: ({ signal }: { signal: AbortSignal }) => {
+          const key = quoteKey(symbol);
+          return fetchQuoteFirstPaint(
+            symbol,
+            signal,
+            client.getQueryData<StockQuote>(key),
+            (full) =>
+              client.setQueryData<StockQuote>(key, (old) => (old ? { ...old, ...full } : full))
+          );
+        },
         enabled,
         refetchInterval: false as const,
         refetchOnWindowFocus: true,
       })),
-    [unique, enabled]
+    [unique, enabled, client]
   );
+  // Last session's rows paint at once; each is refetched immediately (stale).
+  const seeded = useSnapshotSeed<StockQuote>(client, "quotes", unique, quoteKey, enabled, {
+    revive: reviveQuote,
+    alwaysRefetch: true,
+  });
   const combine = useCallback(
     (queries: QueryObserverResult<StockQuote>[]) => ({
       quotes: Object.fromEntries(queries.flatMap((q, i) => (q.data ? [[unique[i], q.data]] : []))),
@@ -40,8 +62,9 @@ export function useWatchlistQuotes(symbols: string[], enabled = true) {
       ),
       loading: queries.some((q) => q.isFetching),
       loaded: queries.filter((q) => q.data).length,
+      ...cachedRows(unique, queries, seeded, Date.now()),
     }),
-    [unique]
+    [unique, seeded]
   );
   // Symbols that should be ticking, from the cached quotes: open session, or
   // not loaded yet (conservative). All ticking on the stream → poll backs off.
@@ -52,6 +75,7 @@ export function useWatchlistQuotes(symbols: string[], enabled = true) {
   const pollMs = useStreamPollInterval(openSymbols, enabled ? (live ? 60_000 : 300_000) : false);
   const results = useMarketQueryResults(options, pollMs);
   const combined = useMemo(() => combine(results), [combine, results]);
+  useSnapshotSave("quotes", unique, results, seeded);
 
   // Live LAST/CHG between polls — one tick moves both, so they never disagree.
   const onTicks = useCallback(

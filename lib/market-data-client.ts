@@ -127,6 +127,15 @@ interface Entry<T> {
 
 const queue = new RequestQueue(3);
 
+/**
+ * Lane for slow-moving per-symbol data — the daily signal scan, Polymarket
+ * summaries. On the shared lane the watchlist's signals waited for every quote
+ * batch to finish (0.03–0.24 s of work, 0.6–1.1 s of waiting, 2026-10-21) and a
+ * 1.4–4 s Polymarket search held a slot quotes needed. Two slots: with the
+ * shared three and the quote stream that is the browser's six per host.
+ */
+export const slowDataQueue = new RequestQueue(2);
+
 export class SymbolBatcher<T> {
   private entries = new Map<string, Entry<T>>();
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -295,13 +304,63 @@ export async function fetchQuote(rawSymbol: string, signal?: AbortSignal): Promi
     return { ...full.data, ...lite };
   }
   const data = await quoteBatcher.request(symbol, signal);
+  rememberFull(symbol, data);
+  return data;
+}
+
+function rememberFull(symbol: string, data: StockQuote) {
   fullQuotes.delete(symbol); // re-insert: Map order = age, oldest evicted first
   fullQuotes.set(symbol, { data, at: Date.now() });
   if (fullQuotes.size > FULL_QUOTES_MAX) {
     const oldest = fullQuotes.keys().next().value;
     if (oldest !== undefined) fullQuotes.delete(oldest);
   }
-  return data;
+}
+
+/** Full quotes fetched behind a first paint — the slow lane, never ahead of a price. */
+const quoteBehindBatcher = new SymbolBatcher<StockQuote>(
+  "/api/watchlist/quotes",
+  "quotes",
+  20,
+  undefined,
+  slowDataQueue
+);
+const fullBehind = new Map<string, Promise<void>>();
+
+/**
+ * WATCHLIST's quote fetch: price first, fundamentals behind it.
+ *
+ * A full quote for a symbol the backend has not seen lately costs a
+ * quoteSummary call per symbol (cold after a restart: 3.8–4.7 s for 34
+ * symbols, 2026-10-21); the lite one is a single batched v7 request. With no
+ * full payload in hand this resolves with lite merged over `prev` (the cached
+ * or stored row, so names stay), then fetches the full payload on the slow lane
+ * and hands it to `onFull`. Once it is in, this is plain `fetchQuote`.
+ */
+export async function fetchQuoteFirstPaint(
+  rawSymbol: string,
+  signal: AbortSignal | undefined,
+  prev: StockQuote | undefined,
+  onFull: (data: StockQuote) => void
+): Promise<StockQuote> {
+  const symbol = rawSymbol.trim().toUpperCase();
+  const full = fullQuotes.get(symbol);
+  if (full && Date.now() - full.at < QUOTE_FUNDAMENTALS_MS) return fetchQuote(symbol, signal);
+  const lite = await quoteLiteBatcher.request(symbol, signal);
+  if (!fullBehind.has(symbol)) {
+    const job = quoteBehindBatcher
+      .request(symbol)
+      .then((data) => {
+        rememberFull(symbol, data);
+        onFull(data);
+      })
+      .catch(() => {
+        /* the next poll asks again: fullQuotes is still empty for it */
+      })
+      .finally(() => fullBehind.delete(symbol));
+    fullBehind.set(symbol, job);
+  }
+  return { ...(prev ?? {}), ...lite } as StockQuote;
 }
 export const sparklineBatcher = new SymbolBatcher<number[]>(
   "/api/watchlist/sparklines",

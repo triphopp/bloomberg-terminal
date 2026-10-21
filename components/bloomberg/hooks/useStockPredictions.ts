@@ -12,7 +12,12 @@ import { useMarketQueryResults } from "./useMarketQueryResults";
  * hammering Gamma.
  */
 
-import { SymbolBatcher, marketRetry, marketRetryDelay } from "@/lib/market-data-client";
+import {
+  SymbolBatcher,
+  marketRetry,
+  marketRetryDelay,
+  slowDataQueue,
+} from "@/lib/market-data-client";
 import { type QueryObserverResult, useQuery } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 
@@ -93,7 +98,8 @@ const summaryBatcher = new SymbolBatcher<PredictionSummary | null>(
   "/api/polymarket/stocks",
   "summaries",
   10,
-  null
+  null,
+  slowDataQueue
 );
 
 /** All symbols are accounted for; null means a successful search found no markets. */
