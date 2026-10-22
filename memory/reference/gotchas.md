@@ -2626,3 +2626,20 @@ or price not read" although OCR read every line. Quantity sits under the header 
 label, and the symbol's OCR box (") SKHU") starts inside the side word's so `same_row` (x0 > anchor.x1 − 5) dropped it.
 Fixed in `parsers/dime.py`; fixture `dime_buy_shares_market_rapidocr.json`. A new FAIL on a real slip: dump the tokens
 first (`ocr.read` → y, x, text) — every miss so far was geometry or a label, never recognition.
+
+## `yf.Search` keeps one empty answer until the backend restarts (2026-10-23)
+
+**Symptom:** NEWS → MACRO showed only RSS stories; topics such as `economy` stayed empty through REFRESH (`fresh=1`)
+for hours, while the same `yf.Search` call from a separate Python process returned 27 stories. `upstream_report.py`
+showed no failures.
+
+**Cause:** yfinance 1.3 `Search.search()` reads through `YfData.cache_get`, which is `@lru_cache` — it lives as long
+as the process and is keyed on the exact query + counts. Yahoo now and then answers a search 200 with an empty `news`
+list; that answer was then served for that query until restart, under every TTL cache of ours. A cached call makes no
+request, so nothing reached `upstream_health` either.
+
+**Fix:** news searches go through `backend/yahoo_search.py` `search_news()` — `YfData().get` (cookie/crumb + Yahoo
+gate, no lru), raises on a non-search answer, and records an empty list as `Yahoo` / `empty` in `logs/upstream.jsonl`.
+Used by `routers/news.py` (MACRO topics) and `routers/news_watchlist.py` (WATCHLIST Yahoo source). Callers keep their
+own TTL cache. **Never add a news read on `yf.Search`.** Still on `yf.Search`: `sources/yfinance_source.py` symbol
+search (quotes; `routers/stock.py` already falls back to one REST call when it comes back empty).

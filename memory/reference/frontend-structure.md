@@ -47,10 +47,10 @@ components/bloomberg/
 │   ├── depth-panel.tsx          ← STRUCTURE DEPTH: bid/offer ladder of the chart symbol (Webull, US only) + every not-ready state as a sentence
 │   ├── news-view.tsx            ← barrel → views/news/index.tsx (kept for the dynamic import path)
 │   ├── news/                    ← NEWS view (2026-08-15 redesign)
-│   │   ├── index.tsx            ← shell: WATCHLIST | NEWSFEED | SOCIAL tabs + shared Polymarket column
+│   │   ├── index.tsx            ← shell: WATCHLIST | MACRO | SOCIAL tabs + shared Polymarket column
 │   │   ├── watchlist-tab.tsx    ← sector rail + article stream + per-symbol HEADLINES/RATE STRESS/DCF/REGIME panels
 │   │   │                          (group: SECTOR/TICKER/TIME · match: NAMED/ALL NEWS · sentiment · source toggles)
-│   │   ├── newsfeed-tab.tsx     ← topic newswire (was the FEED tab)
+│   │   ├── newsfeed-tab.tsx     ← MACRO tab: topic newswire + RSS front pages; hides watchlist-only stories (`coveredByWatchlist`, helpers.ts); id stays `feed` (was NEWSFEED, before that FEED)
 │   │   ├── social-tab.tsx       ← X/YouTube/Reddit/RSS handles
 │   │   ├── (ASK moved to components/bloomberg/ask — NewsView mounts `<AskBar />` + `<AskColumn />`, which takes the Polymarket column's place while shown)
 │   │   ├── polymarket-column.tsx← {SYM} IMPLIED ladder + WATCHLIST MARKETS + MACRO SIGNALS + search

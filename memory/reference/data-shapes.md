@@ -700,7 +700,7 @@ only > 0 when the caller sent `wait`; ask again with `settle=1`. `as_of` is now 
 in the answer** (a stored copy shown while it refreshes says how old it is), not the request time.
 TS: `WatchlistNewsResponse.pending?` in `views/news/types.ts`.
 
-`GET /api/news/feed` → `{ "articles": [{title, url, source, published_at, topic}], "refreshing"?: true }` —
+`GET /api/news/feed` → `{ "articles": [{title, url, source, published_at, topic, tickers}], "refreshing"?: true }` —
 `refreshing` only with `swr=1`, when an older copy was returned while the new one is built.
 
 ## Company Outlook (`GET /api/company/outlook/MU`)

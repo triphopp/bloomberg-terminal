@@ -125,7 +125,7 @@ Audit CLI: `python scripts/accounting_audit.py --api-url http://localhost:9317 -
 
 ## News (`routers/news.py`)
 - `GET /api/news/facebook` — posts from Facebook pages (RSSHub or Graph API)
-- `GET /api/news/feed?topics=&limit=&fresh=0&swr=0` — topic newswire (yfinance Search + 3 curated RSS: Yahoo, CNBC, MarketWatch; Reuters/Investopedia dropped 2026-09-30). `fresh=1` skips the 5-min cache (REFRESH button)
+- `GET /api/news/feed?topics=&limit=&fresh=0&swr=0` — topic newswire behind the NEWS → MACRO tab (Yahoo search through `backend/yahoo_search.py` + 3 curated RSS: Yahoo index headlines `feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC,^DJI,^IXIC` (`rss/topfinstories` 404 since 2026-10), CNBC, MarketWatch; Reuters/Investopedia dropped 2026-09-30). De-duplicated by URL **and headline** (2026-10-23: one press release on PR Newswire / CNW / ACCESS came three times); each article carries Yahoo's `tickers`. `fresh=1` skips the 5-min cache (REFRESH button)
   - two cache layers (2026-10-05): the assembled feed (fresh 5 min) and each piece — one topic search, one RSS feed — 5 min on its own, so adding or removing a topic re-reads only the new piece. Topic pulls are sized in buckets (30 / 80 / 150); a bigger cached pull answers a smaller need
   - `swr=1` (NEWSFEED tab only): a copy 5–30 min old comes back at once with `refreshing: true` while the new one is built; the hook asks again in 2 s. Without it (ASK, one-shot readers) an expired feed is rebuilt before answering
 
