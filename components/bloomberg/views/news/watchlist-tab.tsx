@@ -5,7 +5,6 @@ import { AlertTriangle, ExternalLink, Filter, Layers, RefreshCw, Settings2, X } 
 import dynamic from "next/dynamic";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { currentViewAtom, stockSearchSymbolAtom } from "../../atoms";
-import { BloombergButton } from "../../core/bloomberg-button";
 import {
   ALL_SOURCE_IDS,
   DEFAULT_SOURCE_IDS,
@@ -676,15 +675,22 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
             </select>
           </div>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-1.5">
             <span className="text-[9px] font-mono" style={{ color: colors.textSecondary }}>
               {visible.length}/{articles.length} · {data?.as_of ? clockStr(data.as_of) : "—"}
               {isUpdating && <span style={{ color: colors.accent }}> · UPDATING</span>}
             </span>
-            <BloombergButton color="default" onClick={() => refresh()} disabled={busy}>
-              <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : "mr-1"}`} />
-              {!busy && "REFRESH"}
-            </BloombergButton>
+            <button
+              type="button"
+              onClick={() => refresh()}
+              disabled={busy}
+              title="Refresh"
+              aria-label="Refresh"
+              className="p-0.5 hover:opacity-80 disabled:opacity-60"
+              style={{ color: busy ? colors.accent : colors.textSecondary }}
+            >
+              <RefreshCw className={`h-2.5 w-2.5 ${busy ? "animate-spin" : ""}`} />
+            </button>
           </div>
         </div>
 

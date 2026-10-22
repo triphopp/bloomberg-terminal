@@ -4,7 +4,6 @@ import { useAtomValue } from "jotai";
 import { ExternalLink, Plus, RefreshCw, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { stockSearchSymbolAtom } from "../../atoms";
-import { BloombergButton } from "../../core/bloomberg-button";
 import { DEFAULT_TOPICS, TOPICS_KEY, sourceColor } from "./constants";
 import { timeAgo } from "./helpers";
 import type { Article, ThemeColors } from "./types";
@@ -143,10 +142,17 @@ export function NewsFeedTab({ colors }: { colors: ThemeColors }) {
               {articles.length} articles
             </span>
           )}
-          <BloombergButton color="default" onClick={() => feed.refresh()} disabled={loading}>
-            <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : "mr-1"}`} />
-            {!loading && "REFRESH"}
-          </BloombergButton>
+          <button
+            type="button"
+            onClick={() => feed.refresh()}
+            disabled={loading}
+            title="Refresh"
+            aria-label="Refresh"
+            className="p-0.5 hover:opacity-80 disabled:opacity-60"
+            style={{ color: loading ? colors.accent : colors.textSecondary }}
+          >
+            <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
+          </button>
         </div>
       </div>
 
