@@ -8,9 +8,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 
 import requests
-import yfinance as yf  # yf.Search for topic-based news (no typed wrapper yet)
 from fastapi import APIRouter, Query
 
+import yahoo_search
 from cache import TTLCache
 from config import FACEBOOK_TOKEN, RSSHUB_URL, FB_CACHE_TTL
 from rss import fetch_feed, fetch_items
@@ -38,9 +38,11 @@ _TOPIC_BUCKETS = (30, 80, 150)
 # ── Curated free RSS feeds (no auth) ─────────────────────────────────────────
 # Dropped 2026-09-30: Reuters (feeds.reuters.com no longer resolves) and
 # Investopedia (403 with a 680 KB error page on every call). MarketWatch points
-# at the Dow Jones URL its old address 301s to.
+# at the Dow Jones URL its old address 301s to. Yahoo's `rss/topfinstories`
+# answers 404 since ~2026-10 — its headline feed for the three US indices is
+# the front page that still exists.
 _RSS_FEEDS: dict[str, str] = {
-    "Yahoo Finance": "https://finance.yahoo.com/rss/topfinstories",
+    "Yahoo Finance": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC,^DJI,^IXIC&region=US&lang=en-US",
     "CNBC":          "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
     "MarketWatch":   "https://feeds.content.dowjones.io/public/rss/mw_topstories",
 }
@@ -184,8 +186,7 @@ def _ts_to_iso(ts: int | float) -> str:
 
 def _fetch_yfinance_topic(topic: str, count: int) -> list[dict]:
     try:
-        result = yf.Search(topic, news_count=count, enable_fuzzy_query=True)
-        items = result.news or []
+        items = yahoo_search.search_news(topic, count)
     except Exception:
         try:
             # Typed fallback via market_data contract
