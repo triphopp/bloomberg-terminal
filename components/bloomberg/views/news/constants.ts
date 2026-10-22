@@ -8,7 +8,12 @@ export const WL_SOURCES_KEY = "bloomberg_news_wl_sources";
 export const WL_LAYOUT_KEY = "bloomberg_news_wl_layout";
 export const NEWS_TAB_KEY = "bloomberg_news_tab";
 
-export const DEFAULT_TOPICS = ["market", "economy", "Fed"];
+/** Set once the saved topics have lost the pre-MACRO "market" search. */
+export const TOPICS_MIGRATED_KEY = "bloomberg_news_topics_macro";
+
+// The general market feed is the RSS front pages, which load with any topics —
+// a "market" search only matched the word (airport management market …).
+export const DEFAULT_TOPICS = ["economy", "Fed"];
 
 // ── Sector palette ────────────────────────────────────────────────────────────
 // GICS sectors + the pseudo-sectors the backend assigns to crypto / FX / indices.

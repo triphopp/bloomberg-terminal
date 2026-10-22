@@ -111,6 +111,8 @@ export interface Article {
   source: string;
   published_at: string;
   topic: string;
+  /** Yahoo's related tickers; empty for RSS stories (and older cached answers). */
+  tickers?: string[];
 }
 
 export type Platform = "twitter" | "youtube" | "reddit" | "rss";

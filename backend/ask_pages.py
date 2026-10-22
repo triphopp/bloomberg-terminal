@@ -128,8 +128,8 @@ PAGES: dict[str, dict[str, tuple[str, dict, str]]] = {
     "news": {
         "watchlist": ("/api/news/watchlist", {"symbols": "{symbols}", "per_symbol": 4, "polymarket": 0},
                       "WATCHLIST tab: the latest headlines of every watchlist ticker"),
-        "feed": ("/api/news/feed", {"topics": "market", "limit": 60},
-                 "the general market newswire (the NEWSFEED tab's own topic filter is what the screen shows)"),
+        "feed": ("/api/news/feed", {"topics": "economy,Fed", "limit": 60},
+                 "MACRO tab: the general market newswire — RSS front pages plus topic searches (the tab's own topics and its hiding of watchlist-only stories are what the screen shows)"),
         "polymarket": ("/api/polymarket/signals", {},
                        "Polymarket column: macro prediction markets (Fed, inflation, recession …) with their YES probability"),
         "data": ("/api/v2/series", {},
