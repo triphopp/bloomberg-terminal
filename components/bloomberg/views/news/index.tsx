@@ -22,7 +22,7 @@ const MarketsColumn = memo(PolymarketColumn);
 
 const TABS: { id: NewsTab; label: string }[] = [
   { id: "watchlist", label: "WATCHLIST" },
-  { id: "feed", label: "NEWSFEED" },
+  { id: "feed", label: "MACRO" },
   { id: "social", label: "SOCIAL" },
   { id: "data", label: "DATA" },
 ];

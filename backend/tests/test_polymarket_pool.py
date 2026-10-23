@@ -262,6 +262,25 @@ def test_feed_stale_copy_only_for_callers_that_ask_again(feed):
     assert "refreshing" not in news.news_feed(topics="Fed", limit=20, fresh=0, swr=0)
 
 
+def test_feed_drops_a_headline_carried_by_several_wires(monkeypatch):
+    def topic(t, count):
+        return [
+            {"title": "Frost & Sullivan: Airport Market to Double", "url": "https://prn.example/1",
+             "source": "PR Newswire", "published_at": "2026-10-05T10:00:00Z", "topic": t, "tickers": []},
+            {"title": "FROST & SULLIVAN — Airport Market to Double", "url": "https://cnw.example/1",
+             "source": "CNW Group", "published_at": "2026-10-05T10:01:00Z", "topic": t, "tickers": []},
+            {"title": "Fed holds rates", "url": "https://y.example/2",
+             "source": "Y", "published_at": "2026-10-05T10:02:00Z", "topic": t, "tickers": []},
+        ]
+
+    monkeypatch.setattr(news, "_fetch_yfinance_topic", topic)
+    monkeypatch.setattr(news, "_fetch_rss", lambda name, url, limit: [])
+    news._feed_cache.clear()
+    news._piece_cache.clear()
+    titles = [a["title"] for a in news.news_feed(topics="Fed", limit=20, fresh=0, swr=0)["articles"]]
+    assert titles == ["Fed holds rates", "Frost & Sullivan: Airport Market to Double"]
+
+
 def test_feed_refresh_button_rereads_every_piece(feed):
     news.news_feed(topics="Fed", limit=20, fresh=0, swr=1)
     feed.clear()

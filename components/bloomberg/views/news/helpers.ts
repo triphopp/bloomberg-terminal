@@ -42,3 +42,26 @@ export function polyUrl(slug: string, eventSlug: string): string {
 export function clockStr(iso: string): string {
   return formatIso(HOUR_MINUTE, iso);
 }
+
+/**
+ * MACRO tab: is this story already WATCHLIST's? Yes when it was found by
+ * searching a watchlist ticker, or when every ticker Yahoo ties it to is on the
+ * watchlist. A story with no tickers (RSS, most macro pieces) always stays, and
+ * so does one that also names a stock you do not watch.
+ */
+export function coveredByWatchlist(
+  article: { topic: string; tickers?: string[] },
+  watchlist: ReadonlySet<string>
+): boolean {
+  if (watchlist.size === 0) return false;
+  if (watchlist.has(article.topic.trim().toUpperCase())) return true;
+  const tickers = article.tickers ?? [];
+  return tickers.length > 0 && tickers.every((t) => watchlist.has(t.toUpperCase()));
+}
+
+/** Topics saved before the MACRO rename still carry "market" — a Yahoo search
+ *  that matches the word in any sense (airport management market, money-market
+ *  rates). The general market feed is the RSS front pages, which always load. */
+export function dropLegacyMarketTopic(saved: string[]): string[] {
+  return saved.filter((t) => t.trim().toLowerCase() !== "market");
+}

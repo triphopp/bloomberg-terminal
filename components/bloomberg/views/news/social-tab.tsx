@@ -2,7 +2,6 @@
 
 import { ExternalLink, Plus, RefreshCw, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { BloombergButton } from "../../core/bloomberg-button";
 import { PLATFORMS, PLATFORM_INFO, SOCIAL_KEY } from "./constants";
 import { timeAgo } from "./helpers";
 import type { Platform, SocialHandle, ThemeColors } from "./types";
@@ -119,14 +118,17 @@ export function SocialTab({ colors }: { colors: ThemeColors }) {
         </form>
 
         {socialHandles.length > 0 && (
-          <BloombergButton
-            color="default"
+          <button
+            type="button"
             onClick={() => social.refresh()}
             disabled={socialLoading}
+            title="Refresh"
+            aria-label="Refresh"
+            className="shrink-0 p-0.5 hover:opacity-80 disabled:opacity-60"
+            style={{ color: socialLoading ? colors.accent : colors.textSecondary }}
           >
-            <RefreshCw className={`h-3 w-3 ${socialLoading ? "animate-spin" : "mr-1"}`} />
-            {!socialLoading && "REFRESH"}
-          </BloombergButton>
+            <RefreshCw className={`h-3 w-3 ${socialLoading ? "animate-spin" : ""}`} />
+          </button>
         )}
       </div>
 

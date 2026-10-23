@@ -27,9 +27,10 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed, wait as wait_futures
 from urllib.parse import quote_plus
 
-import yfinance as yf  # yf.Search — the typed contract returns empty NewsItems
+import yfinance as yf  # yf.Ticker(...).news fallback
 from fastapi import APIRouter, Query
 
+import yahoo_search
 from cache import TTLCache
 from db import get_db
 from persist_cache import PersistentStore
@@ -350,15 +351,16 @@ def _src_yahoo_ticker(symbol: str, company: str, limit: int) -> list[dict]:
 
 
 def _src_yfinance(symbol: str, company: str, limit: int) -> list[dict]:
-    """yfinance's own news index. `yf.Search` is used directly because the typed
-    `market_data.get_news` contract currently returns blank NewsItems."""
+    """yfinance's own news index, read through `yahoo_search` (not `yf.Search`,
+    whose process-long cache kept an empty answer until restart; the typed
+    `market_data.get_news` contract currently returns blank NewsItems)."""
     items: list[dict] = []
     failed: Exception | None = None
     try:
-        items = yf.Search(symbol, news_count=limit, enable_fuzzy_query=True).news or []
+        items = yahoo_search.search_news(symbol, limit)
     except Exception as exc:
         failed = exc
-        print(f"[news/watchlist] yf.Search {symbol}: {exc}")
+        print(f"[news/watchlist] yahoo search {symbol}: {exc}")
 
     if not items:
         # Newer yfinance nests the payload under entry["content"]

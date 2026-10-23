@@ -8,9 +8,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 
 import requests
-import yfinance as yf  # yf.Search for topic-based news (no typed wrapper yet)
 from fastapi import APIRouter, Query
 
+import yahoo_search
 from cache import TTLCache
 from config import FACEBOOK_TOKEN, RSSHUB_URL, FB_CACHE_TTL
 from rss import fetch_feed, fetch_items
@@ -38,9 +38,11 @@ _TOPIC_BUCKETS = (30, 80, 150)
 # ── Curated free RSS feeds (no auth) ─────────────────────────────────────────
 # Dropped 2026-09-30: Reuters (feeds.reuters.com no longer resolves) and
 # Investopedia (403 with a 680 KB error page on every call). MarketWatch points
-# at the Dow Jones URL its old address 301s to.
+# at the Dow Jones URL its old address 301s to. Yahoo's `rss/topfinstories`
+# answers 404 since ~2026-10 — its headline feed for the three US indices is
+# the front page that still exists.
 _RSS_FEEDS: dict[str, str] = {
-    "Yahoo Finance": "https://finance.yahoo.com/rss/topfinstories",
+    "Yahoo Finance": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC,^DJI,^IXIC&region=US&lang=en-US",
     "CNBC":          "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
     "MarketWatch":   "https://feeds.content.dowjones.io/public/rss/mw_topstories",
 }
@@ -184,8 +186,7 @@ def _ts_to_iso(ts: int | float) -> str:
 
 def _fetch_yfinance_topic(topic: str, count: int) -> list[dict]:
     try:
-        result = yf.Search(topic, news_count=count, enable_fuzzy_query=True)
-        items = result.news or []
+        items = yahoo_search.search_news(topic, count)
     except Exception:
         try:
             # Typed fallback via market_data contract
@@ -214,6 +215,9 @@ def _fetch_yfinance_topic(topic: str, count: int) -> list[dict]:
             "source":       item.get("publisher", "Yahoo Finance"),
             "published_at": _ts_to_iso(item.get("providerPublishTime", 0)),
             "topic":        topic,
+            # Yahoo's own list of what the story is about — the MACRO tab hides a
+            # story whose tickers are all on the watchlist (WATCHLIST has it).
+            "tickers":      [t for t in (item.get("relatedTickers") or []) if isinstance(t, str)],
         })
     return out
 
@@ -237,6 +241,7 @@ def _fetch_rss(name: str, url: str, limit: int) -> list[dict]:
                 "source":       name,
                 "published_at": entry["published"],
                 "topic":        "general",
+                "tickers":      [],
             })
         return out
     except Exception as e:
@@ -270,6 +275,11 @@ def _rss_piece(name: str, url: str, fresh: bool) -> list[dict]:
     return _piece_cache.get_or_set(f"rss:{name}", lambda: _fetch_rss(name, url, 20))
 
 
+def _headline_key(title: str) -> str:
+    """A headline reduced to lower-case letters and digits, for de-duplication."""
+    return "".join(ch for ch in title.casefold() if ch.isalnum())
+
+
 def _build_feed(topic_list: list[str], limit: int, fresh: bool = False) -> dict:
     """Pull every piece (cached 5 min each), merge, de-duplicate, newest first."""
     per_topic = max(8, limit // max(len(topic_list), 1))
@@ -278,9 +288,12 @@ def _build_feed(topic_list: list[str], limit: int, fresh: bool = False) -> dict:
         *[(_feed_pool.submit(_rss_piece, name, url, fresh), None) for name, url in _RSS_FEEDS.items()],
     ]
 
-    # Deduplicate by URL (keep first seen), in request order so the result does
-    # not depend on which source happened to answer first.
+    # Deduplicate by URL and by headline (keep first seen), in request order so
+    # the result does not depend on which source happened to answer first. The
+    # headline catches one press release carried by several wires (PR Newswire,
+    # CNW, ACCESS Newswire …) under different links.
     seen: set[str] = set()
+    seen_titles: set[str] = set()
     unique: list[dict] = []
     for future, cap in futures:
         try:
@@ -290,8 +303,11 @@ def _build_feed(topic_list: list[str], limit: int, fresh: bool = False) -> dict:
             continue
         for item in items[:cap]:
             u = item["url"]
-            if u and u not in seen:
+            t = _headline_key(item.get("title", ""))
+            if u and u not in seen and (not t or t not in seen_titles):
                 seen.add(u)
+                if t:
+                    seen_titles.add(t)
                 unique.append(item)
 
     unique.sort(key=lambda x: x.get("published_at", ""), reverse=True)

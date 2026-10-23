@@ -2,19 +2,24 @@
 
 import { useAtomValue } from "jotai";
 import { ExternalLink, Plus, RefreshCw, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { stockSearchSymbolAtom } from "../../atoms";
-import { BloombergButton } from "../../core/bloomberg-button";
-import { DEFAULT_TOPICS, TOPICS_KEY, sourceColor } from "./constants";
-import { timeAgo } from "./helpers";
+import { DEFAULT_TOPICS, TOPICS_KEY, TOPICS_MIGRATED_KEY, sourceColor } from "./constants";
+import { coveredByWatchlist, dropLegacyMarketTopic, timeAgo } from "./helpers";
 import type { Article, ThemeColors } from "./types";
 import { useNewsFeed } from "./useNewsQueries";
+import { useWatchlistSymbols } from "./useWatchlistNews";
 
 const NO_ARTICLES: Article[] = [];
 
-/** Topic-driven macro newswire — yfinance search + curated RSS (unchanged behaviour). */
+/**
+ * MACRO tab — topic searches (yfinance) + the RSS front pages. Stories that are
+ * WATCHLIST's (found by a watched ticker, or about watched tickers only) are left
+ * to that tab; the count of them shows beside the article count.
+ */
 export function NewsFeedTab({ colors }: { colors: ThemeColors }) {
   const stockSymbol = useAtomValue(stockSearchSymbolAtom);
+  const watchlist = useWatchlistSymbols();
 
   // Read saved topics in the initializer: seeding DEFAULT_TOPICS and loading the
   // saved list from an effect fired two feed requests on every mount, and the
@@ -25,7 +30,8 @@ export function NewsFeedTab({ colors }: { colors: ThemeColors }) {
     try {
       const saved = localStorage.getItem(TOPICS_KEY);
       if (saved) {
-        const parsed: string[] = JSON.parse(saved);
+        let parsed: string[] = JSON.parse(saved);
+        if (!localStorage.getItem(TOPICS_MIGRATED_KEY)) parsed = dropLegacyMarketTopic(parsed);
         if (parsed.length > 0) return parsed;
       } else if (stockSymbol) {
         return [...DEFAULT_TOPICS, stockSymbol];
@@ -41,10 +47,16 @@ export function NewsFeedTab({ colors }: { colors: ThemeColors }) {
 
   useEffect(() => {
     localStorage.setItem(TOPICS_KEY, JSON.stringify(topics));
+    localStorage.setItem(TOPICS_MIGRATED_KEY, "1");
   }, [topics]);
 
   const feed = useNewsFeed(topics);
-  const articles: Article[] = feed.data?.articles ?? NO_ARTICLES;
+  const allArticles: Article[] = feed.data?.articles ?? NO_ARTICLES;
+  const articles = useMemo(() => {
+    const wl = new Set(watchlist);
+    return allArticles.filter((a) => !coveredByWatchlist(a, wl));
+  }, [allArticles, watchlist]);
+  const onWatchlist = allArticles.length - articles.length;
   const loading = feed.isFetching;
   const error = feed.error
     ? "Failed to fetch news. Make sure the Python backend is running."
@@ -141,12 +153,25 @@ export function NewsFeedTab({ colors }: { colors: ThemeColors }) {
             <span className="text-xs" style={{ color: colors.textSecondary }}>
               {filterText ? `${filtered.length} / ` : ""}
               {articles.length} articles
+              {onWatchlist > 0 && (
+                <span title="Stories about watchlist tickers only — they are in the WATCHLIST tab">
+                  {" "}
+                  · {onWatchlist} in WATCHLIST
+                </span>
+              )}
             </span>
           )}
-          <BloombergButton color="default" onClick={() => feed.refresh()} disabled={loading}>
-            <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : "mr-1"}`} />
-            {!loading && "REFRESH"}
-          </BloombergButton>
+          <button
+            type="button"
+            onClick={() => feed.refresh()}
+            disabled={loading}
+            title="Refresh"
+            aria-label="Refresh"
+            className="p-0.5 hover:opacity-80 disabled:opacity-60"
+            style={{ color: loading ? colors.accent : colors.textSecondary }}
+          >
+            <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
+          </button>
         </div>
       </div>
 
