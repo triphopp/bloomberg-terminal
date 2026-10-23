@@ -7,6 +7,8 @@ import { currentViewAtom, marketSearchSymbolAtom } from "../../../atoms";
 import { SessionGlyph } from "../../../core/market-session";
 import { useLiveQuery } from "../../../hooks/useLiveQuery";
 import { type QuoteTick, useQuoteStream } from "../../../hooks/useQuoteStream";
+import { useSectorQuadrants } from "../../../hooks/useSectorQuadrants";
+import { QUADRANTS, QUAD_COLOR, holdingQuadrant, quadrantTint } from "../../../lib/rrg-quadrant";
 import {
   ALL_COLS,
   type ColName,
@@ -543,6 +545,25 @@ export function OpenPositionsTab({
   });
   const [showColPicker, setShowColPicker] = useState(false);
   const [filter, setFilter] = useState("");
+  // RRG: tint each row by where its sector sits on MKT → ROT (Leading /
+  // Improving / Weakening / Lagging). The tint describes the sector, not the
+  // position, and its palette has no green/red — P&L keeps those.
+  const [rrgTint, setRrgTint] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      return localStorage.getItem("bloomberg_portfolio_rrg_tint") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("bloomberg_portfolio_rrg_tint", rrgTint ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [rrgTint]);
+  const rrg = useSectorQuadrants(rrgTint);
   const [stockCard, setStockCard] = useState<{
     accountId: string;
     symbol: string;
@@ -1145,6 +1166,25 @@ export function OpenPositionsTab({
             >
               DENSE
             </button>
+            <button
+              type="button"
+              aria-pressed={rrgTint}
+              onClick={() => setRrgTint((v) => !v)}
+              className="text-[8px] font-bold"
+              style={{ color: rrgTint ? colors.accent : colors.textSecondary }}
+              title={`Row tint = the sector's quadrant on MKT → ROT (weekly RRG vs ${rrg.bench.US ?? "SPY"} / ${rrg.bench.TH ?? "SET"})${rrg.asOf ? ` · as of ${rrg.asOf}` : ""}\nUS = GICS sector (SPDR) · TH = the SET's sector for the symbol (label if the SET list lacks it) · ETF / crypto / other: no tint\nColours are not gain / loss — those stay green / red`}
+            >
+              RRG
+            </button>
+            {rrgTint && (
+              <span className="flex items-center gap-1.5 text-[7px] font-mono" aria-hidden="true">
+                {QUADRANTS.map((q) => (
+                  <span key={q} style={{ color: QUAD_COLOR[q] }}>
+                    ■{q[0]}
+                  </span>
+                ))}
+              </span>
+            )}
             <div className="relative">
               <button
                 aria-pressed={showColPicker}
@@ -1601,6 +1641,11 @@ export function OpenPositionsTab({
                                 // Market shut and the day was ordinary → step back.
                                 const dimmed =
                                   anyLive && rowLive(p) === false && rowTone !== "watch";
+                                const sq = rrgTint
+                                  ? holdingQuadrant(rrg.map, rrg.setSectorOf, p.sector, p.yf_symbol)
+                                  : null;
+                                const sqArrow =
+                                  sq?.momDir === "up" ? " ↗" : sq?.momDir === "down" ? " ↘" : "";
 
                                 const cellMap: Record<DisplayCol, React.ReactNode> = {
                                   SYMBOL: (
@@ -1672,7 +1717,11 @@ export function OpenPositionsTab({
                                     <span
                                       className="block max-w-[120px] truncate"
                                       style={{ color: colors.textSecondary }}
-                                      title={p.sector || undefined}
+                                      title={
+                                        sq
+                                          ? `${sq.basis === "SET" && sq.groupId !== p.sector ? `${p.sector || "—"} (label) · SET lists it under ${sq.groupId}` : p.sector} → ${sq.groupName} (${sq.groupId}): ${sq.quadrant}${sqArrow} on MKT → ROT`
+                                          : p.sector || undefined
+                                      }
                                     >
                                       {p.sector || "—"}
                                     </span>
@@ -1939,7 +1988,15 @@ export function OpenPositionsTab({
                                   <React.Fragment key={p.rowKey}>
                                     <tr
                                       className={`group hover:bg-[#111] ${dimmed ? "opacity-[0.45] hover:opacity-100" : ""}`}
-                                      style={{ borderBottom: "1px solid #141414", height: rowH }}
+                                      style={{
+                                        borderBottom: "1px solid #141414",
+                                        height: rowH,
+                                        // An image layer, not background-color, so hover:bg-[#111]
+                                        // still shows underneath the tint.
+                                        backgroundImage: sq
+                                          ? `linear-gradient(${quadrantTint(sq.quadrant, 0.09)}, ${quadrantTint(sq.quadrant, 0.09)})`
+                                          : undefined,
+                                      }}
                                     >
                                       {displayCols.map((col) => (
                                         <td

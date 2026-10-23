@@ -11,6 +11,10 @@ of a Relative Rotation Graph without the plot.
 
 Theme exposure uses liquid ETF proxies (not equal-weight baskets) — cheap,
 one batch download, good-enough approximation for rotation monitoring.
+
+What each group IS — GICS for the US sectors, the fund for a theme, the SET's
+own industry groups and sectors for Thailand — lives in sector_membership.py,
+and the drill-down (/constituents) lists the members that definition names.
 """
 from __future__ import annotations
 
@@ -19,84 +23,79 @@ import time
 from typing import Any, Optional
 
 import pandas as pd
+import requests
 import yfinance as yf
 from fastapi import APIRouter, Query
+
+import sector_membership as sm
 
 router = APIRouter(prefix="/api/rotation", tags=["rotation"])
 
 # ── Universe ──────────────────────────────────────────────────────────────────
 
-SECTORS = [
-    ("Technology (XLK)",     "XLK"),
-    ("Financials (XLF)",     "XLF"),
-    ("Health Care (XLV)",    "XLV"),
-    ("Energy (XLE)",         "XLE"),
-    ("Industrials (XLI)",    "XLI"),
-    ("Cons Discret (XLY)",   "XLY"),
-    ("Cons Staples (XLP)",   "XLP"),
-    ("Real Estate (XLRE)",   "XLRE"),
-    ("Utilities (XLU)",      "XLU"),
-    ("Materials (XLB)",      "XLB"),
-    ("Comm Svcs (XLC)",      "XLC"),
-]
+# "Information Technology (XLK)" — the GICS sector's own name, then its SPDR.
+SECTORS = [(f"{name} ({etf})", etf) for _, name, etf in sm.GICS_SECTORS]
 
-# name → ETF proxy
-THEMES = [
-    ("Genomics",           "ARKG"),
-    ("Biotech",            "IBB"),
-    ("Pharma",             "PPH"),
-    ("Fintech & Payments", "FINX"),
-    ("Travel & Airlines",  "JETS"),
-    ("Homebuilders",       "XHB"),
-    ("Defense",            "ITA"),
-    ("Cybersecurity",      "CIBR"),
-    ("Banks & Brokers",    "KBE"),
-    ("Semiconductors",     "SMH"),
-    ("Software",           "IGV"),
-    ("AI & Robotics",      "BOTZ"),
-    ("Cloud",              "SKYY"),
-    ("Quantum",            "QTUM"),
-    ("Solar",              "TAN"),
-    ("Space",              "ARKX"),
-    ("Gold Miners",        "GDX"),
-    ("Nuclear & Uranium",  "URA"),
-    ("China Tech",         "KWEB"),
-    ("Crypto-linked",      "BITQ"),
-    ("Mag 7",              "MAGS"),
-    ("Oil Services",       "OIH"),
-    ("Retail",             "XRT"),
-    ("Innovation (ARKK)",  "ARKK"),
-]
+# name → ETF proxy (labels audited against each fund 2026-10-23)
+THEMES = [(label, etf) for label, etf, _ in sm.THEMES]
 
 _DEFAULT_BENCH = "SPY"
 
-# ── Thai market — no liquid theme ETFs on Yahoo, so sector groups are
-# equal-weight baskets of liquid representatives, benchmarked vs ^SET.BK.
+# ── Thai market — the SET's own industry groups and sectors. Yahoo carries none
+# of the SET's sector indices, so each group is a cap-weighted basket of its
+# largest members (≥80% of the group's market cap, ≤10 names), benchmarked vs
+# ^SET.BK. The drill-down lists every member.
 TH_BENCH = "^SET.BK"
 # Yahoo intermittently serves ^SET.BK with a single bar (2026-09-24: 1 row for
 # period=9mo), which leaves every TH quadrant blank. TDEX.BK is the SET50 ETF
 # in THB — the closest tradable stand-in, and it has full history.
 TH_BENCH_FALLBACK = "TDEX.BK"
-TH_GROUPS: list[tuple[str, list[str]]] = [
-    ("Banking",        ["KBANK.BK", "BBL.BK", "SCB.BK", "KTB.BK", "TTB.BK"]),
-    ("Energy & Util",  ["PTT.BK", "PTTEP.BK", "GULF.BK", "TOP.BK", "BGRIM.BK"]),
-    ("Petrochem",      ["PTTGC.BK", "IVL.BK", "SCGP.BK"]),
-    ("ICT",            ["ADVANC.BK", "TRUE.BK", "INTUCH.BK"]),
-    ("Commerce",       ["CPALL.BK", "CPAXT.BK", "CRC.BK", "HMPRO.BK", "BJC.BK"]),
-    ("Food & Bev",     ["CPF.BK", "TU.BK", "MINT.BK", "OSP.BK", "CBG.BK"]),
-    ("Healthcare",     ["BDMS.BK", "BH.BK", "BCH.BK", "CHG.BK"]),
-    ("Property",       ["LH.BK", "AP.BK", "SPALI.BK", "SIRI.BK"]),
-    ("Transport",      ["AOT.BK", "BEM.BK", "BTS.BK"]),
-    ("Electronics",    ["DELTA.BK", "HANA.BK", "KCE.BK"]),
-    ("Finance (non-bank)", ["MTC.BK", "SAWAD.BK", "TIDLOR.BK", "KTC.BK"]),
-    ("Tourism",        ["AWC.BK", "CENTEL.BK", "ERW.BK"]),
-    ("Construction Mat", ["SCC.BK", "TPIPL.BK", "TASCO.BK"]),
-]
 
 _cache: dict[str, tuple[float, Any]] = {}
 _lock = threading.Lock()
 _TTL = 900  # 15 min — rotation moves slowly
-_HOLDINGS_TTL = 86400  # ETF top-holdings change slowly — 1 day
+_HOLDINGS_TTL = 86400  # ETF holdings change slowly — 1 day
+_HOLDINGS_FAIL_TTL = 1800  # a failed holdings fetch is not retried for 30 min
+_EMPTY_TTL = 120  # an empty drill-down is kept 2 min so a dead group can't hammer Yahoo
+#: A drill-down prices at most this many members (largest first); the rest are
+#: listed with their weight and no returns.
+PRICED_MAX = 100
+
+
+def _th_groups() -> list[dict]:
+    """Every SET industry group and sector with members, in the SET's order.
+
+    {id, name, kind (industry|sector), industry, members, basket, coverage}
+    """
+    snap = sm.load_set_snapshot()
+    out = []
+    for ind, ind_name in sm.SET_INDUSTRIES.items():
+        members = sm.set_members(ind, snap)
+        if members:
+            basket = sm.index_basket(members)
+            out.append({"id": ind, "name": ind_name, "kind": "industry", "industry": ind,
+                        "members": members, "basket": basket,
+                        "coverage": sm.coverage_pct(basket, members)})
+        for sec, (sec_ind, sec_name) in sm.SET_SECTORS.items():
+            if sec_ind != ind:
+                continue
+            members = sm.set_members(sec, snap)
+            if not members:
+                continue  # MINE has no listed company today
+            basket = sm.index_basket(members)
+            out.append({"id": sec, "name": sec_name, "kind": "sector", "industry": ind,
+                        "members": members, "basket": basket,
+                        "coverage": sm.coverage_pct(basket, members)})
+    return out
+
+
+def _th_index(closes: pd.DataFrame, group: dict) -> Optional[pd.Series]:
+    caps = {sm.th_yahoo(m["symbol"]): m["cap"] for m in group["basket"]}
+    return sm.cap_weighted_index(closes, caps)
+
+
+def _th_basket_symbols(groups: list[dict]) -> list[str]:
+    return sorted({sm.th_yahoo(m["symbol"]) for g in groups for m in g["basket"]})
 
 
 # ── RRG quadrant from weekly relative strength ────────────────────────────────
@@ -186,29 +185,17 @@ def _pct(close: pd.Series, days: int) -> Optional[float]:
         return None
 
 
+def _last(close: pd.Series) -> Optional[float]:
+    s = close.dropna()
+    return float(s.iloc[-1]) if len(s) else None
+
+
 def _download_closes(symbols: list[str]) -> pd.DataFrame:
     raw = yf.download(
         sorted(set(symbols)), period="9mo", interval="1d",
         auto_adjust=True, progress=False, threads=4,  # was one thread per ticker; see tail_risk._yf_download
     )
     return raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
-
-
-def _ew_index(closes: pd.DataFrame, members: list[str]) -> Optional[pd.Series]:
-    """Equal-weight basket index: each member rebased to 1.0, then averaged."""
-    cols = [m for m in members if m in closes.columns]
-    if not cols:
-        return None
-    sub = closes[cols].dropna(how="all")
-    rebased = []
-    for c in cols:
-        s = sub[c].dropna()
-        if len(s) < 10 or s.iloc[0] <= 0:
-            continue
-        rebased.append(s / s.iloc[0])
-    if not rebased:
-        return None
-    return pd.concat(rebased, axis=1).mean(axis=1).dropna()
 
 
 def _row_from_series(name: str, row_id: str, kind: str, close: pd.Series,
@@ -224,6 +211,7 @@ def _row_from_series(name: str, row_id: str, kind: str, close: pd.Series,
         "symbol": row_id,
         "kind": kind,
         "n_members": n_members,
+        "price": _last(close) if kind == "stock" else None,
         "d1": _pct(close, 1),
         "w1": _pct(close, 5),
         "m1": m1,
@@ -255,29 +243,48 @@ def _build_table_us(bench_sym: str) -> dict:
         "bench": bench_sym,
         "bench_m1": bench_m1,
         "as_of": str(closes.index[-1].date()) if len(closes.index) else None,
+        "definition": {
+            "standard": "GICS sectors (Select Sector SPDRs) · themes = their ETF",
+            "source": "https://www.ssga.com/us/en/intermediary/etfs/fund-finder",
+            "membership_as_of": None,
+            "method": "each row is its ETF's own price",
+        },
     }
 
 
 def _build_table_th() -> dict:
-    all_members = [m for _, members in TH_GROUPS for m in members]
-    closes = _download_closes(all_members + [TH_BENCH, TH_BENCH_FALLBACK])
+    groups = _th_groups()
+    closes = _download_closes(_th_basket_symbols(groups) + [TH_BENCH, TH_BENCH_FALLBACK])
     bench_sym, bench = _th_bench(closes)
     if bench is None:
         return {"rows": [], "bench": TH_BENCH, "error": "benchmark data unavailable"}
     bench_m1 = _pct(bench, 21)
     rows = []
-    for name, members in TH_GROUPS:
-        ew = _ew_index(closes, members)
-        row = _row_from_series(name, name, "sector", ew, bench, bench_m1,
-                               n_members=len([m for m in members if m in closes.columns]))
+    for g in groups:
+        row = _row_from_series(g["name"], g["id"], g["kind"], _th_index(closes, g), bench,
+                               bench_m1, n_members=len(g["members"]))
         if row:
+            row["industry"] = g["industry"]
+            row["basket_n"] = len(g["basket"])
+            row["coverage_pct"] = g["coverage"]
             rows.append(row)
     rows.sort(key=lambda r: r["m1"] if r["m1"] is not None else -999, reverse=True)
+    snap = sm.load_set_snapshot()
     return {
         "rows": rows,
         "bench": bench_sym,
         "bench_m1": bench_m1,
         "as_of": str(closes.index[-1].date()) if len(closes.index) else None,
+        "definition": {
+            "standard": "SET industry groups / sectors",
+            "source": snap["source"],
+            "membership_as_of": snap["as_of"],
+            "method": "cap-weighted basket of each group's largest members (≥80% of its market cap, "
+                      "≤10 names); the SET's own sector indices are not on Yahoo",
+        },
+        # Every SET symbol → its SET sector, so a holding is placed by the
+        # exchange's classification rather than by the label typed on its trade.
+        "symbol_sector": {m["symbol"]: m["sector"] for m in snap["members"]},
     }
 
 
@@ -303,8 +310,9 @@ def rotation_table(
 
 
 # ── Rotation map (RRG plot) ───────────────────────────────────────────────────
-# Sectors only: 11 SPDRs vs the US benchmark, or the TH equal-weight groups vs
-# SET. Themes stay on the table — 26 more trails make the plot unreadable.
+# Sectors only: 11 SPDRs vs the US benchmark, or the SET's 8 industry groups vs
+# SET (its 27 sectors stay on the table — 27 trails make the plot unreadable,
+# as 26 more theme trails would on the US side).
 
 def _map_entry(name: str, row_id: str, symbol: str, close: Optional[pd.Series],
                bench: pd.Series, tail: int) -> Optional[dict]:
@@ -325,12 +333,11 @@ def _map_entry(name: str, row_id: str, symbol: str, close: Optional[pd.Series],
 
 def _build_map(market: str, bench_sym: str, tail: int) -> dict:
     if market == "TH":
-        closes = _download_closes(
-            [m for _, ms in TH_GROUPS for m in ms] + [TH_BENCH, TH_BENCH_FALLBACK]
-        )
+        groups = [g for g in _th_groups() if g["kind"] == "industry"]
+        closes = _download_closes(_th_basket_symbols(groups) + [TH_BENCH, TH_BENCH_FALLBACK])
         found, bench = _th_bench(closes)
         bench_sym = found or TH_BENCH
-        universe = [(n, n, n, _ew_index(closes, ms)) for n, ms in TH_GROUPS]
+        universe = [(g["name"], g["id"], g["id"], _th_index(closes, g)) for g in groups]
     else:
         closes = _download_closes([s for _, s in SECTORS] + [bench_sym])
         bench = closes[bench_sym].dropna() if bench_sym in closes.columns else None
@@ -379,52 +386,136 @@ def rotation_map(
 
 
 # ── Constituents drill-down ───────────────────────────────────────────────────
-# US themes/sectors: top-10 holdings of the proxy ETF (yfinance funds_data).
-# TH groups: the basket members themselves.
+# Every member the group's definition names, with its weight in the group, its
+# name, and the same returns / quadrant the table ranks groups by:
+#   US sector (SPDR) + KBE/XHB/XRT  every holding, State Street's daily file
+#   other US themes                 Yahoo's top-10 holdings (coverage says so)
+#   TH industry group / sector      the SET's composition (reference_data/)
 
-def _etf_top_holdings(etf: str) -> list[str]:
-    key = f"holdings|{etf}"
-    now = time.time()
+def _cached(key: str, ttl: float):
     with _lock:
         hit = _cache.get(key)
-        if hit and now - hit[0] < _HOLDINGS_TTL:
-            return hit[1]
-    syms: list[str] = []
+    return hit[1] if hit and time.time() - hit[0] < ttl else None
+
+
+def _ssga_holdings(etf: str) -> Optional[dict]:
+    """State Street's full holdings for one fund, or None (negative-cached)."""
+    key = f"ssga|{etf}"
+    hit = _cached(key, _HOLDINGS_TTL)
+    if hit is not None:
+        return hit or None
+    if _cached(f"ssga-fail|{etf}", _HOLDINGS_FAIL_TTL) is not None:
+        return None
+    url = sm.SSGA_URL.format(t=etf.lower())
+    try:
+        r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+        r.raise_for_status()
+        parsed = sm.parse_ssga_holdings(r.content)
+        if not parsed["rows"]:
+            raise ValueError("no holdings in file")
+        parsed["url"] = url
+    except Exception:
+        with _lock:
+            _cache[f"ssga-fail|{etf}"] = (time.time(), True)
+        return None
+    with _lock:
+        _cache[key] = (time.time(), parsed)
+    return parsed
+
+
+def _yahoo_top_holdings(etf: str) -> Optional[list[dict]]:
+    """Yahoo's top-10 holdings [{ticker, name, weight%}], or None (negative-cached)."""
+    key = f"yhold|{etf}"
+    hit = _cached(key, _HOLDINGS_TTL)
+    if hit is not None:
+        return hit or None
+    rows: list[dict] = []
     try:
         top = yf.Ticker(etf).funds_data.top_holdings
-        syms = [str(s).strip().upper() for s in list(top.index)[:10] if str(s).strip()]
+        for sym, rec in top.head(10).iterrows():
+            s = str(sym).strip().upper()
+            if not s:
+                continue
+            w = rec.get("Holding Percent")
+            rows.append({"ticker": s, "name": str(rec.get("Name") or s).strip(),
+                         "weight": round(float(w) * 100, 4) if pd.notna(w) else None})
     except Exception:
-        syms = []
-    with _lock:
-        if syms:
-            _cache[key] = (now, syms)
-    return syms
+        rows = []
+    with _lock:  # an empty list is the negative cache: retried after a day, not per click
+        _cache[key] = (time.time() if rows else time.time() - (_HOLDINGS_TTL - _HOLDINGS_FAIL_TTL), rows)
+    return rows or None
 
 
-@router.get("/constituents")
-def rotation_constituents(
-    id: str = Query(..., min_length=1, max_length=40),
-    market: str = Query("US", pattern="^(US|TH|us|th)$"),
-):
-    mkt = market.upper()
-    cache_key = f"cons|{mkt}|{id}"
-    now = time.time()
-    with _lock:
-        hit = _cache.get(cache_key)
-        if hit and now - hit[0] < _TTL:
-            return hit[1]
-
-    if mkt == "TH":
-        members = next((m for n, m in TH_GROUPS if n == id), [])
-        bench_sym = TH_BENCH
+def _us_members(etf: str) -> tuple[list[dict], dict]:
+    """(members [{symbol, yf_symbol, name, weight}], group meta) for a US row."""
+    gics = sm.GICS_BY_ETF.get(etf)
+    theme = sm.THEME_BY_ETF.get(etf)
+    if gics:
+        group = {"id": etf, "name": gics[1], "kind": "sector",
+                 "definition": f"GICS {gics[0]} {gics[1]} — the S&P 500 members in that sector, "
+                               f"as held by {etf} (Select Sector SPDR, capped market-cap weights)"}
+    elif theme:
+        group = {"id": etf, "name": theme[0], "kind": "theme",
+                 "definition": f"Theme = what {etf} holds: {theme[1]}"}
     else:
-        members = _etf_top_holdings(id.upper())
-        bench_sym = _DEFAULT_BENCH
-    if not members:
-        return {"id": id, "market": mkt, "rows": [], "error": "no constituents found"}
+        return [], {}
+    held = _ssga_holdings(etf) if etf in sm.SSGA_FUNDS else None
+    if held:
+        members = [{"symbol": h["ticker"], "yf_symbol": sm.us_yahoo(h["ticker"]),
+                    "name": h["name"], "weight": h["weight"]} for h in held["rows"]]
+        group["source"] = {"label": "State Street daily holdings", "url": held["url"],
+                           "as_of": held["as_of"], "coverage": "all",
+                           "weight_basis": "% of fund"}
+        return members, group
+    top = _yahoo_top_holdings(etf)
+    if not top:
+        return [], group
+    members = [{"symbol": h["ticker"], "yf_symbol": sm.us_yahoo(h["ticker"]),
+                "name": h["name"], "weight": h["weight"]} for h in top]
+    group["source"] = {"label": "Yahoo Finance top holdings (Morningstar)",
+                       "url": f"https://finance.yahoo.com/quote/{etf}/holdings/",
+                       "as_of": None, "coverage": "top10",
+                       "weight_basis": "% of fund"}
+    if etf in sm.SSGA_FUNDS:
+        group["source"]["note"] = "State Street file unavailable — showing Yahoo's top 10"
+    return members, group
 
+
+def _th_members(group_id: str) -> tuple[list[dict], dict]:
+    g = next((x for x in _th_groups() if x["id"] == group_id), None)
+    if g is None:
+        return [], {}
+    snap = sm.load_set_snapshot()
+    total = sum(m["cap"] for m in g["members"]) or None
+    members = [{"symbol": m["symbol"], "yf_symbol": sm.th_yahoo(m["symbol"]), "name": m["name"],
+                "sector": m["sector"],
+                "weight": round(100 * m["cap"] / total, 4) if total else None,
+                "market_cap": m["cap"] * 1e6 if m["cap"] > 0 else None,
+                "in_basket": any(b["symbol"] == m["symbol"] for b in g["basket"])}
+               for m in g["members"]]
+    what = "industry group" if g["kind"] == "industry" else "sector"
+    group = {"id": g["id"], "name": g["name"], "kind": g["kind"], "industry": g["industry"],
+             "definition": f"SET {what} {g['id']} ({g['name']}) — every SET-listed company the "
+                           f"exchange classifies there",
+             "source": {"label": "SET sector composition", "url": snap["source"],
+                        "as_of": snap["as_of"], "coverage": "all",
+                        "weight_basis": "% of group market cap"},
+             "basket": {"n": len(g["basket"]), "coverage_pct": g["coverage"]}}
+    return members, group
+
+
+def _build_constituents(mkt: str, group_id: str) -> dict:
+    members, group = _th_members(group_id) if mkt == "TH" else _us_members(group_id.upper())
+    if not group:
+        return {"id": group_id, "market": mkt, "rows": [], "error": "unknown group"}
+    if not members:
+        return {"id": group_id, "market": mkt, "group": group, "rows": [],
+                "error": "no constituents found"}
+    members.sort(key=lambda m: -(m["weight"] or 0))
+    priced = members[:PRICED_MAX]
+    bench_sym = TH_BENCH if mkt == "TH" else _DEFAULT_BENCH
     extra = [TH_BENCH_FALLBACK] if mkt == "TH" else []
-    closes = _download_closes(members + [bench_sym] + extra)
+    closes = _download_closes([m["yf_symbol"] for m in priced] + [bench_sym] + extra)
     if mkt == "TH":
         found, th = _th_bench(closes)
         bench_sym = found or bench_sym
@@ -433,17 +524,44 @@ def rotation_constituents(
         bench = closes[bench_sym].dropna() if bench_sym in closes.columns else pd.Series(dtype=float)
     bench_m1 = _pct(bench, 21) if not bench.empty else None
     rows = []
-    for sym in members:
-        if sym not in closes.columns:
-            continue
-        row = _row_from_series(sym, sym, "stock", closes[sym].dropna(), bench, bench_m1)
-        if row:
-            rows.append(row)
-    rows.sort(key=lambda r: r["m1"] if r["m1"] is not None else -999, reverse=True)
-    val = {"id": id, "market": mkt, "bench": bench_sym, "rows": rows}
+    for i, m in enumerate(members):
+        row = None
+        if i < PRICED_MAX and m["yf_symbol"] in closes.columns:
+            row = _row_from_series(m["name"], m["yf_symbol"], "stock",
+                                   closes[m["yf_symbol"]].dropna(), bench, bench_m1)
+        row = row or {"name": m["name"], "id": m["yf_symbol"], "kind": "stock", "n_members": None,
+                      "price": None, "d1": None, "w1": None, "m1": None, "m3": None,
+                      "m1_vs_bench": None, "quadrant": None, "mom_dir": None}
+        row.update({"symbol": m["symbol"], "yf_symbol": m["yf_symbol"], "weight": m["weight"],
+                    "market_cap": m.get("market_cap"), "sector": m.get("sector"),
+                    "in_basket": m.get("in_basket"), "priced": row["m1"] is not None or row["d1"] is not None})
+        rows.append(row)
+    group["source"]["n_total"] = len(members)
+    group["source"]["n_priced"] = sum(1 for r in rows if r["priced"])
+    return {
+        "id": group_id, "market": mkt, "bench": bench_sym, "bench_m1": bench_m1,
+        "as_of": str(closes.index[-1].date()) if len(closes.index) else None,
+        "currency": "THB" if mkt == "TH" else "USD",
+        "group": group, "rows": rows,
+    }
+
+
+@router.get("/constituents")
+def rotation_constituents(
+    id: str = Query(..., min_length=1, max_length=40),
+    market: str = Query("US", pattern="^(US|TH|us|th)$"),
+):
+    mkt = market.upper()
+    gid = id.strip() if mkt == "TH" else id.strip().upper()
+    cache_key = f"cons|{mkt}|{gid}"
+    hit = _cached(cache_key, _TTL)
+    if hit is not None:
+        return hit
+    val = _build_constituents(mkt, gid)
     with _lock:
-        if rows:
-            _cache[cache_key] = (now, val)
+        # Kept even when empty — for 2 min, not 15 — so a group whose source is
+        # down does not re-fire Yahoo / State Street on every click.
+        _cache[cache_key] = (time.time() if val["rows"] else time.time() - (_TTL - _EMPTY_TTL), val)
     return val
 
 
@@ -641,3 +759,29 @@ def rotation_tilt(window: int = Query(20, ge=5, le=90)):
         if val.get("rows"):
             _cache[key] = (now, val)
     return val
+
+
+# ── Screen: one group's members ranked by four factors (sector_screen.py) ────
+
+@router.get("/screen")
+def rotation_screen(
+    group: str = Query(..., min_length=1, max_length=60,
+                       description="ROT group id (XLE, SMH, FINCIAL) or a word of its name"),
+    market: str = Query("US", pattern="^(US|TH|us|th)$"),
+    top: int = Query(15, ge=3, le=40, description="Largest members by weight"),
+):
+    import sector_screen
+
+    mkt = market.upper()
+    rows = (rotation_table(bench=_DEFAULT_BENCH, market=mkt).get("rows") or [])
+    needle = group.strip().lower()
+    found = [r for r in rows if str(r.get("id", "")).lower() == needle] or \
+            [r for r in rows if needle in str(r.get("name", "")).lower()]
+    if not found:
+        return {"market": mkt, "group": None, "rows": [],
+                "error": f"no {mkt} ROT group matches '{group.strip()}' — groups: "
+                         + ", ".join(f"{r.get('id')} ({r.get('name')})" for r in rows)}
+    out = sector_screen.build(mkt, found[0]["id"], top)
+    if out.get("group"):
+        out["group"] = {**out["group"], "name": found[0]["name"], "quadrant": found[0].get("quadrant")}
+    return out

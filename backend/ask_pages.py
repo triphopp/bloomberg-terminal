@@ -69,6 +69,20 @@ PAGES: dict[str, dict[str, tuple[str, dict, str]]] = {
         "fx": ("/api/fx", {"type": "overview"}, "20 currency pairs, last and change"),
         "positioning": ("/api/cot/snapshot", {"window": 156},
                         "CFTC COT by contract: net positions, z-scores and crowding flags, weekly"),
+        "rotation_us": ("/api/rotation/table", {"market": "US"},
+                        "STRUCTURE → ROT, US: the 11 GICS sectors (each its Select Sector SPDR) and ~24 theme ETFs — "
+                        "1D/1W/1M/3M return, 1M vs SPY, RRG quadrant and momentum direction"),
+        "rotation_th": ("/api/rotation/table", {"market": "TH"},
+                        "STRUCTURE → ROT, Thailand: the SET's own 8 industry groups and 27 sectors (each a cap-weighted "
+                        "basket of its largest members), the same returns and quadrant vs SET"),
+        "rotation_members": ("/api/rotation/constituents", {"id": "{group}", "market": "US"},
+                             "the stocks in one US ROT group (key = the ETF, e.g. XLK, SMH): every holding with its "
+                             "weight from the fund's own file (top 10 for non-State-Street themes), name, last price, "
+                             "returns and quadrant"),
+        "rotation_members_th": ("/api/rotation/constituents", {"id": "{group}", "market": "TH"},
+                                "the stocks in one SET industry group or sector (key = the SET code, e.g. BANK, "
+                                "PF&REIT, FINCIAL): every member the exchange lists there, share of the group's "
+                                "market cap, returns and quadrant"),
     },
     "portfolio": {
         "summary": ("/api/v2/portfolio/summary", {"base_currency": "THB"},
@@ -145,6 +159,7 @@ _ALSO = {
 
 _SYMBOL_RE = re.compile(r"^[A-Z0-9][A-Z0-9.\-=^]{0,19}$")
 _MARKET_RE = re.compile(r"^[A-Z]{2,3}$")
+_GROUP_RE = re.compile(r"^[A-Z0-9][A-Z0-9&\-]{0,9}$")  # XLK, BANK, PF&REIT
 
 _DATE_KEYS = ("date", "d", "t", "time", "week", "period", "month", "as_of", "auction_date", "filed", "published_at")
 
@@ -159,6 +174,8 @@ def section_index(page: str | None) -> str:
         lines.append("  (key = the ticker; left empty it is the one on screen)")
     if any("{market}" in str(params) for _, params, _ in sections.values()):
         lines.append("  (key = the market code on screen, e.g. US, TH, JP)")
+    if any("{group}" in str(params) for _, params, _ in sections.values()):
+        lines.append("  (rotation_members key = the group: an ETF such as XLK, or a SET code such as BANK)")
     if page in _ALSO:
         lines.append(f"  {_ALSO[page]}")
     return "\n".join(lines)
@@ -206,6 +223,12 @@ def lookup(page: str, section: str, key: str = "", focus: list[str] | None = Non
         if not _MARKET_RE.match(market):
             raise RuntimeError(f"'{market}' is not a market code — e.g. US, TH, JP")
         values["{market}"] = market
+    if "{group}" in wanted:
+        if not key:
+            raise RuntimeError("which group? pass key=<ETF or SET code>, e.g. XLK or BANK")
+        if not _GROUP_RE.match(key):
+            raise RuntimeError(f"'{key}' is not a ROT group code")
+        values["{group}"] = key
     if "{symbols}" in wanted:
         if not symbols:
             raise RuntimeError("the watchlist is empty — use get_watchlist_news with the tickers you mean")
@@ -335,7 +358,41 @@ def _calendar(data: Any, points: int) -> Any:
     }
 
 
+_ROT = ("id", "name", "kind", "industry", "d1", "w1", "m1", "m3", "m1_vs_bench", "quadrant", "mom_dir",
+        "n_members", "coverage_pct")
+_MEMBER = ("symbol", "name", "sector", "weight", "market_cap", "price", "d1", "w1", "m1", "m3",
+           "m1_vs_bench", "quadrant")
+
+
+def _rotation(data: Any, points: int) -> Any:
+    """35 TH groups / 35 US rows → split by kind, so no list is long enough for
+    `shrink` to cut (it would keep the bottom of a table sorted by return)."""
+    if not isinstance(data, dict) or not isinstance(data.get("rows"), list):
+        return data
+    out: dict[str, Any] = {k: data[k] for k in ("bench", "bench_m1", "as_of", "definition") if data.get(k)}
+    for r in data["rows"]:
+        out.setdefault(f"{r.get('kind')}s", []).append({k: r[k] for k in _ROT if r.get(k) is not None})
+    return out
+
+
+def _rotation_members(data: Any, points: int) -> Any:
+    """Up to ~75 holdings → the largest by weight, with what the group is."""
+    if not isinstance(data, dict) or not isinstance(data.get("rows"), list):
+        return data
+    n = max(points, _TABLE_ROWS)
+    rows = data["rows"]
+    return {
+        **{k: data[k] for k in ("group", "bench", "bench_m1", "as_of", "currency", "error") if data.get(k)},
+        "members": [{k: r[k] for k in _MEMBER if r.get(k) is not None} for r in rows[:n]],
+        "_note": f"largest {min(n, len(rows))} of {len(rows)} members by weight — ask for more points for the rest",
+    }
+
+
 _SHAPES: dict[tuple[str, str], Shape] = {
+    ("market", "rotation_us"): _rotation,
+    ("market", "rotation_th"): _rotation,
+    ("market", "rotation_members"): _rotation_members,
+    ("market", "rotation_members_th"): _rotation_members,
     ("calendar", "events"): _calendar,
     ("heatmap", "market"): _heatmap,
     ("stock", "options"): _options,

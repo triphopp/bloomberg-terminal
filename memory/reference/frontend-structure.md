@@ -448,6 +448,10 @@ components/bloomberg/
 | `views/news/newsfeed-tab.tsx` | `NewsFeedTab` |
 | `views/news/social-tab.tsx` | `SocialTab` |
 | `views/news/polymarket-column.tsx` | `PolymarketColumn`, `ProbBar` |
+| `views/news/story-clusters.ts` | `clusterStories`, `storyWords`, `sameStory` — rendered by `StoryCard` (internal to `watchlist-tab.tsx`; layout prefs `v: 2` moves an older saved layout onto STORY once) |
+| `views/news/news-pulse-grid.tsx` | `NewsPulseGrid` (props `articles` `colors` `selectedSymbol` `onSymbol`) — logic in `news-pulse.ts` (`buildPulse`, `netTone`, `PULSE_WINDOWS`) |
+| `views/news/sector-screen.tsx` | `SectorScreen` (props `market` `group` `colors`) — `useSectorScreen(market, group, enabled)` in `useNewsQueries.ts` |
+| `views/news/rotation-news.tsx` | `RotationNewsPanel` (props `colors`) — `useRotationNews(market, kind, enabled)` + `useRotationMemberNews(market, group, enabled)` in `useNewsQueries.ts` |
 | `ask/ask-panel.tsx` | Surfaces (see `ask/index.ts` above). `AskAnswers` (internal) holds `useAsk()` itself, so tokens re-render the column only |
 | `ask/ask-settings.tsx` | `AskSettings` — MODEL ▸ panel: provider, model (short list + live `/models` + free text), API key (password field, write-only → `POST /api/news/ask/key`). Opened from `AskBar` and from the answer column header (2026-10-06) |
 | `ask/ask-answer.tsx` | `AnswerBody` (answer laid out as lead · `## ` sections · bullets with the source on its own dim line · signed % coloured; set in `.reading`), `parseAnswer(text)` — the shape is the one `_SYSTEM` in `backend/routers/news_ai.py` asks the model for; change both together |

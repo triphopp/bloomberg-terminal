@@ -2,9 +2,11 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { QUAD_COLOR } from "../lib/rrg-quadrant";
 import type { bloombergColors } from "../lib/theme-config";
 import { RotationMapPanel } from "./rotation-map";
+import { RotationMembers } from "./rotation-members";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -12,8 +14,13 @@ interface RotationRow {
   name: string;
   id: string;
   symbol: string;
-  kind: "theme" | "sector" | "stock";
+  kind: "theme" | "sector" | "industry";
   n_members: number | null;
+  /** TH only: the SET industry group a sector belongs to, and how much of the
+   *  group's market cap the ROT basket covers. */
+  industry?: string;
+  basket_n?: number;
+  coverage_pct?: number | null;
   d1: number | null;
   w1: number | null;
   m1: number | null;
@@ -29,30 +36,34 @@ interface RotationData {
   bench_m1: number | null;
   as_of: string | null;
   market?: string;
-  error?: string;
-}
-
-interface ConstituentsData {
-  id: string;
-  market: string;
-  bench: string;
-  rows: RotationRow[];
+  definition?: {
+    standard: string;
+    source: string;
+    membership_as_of: string | null;
+    method: string;
+  };
   error?: string;
 }
 
 type Market = "US" | "TH";
-type KindFilter = "all" | "theme" | "sector";
+type KindFilter = "all" | "theme" | "sector" | "industry";
 type SortKey = "d1" | "w1" | "m1" | "m3" | "m1_vs_bench";
 type View = "TABLE" | "MAP";
 
 const VIEW_KEY = "bloomberg_rotation_view";
 const TAILS = [4, 8, 12] as const;
 
-const QUAD_COLOR: Record<string, string> = {
-  Leading: "#4ade80",
-  Improving: "#60a5fa",
-  Weakening: "#facc15",
-  Lagging: "#f87171",
+const KIND_TITLE: Record<Market, Partial<Record<KindFilter, string>>> = {
+  US: {
+    all: "Every group",
+    theme: "Theme ETFs — a theme is what its fund holds",
+    sector: "The 11 GICS sectors (Select Sector SPDRs)",
+  },
+  TH: {
+    all: "Every group",
+    industry: "The SET's 8 industry groups",
+    sector: "The SET's sectors",
+  },
 };
 
 const SORT_COLS: { key: SortKey; label: string }[] = [
@@ -80,97 +91,6 @@ function fmt(v: number | null, compact = false): string {
   return `${v >= 0 ? "+" : ""}${v.toFixed(compact ? 1 : 2)}`;
 }
 
-// ── Constituent sub-rows (lazy fetch on expand) ───────────────────────────────
-
-interface ConstituentRowsProps {
-  market: Market;
-  groupId: string;
-  cols: typeof SORT_COLS;
-  fs: string;
-  cellPad: string;
-  compact: boolean;
-  colors: typeof bloombergColors.dark;
-}
-
-function ConstituentRows({
-  market,
-  groupId,
-  cols,
-  fs,
-  cellPad,
-  compact,
-  colors,
-}: ConstituentRowsProps) {
-  const { data, isLoading, isError } = useQuery<ConstituentsData>({
-    queryKey: ["rotation-constituents", market, groupId],
-    queryFn: async () => {
-      const res = await fetch(
-        `/api/rotation/constituents?market=${market}&id=${encodeURIComponent(groupId)}`
-      );
-      if (!res.ok) throw new Error("fetch failed");
-      return res.json();
-    },
-    staleTime: 10 * 60 * 1000,
-    retry: 1,
-  });
-
-  if (isLoading)
-    return (
-      <tr style={{ background: "#0a0a0a" }}>
-        <td colSpan={cols.length + 1} className={`${fs} ${cellPad} font-mono`}>
-          <span className="inline-flex items-center gap-1" style={{ color: colors.textSecondary }}>
-            <Loader2 className="h-2 w-2 animate-spin" /> loading constituents…
-          </span>
-        </td>
-      </tr>
-    );
-
-  if (isError || !data || data.error || !data.rows.length)
-    return (
-      <tr style={{ background: "#0a0a0a" }}>
-        <td
-          colSpan={cols.length + 1}
-          className={`${fs} ${cellPad} font-mono`}
-          style={{ color: colors.textSecondary }}
-        >
-          — no constituent data —
-        </td>
-      </tr>
-    );
-
-  return (
-    <>
-      {data.rows.map((r) => {
-        const qc = r.quadrant ? QUAD_COLOR[r.quadrant] : "#555";
-        return (
-          <tr
-            key={`c-${r.symbol}`}
-            style={{ background: "#0a0a0a", borderBottom: "1px solid #101010" }}
-            title={`${r.symbol} — ${r.quadrant ?? "?"} · in ${groupId}`}
-          >
-            <td className={`${fs} ${cellPad} font-mono whitespace-nowrap`}>
-              <span style={{ color: `${colors.textSecondary}66` }}>{"  └ "}</span>
-              <span style={{ color: colors.textSecondary }}>{r.symbol.replace(/\.BK$/, "")}</span>
-              <span className="ml-1 font-bold" style={{ color: qc }}>
-                {r.quadrant?.[0] ?? ""}
-              </span>
-            </td>
-            {cols.map((c) => (
-              <td
-                key={c.key}
-                className={`${fs} ${cellPad} font-mono text-right`}
-                style={{ background: cellBg(r[c.key]), color: cellFg(r[c.key]), opacity: 0.85 }}
-              >
-                {fmt(r[c.key], compact)}
-              </td>
-            ))}
-          </tr>
-        );
-      })}
-    </>
-  );
-}
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface RotationTableProps {
@@ -182,7 +102,8 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
   const [market, setMarket] = useState<Market>("US");
   const [kind, setKind] = useState<KindFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("m1");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  // The group whose members are on screen (the drill-down replaces the table).
+  const [openGroup, setOpenGroup] = useState<{ id: string; name: string } | null>(null);
   const [view, setView] = useState<View>(() => {
     if (typeof window === "undefined") return "TABLE";
     try {
@@ -216,11 +137,13 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
   const fs = compact ? "text-[6px]" : "text-[9px]";
   const cellPad = compact ? "px-0.5 py-px" : "px-1.5 py-0.5";
   const cols = SORT_COLS;
+  const kinds: KindFilter[] =
+    market === "TH" ? ["all", "industry", "sector"] : ["all", "theme", "sector"];
 
   const switchMarket = (m: Market) => {
     setMarket(m);
-    setExpandedId(null);
-    if (m === "TH") setKind("all"); // TH universe is sector baskets only
+    setOpenGroup(null);
+    setKind("all"); // US filters by theme/sector, TH by SET industry group/sector
   };
 
   const btnFs = compact ? "text-[6px]" : "text-[8px]";
@@ -283,15 +206,28 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
           <span
             className={`${compact ? "text-[5.5px]" : "text-[7px]"} font-mono ml-auto`}
             style={{ color: `${colors.textSecondary}88` }}
-            title="RS = close ÷ benchmark (weekly). RS-Ratio = 100·RS ÷ SMA8(RS); RS-Mom = 100·RS-Ratio ÷ SMA4(RS-Ratio). JdK-style approximation. TH groups are equal-weight baskets; benchmark falls back to TDEX.BK (SET50 ETF) when Yahoo has no ^SET.BK history."
+            title="RS = close ÷ benchmark (weekly). RS-Ratio = 100·RS ÷ SMA8(RS); RS-Mom = 100·RS-Ratio ÷ SMA4(RS-Ratio). JdK-style approximation. US = the 11 GICS sectors via their Select Sector SPDRs. TH = the SET's 8 industry groups, each a cap-weighted basket of its largest members (the SET's own indices are not on Yahoo); benchmark falls back to TDEX.BK (SET50 ETF) when Yahoo has no ^SET.BK history."
           >
-            {market === "US" ? "SPDR sectors vs SPY" : "TH groups vs SET"} · weekly · ⓘ
+            {market === "US" ? "GICS sectors (SPDR) vs SPY" : "SET industry groups vs SET"} · weekly
+            · ⓘ
           </span>
         </div>
         <div className="flex-1 min-h-0">
           <RotationMapPanel market={market} tail={tail} colors={colors} compact={compact} />
         </div>
       </div>
+    );
+
+  if (openGroup)
+    return (
+      <RotationMembers
+        market={market}
+        groupId={openGroup.id}
+        groupName={openGroup.name}
+        colors={colors}
+        compact={compact}
+        onBack={() => setOpenGroup(null)}
+      />
     );
 
   if (isLoading)
@@ -346,29 +282,37 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
             </button>
           ))}
         </div>
-        {market === "US" && (
-          <div className="flex overflow-hidden border" style={{ borderColor: colors.border }}>
-            {(["all", "theme", "sector"] as KindFilter[]).map((k, i) => (
-              <button
-                aria-pressed={kind === k}
-                type="button"
-                key={k}
-                className={`${compact ? "text-[6px]" : "text-[8px]"} font-bold px-1 py-0 leading-4`}
-                style={{
-                  background: kind === k ? "#FF980020" : "transparent",
-                  color: kind === k ? "#FF9800" : colors.textSecondary,
-                  borderRight: i < 2 ? `1px solid ${colors.border}` : undefined,
-                }}
-                onClick={() => setKind(k)}
-              >
-                {k === "all" ? "ALL" : k === "theme" ? "THEME" : "SECTOR"}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="flex overflow-hidden border" style={{ borderColor: colors.border }}>
+          {kinds.map((k, i) => (
+            <button
+              aria-pressed={kind === k}
+              type="button"
+              key={k}
+              className={`${compact ? "text-[6px]" : "text-[8px]"} font-bold px-1 py-0 leading-4`}
+              style={{
+                background: kind === k ? "#FF980020" : "transparent",
+                color: kind === k ? "#FF9800" : colors.textSecondary,
+                borderRight: i < kinds.length - 1 ? `1px solid ${colors.border}` : undefined,
+              }}
+              onClick={() => setKind(k)}
+              title={KIND_TITLE[market][k]}
+            >
+              {k === "all" ? "ALL" : k.toUpperCase()}
+            </button>
+          ))}
+        </div>
         <span
           className={`${compact ? "text-[5.5px]" : "text-[7px]"} font-mono ml-auto`}
           style={{ color: `${colors.textSecondary}88` }}
+          title={
+            data.definition
+              ? `${data.definition.standard} — ${data.definition.method}${
+                  data.definition.membership_as_of
+                    ? ` · membership as of ${data.definition.membership_as_of}`
+                    : ""
+                } · ${data.definition.source}`
+              : undefined
+          }
         >
           vs {data.bench} · {data.as_of ?? ""}
         </span>
@@ -386,7 +330,13 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
                 className={`${fs} ${cellPad} font-mono text-left font-bold`}
                 style={{ color: colors.textSecondary }}
               >
-                {compact ? "THEME/SEC" : "THEME / SECTOR"}
+                {market === "TH"
+                  ? compact
+                    ? "SET GROUP"
+                    : "SET INDUSTRY / SECTOR"
+                  : compact
+                    ? "THEME/SEC"
+                    : "THEME / SECTOR (GICS)"}
               </th>
               {cols.map((c) => (
                 <th
@@ -409,59 +359,62 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
             {rows.map((r) => {
               const qc = r.quadrant ? QUAD_COLOR[r.quadrant] : "#555";
               const arrow = r.mom_dir === "up" ? "↗" : r.mom_dir === "down" ? "↘" : "";
-              const isOpen = expandedId === r.id;
+              const isIndustry = r.kind === "industry";
+              const label =
+                market === "TH"
+                  ? compact
+                    ? r.id
+                    : r.name
+                  : compact
+                    ? r.name.replace(/\s*\(X[A-Z]+\)$/, "").slice(0, 10)
+                    : r.name;
+              const basket =
+                r.coverage_pct != null
+                  ? ` · index = ${r.basket_n} largest of ${r.n_members} (${r.coverage_pct}% of cap)`
+                  : "";
               return (
-                <Fragment key={r.id}>
-                  <tr
-                    className="cursor-pointer hover:opacity-80"
-                    style={{
-                      borderBottom: "1px solid #111",
-                      background: isOpen ? "#101010" : "transparent",
-                    }}
-                    title={`${r.name} (${r.symbol}) — ${r.quadrant ?? "?"} ${arrow} · click for constituents`}
-                    onClick={() => setExpandedId(isOpen ? null : r.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") setExpandedId(isOpen ? null : r.id);
-                    }}
+                <tr
+                  key={r.id}
+                  className="cursor-pointer hover:opacity-80"
+                  style={{
+                    borderBottom: "1px solid #111",
+                    background: isIndustry ? "#0c0c0c" : "transparent",
+                  }}
+                  title={`${r.name.includes(`(${r.symbol})`) ? r.name : `${r.name} (${r.symbol})`}${r.industry && !isIndustry ? ` · ${r.industry}` : ""} — ${r.quadrant ?? "?"} ${arrow}${basket} · click for members`}
+                  onClick={() => setOpenGroup({ id: r.id, name: r.name })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") setOpenGroup({ id: r.id, name: r.name });
+                  }}
+                >
+                  <td
+                    className={`${fs} ${cellPad} font-mono whitespace-nowrap ${isIndustry ? "font-bold" : ""}`}
+                    style={{ color: colors.text }}
                   >
-                    <td
-                      className={`${fs} ${cellPad} font-mono whitespace-nowrap`}
-                      style={{ color: colors.text }}
+                    <span style={{ color: `${colors.textSecondary}88` }}>▸ </span>
+                    {label}
+                    {market === "TH" && !compact && (
+                      <span className="ml-1" style={{ color: `${colors.textSecondary}88` }}>
+                        {r.id}
+                      </span>
+                    )}
+                    <span
+                      className="ml-1 px-0.5 font-bold"
+                      style={{ color: qc, background: `${qc}18`, border: `1px solid ${qc}33` }}
                     >
-                      <span style={{ color: `${colors.textSecondary}88` }}>
-                        {isOpen ? "▾ " : "▸ "}
-                      </span>
-                      {compact ? r.name.replace(/\s*\(X[A-Z]+\)$/, "").slice(0, 10) : r.name}
-                      <span
-                        className="ml-1 px-0.5 font-bold"
-                        style={{ color: qc, background: `${qc}18`, border: `1px solid ${qc}33` }}
-                      >
-                        {compact ? (r.quadrant?.[0] ?? "?") : (r.quadrant ?? "?")}
-                        {arrow}
-                      </span>
+                      {compact ? (r.quadrant?.[0] ?? "?") : (r.quadrant ?? "?")}
+                      {arrow}
+                    </span>
+                  </td>
+                  {cols.map((c) => (
+                    <td
+                      key={c.key}
+                      className={`${fs} ${cellPad} font-mono text-right`}
+                      style={{ background: cellBg(r[c.key]), color: cellFg(r[c.key]) }}
+                    >
+                      {fmt(r[c.key], compact)}
                     </td>
-                    {cols.map((c) => (
-                      <td
-                        key={c.key}
-                        className={`${fs} ${cellPad} font-mono text-right`}
-                        style={{ background: cellBg(r[c.key]), color: cellFg(r[c.key]) }}
-                      >
-                        {fmt(r[c.key], compact)}
-                      </td>
-                    ))}
-                  </tr>
-                  {isOpen && (
-                    <ConstituentRows
-                      market={market}
-                      groupId={r.id}
-                      cols={cols}
-                      fs={fs}
-                      cellPad={cellPad}
-                      compact={compact}
-                      colors={colors}
-                    />
-                  )}
-                </Fragment>
+                  ))}
+                </tr>
               );
             })}
           </tbody>
@@ -483,8 +436,8 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
           style={{ color: `${colors.textSecondary}66` }}
         >
           {market === "US"
-            ? "คลิกแถว = ดู top holdings · ETF proxies"
-            : "คลิกแถว = ดูหุ้นใน basket · equal-weight vs SET"}
+            ? "คลิกแถว = หุ้นทุกตัวในกลุ่ม · sector = GICS (SPDR) · theme = ETF"
+            : "คลิกแถว = หุ้นทุกตัวตาม SET · กลุ่ม = cap-weighted หุ้นใหญ่ ≥80%"}
         </span>
       </div>
     </div>

@@ -200,6 +200,17 @@ thesis `MEM-KRJP` (Samsung · SK hynix · Kioxia) ใช้แหล่งชุ
 | **log การใช้งานของ Claude Code ในเครื่อง** | `~/.claude/projects/**/*.jsonl` (ช่อง `message.usage`) | token ที่ใช้จริงต่อโมเดล → มูลค่าตามราคา API | ✅ นับเฉพาะตัวเลข ไม่อ่านเนื้อหา · ได้แค่เครื่องนั้นและเฉพาะ Claude Code |
 | **โพสต์ Facebook สาธารณะ** | ลิงก์ `web.facebook.com/share/p/<id>/` ผ่าน browser pane | ข้อความโพสต์เต็ม | ✅ อ่านได้โดยไม่ต้อง login (WebFetch ไม่ได้) · เป็นแหล่งรอง ต้องตรวจกับต้นทาง |
 
+### 3.7 ใครอยู่ในกลุ่มไหน: GICS / ETF holdings / หมวดของ SET (ทดสอบ 2026-10-23)
+
+ใช้กับ MKT → STRUCTURE → ROT (รายชื่อหุ้นในแต่ละกลุ่ม) — รายละเอียดและผลตรวจ `reference/rotation-groups.md`
+
+| แหล่ง | URL | ได้อะไร | ผล |
+|---|---|---|---|
+| **State Street holdings รายวัน** | `https://www.ssga.com/library-content/products/fund-data/etfs/us/holdings-daily-us-en-<ticker>.xlsx` (xlk, xlf, kbe, xhb, xrt, spy …) | holdings ทุกตัว: ชื่อ ticker CUSIP SEDOL น้ำหนัก จำนวนหุ้น + วันที่ "As of" | ✅ GET ธรรมดา ไม่ต้องมี key · อ่านผ่าน `/api/rotation/constituents` แล้ว (§2) · ตัด cash / money market / futures ออก |
+| **SET sector composition** | หน้า `set.or.th/en/market/index/set/<industry>/<sector>` → XHR `/api/set/index/<sector>/composition?lang=en` | สมาชิกทุกตัวของหมวด + industry + sector + market cap ของ SET เอง | ⚠️ เปิดได้ใน browser เท่านั้น — script โดน 403 (Incapsula) ห้ามหาทางเลี่ยง · snapshot อยู่ที่ `backend/reference_data/set_sectors.tsv` |
+| Yahoo `funds_data.top_holdings` | yfinance | top 10 ของกองทุนใดก็ได้ + น้ำหนัก | ✅ แค่ 10 ตัว — ต้องบอกว่าเป็น top 10 |
+| ❌ Yahoo `sector` / heatmap sectors | `info.sector`, screener | หมวดแบบ Morningstar | ไม่ใช่ GICS ไม่ใช่ SET — ห้ามใช้จัดกลุ่ม |
+
 ## 4. ฟรีแต่ต้องมี key
 
 | แหล่ง | สถานะในระบบ | ข้อมูล |
@@ -232,6 +243,7 @@ thesis `MEM-KRJP` (Samsung · SK hynix · Kioxia) ใช้แหล่งชุ
 | Yield / curve | `/api/rates/curve` · `/api/macro/global-yields` | ECB / FRED |
 | Positioning / sentiment | `/api/cot/*` · `/api/fear-greed` · `/api/polymarket/signals` | — |
 | ข้อมูลบริษัท | MCP `get_stock_data` · `get_filings` | `/api/company/*` · Fiscal.ai |
+| หุ้นในหมวด / sector ETF / หมวดของ SET | `/api/rotation/constituents?market=US|TH&id=<ETF หรือรหัส SET>` | State Street xlsx · หน้า SET ใน browser (§3.7) |
 
 ---
 
