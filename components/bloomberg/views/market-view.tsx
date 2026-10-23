@@ -92,6 +92,7 @@ import { TrendLineControls } from "../chart/TrendLineControls";
 import { VolumeEventPanel } from "../chart/VolumeEventPanel";
 import { scaleBars, usdPriceSymbol } from "../chart/price-scaling";
 import { useAutoExtendRange } from "../chart/useAutoExtendRange";
+import { arrowShortcutAllowed, stepIn } from "../chart/useChartTimeframe";
 import { useSdBands } from "../chart/useSdBands";
 import { COT_KEY_BY_RATE_ID, CotChip } from "../core/cot-chip";
 import {
@@ -2071,6 +2072,26 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [handleGoToEquity]);
+
+  // ↑ / ↓ = next coarser / finer bar interval, ← / → = shorter / longer range —
+  // the same rules as clicking (a step the pair cannot show moves the other one).
+  // Out of the way of typing, focused controls that use arrows, and floating
+  // chart windows: arrowShortcutAllowed.
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      if (!arrowShortcutAllowed(ev)) return;
+      ev.preventDefault();
+      if (ev.key === "ArrowUp" || ev.key === "ArrowDown") {
+        const next = stepIn(BAR_INTERVALS, barInterval, ev.key === "ArrowUp" ? 1 : -1);
+        if (next !== barInterval) handleHeatmapInterval(next);
+      } else {
+        const next = stepIn(TIME_PERIODS, timePeriod, ev.key === "ArrowRight" ? 1 : -1);
+        if (next !== timePeriod) handleHeatmapPeriod(next, heatmapChartType);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [barInterval, timePeriod, heatmapChartType, handleHeatmapInterval, handleHeatmapPeriod]);
 
   useEffect(() => {
     if (!selectedSymbol && !pendingMarketSymbol.trim()) {

@@ -309,6 +309,9 @@ function BloombergTerminal() {
     // Display-only in the help panel — actual per-view tab shortcuts (1–9) are
     // bound inside each view, not here, so this entry has no action to run.
     { key: "1–9", altKey: true, action: () => {}, description: "Switch to tab N in current view" },
+    // Display-only too — bound in market-view.tsx (MKT chart timeframe).
+    { key: "↑ / ↓", action: () => {}, description: "MKT chart: coarser / finer bar interval" },
+    { key: "← / →", action: () => {}, description: "MKT chart: shorter / longer range" },
   ];
 
   const isMobile = useIsMobile();

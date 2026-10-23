@@ -52,6 +52,44 @@ export const PERIOD_TO_YF: Record<TimePeriod, string> = {
   max: "max",
 };
 
+/**
+ * One step along an ordered list — the MKT arrow keys (↑/↓ bar interval,
+ * ←/→ range). Clamped at both ends: holding ↑ stops at 1W instead of wrapping
+ * round to 1-minute bars. An unknown current value starts from the nearest end.
+ */
+export function stepIn<T>(list: readonly T[], current: T, dir: 1 | -1): T {
+  const i = list.indexOf(current);
+  if (i < 0) return dir > 0 ? list[0] : list[list.length - 1];
+  return list[Math.min(list.length - 1, Math.max(0, i + dir))];
+}
+
+/**
+ * May a bare arrow key move the MKT chart's timeframe? Not while typing, not
+ * when something focused already used the key (a splitter, a list — they call
+ * preventDefault), not inside a control that owns arrows by its role, not in a
+ * floating chart window (it has its own timeframe), and never with a modifier.
+ */
+export function arrowShortcutAllowed(ev: {
+  key: string;
+  defaultPrevented: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  target: EventTarget | null;
+}): boolean {
+  if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(ev.key)) return false;
+  if (ev.defaultPrevented || ev.ctrlKey || ev.altKey || ev.metaKey || ev.shiftKey) return false;
+  const el = ev.target as (Element & { isContentEditable?: boolean }) | null;
+  if (!el || typeof el.closest !== "function") return true;
+  const tag = el.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable)
+    return false;
+  return !el.closest(
+    '[role="slider"],[role="separator"],[role="listbox"],[role="menu"],[role="grid"],[role="dialog"],[role="alertdialog"],[data-chart-window]'
+  );
+}
+
 export interface ChartTimeframeOptions {
   defaultPeriod?: TimePeriod;
   defaultInterval?: BarInterval;
