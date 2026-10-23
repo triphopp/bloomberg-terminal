@@ -269,6 +269,11 @@ the calendar). It is a view of its own (`views/calendar/`, moved out of PORT →
 was too far for something read daily). To send the user somewhere from anywhere: a thesis or a question →
 `useOpenTools()` / `toolsRequestAtom`; a day of the calendar → `useOpenCalendar()` / `calendarRequestAtom` — do not
 add another request atom. ASK reads it as `get_page_data("calendar", "events")`.
+**Agents (2026-10-23):** MCP `get_calendar` reads the same feed (filters: category, thesis, symbol, impact);
+`calendar_link_question(event_id, Q-ref, reads)` → `POST /api/calendar/questions` lets a macro release or a company
+date answer an open question — the event is copied once into `question_dates` (that is where a question waits; still no
+calendar table), the question turns `due` on the day and comes back in `question_queue`. A macro event is linked to a
+question only, never inferred onto a thesis.
 `pytest tests/test_calendar_feed.py` · `npm run test:views`.
 
 **Google Calendar (2026-10-11)** — CAL → GOOGLE pushes the same events, one way, into a "Bloomberg Terminal" calendar in

@@ -71,6 +71,11 @@ mcp = MCPServer(
         "question_answer is refused without evidence (zettel with url + quote); "
         "inference is allowed only with an assumption someone can test. Your answer "
         "is a proposal: only the user accepts it or drops a question. "
+        "CALENDAR: get_calendar is every dated thing in one list (macro releases, "
+        "earnings / ex-dividend dates, what the theses wait on, expiries). When an "
+        "upcoming event could answer an open question, calendar_link_question ties "
+        "them, with what to read on the day; the question then turns due on that day "
+        "and comes back in question_queue. "
         "TRACKED NUMBERS: a number a thesis stands or falls on (a kill condition, a "
         "margin, an inventory figure, a contract price) lives in PORT → TOOLS → TRACK, "
         "not as a line in the thesis body: where it is read, what was expected for the "
@@ -1103,6 +1108,97 @@ def question_date_link(date_ref_or_id: str, question: str, reads: str = "") -> s
     number or statement to look for when the date arrives."""
     return _out(_call("POST", f"{QUESTIONS}/calendar/{date_ref_or_id}/questions",
                       body={"question": question, "reads": reads}))
+
+
+# ── The calendar (CAL view): every dated thing in one list ────────────────────
+#
+# Read with get_calendar. A macro release or a company date that could answer
+# an open question is tied to it with calendar_link_question — the question then
+# turns due on that day and comes back through question_queue.
+
+CalCategory = Literal["MACRO", "COMPANY", "THESIS", "PORT"]
+_CAL_KEEP = ("id", "date", "days_until", "category", "kind", "title", "symbol", "impact",
+             "estimated", "source", "source_url", "detail", "done", "due", "tag")
+
+
+def _cal_row(e: dict) -> dict:
+    row = {k: e[k] for k in _CAL_KEEP if e.get(k) not in (None, "", False)}
+    if e.get("theses"):
+        row["theses"] = [t["id"] for t in e["theses"]]
+    ref = e.get("ref") or {}
+    if ref.get("questions"):
+        row["questions"] = [{k: q.get(k) for k in ("ref", "title", "status", "reads")}
+                            for q in ref["questions"]]
+    elif ref.get("ref"):
+        row["ref"] = ref["ref"]
+    return row
+
+
+@mcp.tool()
+def get_calendar(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    category: Optional[CalCategory] = None,
+    thesis_id: Optional[str] = None,
+    symbol: Optional[str] = None,
+    include_done: bool = False,
+    min_impact: Optional[Literal["high", "medium"]] = None,
+) -> str:
+    """The terminal's one calendar (CAL view), soonest first: MACRO releases (FOMC,
+    CPI, NFP, PCE, GDP …), COMPANY earnings / ex-dividend / splits of every thesis
+    symbol and holding, THESIS dates (dated notes, question-calendar dates with the
+    questions waiting on them, tracked-number releases) and PORT dates (option
+    expiries, HOLD reviews). start/end YYYY-MM-DD (default a week back → 45 days
+    ahead, at most 400 days). `estimated` = the day is not confirmed by its
+    publisher; `due` = the day has come and something waiting on it is unread;
+    `theses` = thesis ids the event belongs to (a macro event belongs to none by
+    itself). `pending` lists symbols whose company dates are still loading — ask
+    again in a few seconds before saying a company has no date.
+    To let an event answer an open question: calendar_link_question(event id, Q-ref)."""
+    data = _call("GET", f"{API}/api/calendar", params={"start": start, "end": end})
+    rank = {"high": 0, "medium": 1}
+    rows = []
+    for e in data["events"]:
+        if category and e["category"] != category:
+            continue
+        if not include_done and e.get("done"):
+            continue
+        if thesis_id and thesis_id not in {t["id"] for t in e.get("theses") or []}:
+            continue
+        if symbol and (e.get("symbol") or "").upper() != symbol.upper():
+            continue
+        if min_impact and e["category"] == "MACRO" and rank.get(e.get("impact") or "", 9) > rank[min_impact]:
+            continue
+        rows.append(_cal_row(e))
+    src = data.get("sources") or {}
+    failed = {k: v for k, v in src.items() if not v.get("ok")}
+    return _out(_clean({
+        "as_of": data["as_of"], "start": data["start"], "end": data["end"],
+        "events": rows, "count": len(rows),
+        "pending": (src.get("company") or {}).get("pending") or None,
+        "sources_failed": failed or None,
+        "fomc_listed_through": (src.get("macro") or {}).get("fomc_through"),
+    }))
+
+
+@mcp.tool()
+def calendar_link_question(event_id: str, question: str, reads: str) -> str:
+    """Tie an open question to a calendar event that could answer it — a macro
+    release (macro:CPI:2026-11-12), a company date (co:EARNINGS:NVDA:2026-11-19)
+    or a question-calendar date (qdate:<id>). event_id comes from get_calendar.
+    `reads` = the number or statement to look for on that day (e.g. "data-center
+    revenue vs the 10% QoQ the answer assumes").
+
+    The event is copied onto the question calendar once (title, day, source,
+    CONFIRMED only when the publisher's own link is there) and reused by every
+    later question. On the day, the question turns due and appears in
+    question_queue: read what `reads` names from the source, then answer it the
+    question protocol's way (get_question_spec) — the event passing is not an
+    answer by itself. A macro event is never tied to a thesis for you: link it
+    only to a question it bears on. If an estimated company date moves, move the
+    copy with question_date_update (with the reason)."""
+    return _out(_call("POST", f"{API}/api/calendar/questions",
+                      body={"event_id": event_id, "question": question, "reads": reads}))
 
 
 @mcp.tool()

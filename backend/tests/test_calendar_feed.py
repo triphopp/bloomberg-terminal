@@ -455,3 +455,114 @@ def test_a_reminder_outlives_a_restart(env):
     env.db.init_alerts_schema()                       # what every start-up runs
     left = env.client.get("/api/alerts/events", params={"acked": "false"}).json()
     assert [e["snapshot"].get("note_id") for e in left] == [n["id"]]
+
+
+# ── A question waits on a calendar event ─────────────────────────────────────
+
+def _question(env, thesis, title="Does data-center revenue keep growing?"):
+    r = env.client.post("/api/v2/questions", json={"title": title, "thesis_id": thesis["id"]})
+    assert r.status_code == 200, r.text
+    return r.json()["question"]
+
+
+def _link(env, event_id, q, reads="data-center revenue", status=200):
+    r = env.client.post("/api/calendar/questions",
+                        json={"event_id": event_id, "question": q["ref"], "reads": reads})
+    assert r.status_code == status, r.text
+    return r.json()
+
+
+def test_a_company_date_becomes_one_question_date_that_every_question_reuses(env):
+    t = _thesis(env, "NVDA")
+    _company_fetch(env, NVDA={
+        "earnings": [{"date": f"{_iso(6)} 16:00", "epsEstimate": 1.25, "reportedEPS": None,
+                      "surprise": None, "eventType": "Earnings", "estimated": True,
+                      "source": "yahoo_calendar"}],
+        "dividends": [], "splits": [], "upcoming_dividends": [], "errors": {},
+    })
+    _get(env)
+    _drain(env.feed)
+    eid = f"co:EARNINGS:NVDA:{_iso(6)}"
+    q1, q2 = _question(env, t), _question(env, t, "Do gross margins hold above 70%?")
+
+    d = _link(env, eid, q1)["date"]
+    assert (d["kind"], d["symbol"], d["date"][:10]) == ("EARNINGS", "NVDA", _iso(6))
+    # Yahoo's day is not the company's announcement: estimated, and it says where it came from.
+    assert d["status"] == "ESTIMATED" and d["source"].startswith("terminal calendar:")
+    assert eid in d["note"]
+    again = _link(env, eid, q2, reads="gross margin")["date"]
+    assert again["id"] == d["id"] and {q["ref"] for q in again["questions"]} == {q1["ref"], q2["ref"]}
+    _link(env, eid, q1, status=409)   # already waiting on it
+
+    # On the calendar the questions now hang on that day.
+    qdate = _by_id(_get(env))[f"qdate:{d['id']}"]
+    assert {q["ref"] for q in qdate["ref"]["questions"]} == {q1["ref"], q2["ref"]}
+
+
+def test_a_macro_release_links_confirmed_only_with_the_publishers_link(env):
+    t = _thesis(env, "TLT")
+    q = _question(env, t, "Does core inflation keep falling?")
+    day = env.feed.ec.fomc_events(TODAY, TODAY + timedelta(days=200))[0]["date"][:10]
+    d = _link(env, f"macro:FOMC:{day}", q, reads="the statement on balance-sheet runoff")["date"]
+    assert (d["status"], d["kind"]) == ("CONFIRMED", "EVENT") and d["source_url"]
+    assert d["questions"][0]["reads"].startswith("the statement")
+
+
+def test_the_question_turns_due_when_the_day_comes(env):
+    t = _thesis(env, "TLT")
+    q = _question(env, t, "Did the Fed signal a cut?")
+    past = env.feed.ec.fomc_events(TODAY - timedelta(days=120), TODAY - timedelta(days=1))[-1]["date"][:10]
+    _link(env, f"macro:FOMC:{past}", q, reads="the dot plot median")
+    queued = env.client.get("/api/v2/questions/queue").json()["queue"]
+    assert q["ref"] in {r["ref"] for r in queued}
+    got = env.client.get(f"/api/v2/questions/{q['ref']}").json()
+    assert got["state"]["due"] is True
+
+
+def test_only_events_that_can_answer_a_question_are_linked(env):
+    t = _thesis(env)
+    q = _question(env, t)
+    note = _note(env, t, "AI capex readout", _iso(3))
+    _link(env, f"note:{note['id']}:{_iso(3)}", q, status=404)  # not a calendar id
+    bad = env.client.post("/api/calendar/questions", json={"event_id": "nonsense", "question": q["ref"]})
+    assert bad.status_code == 422
+    missing = env.client.post("/api/calendar/questions",
+                              json={"event_id": f"macro:CPI:{_iso(2)}", "question": q["ref"]})
+    assert missing.status_code == 404
+
+
+def test_mcp_get_calendar_filters_and_keeps_what_an_agent_needs(monkeypatch):
+    import json
+    import mcp_server
+
+    def ev(eid, cat, kind, **kw):
+        return {"id": eid, "date": "2026-11-12", "days_until": 20, "category": cat, "kind": kind,
+                "title": kind, "symbol": None, "impact": None, "estimated": False, "source": "",
+                "source_url": "", "detail": "", "done": False, "due": False, "theses": [],
+                "ref": None, "tag": None, **kw}
+
+    payload = {"as_of": "2026-10-23", "start": "2026-10-16", "end": "2026-12-07", "events": [
+        ev("macro:CPI:2026-11-12", "MACRO", "CPI", impact="high", source="FRED"),
+        ev("macro:JOLTS:2026-11-12", "MACRO", "JOLTS", impact="medium"),
+        ev("co:EARNINGS:NVDA:2026-11-19", "COMPANY", "EARNINGS", symbol="NVDA", estimated=True,
+           theses=[{"id": "t1"}]),
+        ev("co:DIVIDEND:NVDA:2026-09-01", "COMPANY", "DIVIDEND", symbol="NVDA", done=True,
+           theses=[{"id": "t1"}]),
+        ev("qdate:d1", "THESIS", "QDATE", theses=[{"id": "t1"}],
+           ref={"type": "question_date", "ref": "D-0001",
+                "questions": [{"ref": "Q-0001", "title": "q", "status": "OPEN", "reads": "rev", "id": "x"}]}),
+    ], "sources": {"macro": {"ok": True, "fomc_through": "2026-12-09"},
+                   "company": {"ok": True, "pending": ["AAPL"]}, "notes": {"ok": False, "error": "X"}}}
+    monkeypatch.setattr(mcp_server, "_call", lambda *a, **k: payload)
+
+    out = json.loads(mcp_server.get_calendar())
+    assert [e["id"] for e in out["events"]] == ["macro:CPI:2026-11-12", "macro:JOLTS:2026-11-12",
+                                                "co:EARNINGS:NVDA:2026-11-19", "qdate:d1"]  # done left out
+    assert out["pending"] == ["AAPL"] and "notes" in out["sources_failed"]
+    q = out["events"][-1]
+    assert q["questions"] == [{"ref": "Q-0001", "title": "q", "status": "OPEN", "reads": "rev"}]
+    assert out["events"][2]["theses"] == ["t1"] and out["events"][2]["estimated"] is True
+    hi = json.loads(mcp_server.get_calendar(min_impact="high"))
+    assert "macro:JOLTS:2026-11-12" not in {e["id"] for e in hi["events"]}
+    t1 = json.loads(mcp_server.get_calendar(thesis_id="t1", include_done=True))
+    assert {e["kind"] for e in t1["events"]} == {"EARNINGS", "DIVIDEND", "QDATE"}
