@@ -6,7 +6,7 @@
  *   Senkou A    (leading A)   (Tenkan + Kijun) / 2, plotted `shift` ahead
  *   Senkou B    (leading B)   midpoint of the last `senkou` bars, `shift` ahead (52)
  *   Chikou      (lagging)     the close, plotted `shift` back
- *   Kumo        (cloud)       the space between Senkou A and B — green while A ≥ B
+ *   Kumo        (cloud)       the space between Senkou A and B — blue while A ≥ B
  *
  * Displacement follows TradingView: `shift` 26 counts the current bar as the
  * first, so the spans land 25 bars ahead and Chikou 25 back. That is the chart
@@ -40,14 +40,25 @@ import type {
   SeriesColumns,
 } from "../types";
 
+/**
+ * No green and no red: those are the candles. The textbook palette (green
+ * cloud / red Kijun / green Chikou) puts five lines in the candles' own two
+ * colours, and the chart turns into one tangle.
+ *   - Tenkan / Kijun: saturated cyan and violet — the two lines read against
+ *     price, so they stay sharp.
+ *   - Cloud: a wash, not a shape — blue while A ≥ B, orange while below, the
+ *     edges half-transparent so they frame the fill instead of competing.
+ *   - Chikou: dotted slate — context, the line looked at least.
+ * Slate and the translucent fills hold on the light theme too.
+ */
 export const ICHIMOKU_COLORS = {
-  tenkan: "#2962ff",
-  kijun: "#e53935",
-  chikou: "#43a047",
-  spanA: "#66bb6a",
-  spanB: "#ef5350",
-  cloudUp: "rgba(76,175,80,0.16)",
-  cloudDown: "rgba(239,83,80,0.16)",
+  tenkan: "#22d3ee",
+  kijun: "#c084fc",
+  chikou: "rgba(148,163,184,0.7)",
+  spanA: "rgba(96,165,250,0.5)",
+  spanB: "rgba(251,146,60,0.5)",
+  cloudUp: "rgba(59,130,246,0.13)",
+  cloudDown: "rgba(249,115,22,0.11)",
 } as const;
 
 export const ICHIMOKU_PARAMS: IndicatorParam[] = [
@@ -218,6 +229,7 @@ export const createIchimoku: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: ICHIMOKU_COLORS.chikou,
           lineWidth: 1,
+          lineStyle: "dotted",
           values: chikou,
           from: 0,
           emit: new Uint8Array(n).fill(1, 0, drawn),

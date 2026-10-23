@@ -40,13 +40,14 @@ import type {
 } from "../../types";
 
 export const ICHIMOKU_COLORS = {
-  tenkan: "#2962ff",
-  kijun: "#e53935",
-  chikou: "#43a047",
-  spanA: "#66bb6a",
-  spanB: "#ef5350",
-  cloudUp: "rgba(76,175,80,0.16)",
-  cloudDown: "rgba(239,83,80,0.16)",
+  // Restyled 2026-10-23 with chart/indicators/ichimoku.ts (no green/red — the candles').
+  tenkan: "#22d3ee",
+  kijun: "#c084fc",
+  chikou: "rgba(148,163,184,0.7)",
+  spanA: "rgba(96,165,250,0.5)",
+  spanB: "rgba(251,146,60,0.5)",
+  cloudUp: "rgba(59,130,246,0.13)",
+  cloudDown: "rgba(249,115,22,0.11)",
 } as const;
 
 export const ICHIMOKU_PARAMS: IndicatorParam[] = [
@@ -209,6 +210,7 @@ export const createIchimoku: IndicatorFactory = (overrides = {}) => {
           type: "line",
           color: ICHIMOKU_COLORS.chikou,
           lineWidth: 1,
+          lineStyle: "dotted",
           data: chikou,
         });
       }
