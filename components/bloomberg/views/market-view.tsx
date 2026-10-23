@@ -84,6 +84,7 @@ import {
 import type { BarInterval, IndicatorRegistryEntry, OhlcvBar, TimePeriod } from "../chart";
 import { CompareChart } from "../chart/CompareChart";
 import { FearGreedPane } from "../chart/FearGreedPane";
+import { FooterGauges } from "../chart/FooterGauges";
 import { PEPane } from "../chart/PEPane";
 import { RegressionControls } from "../chart/RegressionControls";
 import { TrendLineControls } from "../chart/TrendLineControls";
@@ -3828,6 +3829,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
           onPeriodChange={(p) => handleHeatmapPeriod(p, heatmapChartType)}
           onIntervalChange={(iv) => handleHeatmapInterval(iv)}
         />
+        <FooterGauges colors={colors} />
         {renderChartFooterStats()}
       </div>
     </div>
