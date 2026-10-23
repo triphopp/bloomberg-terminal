@@ -2626,3 +2626,40 @@ or price not read" although OCR read every line. Quantity sits under the header 
 label, and the symbol's OCR box (") SKHU") starts inside the side word's so `same_row` (x0 > anchor.x1 − 5) dropped it.
 Fixed in `parsers/dime.py`; fixture `dime_buy_shares_market_rapidocr.json`. A new FAIL on a real slip: dump the tokens
 first (`ocr.read` → y, x, text) — every miss so far was geometry or a label, never recognition.
+
+## MKT takes minutes to fill on open — WATCHLIST / signals "slow" but their endpoints are fast (2026-10-21)
+`/api/watchlist/signals` answered in 0.2 s warm / 0.7 s cold (20 symbols), yet at the 20:38 cold start the watchlist's
+requests reached the backend ~2 min after the page opened. **Cause: a browser opens six HTTP/1.1 connections per
+host**, and slow endpoints held them: `/api/regime/correlation` 115 s, `/api/tick-custom` 114 s, `/api/regime/trend`
+93 s, `/api/volatility` 62 s, `/api/rates/curve` 43 s, plus the always-open `/api/stream/quotes`. Behind that: every
+cache recomputed **inside the request** on expiry (TAIL signals p50 13.8 s, max 172 s, every 5 min); regime made ~55
+Yahoo calls per refresh (one `yf.download` of 11 ETFs per period, outside the shared pool); the background scans
+(alerts, TRADE GUARD, IV, series, calendar, margin) all woke 60–150 s after boot — 1,097 Yahoo calls in the first
+10 min (≈250 steady), Yahoo DEGRADED; and the frontend was `next dev` (26 MB of JS, every `/api` route compiled on
+first hit) because the running launcher had been started without `--prod`. Watchlist's own routes touch **no DB**
+(latency log `db_ms` 0) — all fetch; the symbol list itself is the DB (`/api/pins/*`, 0.3–1.1 s cold).
+Fixes: `TTLCache.get_or_refresh` (stale-while-revalidate + last good on disk) on those routes; regime = one shared
+2y/1d `history_future` pull sliced per period (same numbers, 2y weekly via `W-FRI` resample); scheduler passes call
+`request_latency.wait_for_quiet()` (≤ 2 vendor-bound requests in flight for 10 s, max 180 s); WATCHLIST paints the
+pins from localStorage before the DB answers; signals + Polymarket summaries use `slowDataQueue` instead of waiting
+behind quote batches. **Diagnose next time:** `logs/latency.jsonl` around the page-open time (a route ≫ 10 s holds a
+connection), then `upstream_report.py` volume — not the watchlist code. Tests must not write `backend/cache/swr_*`
+(conftest `_no_real_persisted_cache`): a stubbed `swr_tick_custom_IXG.pkl` would be served to the real app.
+**Follow-up, same day — "PRICES 0/34 · updating / SIGNALS 0/34 · updating"** is the WATCHLIST loading strip, not an
+error (a failure reads `UPDATE DELAYED`). Warm it shows ~0.4 s; on a cold backend 4 s, because a full quote costs a
+quoteSummary per symbol. Now rows paint from `localStorage["bloomberg_watchlist_snapshot_v1_*"]` (strip: `N cached 2h
+old · updating`) and the first watchlist quote fetch is lite (`fetchQuoteFirstPaint`). **Trap found while building it:**
+a stream tick patches a seeded quote — fresh `dataUpdatedAt`, so React Query never refetches it — and `patchQuote`
+computes CHG from the stored `regularMarketPreviousClose`, which on a snapshot from an earlier day is the wrong day's
+close. Seeded quotes are therefore invalidated (`alwaysRefetch`) so the lite fetch always runs on mount.
+**Follow-up — WATCHLIST data by visibility (2026-10-21).** Every row stays rendered (ASK's `read_screen` reads the DOM
+text; Ctrl+F; group drag-and-drop), so no virtualization: at 34 rows the list was 230 of 1,721 DOM nodes with no long
+task. What scales with the list is per-symbol data, so only rows on screen ±12 (`useVisibleSymbols`) get stream ticks
+and the 60 s poll; the rest poll every 5 min (sort by LAST/CHG/VOL still reads them). Polymarket summaries are fetched
+only when shown — TABLE view or sort by PM (it used to search for every symbol in every view, 1.4–4 s per 10) — and
+then only for rows on screen unless sorting by PM. Two traps hit while building it: rows are REMOUNTED when the table's
+shape changes, so the observer must find rows with a MutationObserver (an observer on a detached row reports "off
+screen"); and an explicit scroll-container root picked at mount went stale — use the viewport root (it clips by
+scrolling ancestors) and buffer by rows, not `rootMargin`. The Claude Browser pane stops rendering when hidden
+(`requestAnimationFrame` count 0): IntersectionObserver results there are meaningless — check `rAF` first.
+

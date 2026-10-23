@@ -2,9 +2,15 @@
 
 import { useMarketQueryResults } from "./useMarketQueryResults";
 
-import { SymbolBatcher, marketRetry, marketRetryDelay } from "@/lib/market-data-client";
+import {
+  SymbolBatcher,
+  marketRetry,
+  marketRetryDelay,
+  slowDataQueue,
+} from "@/lib/market-data-client";
 import { type QueryObserverResult, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
+import { cachedRows, useSnapshotSave, useSnapshotSeed } from "./useWatchlistSnapshot";
 
 export type TrendState = "UP" | "DOWN" | "FLAT";
 export type RsiState = "OB" | "OS" | "NEUTRAL";
@@ -39,7 +45,15 @@ export interface WatchlistSignalsResponse {
   count: number;
 }
 
-const batcher = new SymbolBatcher<WatchlistSignal>("/api/watchlist/signals", "signals");
+const signalKey = (symbol: string) => ["watchlist-signals", symbol];
+
+const batcher = new SymbolBatcher<WatchlistSignal>(
+  "/api/watchlist/signals",
+  "signals",
+  20,
+  undefined,
+  slowDataQueue
+);
 
 export function useWatchlistSignals(symbols: string[], enabled = true) {
   const client = useQueryClient();
@@ -48,7 +62,7 @@ export function useWatchlistSignals(symbols: string[], enabled = true) {
   const options = useMemo(
     () =>
       unique.map((symbol) => ({
-        queryKey: ["watchlist-signals", symbol],
+        queryKey: signalKey(symbol),
         queryFn: ({ signal }: { signal: AbortSignal }) => batcher.request(symbol, signal),
         enabled,
         staleTime: 15 * 60_000,
@@ -59,17 +73,21 @@ export function useWatchlistSignals(symbols: string[], enabled = true) {
       })),
     [unique, enabled]
   );
+  // Stored scan paints at once; refetched when older than staleTime (15 min).
+  const seeded = useSnapshotSeed<WatchlistSignal>(client, "signals", unique, signalKey, enabled);
   const combine = useCallback(
     (queries: QueryObserverResult<WatchlistSignal>[]) => ({
       signals: Object.fromEntries(queries.flatMap((q, i) => (q.data ? [[unique[i], q.data]] : []))),
       errors: queries.flatMap((q, i) => (q.error ? [`${unique[i]}: ${q.error.message}`] : [])),
       isLoading: queries.some((q) => q.isFetching),
       error: queries.find((q) => q.error)?.error ?? null,
+      ...cachedRows(unique, queries, seeded, Date.now()),
     }),
-    [unique]
+    [unique, seeded]
   );
   const results = useMarketQueryResults(options, enabled ? 15 * 60_000 : false);
   const combined = useMemo(() => combine(results), [combine, results]);
+  useSnapshotSave("signals", unique, results, seeded);
   return {
     ...combined,
     refetch: () =>

@@ -14,10 +14,21 @@ Usage:
     _cache.set(key, data)
 """
 
+import pickle
+import re
 import threading
 import time
 from collections import OrderedDict
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
+
+#: Where `get_or_refresh(persist=...)` keeps the last good value across
+#: restarts — the same gitignored folder `last_good.py` writes to.
+PERSIST_DIR = Path(__file__).resolve().parent / "cache"
+
+#: A refresh that failed is not tried again by the next request for this long,
+#: or every poll during an outage would start another background pull.
+REFRESH_RETRY_S = 30
 
 
 class TTLCache:
@@ -38,6 +49,7 @@ class TTLCache:
         self._store: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._lock = threading.Lock()
         self._inflight: dict[str, threading.Event] = {}  # per-key coalescing
+        self._retry_at: dict[str, float] = {}  # get_or_refresh: failed refresh backoff
 
     def get(self, key: str, ttl: int | None = None) -> Any:
         """Return cached data if fresh, None otherwise.
@@ -57,6 +69,16 @@ class TTLCache:
                 return entry["data"]
             del self._store[key]
             return None
+
+    def peek(self, key: str, ttl: int | None = None) -> Any:
+        """Like get(), but an expired entry stays — get() deletes it, which
+        would throw away the stale value get_or_refresh serves during a refresh."""
+        effective_ttl = ttl if ttl is not None else self._ttl
+        with self._lock:
+            entry = self._store.get(key)
+        if entry is None or time.time() - entry["ts"] >= effective_ttl:
+            return None
+        return entry["data"]
 
     def set(self, key: str, data: Any) -> None:
         """Store data under key with the current timestamp."""
@@ -114,6 +136,135 @@ class TTLCache:
             with self._lock:
                 self._inflight.pop(key, None)
             event.set()
+
+    def get_or_refresh(
+        self,
+        key: str,
+        fn: Callable[[], Any],
+        *,
+        ttl: int | None = None,
+        max_stale: float | None = None,
+        persist: str | None = None,
+        valid: Callable[[Any], bool] | None = None,
+    ) -> Any:
+        """Stale-while-revalidate: a request never waits on a refresh it can skip.
+
+        * fresh entry (younger than `ttl`)        → returned.
+        * stale entry (younger than `max_stale`)  → returned at once; ONE
+          background thread recomputes it (coalesced per key, failures back
+          off REFRESH_RETRY_S).
+        * nothing usable                          → computed in the request,
+          coalesced like `get_or_set`.
+
+        Why: a 5-min TTL that recomputes inside the request made every
+        expiry a 6–170 s wait (TAIL ribbon, 2026-10-21), and a browser holds
+        only six connections per host, so one such wait stalled WATCHLIST too.
+
+        `persist` names a file in PERSIST_DIR that keeps the last good value
+        across restarts — only for data whose timestamp travels with it, since
+        a restart serves it (up to `max_stale` old) until the refresh lands.
+        `valid(value)` False = a failed compute: it is returned only when
+        there is nothing older to serve, and never stored over a good value.
+        """
+        effective_ttl = ttl if ttl is not None else self._ttl
+        now = time.time()
+        with self._lock:
+            entry = self._store.get(key)
+        if entry is None and persist:
+            entry = self._load_persisted(key, persist, max_stale)
+        if entry is not None:
+            age = now - entry["ts"]
+            if age < effective_ttl:
+                return entry["data"]
+            if max_stale is None or age < max_stale:
+                self._refresh_in_background(key, fn, persist, valid)
+                return entry["data"]
+
+        def compute() -> Any:
+            data = fn()
+            if valid is None or valid(data):
+                self._persist(persist, data)
+            return data
+
+        data = self.get_or_set(key, compute, ttl=effective_ttl)
+        if valid is not None and data is not None and not valid(data):
+            self.delete(key)  # a failure is not a hit: the next request retries
+        return data
+
+    def _refresh_in_background(self, key, fn, persist, valid) -> None:
+        with self._lock:
+            if key in self._inflight or time.time() < self._retry_at.get(key, 0):
+                return
+            event = threading.Event()
+            self._inflight[key] = event
+
+        def run() -> None:
+            try:
+                data = fn()
+                if data is not None and (valid is None or valid(data)):
+                    self.set(key, data)
+                    self._persist(persist, data)
+                    with self._lock:
+                        self._retry_at.pop(key, None)
+                else:
+                    with self._lock:
+                        self._retry_at[key] = time.time() + REFRESH_RETRY_S
+            except Exception as exc:  # noqa: BLE001 — the stale value keeps serving
+                print(f"[cache] background refresh of {key} failed: {type(exc).__name__}: {exc}")
+                with self._lock:
+                    self._retry_at[key] = time.time() + REFRESH_RETRY_S
+            finally:
+                with self._lock:
+                    self._inflight.pop(key, None)
+                event.set()
+
+        threading.Thread(target=run, name=f"cache-refresh:{key}"[:60], daemon=True).start()
+
+    @classmethod
+    def drop_persisted(cls, name: str) -> None:
+        """Forget a persisted copy — a "clear cache" must not be answered from disk."""
+        try:
+            cls._persist_path(name).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _persist_path(name: str) -> Path:
+        return PERSIST_DIR / f"swr_{re.sub(r'[^A-Za-z0-9_.-]', '_', name)[:120]}.pkl"
+
+    def _persist(self, name: str | None, data: Any) -> None:
+        if not name or data is None:
+            return
+        path = self._persist_path(name)
+        try:
+            PERSIST_DIR.mkdir(exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_bytes(pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL))
+            tmp.replace(path)
+        except Exception as exc:  # noqa: BLE001 — persistence is best effort
+            print(f"[cache] could not persist {name}: {type(exc).__name__}")
+
+    def _load_persisted(self, key: str, name: str, max_stale: float | None):
+        """Seed the in-memory entry from disk, dated by the file's mtime."""
+        path = self._persist_path(name)
+        try:
+            if not path.exists():
+                return None
+            ts = path.stat().st_mtime
+            if max_stale is not None and time.time() - ts >= max_stale:
+                return None
+            data = pickle.loads(path.read_bytes())
+        except Exception as exc:  # noqa: BLE001 — a bad file is just a cold cache
+            print(f"[cache] could not read {path.name}: {type(exc).__name__}")
+            return None
+        with self._lock:
+            entry = self._store.get(key)
+            if entry is None:
+                entry = {"data": data, "ts": ts}
+                self._store[key] = entry
+                while len(self._store) > self._maxsize:
+                    self._store.popitem(last=False)
+        return entry
 
     def delete(self, key: str) -> None:
         """Remove a specific key from the cache."""

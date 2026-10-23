@@ -153,3 +153,40 @@ def test_run_sync_outside_request_passes_through():
     async def go():
         return await anyio.to_thread.run_sync(lambda: 41 + 1)
     assert _run(go()) == 42
+
+
+def test_foreground_inflight_counts_vendor_lane_only(monkeypatch):
+    """A page load shows up as default-lane requests in flight; local reads and
+    long-lived streams do not, or the background quiet gate would never open."""
+    app, gate = _app()
+    seen = {}
+
+    @app.get("/api/stream/quotes")
+    def stream():
+        seen["during_stream"] = rl.foreground_inflight()
+        return {}
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            blocker = asyncio.create_task(c.get("/api/slow/X"))
+            await asyncio.sleep(0.1)
+            seen["during_slow"] = rl.foreground_inflight()
+            await c.get("/api/pins/assets")
+            await c.get("/api/stream/quotes")
+            gate.set()
+            await blocker
+
+    _run(go())
+    assert seen["during_slow"] == 1
+    assert seen["during_stream"] == 1          # the slow call, not the stream itself
+    assert rl.foreground_inflight() == 0
+
+
+def test_wait_for_quiet_opens_once_calm_and_caps_the_wait(monkeypatch):
+    monkeypatch.setattr(rl, "_fg_inflight", 0)
+    waited = rl.wait_for_quiet(quiet_s=0.05, poll_s=0.01, max_wait_s=5)
+    assert waited < 1
+    monkeypatch.setattr(rl, "_fg_inflight", 9)   # a page that never stops loading
+    t = time.monotonic()
+    rl.wait_for_quiet(quiet_s=0.05, poll_s=0.01, max_wait_s=0.2)
+    assert 0.15 <= time.monotonic() - t < 1

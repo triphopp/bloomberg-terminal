@@ -31,6 +31,8 @@ import threading
 import time
 from datetime import datetime, timezone
 
+import request_latency
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_INTERVAL = 15 * 60
@@ -188,7 +190,7 @@ def status(now: datetime | None = None) -> dict:
         out["state"] = "OFF"
         return out
     ok, started = _status["last_ok_at"], _status["started_at"]
-    budget = 2 * interval + STARTUP_DELAY
+    budget = 2 * interval + STARTUP_DELAY + request_latency.QUIET_MAX_WAIT_S
     if ok is None:
         late = started is not None and (now - started).total_seconds() > budget
         out["state"] = "STALE" if late else ("ERROR" if _status["last_error"] else "STARTING")
@@ -204,6 +206,7 @@ def status(now: datetime | None = None) -> dict:
 def _loop(interval: int) -> None:
     time.sleep(STARTUP_DELAY)
     while True:
+        request_latency.wait_for_quiet()  # let a page load finish first
         _status["last_run_at"] = _now()
         try:
             res = run_once()

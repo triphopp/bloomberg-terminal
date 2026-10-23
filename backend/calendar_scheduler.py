@@ -24,6 +24,8 @@ import threading
 import time
 from datetime import date, datetime, timedelta, timezone
 
+import request_latency
+
 import calendar_feed as feed
 
 logger = logging.getLogger(__name__)
@@ -89,6 +91,7 @@ def run_once() -> dict:
 def _loop(interval: int) -> None:
     time.sleep(STARTUP_DELAY)
     while True:
+        request_latency.wait_for_quiet()  # let a page load finish first
         try:
             run_once()
         except Exception as e:  # noqa: BLE001 — a bad tick must not kill the loop

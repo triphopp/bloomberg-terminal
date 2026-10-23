@@ -50,6 +50,7 @@ import {
   probColor,
   useStockPredictionSummaries,
 } from "../hooks/useStockPredictions";
+import { useVisibleSymbols } from "../hooks/useVisibleSymbols";
 import { useWatchlistQuotes, useWatchlistSparklines } from "../hooks/useWatchlistData";
 import {
   type TrendState,
@@ -1297,6 +1298,7 @@ const CompactWatchRow = memo(function CompactWatchRow({
     >
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: row click is a shortcut; the symbol opens from the keyboard via the context menu and the TABLE view */}
       <tr
+        data-wl-sym={pin.symbol}
         className="cursor-pointer hover:bg-[#111]"
         style={{
           borderBottom: "1px solid #111",
@@ -1359,6 +1361,14 @@ const CompactWatchRow = memo(function CompactWatchRow({
     </SymbolContextMenu>
   );
 });
+
+/** "3m old" / "2h old" / "1d old" — age of the oldest cached row on the strip. */
+function fmtCachedAge(ms: number): string {
+  const m = Math.max(0, Math.round(ms / 60_000));
+  if (m < 60) return `${m}m old`;
+  const h = Math.round(m / 60);
+  return h < 48 ? `${h}h old` : `${Math.round(h / 24)}d old`;
+}
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -1606,6 +1616,27 @@ export const PinnedAssets = memo(function PinnedAssets({
       }
     };
 
+    // Paint the last known list at once. Every row's quote and signal request
+    // waits for this symbol list, and the DB answer can sit behind the rest of
+    // a page load (a browser opens six connections per host). The DB result
+    // replaces it a moment later, and only that result is saved back
+    // (the saveToLS effect waits for syncStatus "ok").
+    if (pins.length === 0) {
+      try {
+        const lsPins = localStorage.getItem(LS_PINS);
+        if (lsPins) {
+          const lsGroups = localStorage.getItem(LS_GROUPS);
+          const lsTags = localStorage.getItem(LS_TAGS);
+          setGroups(lsGroups ? JSON.parse(lsGroups) : [DEFAULT_GROUP]);
+          setPins(applySavedOrder(JSON.parse(lsPins)));
+          setTags(lsTags ? JSON.parse(lsTags) : []);
+          const savedSortKey = localStorage.getItem(LS_SORT_KEY);
+          if (savedSortKey) restoreSort(savedSortKey);
+        }
+      } catch {
+        /* unreadable copy — wait for the DB */
+      }
+    }
     loadFromDB();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1621,26 +1652,40 @@ export const PinnedAssets = memo(function PinnedAssets({
   // All groups share per-symbol queries. Metadata edits/reordering do not refetch.
   const symbolKey = [...new Set(pins.map((p) => p.symbol))].sort().join(",");
   const signalSymbols = useMemo(() => (symbolKey ? symbolKey.split(",") : []), [symbolKey]);
+  // Rows on screen (± one screen) get live ticks, the 60 s poll and Polymarket;
+  // the rest stay rendered (ASK reads them) and refresh slowly.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const visibleSymbols = useVisibleSymbols(rootRef, !collapsed);
   const {
     quotes,
     loading: loadingQuotes,
     errors: quoteErrors,
     loaded: quotesLoaded,
     total: quoteTotal,
+    cached: quotesCached,
+    cachedAgeMs: quotesCachedAgeMs,
     refresh: fetchQuotes,
-  } = useWatchlistQuotes(signalSymbols, !collapsed);
+  } = useWatchlistQuotes(signalSymbols, !collapsed, visibleSymbols);
   const {
     signals,
     isLoading: signalsLoading,
     errors: signalErrors,
+    cached: signalsCached,
   } = useWatchlistSignals(signalSymbols, !collapsed);
-  const predictionSymbols = useMemo(
-    () => signalSymbols.filter((s) => /^[A-Z][A-Z.\-]{0,5}$/.test(s) && !s.includes(".")),
-    [signalSymbols]
-  );
+  // Polymarket is shown only by the TABLE view; sorting by PM needs every row,
+  // otherwise only the rows on screen are searched (1.4–4 s per 10 symbols).
+  const pmShown = viewMode === "table" || sortKey === "pm";
+  const predictionSymbols = useMemo(() => {
+    const eligible = signalSymbols.filter(
+      (s) => /^[A-Z][A-Z.\-]{0,5}$/.test(s) && !s.includes(".")
+    );
+    if (sortKey === "pm" || visibleSymbols === null) return eligible;
+    const onScreen = new Set(visibleSymbols);
+    return eligible.filter((s) => onScreen.has(s));
+  }, [signalSymbols, sortKey, visibleSymbols]);
   const { summaries: pmSummaries, errors: pmErrors } = useStockPredictionSummaries(
     predictionSymbols,
-    !collapsed
+    !collapsed && pmShown
   );
 
   // ── CRUD Handlers ─────────────────────────────────────────────────────────
@@ -2150,7 +2195,13 @@ export const PinnedAssets = memo(function PinnedAssets({
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="border" style={{ borderColor: colors.border, background: "#000" }}>
+    <div
+      ref={rootRef}
+      // how many rows get live data (useVisibleSymbols); "all" until measured
+      data-wl-live={visibleSymbols === null ? "all" : visibleSymbols.length}
+      className="border"
+      style={{ borderColor: colors.border, background: "#000" }}
+    >
       {/* ── Section header ── */}
       <div
         className="flex flex-wrap items-center gap-1 px-1 py-0.5 border-b"
@@ -2422,6 +2473,7 @@ export const PinnedAssets = memo(function PinnedAssets({
               permanent "PRICES 17/17 · SIGNALS 17/17" cost a row for nothing. */}
           {quoteTotal > 0 &&
             (quotesLoaded < quoteTotal ||
+              quotesCached > 0 ||
               Object.keys(quoteErrors).length > 0 ||
               signalErrors.length > 0 ||
               pmErrors.length > 0) && (
@@ -2431,10 +2483,19 @@ export const PinnedAssets = memo(function PinnedAssets({
               >
                 <span>
                   PRICES {quotesLoaded}/{quoteTotal}
+                  {quotesCached > 0 && (
+                    <span
+                      style={{ color: "#f59e0b" }}
+                      title="Shown from this browser's last session until the fresh quote arrives"
+                    >
+                      {` · ${quotesCached} cached ${fmtCachedAge(quotesCachedAgeMs)}`}
+                    </span>
+                  )}
                   {loadingQuotes ? " · updating" : ""}
                 </span>
                 <span>
                   SIGNALS {Object.keys(signals).length}/{quoteTotal}
+                  {signalsCached > 0 && signalsLoading ? ` · ${signalsCached} cached` : ""}
                   {signalsLoading ? " · updating" : ""}
                 </span>
                 {(Object.keys(quoteErrors).length > 0 ||
@@ -2530,6 +2591,7 @@ export const PinnedAssets = memo(function PinnedAssets({
                           handleSymbolClick(pin.symbol, e);
                         }
                       }}
+                      data-wl-sym={pin.symbol}
                       draggable
                       onDragStart={() => setDragIdx(visualIdx)}
                       onDragOver={(e) => {
@@ -3051,6 +3113,7 @@ export const PinnedAssets = memo(function PinnedAssets({
                             onRemove={() => handleDeletePin(pin.id)}
                           >
                             <tr
+                              data-wl-sym={pin.symbol}
                               draggable
                               onDragStart={() => setDragIdx(visualIdx)}
                               onDragOver={(e) => {
