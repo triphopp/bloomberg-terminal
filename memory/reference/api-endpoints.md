@@ -385,6 +385,11 @@ Next.js proxy `app/api/gcal/[...path]/route.ts` (status · connect · sync · di
 The one calendar (the CAL view, key `6`). Read-only; logic in `backend/calendar_feed.py`. Next.js proxy:
 `app/api/calendar/route.ts`. Writes from the calendar go through `POST /api/v2/theses/{id}/notes` (a dated note) or
 `POST /api/v2/questions/calendar` (a date with no thesis) — there is no calendar table.
+- `POST /api/calendar/questions` `{event_id, question, reads}` (2026-10-23, MCP `calendar_link_question`, no Next.js
+  proxy) — ties a question to a MACRO / COMPANY event (or `qdate:<id>`): the event is copied once into `question_dates`
+  (title `<SYM> <title> — <day>`, CONFIRMED only when not estimated and a publisher link exists, note `from calendar
+  event <id>`), reused by title, then linked. 422 for a NOTE / TRACK / PORT event or an id with no date, 404 when the
+  event is not on that day, 409 when the question already waits on it. → `{date}` as `GET /api/v2/questions/calendar`.
 - `GET /api/calendar?start=YYYY-MM-DD&end=YYYY-MM-DD&refresh=false` — default a week back → 45 days ahead; 422 on a bad
   date, `end < start`, or a window over 400 days. → `{as_of, start, end, events:[CalEvent], sources, theses}` (shape in
   `data-shapes.md`), soonest first. `refresh=true` queues a new Yahoo pull for every company symbol.
