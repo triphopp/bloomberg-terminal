@@ -64,7 +64,10 @@ def _zone_from_value(v: float) -> str:
 
 
 def _zone_from_cnn(rating: str) -> str:
-    return CNN_ZONE_MAP.get(rating, _zone_from_value(50))
+    # CNN spells it "extreme fear" (lower case, a space) — not a key above, which
+    # used to land every extreme reading in NEUTRAL.
+    key = (rating or "").strip().lower().replace(" ", "_")
+    return CNN_ZONE_MAP.get(rating) or CNN_ZONE_MAP.get(key, _zone_from_value(50))
 
 
 def _fetch_cnn() -> dict | None:
