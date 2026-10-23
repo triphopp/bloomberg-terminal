@@ -18,6 +18,8 @@ import {
   sourceColor,
 } from "./constants";
 import { clockStr, timeAgo } from "./helpers";
+import { NewsPulseGrid } from "./news-pulse-grid";
+import { clusterStories } from "./story-clusters";
 import type {
   Sentiment,
   ThemeColors,
@@ -51,7 +53,7 @@ const NO_SECTORS: WatchlistSectorMeta[] = [];
 const NO_SYMBOLS: WatchlistSymbolMeta[] = [];
 const NO_MARKETS: WatchlistMarket[] = [];
 
-type GroupMode = "sector" | "ticker" | "time";
+type GroupMode = "sector" | "ticker" | "time" | "story";
 /** Which panel the right-hand column shows once a single company is in focus. */
 type NewsPanel = "headlines" | "rate-stress" | "dcf" | "regime";
 type SentFilter = "ALL" | Sentiment;
@@ -63,10 +65,13 @@ interface LayoutPrefs {
   sentiment: SentFilter;
   perSymbol: number;
   match: MatchMode;
+  /** 2 = STORY mode exists; an older saved layout is moved onto it once. */
+  v?: number;
 }
 
 const DEFAULT_LAYOUT: LayoutPrefs = {
-  group: "sector",
+  group: "story",
+  v: 2,
   sentiment: "ALL",
   perSymbol: 6,
   match: "direct",
@@ -217,6 +222,78 @@ function GroupHeader({
   );
 }
 
+// ── Story card (STORY mode) ───────────────────────────────────────────────────
+
+function StoryCard({
+  story,
+  items,
+  color,
+  open,
+  onToggle,
+  colors,
+  onSymbolClick,
+}: {
+  story: { lead: WatchlistArticle; pos: number; neg: number; newest: string; symbols: string[] };
+  items: WatchlistArticle[];
+  color: string;
+  open: boolean;
+  onToggle: () => void;
+  colors: ThemeColors;
+  onSymbolClick: (sym: string) => void;
+}) {
+  const sources = new Set(items.map((a) => a.source)).size;
+  return (
+    <div className="border-b" style={{ borderColor: colors.border }}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+        className="w-full flex items-start gap-2 px-2 py-1.5 text-left hover:bg-[#0d0d0d]"
+      >
+        <span
+          className="shrink-0 w-9 text-right text-[11px] font-bold font-mono"
+          style={{ color }}
+          title={`${items.length} headlines · ▲${story.pos} ▼${story.neg}`}
+        >
+          {items.length}×
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[11px] leading-snug" style={{ color: colors.text }}>
+            {story.lead.title}
+          </span>
+          <span
+            className="block text-[9px] font-mono mt-0.5"
+            style={{ color: colors.textSecondary }}
+          >
+            <span style={{ color: colors.accent }}>{story.symbols.join(" ")}</span>
+            {"  "}
+            <span style={{ color: SENTIMENT_COLORS.POS }}>▲{story.pos}</span>{" "}
+            <span style={{ color: SENTIMENT_COLORS.NEG }}>▼{story.neg}</span>
+            {"  "}
+            {sources} source{sources > 1 ? "s" : ""} · {timeAgo(story.newest)}
+          </span>
+        </span>
+        <span className="shrink-0 text-[9px] font-mono" style={{ color: colors.textSecondary }}>
+          {open ? "▾" : "▸"}
+        </span>
+      </button>
+      {open && (
+        <div className="divide-y pl-9" style={{ borderColor: colors.border }}>
+          {items.map((a, i) => (
+            <ArticleRow
+              key={a.url || `${a.title}-${i}`}
+              article={a}
+              colors={colors}
+              showSector
+              onSymbolClick={onSymbolClick}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Tab ───────────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -254,7 +331,13 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
     if (typeof window === "undefined") return DEFAULT_LAYOUT;
     try {
       const raw = localStorage.getItem(WL_LAYOUT_KEY);
-      if (raw) return { ...DEFAULT_LAYOUT, ...(JSON.parse(raw) as Partial<LayoutPrefs>) };
+      if (raw) {
+        const saved = JSON.parse(raw) as Partial<LayoutPrefs>;
+        // STORY became the default on 2026-10-23: a layout saved before it opens there once.
+        return saved.v === 2
+          ? { ...DEFAULT_LAYOUT, ...saved }
+          : { ...DEFAULT_LAYOUT, ...saved, group: "story", v: 2 };
+      }
     } catch {
       /* ignore */
     }
@@ -342,7 +425,46 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
   }, [articles, filterText, selectedSector, selectedSymbol, layout.sentiment, layout.match]);
 
   // ── Grouping ────────────────────────────────────────────────────────────────
-  const groups = useMemo(() => {
+  const groups = useMemo((): {
+    key: string;
+    label: string;
+    sublabel: string;
+    color: string;
+    items: WatchlistArticle[];
+    /** STORY mode: a card of ≥2 headlines, folded to its lead until opened. */
+    story?: { lead: WatchlistArticle; pos: number; neg: number; newest: string; symbols: string[] };
+  }[] => {
+    if (layout.group === "story") {
+      const stories = clusterStories(visible);
+      const many = stories.filter((s) => s.items.length > 1);
+      const singles = stories.filter((s) => s.items.length === 1).map((s) => s.lead);
+      return [
+        ...many.map((s) => ({
+          key: s.key,
+          label: s.lead.title,
+          sublabel: s.symbols.join(" "),
+          color:
+            s.pos > s.neg
+              ? SENTIMENT_COLORS.POS
+              : s.neg > s.pos
+                ? SENTIMENT_COLORS.NEG
+                : SENTIMENT_COLORS.NEU,
+          items: s.items,
+          story: { lead: s.lead, pos: s.pos, neg: s.neg, newest: s.newest, symbols: s.symbols },
+        })),
+        ...(singles.length
+          ? [
+              {
+                key: "SINGLES",
+                label: "SINGLE STORIES",
+                sublabel: "one headline each",
+                color: colors.textSecondary,
+                items: singles,
+              },
+            ]
+          : []),
+      ];
+    }
     if (layout.group === "time") {
       return [{ key: "ALL", label: "LATEST", sublabel: "", color: colors.accent, items: visible }];
     }
@@ -378,7 +500,18 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
         color: sectorColor(sector),
         items,
       }));
-  }, [visible, layout.group, colors.accent]);
+  }, [visible, layout.group, colors.accent, colors.textSecondary]);
+  const [openStories, setOpenStories] = useState<Set<string>>(() => new Set());
+  const toggleStory = useCallback(
+    (key: string) =>
+      setOpenStories((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      }),
+    []
+  );
 
   const openStock = useCallback(
     (sym: string) => {
@@ -531,10 +664,14 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
         >
           {/* Group mode */}
           <div className="flex items-center border" style={{ borderColor: colors.border }}>
-            {(["sector", "ticker", "time"] as GroupMode[]).map((g) => (
+            {(["story", "sector", "ticker", "time"] as GroupMode[]).map((g) => (
               <button
                 key={g}
                 type="button"
+                aria-pressed={layout.group === g}
+                title={
+                  g === "story" ? "Headlines that tell the same story, as one card" : undefined
+                }
                 onClick={() => setLayout((l) => ({ ...l, group: g }))}
                 className="px-1.5 py-0.5 text-[9px] font-bold tracking-wider"
                 style={{
@@ -794,6 +931,16 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
           </div>
         )}
 
+        {/* NEWS PULSE — the list below as a ticker × time grid. */}
+        {(!selectedSymbol || panel === "headlines") && articles.length > 0 && (
+          <NewsPulseGrid
+            articles={visible}
+            colors={colors}
+            selectedSymbol={selectedSymbol}
+            onSymbol={setSelectedSymbol}
+          />
+        )}
+
         {/* Stream */}
         <div
           className="flex-1 overflow-y-auto"
@@ -837,30 +984,56 @@ export function WatchlistNewsTab({ colors, onMarketsChange }: Props) {
             </div>
           )}
 
-          {groups.map((g) => (
-            <div key={g.key}>
-              {layout.group !== "time" && (
-                <GroupHeader
-                  label={g.label}
-                  sublabel={g.sublabel}
-                  count={g.items.length}
-                  color={g.color}
-                  colors={colors}
-                />
-              )}
-              <div className="divide-y" style={{ borderColor: colors.border }}>
-                {g.items.map((a, i) => (
-                  <ArticleRow
-                    key={a.url || `${a.title}-${i}`}
-                    article={a}
-                    colors={colors}
-                    showSector={layout.group !== "sector"}
-                    onSymbolClick={openStock}
-                  />
-                ))}
-              </div>
+          {layout.group === "story" && groups.length > 0 && (
+            <div
+              className="px-2 py-1 text-[9px] border-b"
+              style={{ borderColor: colors.border, color: colors.textSecondary }}
+            >
+              {visible.length} headlines → {groups.filter((g) => g.story).length} stories told more
+              than once
+              {groups.some((g) => !g.story)
+                ? ` + ${groups.find((g) => !g.story)?.items.length ?? 0} single`
+                : ""}{" "}
+              · grouped by shared words (names left out), not by meaning
             </div>
-          ))}
+          )}
+          {groups.map((g) =>
+            g.story ? (
+              <StoryCard
+                key={g.key}
+                story={g.story}
+                items={g.items}
+                color={g.color}
+                open={openStories.has(g.key)}
+                onToggle={() => toggleStory(g.key)}
+                colors={colors}
+                onSymbolClick={openStock}
+              />
+            ) : (
+              <div key={g.key}>
+                {layout.group !== "time" && (
+                  <GroupHeader
+                    label={g.label}
+                    sublabel={g.sublabel}
+                    count={g.items.length}
+                    color={g.color}
+                    colors={colors}
+                  />
+                )}
+                <div className="divide-y" style={{ borderColor: colors.border }}>
+                  {g.items.map((a, i) => (
+                    <ArticleRow
+                      key={a.url || `${a.title}-${i}`}
+                      article={a}
+                      colors={colors}
+                      showSector={layout.group !== "sector"}
+                      onSymbolClick={openStock}
+                    />
+                  ))}
+                </div>
+              </div>
+            )
+          )}
         </div>
       </div>
     </div>

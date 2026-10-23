@@ -618,6 +618,81 @@ def get_news(symbols: str, per_symbol: int = 6) -> str:
 
 
 @mcp.tool()
+def get_rotation_news(
+    market: Literal["US", "TH"] = "US",
+    kind: Literal["", "sector", "theme", "industry", "all"] = "",
+    group: str = "",
+    headlines: int = 3,
+) -> str:
+    """Sector rotation read against the news — NEWS → ROTATION in the terminal.
+    One row per MKT → ROT group: its RRG quadrant (Leading/Improving/Weakening/
+    Lagging), 1M return and 1M vs benchmark, the recent headlines that name the
+    group, their tone counted (pos/neg/neu, net = (pos-neg)/n) and `read`:
+    CONFIRMS when tone points the same way as the quadrant, DIVERGES when it points
+    against it, null when tone is flat or fewer than 3 headlines carry one.
+    kind: US sector (11 GICS, default) | theme; TH industry (8 SET groups, default)
+    | sector; all. group: one group by id (XLE, SMH, FINCIAL) or a word of its
+    name (energy, banks) — returns only that group. headlines: per group, 0-12.
+    Tone is a word list over each title (gains/surge/upgrade vs falls/miss/
+    downgrade), not a reading of meaning: context beside price, never a signal —
+    say so when you cite it, and quote the headlines, not just the score."""
+    data = _call("GET", f"{API}/api/news/rotation", timeout=90, params={
+        "market": market, "kind": kind or None, "group": group or None,
+        "headlines": max(0, min(int(headlines), 12)),
+    })
+    # Fewer headlines per group rather than a JSON cut mid-row: every group stays.
+    groups = data.get("groups") or []
+    n = max((len(g.get("headlines") or []) for g in groups), default=0)
+    while n > 0 and len(json.dumps(data, ensure_ascii=False, default=str)) > MAX_CHARS:
+        n -= 1
+        for g in groups:
+            g["headlines"] = (g.get("headlines") or [])[:n]
+        data["_note"] = f"{n} headline(s) per group kept to fit — ask for one group for more"
+    return _out(data)
+
+
+@mcp.tool()
+def get_rotation_stock_news(
+    group: str,
+    market: Literal["US", "TH"] = "US",
+    top: int = 10,
+    headlines: int = 3,
+) -> str:
+    """The stocks behind one ROT group, each with its own news — to summarise
+    what is driving a sector or theme. group: id (XLE, SMH, KBE, FINCIAL) or a
+    word of its name (energy, banks, semiconductors). top: largest members by
+    weight, 1-25. Per member: weight in the group, 1M return, its own quadrant vs
+    the benchmark, the headlines that name it (WATCHLIST sources) and their tone
+    (pos/neg/neu, net). `rollup`: weighted_net (members' net tone weighted by
+    weight, over members with news; weight_covered says how much of the group
+    that is), breadth (members positive / negative / flat / no news) and `read`
+    (CONFIRMS / DIVERGES vs the group's quadrant). Tone is a word list, not
+    meaning: summarise from the headlines themselves, name the stocks and their
+    weight, say which members have no news, and never call it a signal."""
+    data = _call("GET", f"{API}/api/news/rotation/members", timeout=120, params={
+        "market": market, "group": group,
+        "top": max(1, min(int(top), 25)), "headlines": max(0, min(int(headlines), 10)),
+    })
+    members = data.get("members") or []
+    n = max((len(m.get("headlines") or []) for m in members), default=0)
+    while n > 0 and len(json.dumps(data, ensure_ascii=False, default=str)) > MAX_CHARS:
+        n -= 1
+        for m in members:
+            m["headlines"] = (m.get("headlines") or [])[:n]
+        data["_note"] = f"{n} headline(s) per member kept to fit — ask for fewer members for more"
+    return _out(data)
+
+
+@mcp.tool()
+def get_sector_screen(group: str, market: Literal["US", "TH"] = "US", top: int = 15) -> str:
+    """A ROT group's members ranked by four standard factors measured inside the group (momentum 12-1, quality, value, low volatility; percentiles 0-100), with the weights chosen by the market's state from CNN Fear & Greed, VIX and MOVE (rule and weights in market_state, set in advance, not tuned). Per stock: score, factor percentiles, raw inputs, beta to VIX and MOVE and flags (falls most when VIX / MOVE jumps, missing data). top3 = first three with at least 3 of 4 factors. A screen, not advice: never say buy, sell or hold; report the ranking with its reasons, the market state, the flags and the caveats in `method` / `notes` (factor evidence is for diversified portfolios, regime timing is weaker evidence).
+    group: ROT group id (XLE, SMH, KBE, FINCIAL) or a word of its name. top: largest members, 3-40."""
+    return _out(_call("GET", f"{API}/api/rotation/screen", timeout=180, params={
+        "group": group, "market": market, "top": max(3, min(int(top), 40)),
+    }))
+
+
+@mcp.tool()
 def get_filings(symbol: str, forms: str = "10-K,10-Q,8-K", limit: int = 10) -> str:
     """Recent SEC EDGAR filings (US issuers), newest first, with document links."""
     return _out(_call("GET", f"{API}/api/company/filings/{symbol.upper()}",

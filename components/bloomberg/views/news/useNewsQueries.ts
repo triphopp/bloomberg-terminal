@@ -2,7 +2,16 @@
 
 import { keepPreviousData, useQueries, useQuery } from "@tanstack/react-query";
 import { useCallback, useRef } from "react";
-import type { Article, PolySearchResult, PolySignal, SocialHandle, SocialPost } from "./types";
+import type {
+  Article,
+  PolySearchResult,
+  PolySignal,
+  RotationMemberNewsResponse,
+  RotationNewsResponse,
+  SectorScreenResponse,
+  SocialHandle,
+  SocialPost,
+} from "./types";
 
 // Server data for the NEWS tabs. These used to be `fetch` + `useState` inside
 // each tab, so every tab switch (the tabs unmount) and every return to NEWS
@@ -141,5 +150,71 @@ export function usePolymarketSearch(q: string) {
     enabled: q.length >= 2,
     staleTime: FIVE_MIN,
     queryFn: ({ signal }) => getJson(`/api/polymarket?q=${encodeURIComponent(q)}`, signal),
+  });
+}
+
+/** Headlines + tone per ROT group. The first answer waits ≤4 s; groups still
+ *  being pulled are counted in `pending` and asked for again a few times. */
+export function useRotationNews(market: "US" | "TH", kind: string, enabled: boolean) {
+  const fresh = useFreshFlag();
+  const followUps = useRef(0);
+  const query = useQuery<RotationNewsResponse>({
+    queryKey: ["rotation-news", market, kind],
+    enabled,
+    staleTime: FIVE_MIN,
+    placeholderData: keepPreviousData,
+    refetchInterval: (q) =>
+      (q.state.data?.pending ?? 0) > 0 && followUps.current <= MAX_FOLLOW_UPS * 2 ? 3000 : false,
+    queryFn: async ({ signal }) => {
+      const data = await getJson<RotationNewsResponse>(
+        `/api/news/rotation?market=${market}&kind=${kind}&wait=4${fresh.take() ? "&fresh=1" : ""}`,
+        signal
+      );
+      followUps.current = data.pending > 0 ? followUps.current + 1 : 0;
+      return data;
+    },
+  });
+  const refresh = () => {
+    fresh.arm();
+    followUps.current = 0;
+    return query.refetch();
+  };
+  return { ...query, refresh };
+}
+
+/** One ROT group's largest members, each with its own headlines. Pulls through
+ *  the WATCHLIST news store, so the first answer waits ≤4 s and re-asks while
+ *  members are still pending. */
+export function useRotationMemberNews(market: "US" | "TH", group: string, enabled: boolean) {
+  const followUps = useRef(0);
+  return useQuery<RotationMemberNewsResponse>({
+    queryKey: ["rotation-member-news", market, group],
+    enabled: enabled && !!group,
+    staleTime: FIVE_MIN,
+    refetchInterval: (q) =>
+      (q.state.data?.pending ?? 0) > 0 && followUps.current <= MAX_FOLLOW_UPS * 2 ? 3000 : false,
+    queryFn: async ({ signal }) => {
+      const data = await getJson<RotationMemberNewsResponse>(
+        `/api/news/rotation/members?market=${market}&group=${encodeURIComponent(group)}&top=10&headlines=4&wait=4`,
+        signal
+      );
+      followUps.current = data.pending > 0 ? followUps.current + 1 : 0;
+      return data;
+    },
+  });
+}
+
+/** One ROT group's members ranked by four factors (sector_screen.py). Slow on a
+ *  cold group (prices + fundamentals for every member), cached 30 min by the backend. */
+export function useSectorScreen(market: "US" | "TH", group: string, enabled: boolean) {
+  return useQuery<SectorScreenResponse>({
+    queryKey: ["sector-screen", market, group],
+    enabled: enabled && !!group,
+    staleTime: 30 * 60_000,
+    queryFn: ({ signal }) =>
+      getJson(
+        `/api/rotation/screen?market=${market}&group=${encodeURIComponent(group)}&top=15`,
+        signal
+      ),
   });
 }

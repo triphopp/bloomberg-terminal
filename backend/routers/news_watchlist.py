@@ -31,6 +31,7 @@ import yfinance as yf  # yf.Ticker(...).news fallback
 from fastapi import APIRouter, Query
 
 import yahoo_search
+from headline_tone import tone_of
 from cache import TTLCache
 from db import get_db
 from persist_cache import PersistentStore
@@ -109,28 +110,10 @@ SOURCE_KIND: dict[str, str] = {
     "SEC EDGAR": "filing",
 }
 
-# ── Sentiment lexicon (headline-level, deliberately small) ────────────────────
-_POS = (
-    "beat", "beats", "surge", "surges", "soar", "soars", "rally", "rallies", "jump",
-    "jumps", "record high", "upgrade", "upgraded", "outperform", "raises guidance",
-    "buyback", "profit rises", "tops estimates", "strong demand", "wins", "approval",
-)
-_NEG = (
-    "miss", "misses", "plunge", "plunges", "slump", "slumps", "tumble", "tumbles",
-    "downgrade", "downgraded", "underperform", "cuts guidance", "lawsuit", "probe",
-    "recall", "layoff", "layoffs", "falls", "warns", "loss widens", "halt", "fraud",
-)
-
-
-def _sentiment(title: str) -> str:
-    t = title.lower()
-    pos = sum(1 for w in _POS if w in t)
-    neg = sum(1 for w in _NEG if w in t)
-    if pos > neg:
-        return "POS"
-    if neg > pos:
-        return "NEG"
-    return "NEU"
+# ── Sentiment ─────────────────────────────────────────────────────────────────
+# One word list with NEWS → ROTATION (headline_tone.py), so a headline has the
+# same tone on every screen.
+_sentiment = tone_of
 
 
 # ── Time helpers ──────────────────────────────────────────────────────────────

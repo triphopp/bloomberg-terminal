@@ -676,6 +676,57 @@ RStats = `{n, win_pct, avg_return_pct, expectancy_r, avg_win_r, avg_loss_r}`.
 
 **Saved conversation file** (`<root>/<YYYY-MM>/<id>.json`, `backend/ask_sessions.py`): `{v: 1, id, created_at, updated_at, device, page, model, messages[]}` — a message keeps `role, content, at, tools, sources, error, model, private, lostImages`, and a user message with pictures has `image_files: ["<id>.<message>-<n>.jpg"]` (files beside the JSON; the API returns them as `images` data URLs again). List row / `AskSessionMeta`: `{id, title, created_at, updated_at, questions, private, pinned, device, page}` — file-level `pinned: true` (set by PATCH, carried over by every save, never moves `updated_at`). TS in `ask/sessions.ts`. ASK tool results: `search_sessions` → `{query, days, scanned, sessions:[{id, title, created_at, updated_at, questions, current?, matches?:[{role, asked, text}]}]}`; `read_session` → `{id, title, created_at, updated_at, exchanges, items:[{n, asked, question, answer, pictures?, error?}], continue_from}` (answers cut at 4,000 chars; `continue_from` null when all fit).
 
+## Rotation News (`GET /api/news/rotation?market=US&kind=sector`)
+```json
+{
+  "market": "US", "kind": "sector", "kinds": ["sector", "theme"], "bench": "SPY",
+  "rotation_as_of": "2026-10-22", "as_of": "2026-10-23T04:10:00Z", "pending": 0,
+  "method": "headlines that name the group …; Context beside price, not a signal.",
+  "groups": [{
+    "id": "XLE", "name": "Energy (XLE)", "kind": "sector",
+    "quadrant": "Leading", "mom_dir": "up", "m1": 3.1, "m1_vs_bench": 1.2,
+    "tone": {"n": 12, "pos": 2, "neg": 4, "neu": 6, "net": -0.167},
+    "read": "DIVERGES",
+    "headlines": [{"title": "…", "url": "…", "source": "Reuters (GN)", "published_at": "2026-10-22T20:01:00Z", "tone": "NEG"}],
+    "loading": false, "error": null
+  }]
+}
+```
+`read` null = tone flat, <3 toned headlines, or no quadrant. `net` null = no headlines. TS: `RotationNewsResponse`, `RotationNewsGroup`, `RotationHeadline`, `Tone` in `views/news/types.ts`.
+
+## Sector Screen (`GET /api/rotation/screen?group=XLE`)
+```json
+{
+  "market": "US", "group": {"id": "XLE", "name": "Energy (XLE)", "quadrant": "Leading"}, "as_of": "2026-10-22",
+  "market_state": {"state": "stress", "fear_greed": 19.8, "fear_greed_label": "EXTREME FEAR", "vix": 19.03, "vix_pct_1y": 75.4,
+                   "move": 106.84, "move_pct_1y": 96.4, "weights": {"momentum": 0.15, "quality": 0.35, "value": 0.2, "low_vol": 0.3},
+                   "rule": "stress if VIX or MOVE ≥ p80 …", "rules_set": "2026-10-23"},
+  "rows": [{"symbol": "EOG", "name": "…", "weight": 4.0, "quadrant": "Leading",
+            "factors": {"momentum": 21.4, "quality": 85.7, "value": 83.3, "low_vol": 57.1}, "score": 67.0, "coverage": 4,
+            "raw": {"mom_12_1": 0.05, "vol_1y": 0.27, "roe": 0.2, "roa": 0.1, "gross_margin": 0.6, "debt_to_equity": 25.0,
+                    "earnings_yield": 0.09, "ebitda_to_ev": 0.18, "book_to_price": 0.45},
+            "beta_vix": 0.059, "beta_move": 0.094, "flags": []}],
+  "top3": ["EOG", "CVX", "COP"], "members_total": 21, "notes": [], "method": "…"
+}
+```
+Factor values = percentiles inside the group (100 = best), null = fewer than 3 members have it. TS: `SectorScreenResponse`, `ScreenRow`, `ScreenFactor`.
+
+## Rotation Member News (`GET /api/news/rotation/members?market=US&group=XLE`)
+```json
+{
+  "market": "US",
+  "group": {"id": "XLE", "name": "Energy (XLE)", "kind": "sector", "quadrant": "Leading", "m1": 3.1, "m1_vs_bench": 1.2},
+  "bench": "SPY", "weight_basis": "% of fund", "members_total": 21,
+  "members": [{"symbol": "XOM", "name": "EXXONMOBIL HOLDINGS CORP", "weight": 23.77, "m1": 12.3, "m1_vs_bench": 12.8,
+               "quadrant": "Leading", "tone": {"n": 7, "pos": 2, "neg": 0, "neu": 5, "net": 0.286}, "read": null,
+               "headlines": [{"title": "…", "url": "…", "source": "Yahoo Finance", "published_at": "…", "tone": "NEU"}]}],
+  "rollup": {"weighted_net": 0.209, "weight_covered": 71.72, "weight_listed": 71.72, "pos": 10, "neg": 3, "n": 49,
+             "breadth": {"positive": 5, "negative": 3, "flat": 0, "no_news": 0}, "read": "CONFIRMS"},
+  "as_of": "…", "pending": 0, "method": "…"
+}
+```
+No group matched → `group: null, members: [], error` listing the groups. A member's `quadrant` is its own vs the benchmark. TS: `RotationMemberNewsResponse`, `RotationMember`.
+
 ## Watchlist News (`GET /api/news/watchlist?symbols=AAPL,XOM`)
 ```json
 {
@@ -688,7 +739,7 @@ RStats = `{n, win_pct, avg_return_pct, expectancy_r, avg_win_r, avg_loss_r}`.
     "title": "...", "url": "...", "source": "Nasdaq", "source_kind": "company",
     "published_at": "2026-08-15T04:10:00Z", "summary": "...",
     "symbols": ["AAPL","MSFT"], "primary_symbol": "AAPL", "sector": "Technology",
-    "company": "Apple Inc.", "sentiment": "POS|NEG|NEU", "relevance": "direct|feed"
+    "company": "Apple Inc.", "sentiment": "POS|NEG|NEU", "relevance": "direct|feed"  // sentiment = headline_tone.tone_of (2026-10-23, same word list as ROTATION)
   }],
   "markets": [{ "symbol": "AAPL", "sector": "Technology", "question": "...", "slug": "...",
                 "event_slug": "...", "probability": 0.14, "volume": 803010.5,
@@ -1647,6 +1698,33 @@ interface MarketBatchCoverage {
 }
 ```
 RS = close/bench weekly; RS-Ratio = 100·RS/SMA8(RS); RS-Mom = 100·RS-Ratio/SMA4(RS-Ratio). Type: `RotationMapData` in `views/rotation-map.tsx`.
+
+## `/api/rotation/table` + `/api/rotation/constituents` (2026-10-23)
+
+```ts
+// table: rows gained (TH only) industry / basket_n / coverage_pct; kind is "theme" | "sector" | "industry"
+{ rows: { name; id; symbol; kind; n_members; d1; w1; m1; m3; m1_vs_bench; quadrant; mom_dir;
+          industry?: string; basket_n?: number; coverage_pct?: number | null }[];
+  bench; bench_m1; as_of; market;
+  definition: { standard: string; source: string; membership_as_of: string | null; method: string } }
+
+// constituents
+{ id: string; market: "US" | "TH"; bench: string; bench_m1: number | null; as_of: string | null;
+  currency: "USD" | "THB";
+  group: { id; name; kind: "sector" | "theme" | "industry"; industry?: string; definition: string;
+           source: { label; url; as_of: string | null; coverage: "all" | "top10"; weight_basis: string;
+                     n_total: number; n_priced: number; note?: string };
+           basket?: { n: number; coverage_pct: number | null } };          // TH only
+  rows: { symbol: string;            // issuer / SET symbol (BRK.B, PF&REIT member CPNREIT)
+          yf_symbol: string;         // what to open: BRK-B, CPNREIT.BK
+          name: string; sector: string | null;   // sector = SET sector (TH)
+          weight: number | null;     // % — of fund (US) or of the group's market cap (TH)
+          market_cap: number | null; // THB, SET figure (TH only)
+          in_basket: boolean | null; priced: boolean; price: number | null;
+          d1; w1; m1; m3; m1_vs_bench; quadrant; mom_dir }[];             // sorted by weight
+  error?: "unknown group" | "no constituents found" }
+```
+Types: `RotationData` in `views/rotation-table.tsx`, `MembersData` / `MemberRow` in `views/rotation-members.tsx`.
 
 ## `/api/v2/portfolio/rotation` (2026-09-24)
 

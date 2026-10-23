@@ -277,6 +277,56 @@ _TOOLS: list[dict] = [
         }),
     },
     {
+        "name": "get_rotation_news",
+        "description": (
+            "Sector rotation read against the news (NEWS → ROTATION). One row per MKT → ROT group: "
+            "RRG quadrant (Leading/Improving/Weakening/Lagging), 1M return and 1M vs benchmark, the "
+            "recent headlines that name the group, their tone counted (pos/neg/neu, net = (pos-neg)/n) "
+            "and `read`: CONFIRMS when tone points the same way as the quadrant, DIVERGES when against "
+            "it, null when flat or under 3 toned headlines. Use for 'which sectors are rotating in and "
+            "does the news agree', or the news behind one sector. Tone is a word list over titles, not "
+            "meaning: context beside price, never a signal — say so, and quote the headlines."
+        ),
+        "input_schema": _obj({
+            "market": {"type": "string", "enum": ["US", "TH"]},
+            "kind": {"type": "string", "enum": ["", "sector", "theme", "industry", "all"],
+                     "description": "US: sector (11 GICS, default) or theme; TH: industry (8 SET groups, "
+                                    "default) or sector; '' = the default"},
+            "group": {"type": "string", "description": "One group only: id (XLE, SMH, FINCIAL) or a word "
+                                                       "of its name (energy, banks); '' = every group"},
+            "headlines": {"type": "integer", "description": "Headlines per group, 0-12. Use 3 for an "
+                                                            "overview, 10 for one group."},
+        }),
+    },
+    {
+        "name": "get_rotation_stock_news",
+        "description": (
+            "The stocks behind one ROT group, each with its own news — use it to summarise what is "
+            "driving a sector or theme. Per member: weight in the group, 1M return, its own quadrant "
+            "vs the benchmark, the headlines that name it and their tone. `rollup`: weighted_net "
+            "(tone weighted by weight over members with news; weight_covered = how much of the group "
+            "that is), breadth (members positive / negative / flat / no news), read vs the group's "
+            "quadrant. Summarise from the headlines, name the stocks and weights, say which have no "
+            "news; tone is a word list, never a signal."
+        ),
+        "input_schema": _obj({
+            "market": {"type": "string", "enum": ["US", "TH"]},
+            "group": {"type": "string", "description": "Group id (XLE, SMH, KBE, FINCIAL) or a word of "
+                                                       "its name (energy, banks, semiconductors)"},
+            "top": {"type": "integer", "description": "Largest members by weight, 1-25. Use 10."},
+            "headlines": {"type": "integer", "description": "Headlines per member, 0-10. Use 3."},
+        }),
+    },
+    {
+        "name": "get_sector_screen",
+        "description": "A ROT group's members ranked by four standard factors measured inside the group (momentum 12-1, quality, value, low volatility; percentiles 0-100), with the weights chosen by the market's state from CNN Fear & Greed, VIX and MOVE (rule and weights in market_state, set in advance, not tuned). Per stock: score, factor percentiles, raw inputs, beta to VIX and MOVE and flags (falls most when VIX / MOVE jumps, missing data). top3 = first three with at least 3 of 4 factors. A screen, not advice: never say buy, sell or hold; report the ranking with its reasons, the market state, the flags and the caveats in `method` / `notes` (factor evidence is for diversified portfolios, regime timing is weaker evidence).",
+        "input_schema": _obj({
+            "market": {"type": "string", "enum": ["US", "TH"]},
+            "group": {"type": "string", "description": "ROT group id (XLE, SMH, KBE, FINCIAL) or a word of its name"},
+            "top": {"type": "integer", "description": "Largest members by weight, 3-40. Use 15."},
+        }),
+    },
+    {
         "name": "search_web_news",
         "description": (
             "Search the open web's news (Google News + Bing News) for any query, newest first. "
@@ -543,6 +593,9 @@ _TOOL_LABELS = {
     "read_page": "READ",
     "get_watchlist_news": "NEWS",
     "get_topic_news": "NEWSWIRE",
+    "get_rotation_news": "ROTATION NEWS",
+    "get_rotation_stock_news": "ROTATION STOCKS",
+    "get_sector_screen": "SCREEN",
     "get_quote": "QUOTE",
     "get_price_history": "PRICE HISTORY",
     "get_market_overview": "MARKET BOARD",
@@ -582,6 +635,20 @@ def _trim_articles(data: dict) -> dict:
         "as_of": data.get("as_of"),
         "articles": [{k: a[k] for k in _NEWS_KEEP if a.get(k)} for a in data.get("articles", [])],
     }
+
+
+def _fit_rows(data: dict, key: str, room: int) -> dict:
+    """Fewer headlines per row (group or member) until the answer fits — every
+    row stays, with its tone counted over all its headlines; `_note` says how
+    many were kept."""
+    rows = data.get(key) or []
+    n = max((len(r.get("headlines") or []) for r in rows), default=0)
+    while n > 0 and len(json.dumps(data, ensure_ascii=False)) > room:
+        n -= 1
+        for r in rows:
+            r["headlines"] = (r.get("headlines") or [])[:n]
+        data["_note"] = f"{n} headline(s) per row kept to fit — ask for less for more"
+    return data
 
 
 def _search_web_news(query: str, days: int) -> dict:
@@ -794,6 +861,32 @@ def _run_tool(api: str, name: str, args: dict, cfg: dict, state: dict) -> Any:
     if name == "get_topic_news":
         topics = ",".join(t.strip() for t in str(args.get("topics", "")).split(",")[:5] if t.strip())
         return _trim_articles(get("/api/news/feed", {"topics": topics or "market", "limit": 40}))
+    if name == "get_rotation_news":
+        market = "TH" if str(args.get("market", "")).upper() == "TH" else "US"
+        return _fit_rows(get("/api/news/rotation", {
+            "market": market,
+            "kind": str(args.get("kind") or ""),
+            "group": str(args.get("group") or "")[:60],
+            "headlines": _clamp(args.get("headlines"), 0, 12, 3),
+        }, timeout=90), "groups", _MAX_TOOL_CHARS - 500)
+    if name == "get_sector_screen":
+        group = str(args.get("group") or "").strip()[:60]
+        if not group:
+            raise RuntimeError("group is required — a ROT group id or a word of its name")
+        return get("/api/rotation/screen", {
+            "market": "TH" if str(args.get("market", "")).upper() == "TH" else "US",
+            "group": group, "top": _clamp(args.get("top"), 3, 40, 15),
+        }, timeout=180)
+    if name == "get_rotation_stock_news":
+        group = str(args.get("group") or "").strip()[:60]
+        if not group:
+            raise RuntimeError("group is required — a ROT group id or a word of its name")
+        return _fit_rows(get("/api/news/rotation/members", {
+            "market": "TH" if str(args.get("market", "")).upper() == "TH" else "US",
+            "group": group,
+            "top": _clamp(args.get("top"), 1, 25, 10),
+            "headlines": _clamp(args.get("headlines"), 0, 10, 3),
+        }, timeout=120), "members", _MAX_TOOL_CHARS - 500)
     if name == "search_web_news":
         return _search_web_news(str(args.get("query", "")), _clamp(args.get("days"), 1, 30, 7))
     if name == "get_quote":

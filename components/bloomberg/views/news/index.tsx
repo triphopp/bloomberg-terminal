@@ -64,39 +64,34 @@ export default function NewsView({ isDarkMode }: NewsViewProps) {
   // ASK lives in components/bloomberg/ask; this view only gives it a column.
   const askShown = useAskColumnShown();
 
-  const tabStyle = (active: boolean) => ({
-    borderBottom: active ? `2px solid ${colors.accent}` : "2px solid transparent",
-    color: active ? colors.accent : colors.textSecondary,
-  });
-
   return (
     <div
       className="h-full flex flex-col font-mono overflow-hidden"
       style={{ backgroundColor: colors.background, color: colors.text }}
     >
-      {/* ── Top bar ─────────────────────────────────────────────────────────── */}
+      {/* ── Tab row — same strip as PORT: text only, accent when active ─────── */}
       <div
-        className="shrink-0 flex items-center gap-2 px-2 py-1 border-b"
-        style={{ backgroundColor: colors.surface, borderColor: colors.border }}
+        className="shrink-0 flex items-center px-1 border-b overflow-x-auto"
+        style={{ borderColor: colors.border }}
       >
-        <div className="flex items-end gap-0">
-          {TABS.map((tab, i) => (
-            <button
-              aria-pressed={activeTab === tab.id}
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className="flex items-center gap-1 px-3 py-1 text-xs font-mono font-bold tracking-widest uppercase transition-colors"
-              style={tabStyle(activeTab === tab.id)}
-              title={`Alt+${i + 1}`}
-            >
-              <span className="text-[8px] opacity-35 hidden sm:inline">⌥{i + 1}</span>
-              {tab.label}
-            </button>
-          ))}
-        </div>
+        {TABS.map((tab, i) => (
+          <button
+            aria-pressed={activeTab === tab.id}
+            key={tab.id}
+            type="button"
+            className="text-[9px] px-2 py-1 font-bold hover:opacity-80 whitespace-nowrap"
+            style={{ color: activeTab === tab.id ? colors.accent : colors.textSecondary }}
+            onClick={() => setActiveTab(tab.id)}
+            title={`Alt+${i + 1}`}
+          >
+            {tab.label}
+          </button>
+        ))}
 
-        <span className="ml-auto text-[9px]" style={{ color: colors.textSecondary }}>
+        <span
+          className="ml-auto pl-3 text-[9px] whitespace-nowrap"
+          style={{ color: colors.textSecondary }}
+        >
           {activeTab === "watchlist"
             ? "news sourced per watchlist symbol · grouped by sector"
             : activeTab === "feed"
