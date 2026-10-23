@@ -107,6 +107,7 @@ be negative-cached, or "empty = expired" re-fires them on every request.
 - Backend is modular: `main.py` (app init) + `config.py` + `db.py` + `routers/*.py`
 - State lives in Jotai atoms (`components/bloomberg/atoms/index.ts`) + React Query for server data
 - Native `<select>` menus must use the app-wide popup palette in `styles/globals.css` (`color-scheme` plus explicit `<option>` foreground/background, with light/forced-colors variants). Do not style only the closed select with light text on a transparent background: Windows can render its popup with a light system background. Verify new selectors in DCF/IV-style panels on Windows and Mac when available.
+- Scrollbars are black and thin app-wide (2026-10-23): `:root { scrollbar-color: #333 #000 }` in `styles/globals.css` (light theme `body.light`). Windows draws a native scrollbar white otherwise. Do not patch scroll boxes one by one, never set a light `scrollbarColor`, and do not override `color-scheme` to light on a container.
 
 ## ASK — one chat module (2026-10-06)
 
