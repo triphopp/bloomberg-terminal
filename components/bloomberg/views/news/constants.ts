@@ -7,6 +7,12 @@ export const SOCIAL_KEY = "bloomberg_social_handles";
 export const WL_SOURCES_KEY = "bloomberg_news_wl_sources";
 export const WL_LAYOUT_KEY = "bloomberg_news_wl_layout";
 export const NEWS_TAB_KEY = "bloomberg_news_tab";
+/** Right column: POLYMARKET or ROTATION. */
+/** WATCHLIST → NEWS PULSE: open/closed and its time window. */
+export const PULSE_KEY = "bloomberg_news_pulse";
+export const SIDE_TAB_KEY = "bloomberg_news_side_tab";
+/** ROTATION tab: market, group kind and sort. */
+export const ROT_NEWS_KEY = "bloomberg_news_rotation";
 
 /** Set once the saved topics have lost the pre-MACRO "market" search. */
 export const TOPICS_MIGRATED_KEY = "bloomberg_news_topics_macro";

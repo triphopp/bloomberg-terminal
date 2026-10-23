@@ -54,6 +54,12 @@ components/bloomberg/
 │   │   ├── social-tab.tsx       ← X/YouTube/Reddit/RSS handles
 │   │   ├── (ASK moved to components/bloomberg/ask — NewsView mounts `<AskBar />` + `<AskColumn />`, which takes the Polymarket column's place while shown)
 │   │   ├── polymarket-column.tsx← {SYM} IMPLIED ladder + WATCHLIST MARKETS + MACRO SIGNALS + search
+│   │   │                          sub-tabs ⚡ POLYMARKET · ↻ ROTATION (`SIDE_TAB_KEY`)
+│   │   ├── story-clusters.ts    ← clusterStories(): WATCHLIST STORY mode (default since 2026-10-23) — same-story headlines → one card (shared words, company/ticker names dropped, moves folded to ↑/↓, today/weekday → publish date, 36 h window, quote pages never grouped); pure, `__tests__/story-clusters.test.ts`
+│   │   ├── news-pulse.ts        ← buildPulse(): WATCHLIST headlines → ticker × time grid (pure, `__tests__/news-pulse.test.ts`)
+│   │   ├── news-pulse-grid.tsx  ← NEWS PULSE above the WATCHLIST list: rows = tickers (busiest 14), 24 columns over 12H/24H/72H, colour = tone, depth = count; row/cell picks the ticker (cells carry `data-frame` — global CSS strips button fills)
+│   │   ├── sector-screen.tsx    ← ROTATION → group → SCREEN: market state line (F&G · VIX · MOVE · weights), rank table # · stock · score · M Q V L percentiles · ⚠, hover = raw inputs + betas
+│   │   ├── rotation-news.tsx    ← ROTATION sub-tab: ROT groups × headline tone (US/TH · kind · sort TONE / 1M vs bench), CONF/DIV; open a group → GROUP NEWS | STOCKS (members by weight, own headlines, WTD tone + breadth)
 │   │   ├── prediction-ladder.tsx← implied distribution panel (CLOSE ABOVE CDF + TOUCH LADDER)
 │   │   ├── useWatchlistNews.ts  ← useWatchlistSymbols() (pins atom → localStorage fallback) + React Query (partial answer, then settle polls)
 │   │   ├── useNewsQueries.ts    ← React Query for NEWSFEED / SOCIAL (one query per handle) / Polymarket signals+search; REFRESH → `fresh=1`; follow-up when the backend says `refreshing`
@@ -357,7 +363,8 @@ components/bloomberg/
 | `views/tail-risk-view.tsx` | `TailRiskView`, `SectionRule` (2026-09-23 — TAIL แบ่ง 4 หัวข้อ: RISK DIMENSIONS · EVIDENCE · MACRO & ROTATION CONTEXT · METHOD; คอลัมน์ซ้าย 208px เหลือแค่ VIX TERM + VOL BOARD, การ์ดที่เหลือย้ายลงกริดเต็มความกว้าง) |
 | `views/tail/decomposition.tsx` | `RealRatesPanel` (nominal = real + breakeven per tenor + split line), `EnergySpreadsPanel` (crude/products/cracks, ROLL + EST tags); types `Decomposition` `DecompRow` (2026-09-24) |
 | `views/tail/market-events.tsx` | `MarketEventsPanel` (2026-09-24 compact: name · severity · `headline` · ≤4 number chips; click = summary/checked/definition/rule; props `staleHours`, `partial`), `SEVERITY_COLOR`; types `MarketEvent` `EventEvidence` `EventLogEntry` `RiskBasis` `EventSeverity` (2026-09-24 — top section of TAIL; ribbon imports `SEVERITY_COLOR` and prints the top 2 event names after the dimension chips) |
-| `views/rotation-table.tsx` | `RotationTable` — MKT REGIME → ROT; TABLE/MAP toggle (`localStorage["bloomberg_rotation_view"]`), US|TH, tail 4/8/12W in MAP (2026-09-24) |
+| `views/rotation-table.tsx` | `RotationTable` — MKT REGIME → ROT; TABLE/MAP toggle (`localStorage["bloomberg_rotation_view"]`), US|TH, tail 4/8/12W in MAP (2026-09-24); kind filter ALL/THEME/SECTOR (US) · ALL/INDUSTRY/SECTOR (TH, SET groups, 2026-10-23); a row click opens `RotationMembers` in place of the table |
+| `views/rotation-members.tsx` | `RotationMembers` (2026-10-23) — every member of one ROT group (`/api/rotation/constituents`): SYMBOL · NAME · SECTOR (industry groups) · WT% · CAP ฿M (TH) · LAST (`fmtPriceStd`) · 1D/1W/1M/3M/1MvB · Q; sort buttons carry `aria-pressed`; definition + source + as-of line, • = in the TH index basket; click = stock view, shift-click = chart window (the heatmap's convention); compact = SYMBOL · WT · 1M · 1MvB · Q. Types `MembersData`, `MemberRow` |
 | `views/rotation-map.tsx` | `RotationMap` (SVG RRG: quadrants, faded weekly tails, hover focus, legend-by-quadrant click-to-hide), `RotationMapPanel`, `useRotationMap(market, tail, enabled)`, `RotationMapData`, `QUAD_COLOR` (2026-09-24) |
 | `hooks/useCot.ts` | `useCotSnapshot(enabled, window)`, `useCotHistory(key, weeks)`, `cotExtreme()`, `cotKeyFor(symbol)`, `COT_KEY_BY_SYMBOL` (keep in step with backend `cot.SYMBOL_MAP`), `COT_GROUP_LABEL`, `fmtContracts`; types `CotSnapshot` `CotContract` `CotGroupStats` `CotFlag` `CotHistory` `CotGroup` (2026-09-25) |
 | `core/cot-chip.tsx` | `CotChip` (▼p/▲p mark on MKT TICK DATA rows with an active flag), `COT_KEY_BY_RATE_ID` (2026-09-25) |

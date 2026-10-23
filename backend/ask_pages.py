@@ -146,6 +146,10 @@ PAGES: dict[str, dict[str, tuple[str, dict, str]]] = {
                  "MACRO tab: the general market newswire — RSS front pages plus topic searches (the tab's own topics and its hiding of watchlist-only stories are what the screen shows)"),
         "polymarket": ("/api/polymarket/signals", {},
                        "Polymarket column: macro prediction markets (Fed, inflation, recession …) with their YES probability"),
+        "rotation_us": ("/api/news/rotation", {"market": "US", "kind": "sector"},
+                        "ROTATION tab of the right column: headlines of each US GICS sector beside its ROT quadrant, headline tone counted (POS/NEG/NEU word list, not meaning) and whether tone CONFIRMS or DIVERGES from the quadrant"),
+        "rotation_th": ("/api/news/rotation", {"market": "TH", "kind": "industry"},
+                        "ROTATION tab, Thai market: headlines naming the largest members of each SET industry group, tone and its read against the group's ROT quadrant"),
         "data": ("/api/v2/series", {},
                  "DATA tab: published series recorded here day by day (e.g. DRAM spot prices): last value, date, source"),
     },
@@ -154,7 +158,7 @@ PAGES: dict[str, dict[str, tuple[str, dict, str]]] = {
 # Said under a view's section list: where the rest of what the view shows comes from.
 _ALSO = {
     "stock": "Statements, ratios, estimates, analyst and ownership data of the same ticker: get_company_data.",
-    "news": "Headlines of chosen tickers or topics: get_watchlist_news, get_topic_news.",
+    "news": "Headlines of chosen tickers or topics: get_watchlist_news, get_topic_news. One ROT group's headlines and tone, or another market: get_rotation_news; the stocks behind a group and their own news: get_rotation_stock_news.",
 }
 
 _SYMBOL_RE = re.compile(r"^[A-Z0-9][A-Z0-9.\-=^]{0,19}$")

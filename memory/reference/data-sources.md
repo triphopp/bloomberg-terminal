@@ -27,6 +27,10 @@
 | Quote, งบการเงิน, balance sheet, ข้อมูลบริษัท | `get_stock_data` |
 | ราคาย้อนหลัง OHLCV | `get_price_history` |
 | ข่าวรายหุ้น (7 แหล่ง) | `get_news` |
+| ข่าวราย sector / theme (กลุ่มของ ROT) + tone เทียบ quadrant | `get_rotation_news` |
+| ข่าวหุ้นรายตัวในกลุ่ม ROT (ตามน้ำหนัก) + tone รวมถ่วงน้ำหนัก | `get_rotation_stock_news` |
+| อันดับหุ้นในกลุ่มตาม factor (momentum · quality · value · low vol) + สภาวะตลาด F&G/VIX/MOVE | `get_sector_screen` (`/api/rotation/screen`) |
+| คำศัพท์ sentiment การเงิน (Loughran–McDonald) | ใช้แล้วใน `backend/headline_tone.py` — โหลดจาก wheel `pysentiment2` 0.1.1 บน PyPI (sha256 pinned) เพราะ Google Drive ของ SRAF ติด quota; ใช้ได้ฟรีเฉพาะงานวิจัย ห้าม commit ลง repo (public) |
 | SEC filings (10-K/10-Q/20-F/8-K) | `get_filings` |
 | Fundamentals แหล่งรอง (ต้องเทียบ SEC) | `get_fiscal_data` |
 | ความสนใจการค้นหา / trending | `get_google_trends` · `get_trending_searches` |
