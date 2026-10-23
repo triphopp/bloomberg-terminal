@@ -2889,7 +2889,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                 title={`Open EQUITY ANALYSIS — ${selectedSymbol} (F)`}
                 onClick={handleGoToEquity}
               >
-                {selectedLabel || selectedSymbol}
+                {selectedLabel || displaySymbol({ symbol: selectedSymbol })}
               </button>
               {quote && (
                 <>
@@ -2936,7 +2936,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                       className="text-[9px] truncate flex-1 min-w-0"
                       style={{ color: colors.textSecondary, flexShrink: 100 }}
                     >
-                      {quote.shortName}
+                      {displayName({ symbol: selectedSymbol, shortname: quote.shortName })}
                     </span>
                   )}
                 </>

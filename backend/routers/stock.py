@@ -20,6 +20,7 @@ from market_session import is_today_at, local_date_of
 from market_snapshots import get_quote, get_history, history_future
 from sector_map import classify
 from sources import market_data
+import symbol_names
 
 _DETAIL_TTL = 3600  # 1 hour — financials, events, SEC filings
 
@@ -155,12 +156,9 @@ def _with_display(entry: dict) -> dict:
     duplicated ticker prefix Yahoo puts on Thai names
     ("BH.BK – BH_BUMRUNGRAD HOSPITAL" → "BH – BUMRUNGRAD HOSPITAL")."""
     sym = entry["symbol"]
-    base = sym.split(".")[0]
-    name = entry.get("shortname") or entry.get("longname") or ""
-    if name.upper().startswith(f"{base.upper()}_"):
-        name = name[len(base) + 1:]
-    entry["display_symbol"] = base if sym.upper().endswith(".BK") else sym
-    entry["display_name"] = name.strip()
+    entry["display_symbol"] = symbol_names.display_symbol(sym)
+    entry["display_name"] = symbol_names.display_name(
+        sym, entry.get("shortname") or entry.get("longname"))
     return entry
 
 
