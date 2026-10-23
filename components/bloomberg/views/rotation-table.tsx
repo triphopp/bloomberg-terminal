@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { QUAD_COLOR } from "../lib/rrg-quadrant";
+import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import type { bloombergColors } from "../lib/theme-config";
 import { RotationMapPanel } from "./rotation-map";
 import { RotationMembers } from "./rotation-members";
@@ -319,7 +320,7 @@ export function RotationTable({ colors, compact }: RotationTableProps) {
       </div>
 
       {/* Table */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto" style={SCROLLBAR_THIN_LIGHTER}>
         <table className="w-full border-collapse">
           <thead>
             <tr

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 // One quadrant palette for the table, this map, the members list and PORT's row
 // tint — no green/red, which mean up/down everywhere else.
 import { QUAD_COLOR, type Quadrant } from "../lib/rrg-quadrant";
+import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import type { bloombergColors } from "../lib/theme-config";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -328,7 +329,7 @@ export function RotationMap({ data, colors, compact }: RotationMapProps) {
       {!compact && (
         <div
           className="shrink-0 w-44 overflow-y-auto border-l px-2 py-1"
-          style={{ borderColor: colors.border }}
+          style={{ borderColor: colors.border, ...SCROLLBAR_THIN_LIGHTER }}
         >
           {(["Leading", "Improving", "Weakening", "Lagging"] as const).map((q) => {
             const inQ = rows.filter((r) => r.quadrant === q);

@@ -8,6 +8,7 @@ import { currentViewAtom, stockSearchSymbolAtom } from "../atoms";
 import { openChartWindowAtom } from "../atoms/chart-windows";
 import { fmtPriceStd, numberFormat } from "../lib/number-format";
 import { QUAD_COLOR, type Quadrant } from "../lib/rrg-quadrant";
+import { SCROLLBAR_THIN_LIGHTER } from "../lib/style-constants";
 import type { bloombergColors } from "../lib/theme-config";
 
 // ── Types (/api/rotation/constituents) ────────────────────────────────────────
@@ -236,7 +237,7 @@ export function RotationMembers({
           </span>
         </div>
       ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="flex-1 min-h-0 overflow-y-auto" style={SCROLLBAR_THIN_LIGHTER}>
           <table className="w-full border-collapse">
             <thead>
               <tr
