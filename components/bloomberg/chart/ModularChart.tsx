@@ -63,8 +63,15 @@ import { OverlayPrimitive } from "./overlay-primitive";
 import { clampPaneHeight, computePaneLayout, paneKey, subPaneKeyAtOffset } from "./pane-layout";
 import { PointLabelsPrimitive } from "./point-labels-primitive";
 import { createPriceGridOverlay } from "./price-grid-overlay";
-import { fillSeries, indicatorOutputs, isColumns, refillSeries } from "./refill.ts";
+import {
+  fillSeries,
+  indicatorOutputs,
+  isColumns,
+  outputsDrawAnything,
+  refillSeries,
+} from "./refill.ts";
 import { setSeriesData } from "./series-data.ts";
+import { tickMarkFormatter } from "./time-axis";
 import type {
   CanvasOverlay,
   ChartColors,
@@ -489,6 +496,7 @@ export function ModularChart({
         // and the wheel simply stops responding. Lower so the user can keep
         // zooming out — which is also what asks for the next history window.
         minBarSpacing: 0.05,
+        tickMarkFormatter,
       },
     });
 
@@ -580,6 +588,12 @@ export function ModularChart({
     for (const indicator of paneIndicators) {
       if (data.length < indicator.minBars) continue;
       const outputs = indicatorOutputs(indicator, data);
+      // Nothing to draw (Volume on an index) → no pane, or it is an empty band.
+      // The refill rebuilds the chart once new bars give it something to draw.
+      if (!outputsDrawAnything(outputs)) {
+        refills.push((bars) => !outputsDrawAnything(indicatorOutputs(indicator, bars)));
+        continue;
+      }
 
       const key = paneKey(indicator.id);
       const subPane = chart.addPane();

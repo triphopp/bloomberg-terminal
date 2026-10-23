@@ -36,6 +36,29 @@ export function indicatorOutputs(indicator: ChartIndicator, bars: OhlcvBar[]): S
     : indicator.compute(bars, indicator.config);
 }
 
+/**
+ * Whether the outputs draw anything at all. A pane for an indicator that draws
+ * nothing is an empty band across the chart — Volume on an index (^MOVE, ^VIX)
+ * whose every bar has no volume. A heatmap counts as drawn: its pane carries
+ * the "why am I empty" message.
+ */
+export function outputsDrawAnything(outputs: SeriesOutput[]): boolean {
+  for (const output of outputs) {
+    if (isColumns(output)) {
+      for (let i = output.from; i < output.values.length; i++) {
+        if (Number.isFinite(output.values[i])) return true;
+      }
+    } else if (output.type === "heatmap") {
+      if (output.heatmap) return true;
+    } else {
+      for (const point of output.data) {
+        if ("value" in point && Number.isFinite(point.value)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 /** First fill of a series just created for `output`. */
 // biome-ignore lint/suspicious/noExplicitAny: lightweight-charts setData typing
 export function fillSeries(series: SeriesLike<any>, output: SeriesOutput, bars: OhlcvBar[]): void {

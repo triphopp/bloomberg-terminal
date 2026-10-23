@@ -280,6 +280,7 @@ components/bloomberg/
 
 | `chart/DetachedChartWindow.tsx` | `DetachedChartWindow` |
 | `chart/TimeframeRow.tsx` | `TimeframeRow`, `TimeframeControls`, `IntervalPicker`, `TimeframeRowProps` |
+| `chart/FooterGauges.tsx` | `FooterGauges` — F&G · VIX · MOVE + % vs prev close, centred in the MKT chart footer between `TimeframeControls` and the O/H/L/C stats. VIX/MOVE share the `["volatility"]` query, F&G = `/api/fear-greed` (`previous_close`). VIX/MOVE up = red, F&G up = green; gauges that do not fit wrap out of the 1-line box (whole, never half) |
 | `chart/useAnchoredPanel.ts` | `useAnchoredPanel()` → `{ open, setOpen, toggle, pos, wrapRef, triggerRef }` |
 | `chart/useChartTimeframe.ts` | `useChartTimeframe()`, plus pure `applyPeriod(p, interval, chartType)` / `applyInterval(iv, period)` for components that store the timeframe outside React state |
 | `chart/useAutoExtendRange.ts` | `useAutoExtendRange({symbol, period, interval, barCount, isLoading, enabled})` → `{ effectivePeriod, onLogicalRange, atMaxHistory, extended, viewportKey }` — ซูมออกสุดข้อมูล → ไต่ period ladder โหลดประวัติเพิ่มเอง; plus `periodSpanDays`, `ladderSteps` |
