@@ -80,6 +80,7 @@ SOURCES: dict[str, str] = {
     "deepseek.com": "DeepSeek",
     "tavily.com": "Tavily",
     "search.brave.com": "Brave Search",
+    "ssga.com": "State Street",
 }
 
 #: Hosts that are not vendors — local services must never raise a data alert.

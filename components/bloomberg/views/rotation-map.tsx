@@ -3,11 +3,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+// One quadrant palette for the table, this map, the members list and PORT's row
+// tint — no green/red, which mean up/down everywhere else.
+import { QUAD_COLOR, type Quadrant } from "../lib/rrg-quadrant";
 import type { bloombergColors } from "../lib/theme-config";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-type Quadrant = "Leading" | "Improving" | "Weakening" | "Lagging";
 
 interface RrgPoint {
   date: string;
@@ -34,14 +35,6 @@ export interface RotationMapData {
   error?: string;
 }
 
-// Same quadrant colours as the table so the two views read as one.
-export const QUAD_COLOR: Record<Quadrant, string> = {
-  Leading: "#4ade80",
-  Improving: "#60a5fa",
-  Weakening: "#facc15",
-  Lagging: "#f87171",
-};
-
 // One colour per sector — the quadrant is already the background, so the line
 // colour's only job is telling two neighbouring trails apart.
 const SERIES = [
@@ -59,10 +52,6 @@ const SERIES = [
   "#fbbf24",
   "#94a3b8",
 ];
-
-/** "Technology (XLK)" → "XLK"; TH basket names are kept, trimmed. */
-const shortName = (r: RrgRow, market: string) =>
-  market === "US" ? r.symbol : r.name.replace(/\s*\(.*\)$/, "").slice(0, 12);
 
 function useSize<T extends HTMLElement>() {
   const ref = useRef<T>(null);
@@ -302,7 +291,8 @@ export function RotationMap({ data, colors, compact }: RotationMapProps) {
                     strokeWidth={2.5}
                     paintOrder="stroke"
                   >
-                    {shortName(r, data.market)}
+                    {/* "Information Technology (XLK)" → XLK; a SET industry group → its code (FINCIAL) */}
+                    {r.symbol}
                   </text>
                 </g>
               );

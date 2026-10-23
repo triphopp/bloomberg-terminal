@@ -1839,6 +1839,23 @@ z ของ **ระดับ** จึงตอบว่า "sector นี้ใ
 MKT header (`views/market-view.tsx` → `ExtendedHoursPrice`), STOCK view, PORT → POSITIONS
 (`/api/v2/portfolio/premarket` → `OpenPositionsTab.tsx`)
 
+## A ROT group built from a guess drifts from its real definition (2026-10-23)
+
+**Symptom:** the TH rotation "Petrochem" row moved with SCG Packaging, "Food & Bev" with Minor International,
+"Tourism" with Asset World, and "ICT" carried INTUCH, which no longer trades. The US table called XLK "Technology",
+KBE "Banks & Brokers" (it holds no brokers) and JETS "Travel & Airlines".
+
+**Cause:** hand-made baskets and labels, never checked against the SET's composition or the funds' own holdings.
+
+**Fix:** `backend/sector_membership.py` — TH groups ARE the SET's industry groups / sectors
+(`reference_data/set_sectors.tsv`, dated), US sectors are GICS via their SPDRs, a theme is labelled by what its fund
+holds. `tests/test_sector_membership.py` pins each finding. **Rules:** never group stocks by Yahoo's `sector` /
+`industry` — that is Morningstar's scheme ("Consumer Cyclical", "Financial Services"), neither GICS nor SET, and the
+heatmap's sectors are Yahoo's. The SET site (`set.or.th/api/...`, `listedCompanies_en_US.xls`) answers scripts with
+HTTP 403 (Incapsula) — do not try to get round it; refresh the snapshot by hand (`reference/rotation-groups.md`).
+State Street's holdings .xlsx is a plain GET; its rows end at the first blank row, and cash (`-` ticker), the
+money-market sweep and index futures (`... DEC26`, negative weight) are not members.
+
 ## Yahoo `^SET.BK` history = 1 bar → every TH rotation quadrant blank (2026-09-24)
 
 `yf.download("^SET.BK", period="9mo")` (and `.history()`) returned **1 row**; `^SET50.BK` the same.
