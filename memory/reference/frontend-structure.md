@@ -530,6 +530,10 @@ components/bloomberg/
 | `Ctrl+N` | New watchlist |
 | `?` (Shift) | Show shortcuts help |
 | `i` | Focus the MKT symbol search |
+| `↑` / `↓` | MKT chart: next coarser / finer bar interval (1M … 1W, stops at the ends) — 2026-10-23 |
+| `←` / `→` | MKT chart: shorter / longer range (1D … MAX) — same legality rules as clicking (`applyInterval` / `applyPeriod`) |
+
+Arrow keys are skipped while typing, with a modifier, when a focused control already used them (`preventDefault`), inside a slider / separator / listbox / menu / grid / dialog, or inside a floating chart window (`data-chart-window`) — `arrowShortcutAllowed` in `chart/useChartTimeframe.ts`.
 
 Shortcuts use physical letter/number keys when a Thai keyboard layout is active; IME composition and ordinary typing in input fields are ignored. Header and mobile view tabs are real `/?view=...` links: Ctrl/Meta+click and middle click open a new tab, while plain clicks update the current view and browser history.
 

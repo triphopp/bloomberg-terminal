@@ -101,6 +101,7 @@ function FloatingChartWindowInner({ win }: Props) {
   return (
     <div
       ref={bodyRef}
+      data-chart-window
       className="absolute flex flex-col pointer-events-auto"
       style={{
         left: x,
