@@ -2644,22 +2644,6 @@ label, and the symbol's OCR box (") SKHU") starts inside the side word's so `sam
 Fixed in `parsers/dime.py`; fixture `dime_buy_shares_market_rapidocr.json`. A new FAIL on a real slip: dump the tokens
 first (`ocr.read` → y, x, text) — every miss so far was geometry or a label, never recognition.
 
-## `yf.Search` keeps one empty answer until the backend restarts (2026-10-23)
-
-**Symptom:** NEWS → MACRO showed only RSS stories; topics such as `economy` stayed empty through REFRESH (`fresh=1`)
-for hours, while the same `yf.Search` call from a separate Python process returned 27 stories. `upstream_report.py`
-showed no failures.
-
-**Cause:** yfinance 1.3 `Search.search()` reads through `YfData.cache_get`, which is `@lru_cache` — it lives as long
-as the process and is keyed on the exact query + counts. Yahoo now and then answers a search 200 with an empty `news`
-list; that answer was then served for that query until restart, under every TTL cache of ours. A cached call makes no
-request, so nothing reached `upstream_health` either.
-
-**Fix:** news searches go through `backend/yahoo_search.py` `search_news()` — `YfData().get` (cookie/crumb + Yahoo
-gate, no lru), raises on a non-search answer, and records an empty list as `Yahoo` / `empty` in `logs/upstream.jsonl`.
-Used by `routers/news.py` (MACRO topics) and `routers/news_watchlist.py` (WATCHLIST Yahoo source). Callers keep their
-own TTL cache. **Never add a news read on `yf.Search`.** Still on `yf.Search`: `sources/yfinance_source.py` symbol
-search (quotes; `routers/stock.py` already falls back to one REST call when it comes back empty).
 ## MKT takes minutes to fill on open — WATCHLIST / signals "slow" but their endpoints are fast (2026-10-21)
 `/api/watchlist/signals` answered in 0.2 s warm / 0.7 s cold (20 symbols), yet at the 20:38 cold start the watchlist's
 requests reached the backend ~2 min after the page opened. **Cause: a browser opens six HTTP/1.1 connections per
@@ -2696,3 +2680,38 @@ screen"); and an explicit scroll-container root picked at mount went stale — u
 scrolling ancestors) and buffer by rows, not `rootMargin`. The Claude Browser pane stops rendering when hidden
 (`requestAnimationFrame` count 0): IntersectionObserver results there are meaningless — check `rAF` first.
 
+## `yf.Search` keeps one empty answer until the backend restarts (2026-10-23)
+
+**Symptom:** NEWS → MACRO showed only RSS stories; topics such as `economy` stayed empty through REFRESH (`fresh=1`)
+for hours, while the same `yf.Search` call from a separate Python process returned 27 stories. `upstream_report.py`
+showed no failures.
+
+**Cause:** yfinance 1.3 `Search.search()` reads through `YfData.cache_get`, which is `@lru_cache` — it lives as long
+as the process and is keyed on the exact query + counts. Yahoo now and then answers a search 200 with an empty `news`
+list; that answer was then served for that query until restart, under every TTL cache of ours. A cached call makes no
+request, so nothing reached `upstream_health` either.
+
+**Fix:** news searches go through `backend/yahoo_search.py` `search_news()` — `YfData().get` (cookie/crumb + Yahoo
+gate, no lru), raises on a non-search answer, and records an empty list as `Yahoo` / `empty` in `logs/upstream.jsonl`.
+Used by `routers/news.py` (MACRO topics) and `routers/news_watchlist.py` (WATCHLIST Yahoo source). Callers keep their
+own TTL cache. **Never add a news read on `yf.Search`.** Still on `yf.Search`: `sources/yfinance_source.py` symbol
+search (quotes; `routers/stock.py` already falls back to one REST call when it comes back empty).
+
+## `biome format backend` rewrites evidence backups whose SHA-256 is pinned (2026-10-23)
+
+**Symptom:** after `npx biome format --write … backend`, 128 files changed — tracked test fixtures
+(`backend/slip_ocr/tests/fixtures/**.json`) and gitignored ones: `backend/backups/**` (accounting snapshots, evidence
+manifests), `backend/evidence/slips/*.json`, data caches (`macro_series.json`, `.sync_state_portfolio.json` …). Same
+JSON values, different whitespace — but the backups' `manifest.json` files and DB notes (`option_history.py` writes
+`manifest <name> SHA256 <hash>` into a cash-offset row) pin those files byte for byte, so the citations broke.
+
+**Recovery used:** tracked files → `git checkout`. Untracked → rebuild candidates (the same path in `git log --all`,
+`json.dumps` / `JSON.stringify` variants) and write one back only when its sha256 equals a hash recorded in a manifest
+or the DB: 52 restored exactly, including `dime-options-2026-manifest.json` (cited in the DB). Not recoverable and
+left with new whitespace: `portfolio-review-20260925/evidence/dime-activity/dime-executions-manifest.json`,
+`portfolio-review-20260925/sheet-transcription.json`, `portfolio-review-20260925-r2/prior-sheet-transcription.json`
+(their manifest hashes no longer match), plus manifests and data files no hash points at.
+
+**Rule:** run biome only on the frontend files you changed (`npx biome format --write <file> …`), never on `backend/`
+or a whole directory you did not write. Evidence files are pinned by hash: never reformat, re-save or "pretty-print"
+anything under `backend/backups/` or `backend/evidence/`.
