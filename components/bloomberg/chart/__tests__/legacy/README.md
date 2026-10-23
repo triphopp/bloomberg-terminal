@@ -11,6 +11,8 @@ changed only where it had to be to live in this folder:
 - `bollinger.ts` / `bollinger-b.ts` take `calcBollingerStats` from
   `./bollinger-stats.ts`, which is that function as it was in
   `chart/bollinger-fit.ts`;
+- `ichimoku.ts` colours and Chikou's `lineStyle`, restyled on purpose
+  2026-10-23 together with the live indicator (style only, no value);
 - three `biome-ignore` comments on non-null assertions (`ema.ts`, `volume.ts`),
   and whatever the formatter did when the files were committed.
 
