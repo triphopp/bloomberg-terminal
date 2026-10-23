@@ -225,6 +225,8 @@ components/bloomberg/
 │   ├── useDepth.ts             ← status + depth polling (2 s, slower after a refusal, off when nothing can change) + token request/check
 │   ├── useStockData.ts
 │   ├── useWatchlistSignals.ts   ← batch daily technical scan for the watchlist
+│   ├── useWatchlistSnapshot.ts  ← seed/save WATCHLIST quotes + signals from localStorage (first paint)
+│   ├── useVisibleSymbols.ts     ← WATCHLIST rows on screen (+12 either side) → which get live data
 │   ├── useRatesCurve.ts         ← /api/rates → UST + JGB curves for the TICK DATA board (`RateRowData`)
 │   ├── useFxTicks.ts            ← /api/fx overview for the TICK DATA FX section (`FxPair`)
 │   ├── useAiMarketAnalysis.ts
@@ -298,6 +300,7 @@ components/bloomberg/
 | `lib/iv-smile.ts` | `buildIvSmile`, `buildIvSmileOi`, `chooseSmileExpiry`, `expiryDays`, `smileTenorDate`, `selectSmileTenors`, `smileSamples`, `sviIvAtStrike`, `smilePlotRows`, `smileWingMetrics`, `SMILE_TENOR_MONTHS`; types `IvSmileOption`, `IvSmileChain`, `IvSmilePoint`, `IvSmileOiPoint`, `SmileSide`, `SmileFitMode`, `SviSample`, `RawSviParameters`, `RawSviFit`, `SviFitResponse`, `SmileTenor` |
 | `lib/quote-stream-client.ts` | `createQuoteStreamClient({EventSource, fetch, sessionId, …})` → `{listen, subscribe, cadence, dispose, state}` — the page's one SSE session: union of listeners, diff via `POST /api/stream/interest`, reopen only on none/closed/404, `ready.resumed` → resend, stale-POST guard (stream generation). Pure; tests `lib/__tests__/quote-stream-client.test.ts`. `useQuoteStream` / `useStreamPollInterval` are thin wrappers over a lazy singleton |
 | `hooks/useChangeFeed.ts` | `useChangeFeed()` (mounted once in `layout/bloomberg-terminal.tsx`) — invalidates `CHANGE_KEYS[table]` when the heartbeat's `changes[table]` moves; `chart_drawings → ["chart-drawings"]` (that query no longer polls) |
+| `lib/market-data-client.ts` `fetchQuoteFirstPaint` | WATCHLIST's quote queryFn: with no full quote in hand → lite (one v7 batch) merged over the cached/stored row now, full quote behind it on `slowDataQueue` → `onFull`; afterwards plain `fetchQuote` |
 | `lib/market-data-client.ts` `fetchQuote` | queryFn of `quoteQueryOptions`: full quote when fundamentals are older than `QUOTE_FUNDAMENTALS_MS` (30 min), else `quoteLiteBatcher` (`?fields=price`) merged over the last full one |
 | `hooks/useHeartbeat.ts` | `useHeartbeat(select?, pollMs=15s)` — one shared `["heartbeat"]` query over `/api/heartbeat`; `HEARTBEAT_KEY`, type `Heartbeat`. `useSync` / `useProviders` / `BackendStatusBanner` select their part (was 3 separate polls) |
 | `lib/stream-cadence.ts` | pure: `streamCadence` → `"streamed"`/`"quiet"`/null, `pollInterval(base, cadence)`, `openSymbolsOf(rows)`, `isOpenMarketState`, `symbolKey`; constants `STREAM_TICK_FRESH_MS` 120s, `STREAM_BACKOFF_MS` 300s, `QUIET_BACKOFF_MS` 120s. Tests `lib/__tests__/stream-cadence.test.ts` |
@@ -477,7 +480,11 @@ components/bloomberg/
 | `views/portfolio/weights.ts` | `navBreakdown` `weightPct` `fmtWeight`; types `NavInputs` `NavBreakdown` — pure % of NAV maths (NAV = equity MV + option MV + cash). Tests: `npm run test:views` |
 | `views/portfolio/ui/usePortfolioNav.ts` | `usePortfolioNav(accountId, currency)` → `{ breakdown, pct }` (reads openPositions + summary query caches); `equityMarketValue(trade)` |
 | `views/tail/macro-context.tsx` | `useMacroContext()` `EventStrip` `MacroPanel` `KIND_COLOR`; types `MacroEvent` `EventKind` `MacroContextData` |
-| `hooks/useWatchlistSignals.ts` | `useWatchlistSignals(symbols)` → `{ signals, errors, isLoading, refetch }`; types `WatchlistSignal`, `TrendState`, `RsiState`, `MacdState`, `BreakoutState` |
+| `hooks/useVisibleSymbols.ts` | `useVisibleSymbols(rootRef, enabled)` → sorted symbols of `[data-wl-sym]` rows in view (viewport IntersectionObserver, rows found by MutationObserver, ±12 rows buffer, 250 ms settle); `null` = not measured = all. WATCHLIST root shows the count as `data-wl-live` |
+| `hooks/useMarketQueryResults.ts` `usePrefetchLoop` | poll pass over a subset of options at its own rate (WATCHLIST: on-screen 60 s, off-screen 5 min) |
+| `hooks/useWatchlistSnapshot.ts` | `useSnapshotSeed` (stored values into the query cache before the observers subscribe, with their real fetch time; `alwaysRefetch` for quotes), `useSnapshotSave` (10 s throttle + `pagehide`), `cachedRows` → `{ cached, cachedAgeMs }` for the WATCHLIST strip |
+| `lib/watchlist-snapshot.ts` | pure: `readSnapshot`, `writeSnapshot` (`localStorage["bloomberg_watchlist_snapshot_v1_<quotes\|signals>"]`, ≤ 400 items, ≤ 4 days), `reviveQuote` (re-derives `isCurrentSession` from `quoteDate` + exchange date), `dateInZone` |
+| `hooks/useWatchlistSignals.ts` | `useWatchlistSignals(symbols)` → `{ signals, errors, isLoading, cached, cachedAgeMs, refetch }`; types `WatchlistSignal`, `TrendState`, `RsiState`, `MacdState`, `BreakoutState` |
 | `lib/constants.ts` | `PYTHON_API` (base URL) |
 | `lib/theme-config.ts` | `bloombergColors`, `darkTheme`, `lightTheme` |
 
@@ -655,7 +662,7 @@ Things that will bite:
 
 | File | Exports / behavior |
 |---|---|
-| `lib/market-data-client.ts` | `MarketDataError`, `RequestQueue`, `SymbolBatcher`, `marketJson`, `marketRetry`, `marketRetryDelay`, `retryAfterSeconds`, `StockQuote`, `quoteBatcher`, `sparklineBatcher`, `quoteQueryOptions` |
+| `lib/market-data-client.ts` | `MarketDataError`, `RequestQueue`, `SymbolBatcher`, `marketJson`, `marketRetry`, `marketRetryDelay`, `retryAfterSeconds`, `StockQuote`, `quoteBatcher`, `sparklineBatcher`, `quoteQueryOptions`, `fetchQuoteFirstPaint`, `slowDataQueue` (2-slot lane: signals, Polymarket summaries, full quotes behind a first paint) |
 | `lib/market-data-proxy.ts` | `marketDataProxy` — backend status/body/Retry-After, abort/deadline, no retry |
 | `components/bloomberg/hooks/useMarketQueryResults.ts` | `useMarketQueryResults` — public TanStack QueriesObserver, 50ms React notification coalescing, one polling pass per resource, no overlapping passes, pause in hidden tab |
 | `components/bloomberg/hooks/useWatchlistData.ts` | `useWatchlistQuotes`, `useWatchlistSparklines` — stable per-symbol query keys, retained cache, complete quote coverage, optional sparkline observers |

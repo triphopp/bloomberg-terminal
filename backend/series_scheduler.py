@@ -31,6 +31,8 @@ import time
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+import request_latency
+
 logger = logging.getLogger(__name__)
 
 #: A pass is cheap once the day is covered, and several chances per day is what
@@ -127,6 +129,7 @@ def run_pass() -> list:
 def _loop(interval: int) -> None:
     time.sleep(STARTUP_DELAY)
     while True:
+        request_latency.wait_for_quiet()  # let a page load finish first
         try:
             if needs_pass():
                 run_pass()

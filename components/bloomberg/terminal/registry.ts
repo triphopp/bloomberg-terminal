@@ -170,6 +170,15 @@ const NAV: CommandDef[] = [
     },
   },
   {
+    name: "TAIL",
+    group: "nav",
+    description: "Go to Tail Risk Monitor (events · risk dimensions · macro · positioning · cycle)",
+    handler: (_, ctx) => {
+      ctx.setView("tail");
+      return { kind: "navigate", view: "tail" };
+    },
+  },
+  {
     name: "CAL",
     group: "nav",
     description: "Go to Calendar (macro, company and thesis dates)",

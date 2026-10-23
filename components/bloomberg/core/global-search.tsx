@@ -118,6 +118,21 @@ function typeColor(type?: string): string {
   }
 }
 
+// Typed in the search box but not registry commands — shown under HELP → also.
+const HELP_ALSO: [string, string][] = [
+  [
+    "AAPL · 0700.HK · BTC-USD",
+    "Bare ticker or company name → stock analysis (Ctrl+P pins to a group)",
+  ],
+  ["FG · FEAR-GREED", "Fear & Greed composite index"],
+  ["USD_scaling", "Chart the MKT symbol priced in another currency (USD, BTC, EUR, THB …)"],
+  [
+    "heatmap(TH, 52w)",
+    "Market heatmap: US TH JP HK CN KR TW IN UK DE FR SG AU CA · 1d 52w 50d 200d",
+  ],
+  ["c", "Open ASK (chat with the model, any view) — also the header icon"],
+];
+
 const GROUP_COLORS: Record<string, string> = {
   analysis: "#FF6600",
   nav: "#42a5f5",
@@ -903,6 +918,23 @@ export function GlobalSearch() {
                       </div>
                     );
                   })}
+                  {/* Things that are typed but are not registry commands */}
+                  <div className="mb-3">
+                    <div
+                      className="text-[9px] font-bold tracking-widest mb-1 uppercase"
+                      style={{ color: colors.accent }}
+                    >
+                      also
+                    </div>
+                    {HELP_ALSO.map(([name, desc]) => (
+                      <div key={name} className="flex gap-3 text-[10px] py-0.5">
+                        <span className="w-40 shrink-0 font-bold" style={{ color: colors.accent }}>
+                          {name}
+                        </span>
+                        <span style={{ color: colors.textSecondary }}>{desc}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </>

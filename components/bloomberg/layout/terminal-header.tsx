@@ -14,6 +14,8 @@ export interface NavItem {
   id: string;
   label: string;
   shortcut: string;
+  /** One line for the help panel. */
+  description?: string;
   href: string;
   onClick: () => void;
 }

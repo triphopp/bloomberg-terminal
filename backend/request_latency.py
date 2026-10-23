@@ -103,6 +103,8 @@ _bg_holds: deque = deque(maxlen=50)
 _counters = {"requests": 0, "slow": 0, "db_locked": 0, "bg_db_locked": 0}
 _peak = {"busy": 0, "waiting": 0, "local_busy": 0}
 _started = time.time()
+#: Vendor-bound (default lane) requests in flight — what a page load looks like.
+_fg_inflight = 0
 _local_limiter = None  # anyio.CapacityLimiter, created lazily on the event loop
 
 
@@ -192,6 +194,49 @@ def _default_limiter():
         return None
 
 
+# ── foreground quiet gate ─────────────────────────────────────────────────────
+# Background scans (alerts, TRADE GUARD, IV, series, calendar…) share Yahoo with
+# the page a person is opening. Their fixed start-up delays (60–150 s) landed
+# them together, right when the terminal is usually first opened: 1,097 Yahoo
+# calls in the first 10 min on 2026-10-21 (≈250 steady), Yahoo DEGRADED, and
+# MKT waiting minutes. A pass now waits for the page load to finish first.
+
+#: Never "someone loading a page": long-lived streams and constant cheap polls.
+QUIET_IGNORE: tuple[str, ...] = (
+    "/api/stream/", "/api/webull/depth/stream", "/api/heartbeat", "/api/dev/", "/api/health",
+)
+
+
+def foreground_inflight() -> int:
+    with _lock:
+        return _fg_inflight
+
+
+#: Longest a background pass defers to page loads.
+QUIET_MAX_WAIT_S = 180
+
+
+def wait_for_quiet(*, max_wait_s: float = QUIET_MAX_WAIT_S, quiet_s: float = 10,
+                   busy_above: int = 2, poll_s: float = 1.0) -> float:
+    """Block a BACKGROUND thread until vendor-bound requests have stayed at or
+    below `busy_above` for `quiet_s` in a row — or `max_wait_s` has passed, so
+    a page that polls forever cannot starve a scan. Returns seconds waited.
+    Never call it on a request path."""
+    start = time.monotonic()
+    calm_since = None
+    while True:
+        now = time.monotonic()
+        if now - start >= max_wait_s:
+            return now - start
+        if foreground_inflight() <= busy_above:
+            calm_since = calm_since if calm_since is not None else now
+            if now - calm_since >= quiet_s:
+                return now - start
+        else:
+            calm_since = None
+        time.sleep(poll_s)
+
+
 # ── middleware ────────────────────────────────────────────────────────────────
 
 class LatencyMiddleware:
@@ -212,6 +257,11 @@ class LatencyMiddleware:
                 pass
         token = _current.set(req)
         status = [0]
+        counted = req.lane == "default" and not path.startswith(QUIET_IGNORE)
+        global _fg_inflight
+        if counted:
+            with _lock:
+                _fg_inflight += 1
 
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
@@ -221,6 +271,9 @@ class LatencyMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
+            if counted:
+                with _lock:
+                    _fg_inflight -= 1
             _current.reset(token)
             _finish(scope, req, status[0])
 

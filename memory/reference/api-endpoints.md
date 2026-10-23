@@ -936,8 +936,10 @@ Per symbol: `trend` (EMA20/50/200 stack), `rsi` (Wilder 14), `rvol` (vs 20d avg)
 
 | Data | Cache | Where |
 |------|-------|-------|
-| Market indices | 60s | Python in-memory |
+| Market indices (`/api/market-data`), VOLATILITY, `/api/tick-custom` | 60s fresh · **stale-while-revalidate** up to 15 min · last good on disk (`backend/cache/swr_*.pkl`) | `TTLCache.get_or_refresh` |
 | Market indices | 55s | Next.js in-memory |
+| TAIL signals (`/api/tail-risk/signals`) | 5min fresh · SWR up to 12h · disk | `TTLCache.get_or_refresh` |
+| Rates curve (`/api/rates/curve`) | 1hr fresh · SWR up to 36h · disk (DELETE drops both) | `TTLCache.get_or_refresh` |
 | Heatmap | 60s | Python in-memory |
 | Stock quote / raw Yahoo info / fast-info | 60s, per-symbol single-flight | `market_requests.py` + `market_snapshots.py` |
 | Stock history | 5min (12hr for max/5y) | Python in-memory |
@@ -964,7 +966,14 @@ Per symbol: `trend` (EMA20/50/200 stack), `rsi` (Wilder 14), `rvol` (vs 20d avg)
 | Allocation signal | 5min | Python in-memory |
 | Country rotation | 5min | Python in-memory |
 | Sector selection | 5min | Python in-memory |
-| Regime detection | 5min | Python in-memory |
+| Regime detection (`/api/regime/correlation · trend · calibrated`) | 5min fresh · SWR up to 12h · disk; one 2y/1d pull of the 11 sector ETFs via `history_future` (15 min) feeds every period | `routers/regime.py` |
+
+**Stale-while-revalidate** (`backend/cache.py` `TTLCache.get_or_refresh`, 2026-10-21): past `ttl` the request gets the
+old value at once and ONE background thread recomputes (failed refresh → kept old value, retried after 30 s); past
+`max_stale` (or nothing cached) it computes in the request as before. `persist=` keeps the last good value in
+`backend/cache/swr_<name>.pkl` so a restart answers at once — only for payloads that carry their own time (`ts`,
+`asOf`, `quoteDate`). `valid=` marks a failed compute: never stored over a good value, never persisted. Use it for any
+endpoint whose compute takes seconds; `peek()` reads without evicting the stale entry (`get()` deletes it).
 
 ---
 

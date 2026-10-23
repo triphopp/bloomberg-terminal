@@ -7,6 +7,7 @@ import {
   RequestQueue,
   SymbolBatcher,
   fetchQuote,
+  fetchQuoteFirstPaint,
   quoteQueryOptions,
   retryAfterSeconds,
 } from "../market-data-client.ts";
@@ -228,4 +229,45 @@ test("fetchQuote: a lite failure surfaces as the query error, no silent stale pr
   };
   await fetchQuote("fq2");
   await assert.rejects(() => fetchQuote("fq2"));
+});
+
+test("first paint: lite over the cached row now, the full quote behind it, then plain fetchQuote", async () => {
+  const asked: string[] = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    const symbols = requestedSymbols(input);
+    const lite = url.includes("fields=price");
+    asked.push(lite ? "lite" : "full");
+    return Response.json({
+      quotes: Object.fromEntries(
+        symbols.map((s) => [
+          s,
+          lite
+            ? { symbol: s, regularMarketPrice: 11 }
+            : { symbol: s, regularMarketPrice: 12, longName: "Full" },
+        ])
+      ),
+    });
+  };
+  let full: { longName?: string } | undefined;
+  const got = await fetchQuoteFirstPaint(
+    "fpaint",
+    undefined,
+    {
+      regularMarketPrice: 9,
+      regularMarketChangePercent: 0,
+      regularMarketChange: 0,
+      longName: "Cached",
+    },
+    (q) => {
+      full = q;
+    }
+  );
+  assert.equal(got.regularMarketPrice, 11); // the lite price…
+  assert.equal(got.longName, "Cached"); // …over the cached row's names
+  for (let i = 0; i < 50 && !full; i++) await pause(5);
+  assert.equal(full?.longName, "Full");
+  asked.length = 0;
+  await fetchQuoteFirstPaint("FPAINT", undefined, undefined, () => assert.fail("no second full"));
+  assert.deepEqual(asked, ["lite"]); // fundamentals in hand: fetchQuote's lite poll
 });

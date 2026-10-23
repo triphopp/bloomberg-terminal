@@ -508,17 +508,30 @@ def _single_pass_aggregates(stks: list[dict]) -> dict:
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+def _has_rows(data: dict) -> bool:
+    """A build where every row failed is an outage, not an answer to keep."""
+    return any(isinstance(v, list) and v for v in (data or {}).values())
+
+
 @router.get("/api/market-data")
 def get_market_data():
     # get_or_set coalesces concurrent misses → only ONE thread hits yfinance,
     # the rest wait and share the result (prevents thundering-herd refetch).
-    return _cache.get_or_set("market_data", build_market_data)
+    # Stale-while-revalidate: rows carry their own quoteDate / isCurrentSession,
+    # and a copy older than 15 min is not served — the request rebuilds instead.
+    return _cache.get_or_refresh(
+        "market_data", build_market_data, max_stale=15 * 60, persist="market_data",
+        valid=_has_rows,
+    )
 
 
 @router.get("/api/volatility")
 def get_volatility():
     """VIX-family "fear" indices for the TICK DATA board."""
-    return _vol_cache.get_or_set("volatility", build_volatility_data)
+    return _vol_cache.get_or_refresh(
+        "volatility", build_volatility_data, max_stale=15 * 60, persist="volatility",
+        valid=_has_rows,
+    )
 
 
 _custom_cache = TTLCache(ttl=CACHE_TTL, maxsize=32)
@@ -571,7 +584,11 @@ def get_tick_custom(symbols: str = Query(..., description="Comma-separated Yahoo
             "dataSource": "yfinance",
         }
 
-    return _custom_cache.get_or_set(",".join(sorted(wanted)), _build)
+    key = ",".join(sorted(wanted))
+    return _custom_cache.get_or_refresh(
+        key, _build, max_stale=15 * 60, persist=f"tick_custom_{key}",
+        valid=lambda d: bool(d.get("items")),
+    )
 
 
 @router.get("/api/heatmap")

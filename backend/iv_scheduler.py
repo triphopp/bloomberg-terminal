@@ -40,6 +40,8 @@ import threading
 import time
 from datetime import datetime
 
+import request_latency
+
 import us_session
 
 logger = logging.getLogger(__name__)
@@ -238,6 +240,7 @@ def run_once() -> dict:
 def _loop(interval: int) -> None:
     time.sleep(STARTUP_DELAY)
     while True:
+        request_latency.wait_for_quiet()  # let a page load finish first
         try:
             run_once()
         except Exception as e:  # noqa: BLE001 — a bad pass must not kill the loop
