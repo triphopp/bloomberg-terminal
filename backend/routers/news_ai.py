@@ -92,6 +92,9 @@ _PRIVATE_TOOLS = frozenset({
 # written by the model, from pages it read. Their links are not added to `_Links`.
 _UNVOUCHED_TOOLS = frozenset({"read_page", "search_sessions", "read_session"})
 _PRIVATE_PAGES = frozenset({"portfolio"})
+# Sections of a public page that carry the book: MKT → CHECK says what weight a
+# buy would reach and which theses exist (routers/prebuy_check.py).
+_PRIVATE_SECTIONS = frozenset({("market", "check")})
 
 
 
@@ -738,10 +741,13 @@ def _is_private_call(call: dict, page: str | None) -> bool:
         return page in _PRIVATE_PAGES
     if name == "get_page_data":
         try:
-            asked = str((json.loads(call["arguments"] or "{}") or {}).get("page") or page or "")
+            args = json.loads(call["arguments"] or "{}") or {}
+            asked = str(args.get("page") or page or "")
+            section = str(args.get("section") or "")
         except (ValueError, AttributeError):
-            asked = page or ""
-        return asked.strip().lower() in _PRIVATE_PAGES
+            asked, section = page or "", ""
+        asked = asked.strip().lower()
+        return asked in _PRIVATE_PAGES or (asked, section.strip().lower()) in _PRIVATE_SECTIONS
     return False
 
 

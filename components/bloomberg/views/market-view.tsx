@@ -60,6 +60,7 @@ import {
   pinnedAssetsAtom,
   showHeatmapSettingsAtom,
   stockSearchSymbolAtom,
+  structureModeRequestAtom,
 } from "../atoms";
 import { MAX_CHART_WINDOWS, chartWindowsAtom, openChartWindowAtom } from "../atoms/chart-windows";
 import {
@@ -145,6 +146,7 @@ import {
 } from "../lib/tick-board";
 import { TICK_HEAD, TICK_NOTE, TICK_REGION, TICK_SUBGROUP, TICK_TABLE } from "../lib/tick-grammar";
 import type { MarketItem } from "../types";
+import { CheckChip } from "./check-panel";
 import { FrequentSearchList, MostActiveList } from "./discover-lists";
 import { PinnedAssets } from "./pinned-assets";
 import { SectorRegimeHeatmap } from "./sector-regime-heatmap";
@@ -1721,6 +1723,7 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
 
   const setCurrentView = useSetAtom(currentViewAtom);
   const setStockSymbol = useSetAtom(stockSearchSymbolAtom);
+  const requestStructureMode = useSetAtom(structureModeRequestAtom);
   const openChartWindow = useSetAtom(openChartWindowAtom);
   const chartWindows = useAtomValue(chartWindowsAtom);
   const [pins] = useAtom(pinnedAssetsAtom);
@@ -2918,6 +2921,16 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
                     ))}
                   </span>
                   <QuoteStatsPopover fields={quoteFields.stat} colors={colors} />
+                  {/* Pre-buy CHECK of the chart symbol — opens STRUCTURE → CHECK
+                      (the STRUCTURE panel lives under the watchlist). */}
+                  <CheckChip
+                    symbol={selectedSymbol}
+                    onOpen={() => {
+                      requestStructureMode("check");
+                      if (layout.collapsedPanels.includes("watchlist"))
+                        toggleCollapsed("watchlist");
+                    }}
+                  />
                   <MarketSessionBadge state={quote.marketState as string | undefined} compact />
                   {/* Pre/after-hours price folded into the header instead of its own
                       full-width row below — it's only relevant outside regular hours,

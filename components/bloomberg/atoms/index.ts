@@ -106,9 +106,9 @@ export const toolsRequestAtom = atom<ToolsRequest | null>(null);
 export const calendarRequestAtom = atom<{ date?: string; category?: string } | null>(null);
 
 // A mode the MKT STRUCTURE panel is asked to open — a WEBULL alert leads to
-// DEPTH, where a token is requested. SectorRegimeHeatmap consumes it and resets
-// it to null.
-export const structureModeRequestAtom = atom<"depth" | null>(null);
+// DEPTH, where a token is requested; the CHECK chip on the chart header leads
+// to CHECK. SectorRegimeHeatmap consumes it and resets it to null.
+export const structureModeRequestAtom = atom<"depth" | "check" | null>(null);
 
 // Symbol requested by another view for the main MKT chart. The market view
 // consumes and clears this when it becomes active.

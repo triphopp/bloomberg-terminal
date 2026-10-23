@@ -402,6 +402,27 @@ def company_events(universe: dict[str, dict], by_symbol: dict[str, list[dict]], 
     }
 
 
+def symbol_events(symbol: str, start: date, end: date, *, fetch: bool = True) -> tuple[list[dict], dict]:
+    """One symbol's company dates, whether or not the book holds it — for the
+    pre-buy CHECK (prebuy_check.py). Same background pull, store and retry clock
+    as the calendar's own symbols; the symbol does NOT join the CAL grid's
+    universe (company_universe stays holdings + theses). Returns (rows, status)
+    with status {loaded, pending, failed}."""
+    p = str(symbol or "").upper().strip()
+    if not p or p.endswith("-USD") or p.endswith("=X") or p.startswith("^"):
+        return [], {"loaded": False, "pending": False, "failed": None, "applicable": False}
+    pending = bool(_schedule([p])) if fetch else False
+    entry = _store.get(p)
+    if entry is None:
+        return [], {"loaded": False, "pending": pending, "failed": None, "applicable": True}
+    rows = _company_rows({"symbol": p, "display": p}, entry, start.isoformat(), end.isoformat(), [])
+    for e in rows:
+        e["days_until"] = (_d(e["date"]) - date.today()).days
+    rows.sort(key=lambda e: e["date"])
+    return rows, {"loaded": True, "pending": pending, "failed": entry.get("errors") or None,
+                  "applicable": True}
+
+
 # ── THESIS ───────────────────────────────────────────────────────────────────
 
 def note_events(conn, by_id: dict[str, dict], start: date, end: date) -> list[dict]:

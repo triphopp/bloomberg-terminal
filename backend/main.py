@@ -283,6 +283,8 @@ app.include_router(fiscal_ai.router, tags=["Fiscal.ai"])
 app.include_router(trade_history.router, tags=["Trade History"])
 app.include_router(fund.router, tags=["Fund"])
 app.include_router(webull.router, tags=["Webull"])
+from routers import prebuy_check as prebuy_check_router  # noqa: E402
+app.include_router(prebuy_check_router.router, tags=["Pre-buy CHECK"])
 
 
 # ── Sync gate ─────────────────────────────────────────────────────────────────
