@@ -83,6 +83,13 @@ PAGES: dict[str, dict[str, tuple[str, dict, str]]] = {
                                 "the stocks in one SET industry group or sector (key = the SET code, e.g. BANK, "
                                 "PF&REIT, FINCIAL): every member the exchange lists there, share of the group's "
                                 "market cap, returns and quadrant"),
+        "check": ("/api/prebuy-check/{symbol}", {},
+                  "STRUCTURE → CHECK, the pre-buy check of one stock or ETF: each measured fact that disagrees "
+                  "with buying it now (sector Lagging in ROT, below its 200-day average, earnings or a high-impact "
+                  "macro release within days, the book's weight / sector weight after a size-S buy over the "
+                  "TRADE GUARD caps) and the open questions (no thesis, no kill line, no holding rules), tier A/B/C "
+                  "and the size it allows, the symbol's events this month. A list of conflicts, never a buy / sell "
+                  "call — say which facts conflict, not what to do"),
     },
     "portfolio": {
         "summary": ("/api/v2/portfolio/summary", {"base_currency": "THB"},

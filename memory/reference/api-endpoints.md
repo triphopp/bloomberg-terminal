@@ -400,6 +400,21 @@ Next.js proxy `app/api/gcal/[...path]/route.ts` (status · connect · sync · di
 - `POST /api/gcal/disconnect?delete_calendar=false` → revokes, forgets the token (calendar kept unless asked).
 - The calendar scheduler's tick (`CALENDAR_SCAN_INTERVAL`) also runs a pass when this machine is connected.
 
+## Pre-buy CHECK (`routers/prebuy_check.py`) — 2026-10-23
+
+`GET /api/prebuy-check/{symbol}?fresh=0` — MKT → STRUCTURE → CHECK and the chart-header chip: each measured fact that
+disagrees with buying `symbol` now. Rules pure in `backend/prebuy_check.py` (`RULES`, `evaluate`, `tier_of`;
+`tests/test_prebuy_check.py`). Facts come from what other screens already cache: ROT table (US: the Select Sector SPDR
+whose State Street file lists the stock — Yahoo's Morningstar sector only as a labelled fallback; TH: the SET sector
+file), daily history 2y (SMA50 / SMA200), `calendar_feed.build` (macro + the symbol's thesis dates) +
+`calendar_feed.symbol_events` (company dates of ANY symbol, same background pull; the symbol does not join the CAL
+grid), TRADE GUARD snapshot of the personal book (weight / sector weight after a size-S buy), theses / track_metrics
+(KILLER with a kill line) / thesis_notes (`กติกาการถือ…`). A slow fact is `PENDING` and named in `pending` (client
+polls 4 s); a failed one is `OPEN` with the reason, never `PASS`. Indices / FX / crypto / futures → `applicable:
+false`. Cache 60 s (never while pending). Warm ~60 ms; first call of the day ~5 s (11 SPDR files, ROT build).
+Proxy `app/api/prebuy-check/[symbol]/route.ts`. ASK `get_page_data market/check` (private section — it carries book
+weights, `_PRIVATE_SECTIONS` in `routers/news_ai.py`). Plan `plans/pre-buy-check.md`.
+
 ## Calendar (`routers/calendar_feed.py`) — 2026-10-08
 
 The one calendar (the CAL view, key `6`). Read-only; logic in `backend/calendar_feed.py`. Next.js proxy:

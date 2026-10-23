@@ -2112,6 +2112,39 @@ Options    Envelope & { total_matching; returned; complete; next_offset;
 Wins / losses follow the stored `win_loss` flag (as PORT counts them); `flag_disagrees_with_sign` reports where the flag
 and the sign of `pnl_amount` differ. Errors: 422 (unreadable filter — the sentence says which), 404 / 409 on `/trades/{id}`.
 
+## Pre-buy CHECK (`/api/prebuy-check/{symbol}`) — 2026-10-23
+
+TS: `components/bloomberg/hooks/usePrebuyCheck.ts` (`PrebuyCheck`, `PrebuyCheckItem`, `PrebuyEvent`).
+
+```jsonc
+{
+  "symbol": "GOOGL", "as_of": "2026-10-23", "applicable": true,   // false + "reason" for ^ / = / -USD
+  "name": "Alphabet Inc.", "sector": "Communication Services (XLC)",
+  "tier": "C",                    // A · B · C · null (something PENDING, no conflict yet — never A on missing data)
+  "counts": {"conflict": 3, "open": 2, "pass": 4, "pending": 0},
+  "tier_size": 0.0,               // A 1 · B 0.5 · C 0
+  "size_multiplier": 0.0,         // min(tier_size, guard.size_multiplier); null with tier null
+  "guard": {"light": "RED", "size_multiplier": 0.5, "why": ["DD -8.2% ≤ −5%", "…"]},  // book-wide, not a conflict
+  "checks": [{                    // CONFLICT first, then OPEN, PENDING, PASS
+    "id": "rotation",             // rotation · trend · earnings · macro · weight · sector · thesis · kill · rules
+    "group": "TIMING",            // TIMING · EVENTS · BOOK · THESIS
+    "state": "CONFLICT",          // CONFLICT · OPEN · PASS · PENDING
+    "title": "Sector lagging (Communication Services (XLC))",
+    "detail": "1M -4.1 vs SPY · momentum down",
+    "view": "ROT",                // ROT · chart · CAL · RISK · THESES · TRACK — where the fact lives
+    "group_id": "XLC", "quadrant": "Lagging"   // optional extras: date, thesis_id
+  }],
+  "events": [{"id": "co:EARNINGS:GOOGL:2026-10-28", "date": "2026-10-28", "days_until": 5, "category": "COMPANY",
+              "kind": "EARNINGS", "title": "Earnings", "impact": null, "estimated": false, "done": false,
+              "detail": "", "source": "Yahoo calendar", "symbol": "GOOGL"}],   // month start → +45 d; macro high/medium,
+                                                                              // the symbol's company dates, its thesis dates
+  "pending": [], "errors": {}, "took_ms": 62,
+  "rules": {"earnings_days": 5, "macro_days": 3, "sma_long": 200, "sma_short": 50, "sma_slope_bars": 10,
+            "max_weight_pct": 10.0, "max_sector_pct": 25.0, "buy_bucket": "S", "conflict_quadrants": ["Lagging"],
+            "tier_size": {"A": 1.0, "B": 0.5, "C": 0.0}}
+}
+```
+
 ## Calendar (`/api/calendar`) — 2026-10-08
 
 TS: `components/bloomberg/views/calendar/types.ts` (`CalPayload`, `CalEvent`, `CalThesis`, `CalRef`).

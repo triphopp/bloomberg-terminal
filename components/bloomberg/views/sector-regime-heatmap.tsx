@@ -7,7 +7,9 @@ import { memo, useEffect, useRef, useState } from "react";
 import { structureModeRequestAtom } from "../atoms";
 import { useDepth } from "../hooks/useDepth";
 import { useIvSmile } from "../hooks/useIvSmile";
+import { checkApplies } from "../hooks/usePrebuyCheck";
 import type { bloombergColors } from "../lib/theme-config";
+import { CheckPanel } from "./check-panel";
 import { DepthPanel } from "./depth-panel";
 import { IvSmilePanel } from "./iv-smile-panel";
 import { RotationTable } from "./rotation-table";
@@ -15,6 +17,8 @@ import { RotationTable } from "./rotation-table";
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const LS_DEFAULTS = "bloomberg_regime_defaults";
+/** CHECK opens by itself when the chart symbol changes — per browser, default on. */
+const LS_CHECK_AUTO = "bloomberg_check_autopen";
 const PERIODS = ["1m", "3m", "6m", "1y"] as const;
 const MODES = [
   {
@@ -26,10 +30,15 @@ const MODES = [
   { key: "geom", label: "GEOM", desc: "Geometric: Wedge Product / Gram Determinant" },
   { key: "rot", label: "ROT", desc: "Theme/Sector rotation table vs SPY (RRG quadrants)" },
   { key: "iv", label: "IV", desc: "IV smile for the symbol selected on the MKT chart" },
+  {
+    key: "check",
+    label: "CHECK",
+    desc: "Pre-buy CHECK for the chart symbol — what we can measure that disagrees with buying it now",
+  },
 ] as const;
 
 type Period = (typeof PERIODS)[number];
-type Mode = "depth" | "corr" | "geom" | "rot" | "iv";
+type Mode = "depth" | "corr" | "geom" | "rot" | "iv" | "check";
 type GeomView = "matrix" | "space";
 
 // One distinct vivid colour per sector (dark-background safe)
@@ -736,10 +745,40 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
     setModeRequest(null);
   }, [restored, modeRequest, setModeRequest]);
 
+  // CHECK follows the chart symbol; with "open on every symbol" on, a new symbol
+  // (a stock or ETF — not an index or a future) also brings the panel to CHECK.
+  // Only on a CHANGE after the stored view is back, so a reload keeps its mode.
+  const [checkAuto, setCheckAuto] = useState(true);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(LS_CHECK_AUTO) === "0") setCheckAuto(false);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const toggleCheckAuto = () =>
+    setCheckAuto((v) => {
+      try {
+        localStorage.setItem(LS_CHECK_AUTO, v ? "0" : "1");
+      } catch {
+        /* ignore */
+      }
+      return !v;
+    });
+  const lastSymbolRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!restored) return;
+    const prev = lastSymbolRef.current;
+    lastSymbolRef.current = symbol;
+    if (prev === undefined || prev === symbol) return;
+    if (checkAuto && checkApplies(symbol)) setMode("check");
+  }, [restored, symbol, checkAuto]);
+
   const isRot = mode === "rot";
   const isSmile = mode === "iv";
   const isMatrix = mode === "corr" || mode === "geom";
   const isDepth = mode === "depth";
+  const isCheck = mode === "check";
   const smile = useIvSmile(symbol, isSmile);
   const depth = useDepth(symbol, isDepth);
 
@@ -963,7 +1002,18 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
         )}
 
         {/* Visualisation area */}
-        {isDepth ? (
+        {isCheck ? (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <CheckPanel
+              symbol={symbol}
+              colors={colors}
+              compact
+              onOpenRot={() => setMode("rot")}
+              autoOpen={checkAuto}
+              onToggleAutoOpen={toggleCheckAuto}
+            />
+          </div>
+        ) : isDepth ? (
           <div className="flex-1 min-h-0 overflow-hidden">
             <DepthPanel model={depth} colors={colors} compact />
           </div>
@@ -1064,13 +1114,15 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
               style={{ borderBottom: `1px solid ${colors.border}`, background: "#0c0c0c" }}
             >
               <span className="text-[10px] font-bold tracking-widest" style={{ color: "#FF9800" }}>
-                {isDepth
-                  ? "ORDER BOOK DEPTH"
-                  : isSmile
-                    ? "IV SMILE"
-                    : isRot
-                      ? "SECTOR ROTATION"
-                      : "US SECTOR REGIME DETECTION"}
+                {isCheck
+                  ? "PRE-BUY CHECK"
+                  : isDepth
+                    ? "ORDER BOOK DEPTH"
+                    : isSmile
+                      ? "IV SMILE"
+                      : isRot
+                        ? "SECTOR ROTATION"
+                        : "US SECTOR REGIME DETECTION"}
               </span>
 
               <div
@@ -1208,7 +1260,16 @@ export const SectorRegimeHeatmap = memo(function SectorRegimeHeatmap({
                   <Loader2 className="h-6 w-6 animate-spin" style={{ color: "#FF9800" }} />
                 </div>
               )}
-              {isDepth ? (
+              {isCheck ? (
+                <CheckPanel
+                  symbol={symbol}
+                  colors={colors}
+                  compact={false}
+                  onOpenRot={() => setMode("rot")}
+                  autoOpen={checkAuto}
+                  onToggleAutoOpen={toggleCheckAuto}
+                />
+              ) : isDepth ? (
                 <DepthPanel model={depth} colors={colors} />
               ) : isSmile ? (
                 <IvSmilePanel model={smile} colors={colors} />
