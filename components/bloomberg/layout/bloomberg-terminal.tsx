@@ -187,36 +187,68 @@ function BloombergTerminal() {
     // If already on market view, Esc does nothing (no annoying confirm dialog)
   }, [currentView, setCurrentView, isAskDrawerShown, setAskOpen]);
 
-  // ── Navigation items with shortcut keys ──────────────────────────────────
-  const navItems: NavItem[] = [
-    {
-      id: "market",
-      label: "MKT",
-      shortcut: "1",
-      href: viewHref("market"),
-      onClick: handleMarketView,
-    },
-    { id: "news", label: "NEWS", shortcut: "2", href: viewHref("news"), onClick: handleNewsView },
-    { id: "bonds", label: "BOND", shortcut: "3", href: viewHref("bonds"), onClick: handleBondView },
-    {
-      id: "portfolio",
-      label: "PORT",
-      shortcut: "4",
-      href: viewHref("portfolio"),
-      onClick: handlePortfolioView,
-    },
-    // Beside PORT on purpose: the two books sit next to each other. The key
-    // stays 7 — TAIL and CAL keep the numbers they have always had.
-    { id: "fund", label: "FUND", shortcut: "7", href: viewHref("fund"), onClick: handleFundView },
-    { id: "tail", label: "TAIL", shortcut: "5", href: viewHref("tail"), onClick: handleTailView },
-    {
-      id: "calendar",
-      label: "CAL",
-      shortcut: "6",
-      href: viewHref("calendar"),
-      onClick: handleCalendarView,
-    },
-  ];
+  // ── Navigation items — the key of each is its place in this list ─────────
+  // Reorder, add or drop a row and the numbers on the header, the 1–N keys and
+  // the help panel follow; nothing else holds a number.
+  const navItems: NavItem[] = (
+    [
+      {
+        id: "market",
+        label: "MKT",
+        description: "Market overview",
+        href: viewHref("market"),
+        onClick: handleMarketView,
+      },
+      {
+        id: "news",
+        label: "NEWS",
+        description: "News",
+        href: viewHref("news"),
+        onClick: handleNewsView,
+      },
+      {
+        id: "bonds",
+        label: "BOND",
+        description: "Bond Monitor (price vs supply)",
+        href: viewHref("bonds"),
+        onClick: handleBondView,
+      },
+      {
+        id: "portfolio",
+        label: "PORT",
+        description: "Portfolio",
+        href: viewHref("portfolio"),
+        onClick: handlePortfolioView,
+      },
+      // Beside PORT on purpose: the two books sit next to each other.
+      {
+        id: "fund",
+        label: "FUND",
+        description: "Fund (pooled book, apart from PORT)",
+        href: viewHref("fund"),
+        onClick: handleFundView,
+      },
+      {
+        id: "tail",
+        label: "TAIL",
+        description: "Tail Risk Monitor",
+        href: viewHref("tail"),
+        onClick: handleTailView,
+      },
+      {
+        id: "calendar",
+        label: "CAL",
+        description: "Calendar (macro · company · thesis)",
+        href: viewHref("calendar"),
+        onClick: handleCalendarView,
+      },
+    ] satisfies Omit<NavItem, "shortcut">[]
+  ).map((item, i) => ({ ...item, shortcut: String(i + 1) }));
+  const viewKeyShortcuts = navItems.map(({ shortcut, onClick, description }) => ({
+    key: shortcut,
+    action: onClick,
+    description: description ?? "",
+  }));
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
   const shortcuts = [
@@ -242,13 +274,7 @@ function BloombergTerminal() {
         currentView === "portfolio" ? "Toggle THB ↔ USD (PORT only)" : "Toggle %Chg YTD / Daily",
     },
     // View shortcuts (number keys)
-    { key: "1", action: handleMarketView, description: "Market overview" },
-    { key: "2", action: handleNewsView, description: "News" },
-    { key: "3", action: handleBondView, description: "Bond Monitor (price vs supply)" },
-    { key: "4", action: handlePortfolioView, description: "Portfolio" },
-    { key: "5", action: handleTailView, description: "Tail Risk Monitor" },
-    { key: "6", action: handleCalendarView, description: "Calendar (macro · company · thesis)" },
-    { key: "7", action: handleFundView, description: "Fund (pooled book, apart from PORT)" },
+    ...viewKeyShortcuts,
     { key: "h", action: () => setCurrentView("heatmap"), description: "Heatmap (last market)" },
     { key: "p", action: handlePortfolioView, description: "Portfolio" },
     {
