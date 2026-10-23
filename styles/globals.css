@@ -14,6 +14,19 @@
   100% { transform: translateX(-50%); }
 }
 
+/* Scrollbars — black, thin, everywhere (house rule 2026-10-23). Windows draws a
+ * native scrollbar light unless told otherwise, so every new scroll box used to
+ * come out as a white strip and got patched one by one (SCROLLBAR_THIN_LIGHTER).
+ * scrollbar-color is inherited: set once here, every element follows. A
+ * component may still pass its own (style-constants.ts), never a light one. */
+:root {
+  scrollbar-width: thin;
+  scrollbar-color: #333 #000;
+}
+body.light {
+  scrollbar-color: #bbb #eee;
+}
+
 /* Native select popups are OS/browser UI. Keep their palette explicit across
  * every view (DCF, IV, portfolio, etc.), while leaving the closed control's
  * border, fill and foreground to each component. */
