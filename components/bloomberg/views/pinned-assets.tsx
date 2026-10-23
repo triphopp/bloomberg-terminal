@@ -97,6 +97,7 @@ const PALETTE = [
 ];
 
 import { fmtPriceStd } from "../lib/number-format";
+import { displayName, displaySymbol } from "../lib/symbol-display";
 import { TICK_HEAD, TICK_REGION, TICK_TABLE } from "../lib/tick-grammar";
 import {
   DEFAULT_WATCHLIST_GROUP as DEFAULT_GROUP,
@@ -1094,7 +1095,7 @@ function EditCardForm({
       style={{ background: `${colors.accent}0a`, borderColor: colors.border }}
     >
       <span className="font-bold font-mono text-[10px]" style={{ color: colors.accent }}>
-        {pin.symbol}
+        {displaySymbol(pin)}
       </span>
       <PriorityStars value={editPriority} onChange={setEditPriority} />
       {groups.length > 1 && (
@@ -1328,7 +1329,7 @@ const CompactWatchRow = memo(function CompactWatchRow({
           className="px-1 py-0 text-left font-bold truncate max-w-0 w-full min-w-[5ch]"
           style={{ color: sellAlert ? "#ef4444" : buyAlert ? "#4ade80" : colors.accent }}
         >
-          {pin.symbol}
+          {displaySymbol(pin)}
           {quoteError && <span className="text-amber-400">!</span>}
         </td>
         <td className={COMPACT_CELL} style={{ color: colors.text }}>
@@ -2623,7 +2624,7 @@ export const PinnedAssets = memo(function PinnedAssets({
                               className="text-[10px] font-bold font-mono leading-tight"
                               style={{ color: colors.accent }}
                             >
-                              {pin.symbol}
+                              {displaySymbol(pin)}
                             </span>
                             {quoteErrors[pin.symbol] && (
                               <span
@@ -2658,7 +2659,7 @@ export const PinnedAssets = memo(function PinnedAssets({
                               className="text-[7px] truncate leading-tight"
                               style={{ color: colors.textSecondary }}
                             >
-                              {q.shortName}
+                              {displayName({ symbol: pin.symbol, shortname: q.shortName })}
                             </div>
                           )}
                         </div>
@@ -3170,7 +3171,7 @@ export const PinnedAssets = memo(function PinnedAssets({
                                     style={{ color: colors.accent }}
                                     onClick={(e) => handleSymbolClick(pin.symbol, e)}
                                   >
-                                    {pin.symbol}
+                                    {displaySymbol(pin)}
                                     {quoteErrors[pin.symbol] && (
                                       <span
                                         className="text-[8px] text-amber-400"
@@ -3191,7 +3192,7 @@ export const PinnedAssets = memo(function PinnedAssets({
                                       style={{ color: colors.textSecondary, flexShrink: 100 }}
                                       title={q.shortName}
                                     >
-                                      {q.shortName}
+                                      {displayName({ symbol: pin.symbol, shortname: q.shortName })}
                                     </span>
                                   )}
                                   {hasAlert && (

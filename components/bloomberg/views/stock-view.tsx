@@ -4678,11 +4678,14 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
             <div className="flex items-start justify-between mb-3">
               <div>
                 <h2 className="text-base font-bold tracking-wide leading-tight">
-                  {quote.longName ?? quote.shortName ?? activeSymbol}
+                  {displayName({
+                    symbol: quote.symbol,
+                    shortname: quote.longName ?? quote.shortName ?? undefined,
+                  }) || activeSymbol}
                 </h2>
                 <div className="flex items-center gap-2 mt-1">
                   <span className="text-xs font-bold" style={{ color: colors.accent }}>
-                    {quote.symbol}
+                    {displaySymbol({ symbol: quote.symbol })}
                   </span>
                   <span className="text-xs" style={secText}>
                     {quote.fullExchangeName ?? quote.exchange}

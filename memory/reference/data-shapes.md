@@ -89,6 +89,11 @@ History (`/api/cot/history`): `{code,key,label,dataset,focus,rows:[{date,release
   "52weekHigh": 200.0, "52weekLow": 150.0
 }
 ```
+(Shape above is old — the live payload uses Yahoo's keys: `longName`, `shortName`, `regularMarketPrice`, …)
+**2026-10-23:** + `displaySymbol` / `displayName` — what the UI shows (`^MOVE` → `MOVE`, `BH.BK` → `BH`,
+`BH_BUMRUNGRAD HOSPITAL` → `BUMRUNGRAD HOSPITAL`), from `backend/symbol_names.py`; not in the LITE quote.
+`longName` / `shortName` are corrected for known Yahoo mislabels (`symbol_names.NAME_FIXES`: `^MOVE` →
+"ICE BofA MOVE Index"). Frontend mirror: `lib/symbol-display.ts` — show through it, never call an API with its output.
 
 ## Stock History (`GET /api/stock/history/{symbol}?period=3m`)
 ```json

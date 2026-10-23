@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from market_session import is_today_at, local_date_of
 from market_requests import market_requests, as_http_error, collect
 from sources import market_data
+import symbol_names
 
 
 def _safe_float(val: Any):
@@ -277,8 +278,12 @@ def _load_quote(symbol: str, lite: bool = False):
 
         data = {
             "symbol":                     symbol.upper(),
-            "longName":                   info.get("longName"),
-            "shortName":                  info.get("shortName"),
+            "longName":                   symbol_names.fix_name(symbol, info.get("longName")),
+            "shortName":                  symbol_names.fix_name(symbol, info.get("shortName")),
+            # What the UI shows: ^MOVE → MOVE, BH_BUMRUNGRAD HOSPITAL → BUMRUNGRAD HOSPITAL.
+            "displaySymbol":              symbol_names.display_symbol(symbol),
+            "displayName":                symbol_names.display_name(
+                symbol, info.get("shortName") or info.get("longName")),
             "fullExchangeName":           info.get("fullExchangeName"),
             "exchange":                   info.get("exchange") or getattr(fi, "exchange", None),
             "currency":                   info.get("currency"),

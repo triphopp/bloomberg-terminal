@@ -29,6 +29,7 @@ from fastapi import APIRouter, HTTPException, Query
 from yfinance import EquityQuery
 
 from cache import TTLCache
+import symbol_names
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -107,7 +108,7 @@ def _tile(q: dict, sector: str) -> dict | None:
     avg = q.get("averageDailyVolume3Month")
     return {
         "s": sym,
-        "n": q.get("shortName") or q.get("longName") or sym,
+        "n": symbol_names.display_name(sym, q.get("shortName") or q.get("longName")) or sym,
         "ln": q.get("longName"),
         "sec": sector,
         "cap": float(cap),
