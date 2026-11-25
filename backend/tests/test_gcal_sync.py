@@ -199,6 +199,19 @@ def test_body_is_an_all_day_free_event_with_the_hash():
     assert gc.event_body(ev("x"))["extendedProperties"] != gc.event_body(ev("x", title="Other"))["extendedProperties"]
 
 
+def test_a_printed_fred_release_carries_its_figure_in_the_title():
+    gdp = ev("macro:GDP:2026-11-25", day="2026-11-25", category="MACRO", kind="GDP", title="GDP",
+             symbol=None, impact="medium",
+             actual=[{"series": "A191RL1Q225SBEA", "label": "Real GDP q/q saar", "value": 4.3,
+                      "text": "4.30%", "prev_text": "2.20%", "period": "Q3 2026"}])
+    assert gc.event_body(gdp)["summary"] == "GDP 4.30%"
+    waiting = {**gdp, "actual": []}
+    assert gc.event_body(waiting)["summary"] == "GDP"
+    # The figure arriving changes the hash, so the next pass rewrites the event.
+    assert (gc.event_body(gdp)["extendedProperties"]["private"]
+            != gc.event_body(waiting)["extendedProperties"]["private"])
+
+
 def test_settings_choose_what_goes_up():
     d = gc.clean_settings(gc.DEFAULT_SETTINGS)
     assert "PORT" not in d["categories"]
