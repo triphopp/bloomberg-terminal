@@ -1,6 +1,6 @@
 "use client";
 import { Loader2 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -472,13 +472,21 @@ function NavIndexChartView({
 
   const portDrawdown = runningDrawdownPct(pts.map((p) => p.port_index));
   const benchDrawdown = runningDrawdownPct(pts.map((p) => p.bench_index));
-  const chart = pts.map((p, i) => ({
-    date: p.date.slice(5),
-    port: p.port_index,
-    bench: p.bench_index,
-    portDd: portDrawdown[i],
-    benchDd: benchDrawdown[i],
-  }));
+  const chart = pts.map((p, i) => {
+    const port = p.port_index;
+    const bench = p.bench_index;
+    return {
+      date: p.date.slice(5),
+      port,
+      bench,
+      // The gap between the two lines, split by who is ahead. Each band is
+      // zero-width where the other is drawn, so neither breaks at a crossing.
+      ahead: bench == null ? null : [bench, Math.max(port, bench)],
+      behind: bench == null ? null : [Math.min(port, bench), bench],
+      portDd: portDrawdown[i],
+      benchDd: benchDrawdown[i],
+    };
+  });
   const twr = data?.port_twr_pct ?? null;
   const bench = data?.bench_pct ?? null;
   const excess = data?.excess_pct ?? null;
@@ -492,33 +500,132 @@ function NavIndexChartView({
   const ddFloor = Math.floor(trough - Math.max(1, Math.abs(trough) * 0.08));
   const riskPct = (value: number | null, sign = "") =>
     value == null ? "—" : `${value === 0 ? "" : sign}${value.toFixed(2)}%`;
+  const sgn = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`);
+
+  // Name tags at the right end of each line, so the lines are read without the
+  // legend. When the two lines end close together the tags are pushed apart.
+  let portLast = -1;
+  let benchLast = -1;
+  let lo = Number.POSITIVE_INFINITY;
+  let hi = Number.NEGATIVE_INFINITY;
+  chart.forEach((c, i) => {
+    portLast = i;
+    lo = Math.min(lo, c.port);
+    hi = Math.max(hi, c.port);
+    if (c.bench != null) {
+      benchLast = i;
+      lo = Math.min(lo, c.bench);
+      hi = Math.max(hi, c.bench);
+    }
+  });
+  const portEnd = chart[portLast]?.port ?? null;
+  const benchEnd = benchLast >= 0 ? chart[benchLast].bench : null;
+  const tagsCollide =
+    portEnd != null && benchEnd != null && Math.abs(portEnd - benchEnd) < (hi - lo) * 0.09;
+  const portAbove = portEnd != null && benchEnd != null && portEnd >= benchEnd;
+  const portTagDy = tagsCollide ? (portAbove ? -7 : 7) : 0;
+  const benchTagDy = tagsCollide ? -portTagDy : 0;
+  const endTag =
+    (text: string, color: string, at: number, dy: number, filled: boolean) =>
+    // biome-ignore lint/suspicious/noExplicitAny: recharts label props
+    (props: any) => {
+      if (props.index !== at || props.x == null || props.y == null) return <g />;
+      const w = text.length * 5 + 8;
+      return (
+        <g>
+          <rect
+            x={props.x + 4}
+            y={props.y + dy - 6}
+            width={w}
+            height={12}
+            fill={filled ? color : "#000"}
+            stroke={color}
+            strokeWidth={filled ? 0 : 1}
+            strokeDasharray={filled ? undefined : "2 1.5"}
+          />
+          <text
+            x={props.x + 8}
+            y={props.y + dy + 3}
+            fontSize={8}
+            fontFamily="monospace"
+            fontWeight="bold"
+            fill={filled ? "#000" : color}
+          >
+            {text}
+          </text>
+        </g>
+      );
+    };
+  const idxPct = (v: number | null | undefined) => (v == null ? null : v - 100);
+
+  // biome-ignore lint/suspicious/noExplicitAny: recharts tooltip props
+  const renderTip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    const row = payload[0].payload as (typeof chart)[number];
+    const gap = row.bench == null ? null : row.port - row.bench;
+    return (
+      <div style={{ ...tooltipContentStyle, padding: "4px 6px" } as CSSProperties}>
+        <div style={tooltipLabelStyle as CSSProperties}>{label}</div>
+        <div className="font-mono" style={{ color: PORT_COLOR }}>
+          <LineSwatch color={PORT_COLOR} width={2.2} /> PORTFOLIO {sgn(idxPct(row.port))}
+        </div>
+        <div className="font-mono" style={{ color: BENCH_COLOR }}>
+          <LineSwatch color={BENCH_COLOR} dashed width={1.4} /> {benchmark} {sgn(idxPct(row.bench))}
+        </div>
+        {gap != null && (
+          <div className="font-mono" style={{ color: gap >= 0 ? AHEAD_COLOR : BEHIND_COLOR }}>
+            {gap >= 0 ? "AHEAD" : "BEHIND"} {gap >= 0 ? "+" : ""}
+            {gap.toFixed(2)} pts
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <>
+      {/* Row 1 is the legend: each line's swatch next to its return. */}
       <div
-        className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-1 text-[8px] font-mono"
+        className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-0.5 text-[9px] font-mono"
         style={{ color: colors.textSecondary }}
       >
-        <span title="Time-weighted return over the snapshot span — external cash flows removed">
-          TWR{" "}
-          <span style={{ color: pnlColor(twr ?? 0) }} className="font-bold">
-            {twr == null ? "—" : `${twr >= 0 ? "+" : ""}${twr.toFixed(2)}%`}
-          </span>
+        <span
+          title="Time-weighted return over the snapshot span — external cash flows removed"
+          style={{ color: PORT_COLOR }}
+          className="font-bold"
+        >
+          <LineSwatch color={PORT_COLOR} width={2.2} />
+          PORTFOLIO (TWR) <span style={{ color: pnlColor(twr ?? 0) }}>{sgn(twr)}</span>
         </span>
-        <span>
-          {benchmark}{" "}
-          <span style={{ color: pnlColor(bench ?? 0) }} className="font-bold">
-            {bench == null ? "—" : `${bench >= 0 ? "+" : ""}${bench.toFixed(2)}%`}
-          </span>
+        <span style={{ color: BENCH_COLOR }} className="font-bold">
+          <LineSwatch color={BENCH_COLOR} dashed width={1.4} />
+          {benchmark} (BENCHMARK) <span style={{ color: pnlColor(bench ?? 0) }}>{sgn(bench)}</span>
         </span>
         <span title="TWR − benchmark over the same dates">
           EXCESS{" "}
           <span style={{ color: pnlColor(excess ?? 0) }} className="font-bold">
-            {excess == null ? "—" : `${excess >= 0 ? "+" : ""}${excess.toFixed(2)}%`}
+            {sgn(excess)}
           </span>
         </span>
+        <span title="Shaded gap between the two lines: green = portfolio above the benchmark, red = below">
+          <BandSwatch color={AHEAD_COLOR} /> AHEAD <BandSwatch color={BEHIND_COLOR} /> BEHIND
+        </span>
+        {(data?.suspect_days ?? 0) > 0 && (
+          <span
+            style={{ color: "#f87171" }}
+            title="วันที่ NAV ขยับเกิน 50% — มักเป็นเงินฝาก/ถอนที่ยังไม่ได้บันทึกใน CASH ไม่ใช่ผลตอบแทน"
+          >
+            ⚠ {data?.suspect_days} วันน่าสงสัย
+          </span>
+        )}
+        {data && !data.benchmark_available && <span style={{ color: "#f87171" }}>ไม่มีราคาดัชนี</span>}
+      </div>
+      <div
+        className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-1 text-[8px] font-mono"
+        style={{ color: colors.textSecondary }}
+      >
         <span title="Largest peak-to-trough decline in the portfolio INDEX line over this span">
-          MAX DD{" "}
+          PORT MAX DD{" "}
           <span style={{ color: "#f87171" }} className="font-bold">
             {riskPct(portRisk.maxDrawdownPct, "−")}
           </span>
@@ -526,13 +633,13 @@ function NavIndexChartView({
         <span
           title={`Largest peak-to-trough decline in the ${benchmark} INDEX line over this span`}
         >
-          {benchmark} DD{" "}
+          {benchmark} MAX DD{" "}
           <span style={{ color: "#f87171" }} className="font-bold">
             {riskPct(benchRisk.maxDrawdownPct, "−")}
           </span>
         </span>
         <span title="Portfolio annualized sample standard deviation of returns between displayed observations (×√252); calendar gaps count as one observation">
-          TWR STD{" "}
+          PORT STD{" "}
           <span style={{ color: colors.text }} className="font-bold">
             {riskPct(portRisk.stdAnnualPct)}
           </span>
@@ -548,24 +655,9 @@ function NavIndexChartView({
         <span>
           {data?.start} → {data?.end} · {data?.n_days}d
         </span>
-        {(data?.suspect_days ?? 0) > 0 && (
-          <span
-            style={{ color: "#f87171" }}
-            title="วันที่ NAV ขยับเกิน 50% — มักเป็นเงินฝาก/ถอนที่ยังไม่ได้บันทึกใน CASH ไม่ใช่ผลตอบแทน"
-          >
-            ⚠ {data?.suspect_days} วันน่าสงสัย
-          </span>
-        )}
-        {data && !data.benchmark_available && <span style={{ color: "#f87171" }}>ไม่มีราคาดัชนี</span>}
       </div>
       <ResponsiveContainer width="100%" height={height}>
-        <ComposedChart data={chart} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-          <defs>
-            <linearGradient id="twrGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.25} />
-              <stop offset="95%" stopColor="#60a5fa" stopOpacity={0} />
-            </linearGradient>
-          </defs>
+        <ComposedChart data={chart} margin={{ top: 8, right: TAG_ROOM, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
           <XAxis dataKey="date" tick={{ fill: "#666", fontSize: 8 }} tickLine={false} />
           <YAxis
@@ -575,32 +667,48 @@ function NavIndexChartView({
             domain={["auto", "auto"]}
             tickFormatter={(v: number) => v.toFixed(0)}
           />
-          <Tooltip
-            contentStyle={tooltipContentStyle}
-            labelStyle={tooltipLabelStyle}
-            itemStyle={tooltipItemStyle}
-            // biome-ignore lint/suspicious/noExplicitAny: recharts formatter
-            formatter={(v: any, name: any) => [
-              v == null ? "—" : `${Number(v).toFixed(2)} (${(Number(v) - 100).toFixed(2)}%)`,
-              name === "port" ? "Portfolio (TWR)" : benchmark,
-            ]}
-          />
+          <Tooltip content={renderTip} />
           {/* 100 = the first snapshot. Above it the book made money, below it lost. */}
           <ReferenceLine y={100} stroke="#444" strokeDasharray="3 3" />
           <Area
-            dataKey="port"
-            stroke="#60a5fa"
-            strokeWidth={1.6}
-            fill="url(#twrGrad)"
-            dot={false}
+            dataKey="ahead"
+            stroke="none"
+            fill={AHEAD_COLOR}
+            fillOpacity={0.16}
+            isAnimationActive={false}
+            activeDot={false}
+          />
+          <Area
+            dataKey="behind"
+            stroke="none"
+            fill={BEHIND_COLOR}
+            fillOpacity={0.16}
+            isAnimationActive={false}
+            activeDot={false}
           />
           <Line
             dataKey="bench"
-            stroke="#facc15"
-            strokeWidth={1.2}
+            stroke={BENCH_COLOR}
+            strokeWidth={1.4}
+            strokeDasharray="5 3"
             dot={false}
             connectNulls
-            fill="none"
+            isAnimationActive={false}
+            label={endTag(
+              `${benchmark} ${sgn(idxPct(benchEnd))}`,
+              BENCH_COLOR,
+              benchLast,
+              benchTagDy,
+              false
+            )}
+          />
+          <Line
+            dataKey="port"
+            stroke={PORT_COLOR}
+            strokeWidth={2.2}
+            dot={false}
+            isAnimationActive={false}
+            label={endTag(`PORT ${sgn(idxPct(portEnd))}`, PORT_COLOR, portLast, portTagDy, true)}
           />
         </ComposedChart>
       </ResponsiveContainer>
@@ -611,12 +719,20 @@ function NavIndexChartView({
         <span style={{ color: colors.accent }} className="font-bold">
           DRAWDOWN
         </span>
-        <span style={{ color: "#60a5fa" }}>● TWR</span>
-        {data?.benchmark_available && <span style={{ color: "#facc15" }}>● {benchmark}</span>}
+        <span style={{ color: PORT_COLOR }}>
+          <LineSwatch color={PORT_COLOR} width={2.2} />
+          PORTFOLIO
+        </span>
+        {data?.benchmark_available && (
+          <span style={{ color: BENCH_COLOR }}>
+            <LineSwatch color={BENCH_COLOR} dashed width={1.4} />
+            {benchmark}
+          </span>
+        )}
         <span className="ml-auto">0% = NEW HIGH</span>
       </div>
       <ResponsiveContainer width="100%" height={132}>
-        <ComposedChart data={chart} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+        <ComposedChart data={chart} margin={{ top: 4, right: TAG_ROOM, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
           <XAxis dataKey="date" tick={{ fill: "#666", fontSize: 8 }} tickLine={false} />
           <YAxis
@@ -640,16 +756,65 @@ function NavIndexChartView({
           <Area
             dataKey="portDd"
             baseValue={0}
-            stroke="#60a5fa"
-            strokeWidth={1.6}
-            fill="#60a5fa"
-            fillOpacity={0.3}
+            stroke={PORT_COLOR}
+            strokeWidth={1.8}
+            fill={PORT_COLOR}
+            fillOpacity={0.25}
             dot={false}
           />
-          <Line dataKey="benchDd" stroke="#facc15" strokeWidth={1.2} dot={false} fill="none" />
+          <Line
+            dataKey="benchDd"
+            stroke={BENCH_COLOR}
+            strokeWidth={1.4}
+            strokeDasharray="5 3"
+            dot={false}
+            fill="none"
+          />
         </ComposedChart>
       </ResponsiveContainer>
     </>
+  );
+}
+
+// EQUITY CURVE colours. The portfolio is the one coloured, solid, heavy line;
+// the benchmark is a grey dashed reference — the two never share a style, so
+// neither needs a hover to tell apart (drawdown pane uses the same pair).
+const PORT_COLOR = "#60a5fa";
+const BENCH_COLOR = "#a1a1aa";
+const AHEAD_COLOR = "#22c55e";
+const BEHIND_COLOR = "#ef4444";
+/** Right margin that holds the end-of-line name tags. */
+const TAG_ROOM = 76;
+
+function LineSwatch({
+  color,
+  width,
+  dashed = false,
+}: {
+  color: string;
+  width: number;
+  dashed?: boolean;
+}) {
+  return (
+    <svg width={18} height={6} className="inline-block align-middle mr-1" aria-hidden="true">
+      <line
+        x1={0}
+        y1={3}
+        x2={18}
+        y2={3}
+        stroke={color}
+        strokeWidth={width}
+        strokeDasharray={dashed ? "5 3" : undefined}
+      />
+    </svg>
+  );
+}
+
+function BandSwatch({ color }: { color: string }) {
+  return (
+    <svg width={10} height={8} className="inline-block align-middle" aria-hidden="true">
+      <rect x={0} y={0} width={10} height={8} fill={color} fillOpacity={0.35} />
+    </svg>
   );
 }
 
