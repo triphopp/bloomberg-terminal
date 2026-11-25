@@ -57,7 +57,19 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(feed, "_inflight", set())
     monkeypatch.setattr(feed, "_queue", type(feed._queue)())
     monkeypatch.setattr(feed, "_active", 0)
-    monkeypatch.setattr(feed.ec, "release_events", lambda s, e: ([], True))
+    fred = feed.fred_release_dates
+    monkeypatch.setattr(fred, "_store", PersistentStore(None, max_age=fred.KEEP_S))
+    monkeypatch.setattr(fred, "_inflight", set())
+    monkeypatch.setattr(fred, "_queue", type(fred._queue)())
+    monkeypatch.setattr(fred, "_active", 0)
+    fred_calls: list[tuple[int, int]] = []
+    real_fetch = fred._fetch
+
+    def fake_fred(rid, year):
+        fred_calls.append((rid, year))
+        return []
+
+    monkeypatch.setattr(fred, "_fetch", fake_fred)
     calls: list[str] = []
 
     def fake_fetch(symbol):
@@ -75,15 +87,16 @@ def env(tmp_path, monkeypatch):
 
     e = Env()
     e.client, e.feed, e.sched, e.db, e.calls, e.monkeypatch = TestClient(app), feed, sched, db, calls, monkeypatch
+    e.fred, e.fred_calls, e.fred_real_fetch = fred, fred_calls, real_fetch
     yield e
     _drain(feed)
 
 
 def _drain(feed, timeout=10.0):
-    """Let the background company pulls finish."""
+    """Let the background company and FRED pulls finish."""
     deadline = time.time() + timeout
-    while not feed.idle():
-        assert time.time() < deadline, "company pulls did not finish"
+    while not (feed.idle() and feed.fred_release_dates.idle()):
+        assert time.time() < deadline, "background pulls did not finish"
         time.sleep(0.005)
 
 
@@ -112,40 +125,125 @@ def _by_id(payload):
 
 # ── Macro ────────────────────────────────────────────────────────────────────
 
+def _fred_dates(env, by_release: dict[int, list[str]]):
+    """FRED answers with these dates (per release id, any year)."""
+    def fetch(rid, year):
+        env.fred_calls.append((rid, year))
+        return [d for d in by_release.get(rid, []) if d.startswith(str(year))]
+    env.monkeypatch.setattr(env.fred, "_fetch", fetch)
+
+
 def test_macro_events_carry_source_and_whether_the_date_is_only_a_rule(env):
-    asked = []
-
-    def releases(s, e):
-        asked.append((s, e))
-        return ([{"date": "2026-10-14", "kind": "CPI", "label": "CPI", "sep": False,
-                  "impact": "high", "source": "FRED"}], True)
-
-    env.monkeypatch.setattr(env.feed.ec, "release_events", releases)
+    _fred_dates(env, {10: ["2026-10-14"], 53: ["2026-10-29"]})
+    env.feed.macro_events(date(2026, 10, 1), date(2026, 10, 31))
+    _drain(env.feed)
     events, src = env.feed.macro_events(date(2026, 10, 1), date(2026, 10, 31))
     by = {e["id"]: e for e in events}
 
     fomc = by["macro:FOMC:2026-10-28"]
     assert (fomc["category"], fomc["impact"], fomc["estimated"]) == ("MACRO", "high", False)
     assert fomc["source"] == "federalreserve.gov" and fomc["source_url"]
-    assert by["macro:CPI:2026-10-14"]["source"] == "FRED"
+    cpi = by["macro:CPI:2026-10-14"]
+    assert (cpi["source"], cpi["impact"], cpi["estimated"]) == ("FRED", "high", False)
+    gdp = by["macro:GDP:2026-10-29"]
+    assert "rid=53" in gdp["source_url"] and "GDPC1" in gdp["detail"]
     opex = by["macro:OPEX:2026-10-16"]
     assert opex["estimated"] is True and opex["source"] == "rule"
-    # A whole year per FRED call: moving the grid by a month must hit the cache.
-    assert asked == [(date(2026, 1, 1), date(2026, 12, 31))]
-    assert src["releases_ok"] is True and src["fomc_missing"] is False
+    # A whole year per FRED call, each release once: moving the grid by a month hits the store.
+    assert sorted(env.fred_calls) == sorted((rid, 2026) for rid in env.fred.RELEASES)
+    assert src["releases_ok"] is True and src["pending"] == [] and src["fomc_missing"] is False
+
+
+def test_the_request_never_waits_on_fred(env):
+    import threading
+    gate = threading.Event()
+
+    def slow(rid, year):
+        gate.wait(5)
+        return ["2026-11-25"] if rid == 53 else []
+
+    env.monkeypatch.setattr(env.fred, "_fetch", slow)
+    t0 = time.time()
+    events, src = env.feed.macro_events(date(2026, 11, 1), date(2026, 11, 30))
+    assert time.time() - t0 < 1
+    assert len(src["pending"]) == len(env.fred.RELEASES) and src["releases_ok"] is True
+    assert any(e["kind"] == "OPEX" for e in events)  # rule dates are there at once
+    gate.set()
+    _drain(env.feed)
+    events, src = env.feed.macro_events(date(2026, 11, 1), date(2026, 11, 30))
+    assert "macro:GDP:2026-11-25" in {e["id"] for e in events} and src["pending"] == []
+
+
+def test_every_fred_release_on_cal_is_consistent(env):
+    fred = env.fred
+    assert not set(fred.RELEASES) & set(fred.SKIPPED)
+    # TAIL's market-moving releases are all on CAL, under the same kind.
+    for rid, (kind, _label) in fred.ec.FRED_RELEASES.items():
+        assert fred.RELEASES[rid].kind == kind
+    kinds = [r.kind for r in fred.RELEASES.values()]
+    assert len(kinds) == len(set(kinds)), "two releases under one kind would share event ids"
+    for r in fred.RELEASES.values():
+        assert r.impact in ("high", "medium", "low")
+    reads = {s for r in fred.RELEASES.values() for s in r.series}
+    assert {"GDPC1", "PCEPI", "CPIAUCSL", "PAYEMS", "NFCI", "STLFSI4", "MORTGAGE30US",
+            "UMCSENT", "SAHMREALTIME", "CFNAI"} <= reads
+
+
+def test_weekly_fred_prints_are_low_and_never_a_reminder(env):
+    _fred_dates(env, {190: [TODAY.isoformat()], 10: [TODAY.isoformat()]})
+    env.feed.build(TODAY, TODAY + timedelta(days=3), TODAY)
+    _drain(env.feed)
+    p = env.feed.build(TODAY, TODAY + timedelta(days=3), TODAY, fetch=False)
+    by = {e["kind"]: e for e in p["events"] if e["date"] == TODAY.isoformat()}
+    assert by["MORTGAGE"]["impact"] == "low" and by["CPI"]["impact"] == "high"
+    kinds = {a["snapshot"]["kind"] for a in env.feed.alertable(p["events"], TODAY)}
+    assert "CPI" in kinds and "MORTGAGE" not in kinds
+
+
+def test_a_release_turned_daily_is_refused(env):
+    env.monkeypatch.setattr(env.fred.ec, "_fetch_release_dates",
+                            lambda rid, s, e: [f"2026-01-{d:02d}" for d in range(1, 32)] * 3)
+    with pytest.raises(RuntimeError):
+        env.fred_real_fetch(22, 2026)
+
+
+def test_fred_down_keeps_the_last_good_dates_and_does_not_ask_again_at_once(env):
+    _fred_dates(env, {53: ["2026-11-25"]})
+    env.feed.macro_events(date(2026, 11, 1), date(2026, 11, 30))
+    _drain(env.feed)
+    env.fred_calls.clear()
+
+    def down(rid, year):
+        env.fred_calls.append((rid, year))
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")  # FRED's maintenance page
+
+    env.monkeypatch.setattr(env.fred, "_fetch", down)
+    env.feed.macro_events(date(2026, 11, 1), date(2026, 11, 30), force=True)
+    _drain(env.feed)
+    events, src = env.feed.macro_events(date(2026, 11, 1), date(2026, 11, 30))
+    _drain(env.feed)
+    assert "macro:GDP:2026-11-25" in {e["id"] for e in events}
+    assert src["releases_ok"] is True and src["failed"]["53:2026"] == "ValueError"
+    # Asked once by the forced refresh, not again by the next request (negative cache).
+    assert len(env.fred_calls) == len(env.fred.RELEASES)
+
+
+def test_fred_down_from_cold_leaves_fomc_and_rule_dates_standing(env):
+    def down(rid, year):
+        raise ConnectionError("no route")
+
+    env.monkeypatch.setattr(env.fred, "_fetch", down)
+    env.feed.build(date(2026, 10, 1), date(2026, 10, 31), date(2026, 10, 8))
+    _drain(env.feed)
+    p = env.feed.build(date(2026, 10, 1), date(2026, 10, 31), date(2026, 10, 8), fetch=False)
+    assert p["sources"]["macro"]["releases_ok"] is False
+    assert "macro:FOMC:2026-10-28" in _by_id(p)
 
 
 def test_a_window_past_the_fomc_list_says_so(env):
     last = date.fromisoformat(env.feed.ec.FOMC_CALENDAR_THROUGH)
     _, src = env.feed.macro_events(last, last + timedelta(days=40))
     assert src["fomc_missing"] is True
-
-
-def test_fred_down_leaves_fomc_and_rule_dates_standing(env):
-    env.monkeypatch.setattr(env.feed.ec, "release_events", lambda s, e: ([], False))
-    p = env.feed.build(date(2026, 10, 1), date(2026, 10, 31), date(2026, 10, 8), fetch=False)
-    assert p["sources"]["macro"]["releases_ok"] is False
-    assert "macro:FOMC:2026-10-28" in _by_id(p)
 
 
 # ── Theses ───────────────────────────────────────────────────────────────────

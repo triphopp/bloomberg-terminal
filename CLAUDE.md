@@ -260,6 +260,9 @@ theses each event belongs to. **It stores nothing and there is no calendar table
 from the calendar is written where such rows already live: a dated note on a thesis (`thesis_notes.watch_date`), or a
 row of the question calendar (`question_dates`) when it belongs to no thesis. A new source of dates → one function in
 `calendar_feed.build()` (category MACRO / COMPANY / THESIS / PORT); the grid, the filter and the reminders follow.
+MACRO's FRED dates (2026-11-25) are every release the backend reads a series from, pulled behind the request like
+company dates (`backend/fred_release_dates.py`, cache `backend/cache/calendar_fred.json`) — **a new FRED series → its
+release in `RELEASES`** (or in `SKIPPED` with the reason, when it prints daily).
 A macro event belongs to no thesis by itself — the user ties one by writing a note on that day; never infer the link.
 Company dates are pulled behind the request (daemon threads, `backend/cache/calendar_company.json`, a failed symbol is
 negative-cached): the route never waits on Yahoo and lists what is `pending`. Reminders: `calendar_scheduler.py` writes

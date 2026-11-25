@@ -2164,6 +2164,7 @@ TS: `components/bloomberg/views/calendar/types.ts` (`CalPayload`, `CalEvent`, `C
     "estimated": false,                       // a window, a rule date, a SET deadline, a question date not CONFIRMED
     "source": "Yahoo earnings dates", "source_url": "",
     "detail": "EPS est 0.39",                 // QDATE: the tracked numbers waiting ("K-0015 … — expected: …")
+                                              // MACRO from FRED: "FRED release 53 · the terminal reads GDPC1, …"
     "done": false,                            // reported / resolved / read — shown dim
     "due": false,                             // its day came and a question or tracked number still waits
     "theses": [{"id": "…", "symbol": "INTC", "title": "…", "status": "draft", "via": "symbol"}],  // via: note|question|metric|symbol
@@ -2173,7 +2174,10 @@ TS: `components/bloomberg/views/calendar/types.ts` (`CalPayload`, `CalEvent`, `C
     "days_until": 21
   }],
   "sources": {
-    "macro":   {"ok": true, "releases_ok": true, "fomc_through": "2027-12-08", "fomc_missing": false},
+    "macro":   {"ok": true, "releases_ok": true, "fomc_through": "2027-12-08", "fomc_missing": false,
+                // 2026-11-25: FRED release dates are pulled behind the request (fred_release_dates.py)
+                "fred_releases": 27, "pending": ["53:2027"], "failed": {"22:2026": "ValueError"}},
+                // releases_ok false only when a release failed with no last-good dates to show
     "company": {"ok": true, "symbols": 25, "loaded": 25, "pending": [], "failed": {"AJ": {"earnings": "HTTP 500"}},
                 "oldest_pull": "2026-10-08T20:43:27"},
     "notes": {"ok": true, "count": 15}, "dates": {"ok": true, "count": 18}, "port": {"ok": true, "count": 0}

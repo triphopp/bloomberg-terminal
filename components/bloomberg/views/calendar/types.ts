@@ -54,7 +54,18 @@ export interface CalEvent {
 }
 
 export interface CalSources {
-  macro?: { ok: boolean; releases_ok?: boolean; fomc_through?: string; fomc_missing?: boolean };
+  macro?: {
+    ok: boolean;
+    releases_ok?: boolean;
+    fomc_through?: string;
+    fomc_missing?: boolean;
+    /** FRED releases on the calendar (every one the backend reads a series from). */
+    fred_releases?: number;
+    /** "<release id>:<year>" still being pulled from FRED behind the request. */
+    pending?: string[];
+    /** Pulls that failed; the last good dates stay on screen meanwhile. */
+    failed?: Record<string, string>;
+  };
   company?: {
     ok: boolean;
     symbols: number;

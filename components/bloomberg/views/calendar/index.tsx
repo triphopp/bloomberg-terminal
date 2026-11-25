@@ -190,8 +190,11 @@ export function CalendarView() {
     },
     staleTime: 60_000,
     placeholderData: (prev) => prev,
-    // Company dates load behind the request: ask again while some are still out.
-    refetchInterval: (q) => (q.state.data?.sources.company?.pending.length ? 6_000 : 5 * 60_000),
+    // Company and FRED dates load behind the request: ask again while some are still out.
+    refetchInterval: (q) =>
+      q.state.data?.sources.company?.pending.length || q.state.data?.sources.macro?.pending?.length
+        ? 6_000
+        : 5 * 60_000,
   });
 
   const events = data?.events ?? [];
@@ -232,8 +235,18 @@ export function CalendarView() {
       text: `Yahoo อ่านไม่ได้ ${failed.length} บริษัท: ${failed.slice(0, 6).join(", ")}${failed.length > 6 ? "…" : ""} — แสดงวันล่าสุดที่เคยอ่านได้ ลองใหม่เอง`,
       color: "#B06000",
     });
+  if (src?.macro?.pending?.length)
+    notices.push({
+      text: `กำลังอ่านวันประกาศตัวเลขจาก FRED — เหลือ ${src.macro.pending.length} รายการ…`,
+      color: colors.textSecondary,
+      title: src.macro.pending.join(", "),
+    });
   if (src?.macro && src.macro.releases_ok === false)
-    notices.push({ text: "FRED ไม่ตอบ — มหภาคเหลือ FOMC กับวันตามกฎ", color: "#B06000" });
+    notices.push({
+      text: `FRED ไม่ตอบ — ${Object.keys(src.macro.failed ?? {}).length || "บาง"} release ยังไม่มีวัน ลองใหม่เอง`,
+      color: "#B06000",
+      title: Object.entries(src.macro.failed ?? {}).map(([k, v]) => `${k} ${v}`).join(", "),
+    });
   if (src?.macro?.fomc_missing)
     notices.push({
       text: `FOMC ใส่ไว้ถึง ${src.macro.fomc_through} — หลังจากนั้น "ไม่มี FOMC" แปลว่ายังไม่ได้ใส่`,

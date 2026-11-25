@@ -7,6 +7,12 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### CAL: a FRED release (GDP…) missing, or only 8 of the FRED data the app reads had dates (fixed 2026-11-25)
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| A FRED release the user follows (GDP on 2026-11-25) is not on CAL; NFCI, STLFSI, mortgage rates, CFNAI, Sahm, UMich… never had a date there | CAL took MACRO only from `event_calendar.FRED_RELEASES` — TAIL's 8 market-moving releases — asked of FRED **inside the request** with an in-memory 12 h cache and no fallback: when FRED answered with a non-JSON page (`[event_calendar] FRED release 53 failed: Expecting value…`, 2026-10-21) every release dropped off the calendar and the next request asked again | `backend/fred_release_dates.py`: every FRED release the backend reads a series from (series → release asked of `fred/series/release`), pulled behind the request into `backend/cache/calendar_fred.json`, last good dates kept on failure, negative-cached, a non-JSON 200 recorded in `logs/upstream.jsonl` as `bad_body`. **A new FRED series in the backend → add its release to `RELEASES`** (or to `SKIPPED` with the reason if it is daily). First open on a machine with no cache file shows FOMC/rule dates and "กำลังอ่านวันประกาศตัวเลขจาก FRED" for ~10 s. |
+
 ### Order Footprint (FP) on, nothing drawn on a crypto chart (fixed 2026-10-10)
 
 | Symptom | Root cause | Fix |
