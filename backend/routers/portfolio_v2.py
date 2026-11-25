@@ -2411,6 +2411,36 @@ def delete_dividend(div_id: str):
     return {"ok": True}
 
 
+# ── Auto dividends (backend/dividend_auto.py) ─────────────────────────────────
+# Static paths: no GET /dividends/{id} exists, and POST /dividends/auto/run has
+# one more segment than PUT/DELETE /dividends/{id}, so neither is shadowed.
+
+@router.get("/dividends/auto")
+def dividends_auto_status():
+    """Is the automatic booking on, what did the last pass do, and what would a
+    pass book now (dry run, reads only)."""
+    import dividend_auto
+
+    try:
+        preview = dividend_auto.run_once(dry_run=True)
+    except Exception as exc:  # noqa: BLE001 — status must answer even when Yahoo does not
+        logger.exception("dividend auto preview failed")
+        preview = {"to_book": [], "skipped": [], "error": type(exc).__name__}
+    return {**dividend_auto.status(), "preview": preview}
+
+
+class DividendAutoRun(BaseModel):
+    dry_run: bool = False
+
+
+@router.post("/dividends/auto/run")
+def dividends_auto_run(body: DividendAutoRun = DividendAutoRun()):
+    """Run one pass now (the scheduler runs it every DIVIDEND_AUTO_INTERVAL)."""
+    import dividend_auto
+
+    return dividend_auto.run_once(dry_run=body.dry_run)
+
+
 # ── Dividend Suggestions (from yfinance) ─────────────────────────────────────
 
 @router.get("/dividend-suggestions")
@@ -2436,10 +2466,13 @@ def get_dividend_suggestions(account_id: Optional[str] = Query(None)):
             params,
         ).fetchall()
 
-        existing = {
-            (r["asset"], r["account_id"], r["ex_date"])
-            for r in conn.execute("SELECT asset, account_id, ex_date FROM dividends").fetchall()
-        }
+        # Booked rows per (account, asset). A dividend typed with the record or
+        # announcement date as its XD (a day or two off Yahoo's) is still the
+        # same dividend — matched the way dividend_auto matches, not by exact date.
+        existing: dict[tuple[str, str], list[dict]] = {}
+        for r in conn.execute("SELECT account_id, asset, ex_date, pay_date, id FROM dividends").fetchall():
+            existing.setdefault((r["account_id"], str(r["asset"] or "").upper()), []).append(dict(r))
+    from dividend_auto import _already_booked
 
     if not rows:
         return {"suggestions": []}
@@ -2459,7 +2492,8 @@ def get_dividend_suggestions(account_id: Optional[str] = Query(None)):
                 continue
             # Only dividends paid while the position was actually held
             eligible = [d for d in div_records if d.ex_date >= held_since]
-            eligible = [d for d in eligible if (symbol, acct, d.ex_date) not in existing]
+            booked = existing.get((acct, str(symbol).upper()), [])
+            eligible = [d for d in eligible if not _already_booked(booked, d.ex_date)]
             if not eligible:
                 continue
             for d in sorted(eligible, key=lambda d: d.ex_date):

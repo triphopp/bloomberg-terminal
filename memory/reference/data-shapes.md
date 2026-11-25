@@ -1158,6 +1158,34 @@ SSE `event: ready` (first frame): `{"session": "<id>" | null, "resumed": bool}`.
 deliberately withheld so it cannot be compared against a current one.
 `verdict` is `"UNVALIDATED"` for the VVIX/SKEW/OVX/GVZ/VXN signals — they have no backtest, and `stats` is `null`.
 
+## Tail Risk history exports (2026-11-25)
+
+`GET /api/tail-risk/history?format=json` (CSV by default — same columns):
+```jsonc
+{
+  "rows": [{ "date": "2026-11-25",
+             "vix_level": 0, "vix_momentum": null /* unknown */, "…13 signals": 1,
+             "signals_on": 5, "alert_dimensions": 1,          // = the 90D chart
+             "equity_vol_on": 1, "tail_pricing_on": 1, "cross_asset_vol_on": 2, "flow_positioning_on": 1,
+             "VIX": 26.1, "VIX_z20": 1.2, "VIX_chg5_pct": 8.4, "VIX9D": …, "VIX3M": …, "SKEW": …, "VVIX": …,
+             "VVIX_VIX_z63": …, "OVX": …, "OVX_z63": …, "GVZ": …, "GVZ_z63": …, "MOVE": …, "MOVE_z63": …,
+             "VXN": …, "VXN_VIX_z63": …, "SPY": …, "AGG": …, "SPY_volume": …, "SPY_RSI14": …,
+             "SPY_volume_z63": …, "layer_a_z": … }],
+  "count": 1289, "first": "2021-11-26", "last": "2026-11-25",
+  "signals": { "vix_level": { "label", "dimension", "rule", "input": "VIX_z20" } },
+  "evidence": { "VIX_z20": "z of VIX vs its trailing 20 sessions — vix_level fires > 1.5 (or VIX > 30)" },
+  "notes": ["…"]
+}
+```
+`GET /api/tail-risk/snapshots?format=json` → `{rows, count, first, last}`; a row = the `tail_signal_snapshots`
+columns with the JSON ones decoded: `signals_json[] {id, dimension, state, value, detail, reason, counted}`,
+`dimensions_json[] {id, status, on_count, total, unknown_count, active_signals}`, `events_json[] {id, name, channel,
+direction, severity, score, rule, evidence, catalyst}`, `context_json {fear_greed, spy_rsi, sector_regime, sector_corr,
+crisis_level, dcc_v1_signal, dcc_v3_signal, vix_term, events_ok, event_partial, event_asof}`. CSV flattens it: one
+column pair `<signal>` (`on`/`off`/`unknown`) + `<signal>_value` per signal, `;`-joined lists.
+
+---
+
 ## TypeScript Interfaces (key frontend types)
 
 ### `portfolio/types.ts`

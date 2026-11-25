@@ -49,6 +49,21 @@ def _market_dividends(yf_symbol: str) -> list:
     return recs
 
 
+def held_on(lots: list, ex_date: str) -> float:
+    """Units entitled to a dividend that goes ex on `ex_date`: lots bought
+    before the ex-date and not sold before it (selling ON the ex-date keeps the
+    dividend; buying on it does not). Shared with dividend_auto, so the check
+    and the automatic booking can never disagree on what was held."""
+    when = (ex_date or "")[:10]
+    held = 0.0
+    for lot in lots:
+        de = str(lot.get("date_entry") or "")[:10]
+        dx = str(lot.get("date_exit") or "")[:10]
+        if de and de < when and (not dx or dx >= when):
+            held += float(lot.get("volume") or 0)
+    return held
+
+
 def _days(a: str, b: str) -> int:
     from datetime import date
 
@@ -172,13 +187,7 @@ def check(
 
     # ── 2. total vs units held on the ex-date ────────────────────────────────
     if lots and when:
-        held = 0.0
-        for lot in lots:
-            de = str(lot.get("date_entry") or "")[:10]
-            dx = str(lot.get("date_exit") or "")[:10]
-            # Entitled if bought before the ex-date and not sold before it.
-            if de and de < when and (not dx or dx >= when):
-                held += float(lot.get("volume") or 0)
+        held = held_on(lots, when)
         out["held_units"] = round(held, 6)
         if held <= 0:
             issues.append({

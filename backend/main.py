@@ -71,6 +71,7 @@ from db import (
     init_etf_aum_schema,
     init_bond_issuance_schema,
     init_cot_schema,
+    init_tail_snapshot_schema,
     seed_symbol_lists,
     sync_symbol_lists,
 )
@@ -102,6 +103,7 @@ import calendar_scheduler
 import webull_scheduler
 import iv_scheduler
 import series_scheduler
+import tail_snapshots
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -149,6 +151,7 @@ init_etf_aum_schema()  # self-built ETF AUM record; must precede init_sync_layer
 init_chart_drawings_schema()  # trend lines / REG channels; must precede init_sync_layer()
 init_bond_issuance_schema()  # BOND view EDGAR cache; not synced, order free
 init_cot_schema()      # CFTC COT cache; not synced, order free
+init_tail_snapshot_schema()  # TAIL board, one row per market date; not synced, order free
 init_sync_layer()
 init_audit_layer()     # after sync layer: needs _sync_guard + final column set
 init_alerts_schema()
@@ -186,6 +189,10 @@ margin_scheduler.start_background_scan()
 # ── CALENDAR: a date that has come up → alert feed (backend/calendar_scheduler.py) ──
 calendar_scheduler.start_background_scan()
 
+# ── AUTO DIVIDEND: ex-date passed + held on it → booked in PORT dividends (backend/dividend_auto.py) ──
+import dividend_auto
+dividend_auto.start_background_scan()
+
 # ── WEBULL: token / entitlement about to end → alert feed (backend/webull_scheduler.py) ──
 webull_scheduler.start_background_scan()
 
@@ -199,6 +206,10 @@ iv_scheduler.start_background_recorder()
 # reason as the IV recorder above: the publishers show only today's number and
 # sell the history, so the series exists only if something writes it down daily.
 series_scheduler.start_background_recorder()
+
+# TAIL board, one row per market date: credit / DCC / regime / events / the
+# composite have no history upstream, so a day nobody records is lost for good.
+tail_snapshots.start_background_recorder()
 
 # ── Mount routers ─────────────────────────────────────────────────────────────
 app.include_router(dev_router.router)
