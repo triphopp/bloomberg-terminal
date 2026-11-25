@@ -153,7 +153,8 @@ export function kindLabel(kind: string): string {
 
 /** What a grid cell says about one event — it has ~14 characters. */
 export function cellLabel(e: CalEvent): string {
-  if (e.category === "MACRO") return e.kind;
+  // A release that has printed shows its headline figure: "GDP 4.30%".
+  if (e.category === "MACRO") return e.actual?.length ? `${e.kind} ${e.actual[0].text}` : e.kind;
   if (e.category === "COMPANY" || e.category === "PORT")
     return `${e.symbol ?? ""} ${kindLabel(e.kind)}`.trim();
   return `${e.symbol ?? ""} ${e.title}`.trim();

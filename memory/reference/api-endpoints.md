@@ -436,7 +436,12 @@ The one calendar (the CAL view, key `6`). Read-only; logic in `backend/calendar_
   Moody's, FOMC press release, USREC) are left out on purpose (`SKIPPED`). Pulled one release-year per call on a
   daemon thread, kept in `backend/cache/calendar_fred.json` (fresh 12 h · failed 30 min, 6 h after three in a row ·
   last good kept 60 d) — the request never waits on FRED; `sources.macro.pending` lists `"<rid>:<year>"` still out,
-  `failed` what failed (last good dates stay shown); `refresh=true` re-pulls them too. COMPANY = `stock_earnings_calendar` + `stock_dividends` per symbol, pulled on
+  `failed` what failed (last good dates stay shown); `refresh=true` re-pulls them too. A FRED release whose day has
+  come carries `actual` = the headline figures it printed (`HEADLINES`: GDP q/q saar, CPI / PCE y/y, payrolls,
+  claims, NFCI …), **as first published that day** — read from the FRED vintage (`series/observations` with a
+  realtime window, one call per series per year, `backend/cache/calendar_fred_values.json`, past years 30 d, this
+  year 12 h, a release of the last 3 days not yet on FRED re-asked every 30 min); the same figures lead `detail`, so
+  reminders, Google Calendar and ASK read them too. COMPANY = `stock_earnings_calendar` + `stock_dividends` per symbol, pulled on
   daemon threads and kept in `backend/cache/calendar_company.json` (fresh 6 h · failed 30 min, 6 h after three in a row
   · last good shown up to 30 d) — the request never waits, `sources.company.pending` lists what is still out; THESIS =
   `thesis_notes.watch_date`, `question_dates` (+ linked questions, tracked numbers), forecasts with only a `due_date`;

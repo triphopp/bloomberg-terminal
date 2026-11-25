@@ -20,6 +20,11 @@ with what is held and lists what is still `pending`. A failed pull is not asked
 again for RETRY_S (6 h after three failures in a row), and the last good dates
 stay on screen meanwhile — a FRED outage no longer empties the macro calendar
 (2026-10-21: FRED answered with a non-JSON page and every release dropped off).
+
+A release day that has come also carries what it published (HEADLINES: GDP
+q/q saar, CPI y/y, payrolls …) as first printed that day — read from the FRED
+vintage in force on the date, one call per series per year, same worker, kept
+in `backend/cache/calendar_fred_values.json`.
 """
 from __future__ import annotations
 
@@ -28,6 +33,8 @@ import time
 from collections import deque
 from datetime import date
 from typing import NamedTuple, Optional
+
+import requests
 
 import event_calendar as ec
 from persist_cache import PersistentStore
@@ -95,6 +102,175 @@ SKIPPED: dict[int, str] = {
     427: "Moody's Daily Corporate Bond Yields — daily (DAAA, DBAA)",
 }
 
+
+# ── What was printed: the headline figures of each release ────────────────────
+#
+# A release day on CAL carries the number it published — GDP 4.30% on the day
+# BEA put it out — as first published that day, not today's revised value: the
+# value comes from the FRED vintage (ALFRED) in force on the release date, so a
+# GDP second estimate shows the second estimate and the advance shows the
+# advance. Same transforms TAIL uses (routers/macro.py `_INDICATOR_CFG`).
+
+class Headline(NamedTuple):
+    series: str
+    label: str
+    xform: str        # direct | yoy_pct | mom_pct | mom_diff
+    fmt: str          # str.format of the scaled value
+    scale: float = 1.0
+
+
+_PCT = "{:.2f}%"
+_SPCT = "{:+.2f}%"
+_IDX = "{:.2f}"
+
+HEADLINES: dict[int, tuple[Headline, ...]] = {
+    9: (Headline("RSXFS", "Retail sales m/m", "mom_pct", _SPCT),),
+    10: (Headline("CPIAUCSL", "CPI y/y", "yoy_pct", _PCT),
+         Headline("CPILFESL", "Core CPI y/y", "yoy_pct", _PCT)),
+    46: (Headline("PPIFIS", "PPI final demand y/y", "yoy_pct", _PCT),),
+    50: (Headline("PAYEMS", "Nonfarm payrolls", "mom_diff", "{:+,.0f}k"),
+         Headline("UNRATE", "Unemployment rate", "direct", _PCT)),
+    53: (Headline("A191RL1Q225SBEA", "Real GDP q/q saar", "direct", _PCT),),
+    54: (Headline("PCEPI", "PCE y/y", "yoy_pct", _PCT),
+         Headline("PCEPILFE", "Core PCE y/y", "yoy_pct", _PCT)),
+    180: (Headline("ICSA", "Initial claims", "direct", "{:,.0f}k", 1e-3),),
+    192: (Headline("JTSJOL", "Job openings", "direct", "{:.2f}M", 1e-3),),
+    22: (Headline("BUSLOANS", "C&I loans", "direct", "${:,.1f}bn"),),
+    52: (Headline("NCBDBIQ027S", "Nonfin. corporate debt securities", "direct", "${:,.1f}bn", 1e-3),),
+    80: (Headline("GFDEBTN", "Federal debt", "direct", "${:,.2f}tn", 1e-6),),
+    91: (Headline("UMCSENT", "Consumer sentiment", "direct", _IDX),),
+    187: (Headline("STLFSI4", "Financial stress index", "direct", _IDX),),
+    190: (Headline("MORTGAGE30US", "30Y fixed mortgage", "direct", _PCT),),
+    191: (Headline("DRTSCILM", "Banks tightening C&I standards (net)", "direct", _PCT),),
+    205: (Headline("USALOLITOAASTSAM", "US composite leading indicator", "direct", _IDX),),
+    219: (Headline("CFNAI", "CFNAI", "direct", _IDX),
+          Headline("CFNAIMA3", "CFNAI 3-month avg", "direct", _IDX)),
+    221: (Headline("NFCI", "NFCI", "direct", _IDX),),
+    231: (Headline("DRCCLACBS", "Credit card delinquency", "direct", _PCT),
+          Headline("DRSFRMACBS", "Mortgage delinquency", "direct", _PCT)),
+    261: (Headline("RECPROUSM156N", "Recession probability", "direct", _PCT),),
+    321: (Headline("GACDISA066MSFRBNY", "Empire general conditions", "direct", _IDX),),
+    351: (Headline("GACDFSA066MSFRBPHI", "Philly Fed general activity", "direct", _IDX),),
+    354: (Headline("THREEFYTP10", "10Y term premium", "direct", _PCT),),
+    373: (Headline("JHGDPBRINDX", "GDP-based recession index", "direct", _PCT),),
+    374: (Headline("BACTSAMFRBDAL", "Dallas Fed general activity", "direct", _IDX),),
+    456: (Headline("SAHMREALTIME", "Sahm rule", "direct", "{:.2f} pp"),),
+}
+
+
+def _shift_year(d: str, years: int) -> str:
+    return f"{int(d[:4]) + years:04d}{d[4:]}"
+
+
+def _xform(obs: list[tuple[str, float]], i: int, how: str) -> Optional[float]:
+    """Transformed value of observation i of one vintage (sorted by date)."""
+    d, v = obs[i]
+    if how == "direct":
+        return v
+    if how in ("mom_pct", "mom_diff"):
+        if i == 0:
+            return None
+        p = obs[i - 1][1]
+        return v - p if how == "mom_diff" else (v / p - 1) * 100 if p else None
+    if how == "yoy_pct":
+        ago = dict(obs).get(_shift_year(d, -1))
+        return (v / ago - 1) * 100 if ago else None
+    raise ValueError(how)
+
+
+def _period(obs: list[tuple[str, float]]) -> str:
+    """Reference period of the last observation, named the way the agency does."""
+    d = obs[-1][0]
+    gap = (date.fromisoformat(d) - date.fromisoformat(obs[-2][0])).days if len(obs) > 1 else 31
+    if gap > 80:
+        return f"Q{(int(d[5:7]) - 1) // 3 + 1} {d[:4]}"
+    if gap > 20:
+        return date.fromisoformat(d).strftime("%b %Y")
+    return f"week of {d}"
+
+
+def vintage_values(rows: list[tuple[str, str, str, Optional[float]]], how: str,
+                   year: int) -> dict[str, list]:
+    """{release day: [value, previous value, reference period]} for every day of
+    `year` on which this series got new data — each read from the vintage in
+    force on that day. `rows` = (observation date, realtime_start, realtime_end,
+    value) as FRED returns them with a realtime window."""
+    lo = f"{year:04d}-01-01"
+    out: dict[str, list] = {}
+    for day in sorted({r[1] for r in rows if r[1] >= lo and r[1][:4] == str(year)}):
+        obs = sorted((o, v) for o, s, e, v in rows if s <= day <= e and v is not None)
+        if not obs:
+            continue
+        out[day] = [_xform(obs, len(obs) - 1, how),
+                    _xform(obs, len(obs) - 2, how) if len(obs) > 1 else None,
+                    _period(obs)]
+    return out
+
+
+def _fetch_obs(series: str, year: int) -> list[tuple[str, str, str, Optional[float]]]:
+    """Every vintage of `series` that took effect in `year`. Raises on any failure."""
+    from config import FRED_API_KEY
+
+    if not FRED_API_KEY:
+        raise RuntimeError("FRED_API_KEY not set")
+    # realtime_end may not be after today unless it is FRED's max date.
+    rt_end = f"{year}-12-31" if year < date.today().year else "9999-12-31"
+    r = requests.get(OBS_URL, params={
+        "series_id": series, "api_key": FRED_API_KEY, "file_type": "json",
+        "realtime_start": f"{year}-01-01", "realtime_end": rt_end,
+        # 14 months before January: a y/y on the first print of the year.
+        "observation_start": f"{year - 2}-01-01",
+    }, timeout=30)
+    r.raise_for_status()
+    try:
+        body = r.json()
+    except ValueError:
+        import upstream_health
+        upstream_health.record("FRED", "bad_body", target=f"/fred/series/observations?series_id={series}")
+        raise
+    rows = []
+    for x in body.get("observations", []):
+        try:
+            v: Optional[float] = float(x["value"])
+        except (TypeError, ValueError):
+            v = None   # "." = no value
+        rows.append((x["date"], x["realtime_start"], x["realtime_end"], v))
+    return rows
+
+
+def _how(series: str) -> str:
+    return next(h.xform for hs in HEADLINES.values() for h in hs if h.series == series)
+
+
+def _text(h: Headline, v: Optional[float]) -> Optional[str]:
+    return None if v is None else h.fmt.format(v * h.scale)
+
+
+def actual(rid: int, day: str) -> Optional[list[dict]]:
+    """The headline figures release `rid` published on `day`, as held. None when
+    the release has no headline; [] when none is held for that day (not out yet,
+    or FRED has not picked it up)."""
+    heads = HEADLINES.get(rid)
+    if not heads:
+        return None
+    out = []
+    for h in heads:
+        entry = _vstore.get(_vkey(h.series, int(day[:4])))
+        got = ((entry or {}).get("vals") or {}).get(day)
+        if not got:
+            continue
+        v, p, period = got
+        out.append({"series": h.series, "label": h.label,
+                    "value": None if v is None else round(v * h.scale, 6),
+                    # Printed, but the change cannot be worked out from FRED: the
+                    # earlier observation is missing (CPI of Oct 2025 was never
+                    # collected — the 2025 shutdown — so no y/y for Oct 2026).
+                    "text": _text(h, v) or "n/a", "prev_text": _text(h, p), "period": period})
+    return out
+
+
+# ── Background pull (dates and values share one worker) ──────────────────────
+
 # More dates than a weekly release has in a year: the release turned daily.
 MAX_PER_YEAR = 60
 
@@ -102,8 +278,13 @@ FRESH_S = 12 * 3600        # a good pull is reused this long
 RETRY_S = 30 * 60          # a failed pull is not asked again sooner
 RETRY_SLOW_S = 6 * 3600    # … and this long once it has failed three times running
 KEEP_S = 60 * 86400        # the last good dates stay as fallback this long
+PAST_YEAR_FRESH_S = 30 * 86400   # vintages of a past year no longer change
+AWAIT_DAYS = 3             # a release this recent with no figure held is asked again every RETRY_S
+
+OBS_URL = "https://api.stlouisfed.org/fred/series/observations"
 
 _store = PersistentStore("calendar_fred", max_age=KEEP_S, maxsize=500)
+_vstore = PersistentStore("calendar_fred_values", max_age=KEEP_S, maxsize=500)
 _queue: deque[str] = deque()
 _inflight: set[str] = set()
 _active = 0
@@ -116,6 +297,10 @@ def release_url(rid: int) -> str:
 
 def _key(rid: int, year: int) -> str:
     return f"{rid}:{year}"
+
+
+def _vkey(series: str, year: int) -> str:
+    return f"v:{series}:{year}"
 
 
 def _fetch(rid: int, year: int) -> list[str]:
@@ -133,31 +318,38 @@ def _fetch(rid: int, year: int) -> list[str]:
     return dates
 
 
-def _due(entry: Optional[dict], now: float) -> bool:
+def _due(entry: Optional[dict], now: float, fresh: float = FRESH_S) -> bool:
     if entry is None:
         return True
     age = now - entry.get("tried", 0)
     if not entry.get("error"):
-        return age > FRESH_S
+        return age > fresh
     return age > (RETRY_SLOW_S if entry.get("fails", 0) >= 3 else RETRY_S)
 
 
 def _pull(key: str) -> None:
     try:
-        rid, year = (int(x) for x in key.split(":"))
         now = time.time()
-        prev = _store.get(key)
+        if key.startswith("v:"):
+            _, series, y = key.split(":")
+            store, field = _vstore, "vals"
+            fetch = lambda: vintage_values(_fetch_obs(series, int(y)), _how(series), int(y))  # noqa: E731
+        else:
+            rid, year = (int(x) for x in key.split(":"))
+            store, field = _store, "dates"
+            fetch = lambda: _fetch(rid, year)  # noqa: E731
+        prev = store.get(key)
         try:
-            entry = {"dates": _fetch(rid, year), "ts": now, "tried": now, "fails": 0, "error": None}
+            entry = {field: fetch(), "ts": now, "tried": now, "fails": 0, "error": None}
         except Exception as exc:  # noqa: BLE001 — recorded, retried on the negative-cache clock
-            print(f"[fred_release_dates] release {rid} {year} failed: {type(exc).__name__}: {exc}")
-            # Keep the last good dates, and their age: a fallback that is never
+            print(f"[fred_release_dates] {key} failed: {type(exc).__name__}: {exc}")
+            # Keep the last good answer, and its age: a fallback that is never
             # refreshed must still expire.
-            entry = {"dates": prev.get("dates") if prev else None,
+            entry = {field: prev.get(field) if prev else None,
                      "ts": prev.get("ts", now) if prev else now, "tried": now,
                      "fails": (prev.get("fails", 0) if prev else 0) + 1,
                      "error": type(exc).__name__}
-        _store.put(key, entry)
+        store.put(key, entry)
     finally:
         with _lock:
             _inflight.discard(key)
@@ -174,14 +366,13 @@ def _work() -> None:
         _pull(key)
 
 
-def _schedule(keys: list[str], force: bool = False) -> None:
-    """Queue every key that is due. One worker: FRED allows 120 calls a minute
-    and a cold start is ~30 releases × the years on screen."""
+def _schedule(keys: list[str]) -> None:
+    """Queue these keys (the caller decided they are due). One worker: FRED
+    allows 120 calls a minute and a cold start is ~60 calls per year on screen."""
     global _active
-    now = time.time()
     with _lock:
         for k in keys:
-            if k in _inflight or not (force or _due(_store.get(k), now)):
+            if k in _inflight:
                 continue
             _inflight.add(k)
             _queue.append(k)
@@ -195,18 +386,45 @@ def idle() -> bool:
         return not _inflight
 
 
-def events(start: date, end: date, *, fetch: bool = True, force: bool = False) -> tuple[list[dict], dict]:
-    """FRED release dates in [start, end] from what is held, and how the pull
-    stands. With `fetch`, what is missing or due is queued behind the request."""
-    keys = [_key(rid, y) for rid in RELEASES for y in range(start.year, end.year + 1)]
-    if fetch:
-        _schedule(keys, force=force)
+def _value_keys_due(dated: list[tuple[int, str]], years: range, today: date, now: float,
+                    force: bool) -> list[str]:
+    """Value pulls to queue: a missing or stale year, and — on top of the plain
+    freshness — a release of the last AWAIT_DAYS whose figure is not held yet
+    (FRED picks a print up some time after the agency posts it)."""
+    awaiting = {h.series for rid, d in dated
+                if 0 <= (today - date.fromisoformat(d)).days <= AWAIT_DAYS and actual(rid, d) == []
+                for h in HEADLINES.get(rid, ())}
+    out = []
+    for series in {h.series for hs in HEADLINES.values() for h in hs}:
+        # FRED refuses a realtime window that starts in the future.
+        for y in (y for y in years if y <= today.year):
+            k = _vkey(series, y)
+            entry = _vstore.get(k)
+            fresh = PAST_YEAR_FRESH_S if y < today.year else FRESH_S
+            if force or _due(entry, now, fresh) or (
+                    series in awaiting and y == today.year and now - entry.get("tried", 0) > RETRY_S):
+                out.append(k)
+    return out
+
+
+def events(start: date, end: date, *, fetch: bool = True, force: bool = False,
+           today: Optional[date] = None) -> tuple[list[dict], dict]:
+    """FRED release dates in [start, end] from what is held — each past one with
+    the figures it published — and how the pull stands. With `fetch`, what is
+    missing or due is queued behind the request."""
+    today = today or date.today()
+    now = time.time()
+    years = range(start.year, end.year + 1)
+    keys = [_key(rid, y) for rid in RELEASES for y in years]
+    dated: list[tuple[int, str]] = []
     out: list[dict] = []
     pending: list[str] = []
     failed: dict[str, str] = {}
+    blank = False   # a release that failed with no last-good dates to show
+    if fetch:
+        _schedule([k for k in keys if force or _due(_store.get(k), now)])
     with _lock:
         inflight = set(_inflight)
-    blank = False   # a release that failed with no last-good dates to show
     for k in keys:
         entry = _store.get(k)
         if entry and entry.get("error"):
@@ -219,8 +437,15 @@ def events(start: date, end: date, *, fetch: bool = True, force: bool = False) -
             continue
         rid = int(k.split(":")[0])
         rel = RELEASES[rid]
-        out += [{"date": d, "kind": rel.kind, "label": rel.label, "impact": rel.impact,
-                 "source": "FRED", "release_id": rid, "series": list(rel.series)}
-                for d in entry["dates"] if start <= date.fromisoformat(d[:10]) <= end]
+        for d in entry["dates"]:
+            if not start <= date.fromisoformat(d[:10]) <= end:
+                continue
+            dated.append((rid, d))
+            out.append({"date": d, "kind": rel.kind, "label": rel.label, "impact": rel.impact,
+                        "source": "FRED", "release_id": rid, "series": list(rel.series),
+                        # Figures exist only once the day has come.
+                        "actual": actual(rid, d) if d <= today.isoformat() else None})
+    if fetch:
+        _schedule(_value_keys_due(dated, years, today, now, force))
     # A failure with last-good dates still on screen is only listed under `failed`.
     return out, {"ok": not blank, "releases": len(RELEASES), "pending": pending, "failed": failed}

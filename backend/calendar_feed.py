@@ -92,19 +92,22 @@ def _event(eid: str, day: str, category: str, kind: str, title: str, *, symbol: 
            impact: Optional[str] = None, estimated: bool = False, source: str = "",
            source_url: str = "", detail: str = "", done: bool = False, due: bool = False,
            theses: Optional[list[dict]] = None, ref: Optional[dict] = None,
-           tag: Optional[str] = None) -> dict:
+           tag: Optional[str] = None, actual: Optional[list[dict]] = None) -> dict:
     return {
         "id": eid, "date": day, "category": category, "kind": kind, "title": title,
         "symbol": symbol, "impact": impact, "estimated": estimated,
         "source": source, "source_url": source_url, "detail": detail,
         "done": done, "due": due, "theses": theses or [], "ref": ref, "tag": tag,
+        # MACRO from FRED, once its day has come: the figures it published
+        # ([] = not held yet); None everywhere else.
+        "actual": actual,
     }
 
 
 # ── MACRO ────────────────────────────────────────────────────────────────────
 
-def macro_events(start: date, end: date, *, fetch: bool = True,
-                 force: bool = False) -> tuple[list[dict], dict]:
+def macro_events(start: date, end: date, *, fetch: bool = True, force: bool = False,
+                 today: Optional[date] = None) -> tuple[list[dict], dict]:
     """FOMC + FRED release dates + rule dates in [start, end].
 
     FOMC and rule dates need no network. FRED release dates — every release the
@@ -112,7 +115,7 @@ def macro_events(start: date, end: date, *, fetch: bool = True,
     `fred_release_dates`, pulled behind the request like company dates: the
     route never waits on FRED, and what is still out is listed in `pending`.
     """
-    releases, fred = fred_release_dates.events(start, end, fetch=fetch, force=force)
+    releases, fred = fred_release_dates.events(start, end, fetch=fetch, force=force, today=today)
 
     out: dict[str, dict] = {}
     for e in ec.fomc_events(start, end) + releases + ec.rule_events(start, end):
@@ -121,6 +124,9 @@ def macro_events(start: date, end: date, *, fetch: bool = True,
         if eid in out:  # ISM prints two reports on some days; keep them apart
             eid = f"{eid}:{hashlib.sha1(e['label'].encode()).hexdigest()[:6]}"
         rid = e.get("release_id")
+        printed = "; ".join(
+            f"{a['label']} {a['text']} ({a['period']}" + (f", prev {a['prev_text']})" if a["prev_text"] else ")")
+            for a in e.get("actual") or [])
         out[eid] = _event(
             eid, day, "MACRO", e["kind"], e["label"], impact=e.get("impact"),
             # A rule date is the scheduled day, not the publisher's confirmation.
@@ -128,8 +134,10 @@ def macro_events(start: date, end: date, *, fetch: bool = True,
             source=e.get("source") or "",
             source_url=FOMC_URL if e["kind"] == "FOMC" else
             fred_release_dates.release_url(rid) if rid else "",
-            detail=(f"FRED release {rid}" + (f" · the terminal reads {', '.join(e['series'])}"
-                                             if e.get("series") else "")) if rid else "",
+            detail=(f"{printed} · " if printed else "") + (
+                (f"FRED release {rid}" + (f" · the terminal reads {', '.join(e['series'])}"
+                                          if e.get("series") else "")) if rid else ""),
+            actual=e.get("actual"),
         )
     last = _d(ec.FOMC_CALENDAR_THROUGH)
     return list(out.values()), {
@@ -576,7 +584,7 @@ def build(start: date, end: date, today: Optional[date] = None, *, fetch: bool =
     sources: dict[str, dict] = {}
 
     try:
-        rows, sources["macro"] = macro_events(start, end, fetch=fetch, force=force)
+        rows, sources["macro"] = macro_events(start, end, fetch=fetch, force=force, today=today)
         events += rows
     except Exception as exc:  # noqa: BLE001
         sources["macro"] = {"ok": False, "error": type(exc).__name__}

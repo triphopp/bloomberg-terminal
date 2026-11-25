@@ -27,6 +27,19 @@ export type CalRef =
   | { type: "question_date"; id: string; ref: string; questions: CalQuestion[] }
   | { type: "metric"; id: string; ref: string; thesis_id: string | null };
 
+/** One figure a FRED release printed on its day (backend/fred_release_dates.py HEADLINES),
+ * as first published that day — read from the FRED vintage in force on the date. */
+export interface CalActual {
+  series: string;
+  label: string;
+  /** Scaled as `text` shows it; null when it cannot be worked out (`text` = "n/a"). */
+  value: number | null;
+  text: string;
+  prev_text: string | null;
+  /** Reference period: "Q3 2026" · "Oct 2026" · "week of 2026-11-20". */
+  period: string;
+}
+
 export interface CalEvent {
   id: string;
   /** YYYY-MM-DD */
@@ -48,6 +61,8 @@ export interface CalEvent {
   due: boolean;
   theses: CalThesis[];
   ref: CalRef | null;
+  /** MACRO from FRED once its day has come: what it printed ([] = not on FRED yet). null elsewhere. */
+  actual?: CalActual[] | null;
   /** Sub-kind: a note's kind (CATALYST…), a question date's kind (FILING…). */
   tag: string | null;
   days_until: number;

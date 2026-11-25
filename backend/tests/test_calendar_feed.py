@@ -59,6 +59,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(feed, "_active", 0)
     fred = feed.fred_release_dates
     monkeypatch.setattr(fred, "_store", PersistentStore(None, max_age=fred.KEEP_S))
+    monkeypatch.setattr(fred, "_vstore", PersistentStore(None, max_age=fred.KEEP_S))
     monkeypatch.setattr(fred, "_inflight", set())
     monkeypatch.setattr(fred, "_queue", type(fred._queue)())
     monkeypatch.setattr(fred, "_active", 0)
@@ -70,6 +71,7 @@ def env(tmp_path, monkeypatch):
         return []
 
     monkeypatch.setattr(fred, "_fetch", fake_fred)
+    monkeypatch.setattr(fred, "_fetch_obs", lambda series, year: fred_calls.append((series, year)) or [])
     calls: list[str] = []
 
     def fake_fetch(symbol):
@@ -150,7 +152,8 @@ def test_macro_events_carry_source_and_whether_the_date_is_only_a_rule(env):
     opex = by["macro:OPEX:2026-10-16"]
     assert opex["estimated"] is True and opex["source"] == "rule"
     # A whole year per FRED call, each release once: moving the grid by a month hits the store.
-    assert sorted(env.fred_calls) == sorted((rid, 2026) for rid in env.fred.RELEASES)
+    assert sorted(c for c in env.fred_calls if isinstance(c[0], int)) == sorted(
+        (rid, 2026) for rid in env.fred.RELEASES)
     assert src["releases_ok"] is True and src["pending"] == [] and src["fomc_missing"] is False
 
 
@@ -225,7 +228,7 @@ def test_fred_down_keeps_the_last_good_dates_and_does_not_ask_again_at_once(env)
     assert "macro:GDP:2026-11-25" in {e["id"] for e in events}
     assert src["releases_ok"] is True and src["failed"]["53:2026"] == "ValueError"
     # Asked once by the forced refresh, not again by the next request (negative cache).
-    assert len(env.fred_calls) == len(env.fred.RELEASES)
+    assert len([c for c in env.fred_calls if isinstance(c[0], int)]) == len(env.fred.RELEASES)
 
 
 def test_fred_down_from_cold_leaves_fomc_and_rule_dates_standing(env):
@@ -244,6 +247,102 @@ def test_a_window_past_the_fomc_list_says_so(env):
     last = date.fromisoformat(env.feed.ec.FOMC_CALENDAR_THROUGH)
     _, src = env.feed.macro_events(last, last + timedelta(days=40))
     assert src["fomc_missing"] is True
+
+
+# ── What a FRED release printed ──────────────────────────────────────────────
+
+# A191RL1Q225SBEA as FRED returns it with a realtime window (2026-11-25):
+# Q3 2026 advance 3.4 on 10-29, second estimate 4.3 on 11-25.
+_GDP_ROWS = [
+    ("2026-04-01", "2026-07-30", "2026-09-29", 1.5), ("2026-04-01", "2026-09-30", "9999-12-31", 2.2),
+    ("2026-07-01", "2026-10-29", "2026-11-24", 3.4), ("2026-07-01", "2026-11-25", "9999-12-31", 4.3),
+]
+
+
+def test_a_release_day_reads_the_vintage_in_force_that_day(env):
+    vals = env.fred.vintage_values(_GDP_ROWS, "direct", 2026)
+    assert vals["2026-10-29"] == [3.4, 2.2, "Q3 2026"]   # the advance, not today's revision
+    assert vals["2026-11-25"] == [4.3, 2.2, "Q3 2026"]
+
+
+def test_transforms_match_tail(env):
+    rows = [(f"2025-{m:02d}-01", "2025-01-01", "9999-12-31", 100.0 + m) for m in range(1, 13)]
+    rows += [("2026-01-01", "2026-02-11", "9999-12-31", 110.0)]
+    yoy = env.fred.vintage_values(rows, "yoy_pct", 2026)["2026-02-11"]
+    assert yoy[0] == pytest.approx((110 / 101 - 1) * 100) and yoy[2] == "Jan 2026"
+    diff = env.fred.vintage_values(rows, "mom_diff", 2026)["2026-02-11"]
+    assert diff[:2] == [pytest.approx(-2.0), pytest.approx(1.0)]
+    # The index a year earlier was never collected (CPI Oct 2025): no y/y, not a wrong one.
+    gap = [r if r[0] != "2025-01-01" else (r[0], r[1], r[2], None) for r in rows]
+    assert env.fred.vintage_values(gap, "yoy_pct", 2026)["2026-02-11"][0] is None
+
+
+def _fred_obs(env, by_series: dict[str, list]):
+    def fetch(series, year):
+        env.fred_calls.append((series, year))
+        return by_series.get(series, [])
+    env.monkeypatch.setattr(env.fred, "_fetch_obs", fetch)
+
+
+def test_a_release_that_has_come_carries_what_it_printed(env):
+    _fred_dates(env, {53: ["2026-10-29", "2026-11-25", "2026-12-23"]})
+    _fred_obs(env, {"A191RL1Q225SBEA": _GDP_ROWS})
+    today = date(2026, 11, 25)
+    env.feed.build(date(2026, 10, 1), date(2026, 12, 31), today)
+    _drain(env.feed)
+    env.feed.build(date(2026, 10, 1), date(2026, 12, 31), today)   # values are asked once dates are held
+    _drain(env.feed)
+    p = env.feed.build(date(2026, 10, 1), date(2026, 12, 31), today, fetch=False)
+    by = _by_id(p)
+    gdp = by["macro:GDP:2026-11-25"]
+    assert gdp["actual"] == [{"series": "A191RL1Q225SBEA", "label": "Real GDP q/q saar", "value": 4.3,
+                              "text": "4.30%", "prev_text": "2.20%", "period": "Q3 2026"}]
+    assert gdp["detail"].startswith("Real GDP q/q saar 4.30% (Q3 2026, prev 2.20%) · FRED release 53")
+    assert by["macro:GDP:2026-10-29"]["actual"][0]["text"] == "3.40%"
+    assert by["macro:GDP:2026-12-23"]["actual"] is None          # its day has not come
+    assert by["macro:FOMC:2026-10-28"]["actual"] is None          # not a FRED release
+
+
+def test_a_print_not_on_fred_yet_is_asked_again_soon_but_not_at_once(env):
+    _fred_dates(env, {53: ["2026-11-25"]})
+    _fred_obs(env, {"A191RL1Q225SBEA": _GDP_ROWS[:3]})               # FRED has not picked 11-25 up
+    today = date(2026, 11, 25)
+    for _ in range(2):
+        env.feed.macro_events(date(2026, 11, 1), date(2026, 11, 30), today=today)
+        _drain(env.feed)
+    events, _ = env.feed.macro_events(date(2026, 11, 1), date(2026, 11, 30), today=today, fetch=False)
+    assert {e["id"]: e for e in events}["macro:GDP:2026-11-25"]["actual"] == []
+    asked = [c for c in env.fred_calls if c[0] == "A191RL1Q225SBEA"]
+    assert asked == [("A191RL1Q225SBEA", 2026)]
+    # RETRY_S later the awaited series alone is asked again.
+    key = env.fred._vkey("A191RL1Q225SBEA", 2026)
+    entry = env.fred._vstore.get(key)
+    env.fred._vstore.put(key, {**entry, "tried": entry["tried"] - env.fred.RETRY_S - 1})
+    _fred_obs(env, {"A191RL1Q225SBEA": _GDP_ROWS})
+    env.feed.macro_events(date(2026, 11, 1), date(2026, 11, 30), today=today)
+    _drain(env.feed)
+    events, _ = env.feed.macro_events(date(2026, 11, 1), date(2026, 11, 30), today=today, fetch=False)
+    assert {e["id"]: e for e in events}["macro:GDP:2026-11-25"]["actual"][0]["text"] == "4.30%"
+    assert [c for c in env.fred_calls if c[0] == "A191RL1Q225SBEA"] == [("A191RL1Q225SBEA", 2026)] * 2
+
+
+def test_values_are_never_asked_for_a_year_still_to_come(env):
+    today = date(2026, 12, 20)
+    env.feed.macro_events(date(2026, 12, 1), date(2027, 1, 31), today=today)
+    _drain(env.feed)
+    env.feed.macro_events(date(2026, 12, 1), date(2027, 1, 31), today=today)
+    _drain(env.feed)
+    assert not [c for c in env.fred_calls if isinstance(c[0], str) and c[1] == 2027]
+
+
+def test_every_headline_belongs_to_a_release_on_cal(env):
+    for rid, heads in env.fred.HEADLINES.items():
+        assert rid in env.fred.RELEASES
+        for h in heads:
+            assert h.xform in ("direct", "yoy_pct", "mom_pct", "mom_diff")
+            h.fmt.format(1.0)
+    series = [h.series for hs in env.fred.HEADLINES.values() for h in hs]
+    assert len(series) == len(set(series)), "one series, one transform: the store is keyed by series"
 
 
 # ── Theses ───────────────────────────────────────────────────────────────────

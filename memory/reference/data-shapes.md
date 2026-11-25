@@ -2171,7 +2171,11 @@ TS: `components/bloomberg/views/calendar/types.ts` (`CalPayload`, `CalEvent`, `C
     "ref": null,                              // {type:"note", id, thesis_id, status, impact}
                                               // {type:"question_date", id, ref, questions:[{id, ref, title, thesis_id, status, reads}]}
                                               // {type:"metric", id, ref, thesis_id}
-    "days_until": 21
+    "days_until": 21,
+    "actual": null                            // MACRO from FRED once its day has come (2026-11-25), else null:
+                                              // [{series:"A191RL1Q225SBEA", label:"Real GDP q/q saar", value:4.3,
+                                              //   text:"4.30%", prev_text:"2.20%", period:"Q3 2026"}]
+                                              // [] = not on FRED yet; text "n/a" + value null = printed, change not computable
   }],
   "sources": {
     "macro":   {"ok": true, "releases_ok": true, "fomc_through": "2027-12-08", "fomc_missing": false,
