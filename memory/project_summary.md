@@ -106,6 +106,7 @@ TRADE_GUARD_SCAN_INTERVAL (default 900, 0 = off) — TRADE GUARD notifier (guard
 MARGIN_SCAN_INTERVAL (default 300, 0 = off) — MARGIN notifier (margin_scheduler.py): account level worsens → alert_events `margin:<LEVEL>`
 GOOGLE_CALENDAR_CLIENT_ID / GOOGLE_CALENDAR_CLIENT_SECRET — CAL → Google Calendar (OAuth client "Desktop app"); optional GCAL_SYNC_DAYS (120), GCAL_TOKEN_DIR, GCAL_TIMEZONE (Asia/Bangkok), GCAL_SCOPE, GCAL_RECHECK_S (21600) (2026-10-11)
 CALENDAR_SCAN_INTERVAL (default 1800, 0 = off) — CALENDAR notifier (calendar_scheduler.py): a date today or on the next business day → alert_events `cal:<KIND>` (2026-10-08)
+DIVIDEND_AUTO_INTERVAL (default 21600, 0 = off) · DIVIDEND_AUTO_LOOKBACK_DAYS (default 60) — AUTO DIV (dividend_auto.py): an ex-date that passed while a stock was held → one `dividends` row booked by itself (id `auto-div-…`), not held → nothing (2026-11-25)
 UPSTREAM_LOG          — override logs/upstream.jsonl
 DB_POOL_SIZE (16, 0 = off) / CPU_POOL_WORKERS (2) — `db.get_db` connection pool, `cpu_pool.py` process pool
 LATENCY_SLOW_MS (200) / LATENCY_LOG (logs/latency.jsonl) / LATENCY_LOCAL_LANE (1) / LATENCY_LOCAL_TOKENS (16) — `request_latency.py`: slow-request log + the local thread lane for DB-only routers (`GET /api/health/latency`)

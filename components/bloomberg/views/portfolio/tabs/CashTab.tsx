@@ -8,6 +8,7 @@ import { CashReconcileModal } from "../modals/CashReconcileModal";
 import { ConfirmDeleteModal } from "../modals/ConfirmDeleteModal";
 import type { CashEntry, CashFlowForm, CashFlowType, Dividend, Summary, Trade } from "../types";
 import { LedgerFilterBar } from "../ui/LedgerFilterBar";
+import { AutoDividendStrip } from "../ui/AutoDividendStrip";
 import { NumInput } from "../ui/NumInput";
 import type { TransferHint } from "../ui/SlipReader";
 import { SubPortSelect } from "../ui/SubPortSelect";
@@ -720,6 +721,16 @@ export function CashTab({
           )}
         </button>
       </div>
+
+      {subTab === "dividends" && (
+        <AutoDividendStrip
+          colors={colors}
+          onBooked={() => {
+            load();
+            fetchSuggestions();
+          }}
+        />
+      )}
 
       {/* Suggestion chips */}
       {suggestions.length > 0 && (
@@ -1631,6 +1642,15 @@ export function CashTab({
                 >
                   <td className="px-2 py-1 font-bold" style={{ color: colors.accent }}>
                     {d.asset}
+                    {d.id.startsWith("auto-div-") && (
+                      <span
+                        className="ml-1 text-[7px] font-normal"
+                        style={{ color: "#a78bfa" }}
+                        title="Booked automatically (held on the ex-date × market per-unit, gross). Check total and pay date against the broker statement and EDIT if they differ — a later pass never overwrites your edit."
+                      >
+                        AUTO
+                      </span>
+                    )}
                   </td>
                   <td className="px-2 py-1">{d.account_id}</td>
                   <td className="px-2 py-1" style={{ color: colors.textSecondary }}>

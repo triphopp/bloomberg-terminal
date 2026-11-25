@@ -189,6 +189,10 @@ margin_scheduler.start_background_scan()
 # ── CALENDAR: a date that has come up → alert feed (backend/calendar_scheduler.py) ──
 calendar_scheduler.start_background_scan()
 
+# ── AUTO DIVIDEND: ex-date passed + held on it → booked in PORT dividends (backend/dividend_auto.py) ──
+import dividend_auto
+dividend_auto.start_background_scan()
+
 # ── WEBULL: token / entitlement about to end → alert feed (backend/webull_scheduler.py) ──
 webull_scheduler.start_background_scan()
 
