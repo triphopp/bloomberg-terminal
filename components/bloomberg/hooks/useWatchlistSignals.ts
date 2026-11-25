@@ -47,11 +47,13 @@ export interface WatchlistSignalsResponse {
 
 const signalKey = (symbol: string) => ["watchlist-signals", symbol];
 
-const batcher = new SymbolBatcher<WatchlistSignal>(
+// `null` = the backend answered with no scan: a new listing with fewer daily
+// bars than any indicator needs (`tooShort`). Final, not an error — no retry.
+const batcher = new SymbolBatcher<WatchlistSignal | null>(
   "/api/watchlist/signals",
   "signals",
   20,
-  undefined,
+  null,
   slowDataQueue
 );
 
@@ -74,10 +76,14 @@ export function useWatchlistSignals(symbols: string[], enabled = true) {
     [unique, enabled]
   );
   // Stored scan paints at once; refetched when older than staleTime (15 min).
-  const seeded = useSnapshotSeed<WatchlistSignal>(client, "signals", unique, signalKey, enabled);
+  const seeded = useSnapshotSeed<WatchlistSignal | null>(client, "signals", unique, signalKey, enabled);
   const combine = useCallback(
-    (queries: QueryObserverResult<WatchlistSignal>[]) => ({
-      signals: Object.fromEntries(queries.flatMap((q, i) => (q.data ? [[unique[i], q.data]] : []))),
+    (queries: QueryObserverResult<WatchlistSignal | null>[]) => ({
+      signals: Object.fromEntries(
+        queries.flatMap((q, i) => (q.data ? [[unique[i], q.data] as const] : []))
+      ) as Record<string, WatchlistSignal>,
+      /** Symbols too new to have signals yet (too few daily bars). */
+      tooShort: unique.filter((_, i) => queries[i]?.data === null),
       errors: queries.flatMap((q, i) => (q.error ? [`${unique[i]}: ${q.error.message}`] : [])),
       isLoading: queries.some((q) => q.isFetching),
       error: queries.find((q) => q.error)?.error ?? null,

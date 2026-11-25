@@ -280,3 +280,21 @@ def test_shared_alert_history_skips_unknown_symbol_without_dropping_valid_ones(c
         def history(self, **kwargs): return pd.DataFrame() if self.sym == 'BAD' else bars()
     monkeypatch.setattr(snapshots.market_data, 'get_ticker', Ticker)
     assert set(signals._download(['OK', 'BAD'])) == {'OK'}
+
+
+def test_new_listing_is_ready_without_scan_not_an_error(coordinator, monkeypatch):
+    """A stock a few days old has too few bars for any indicator: that is the
+    answer (no scan, `tooShort`), not a failure the client retries and reports
+    as a delayed update."""
+    full, short = bars(), bars().iloc[-4:]
+    class Ticker:
+        def __init__(self, symbol): self.symbol = symbol
+        def history(self, **kwargs):
+            return short if self.symbol == 'NEW' else full
+    monkeypatch.setattr(snapshots.market_data, 'get_ticker', Ticker)
+    result = signals.get_watchlist_signals('OLD,NEW')
+    assert result['errors'] == []
+    assert result['statuses'] == {'OLD': {'status': 'ready'}, 'NEW': {'status': 'ready'}}
+    assert set(result['signals']) == {'OLD'}
+    assert result['tooShort'] == {'NEW': 4}
+    assert result['minBars'] == signals.MIN_BARS

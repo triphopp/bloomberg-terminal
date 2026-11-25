@@ -27,6 +27,8 @@
  *   --install-startup   register in HKCU\...\Run and exit
  *   --uninstall-startup remove the HKCU\...\Run entry and exit
  *   --stop              signal a running launcher instance to quit and exit
+ *   --restart           ask a running launcher to restart both servers (= tray
+ *                       "Restart servers"), exit 1 when none is running
  */
 
 #include <winsock2.h>   /* must precede windows.h */
@@ -426,6 +428,17 @@ static void startFrontend(void)
     g_frontendDiedAt = 0;
 }
 
+/* Wait until nothing answers on <port>, up to timeoutMs. TRUE once it is free. */
+static BOOL waitPortFree(int port, DWORD timeoutMs)
+{
+    DWORD start = GetTickCount();
+    while (portOpen(port)) {
+        if (GetTickCount() - start >= timeoutMs) return FALSE;
+        Sleep(200);
+    }
+    return TRUE;
+}
+
 static void startServers(void)
 {
     g_backendRestarts = g_frontendRestarts = 0;
@@ -448,11 +461,34 @@ static void stopServers(void)
      * kill below as a crash and helpfully restart what we just stopped. */
     g_backendDiedAt = g_frontendDiedAt = 0;
 
-    if (g_backendProc)  { TerminateProcess(g_backendProc, 0);  CloseHandle(g_backendProc);  g_backendProc = NULL; }
-    if (g_frontendProc) { TerminateProcess(g_frontendProc, 0); CloseHandle(g_frontendProc); g_frontendProc = NULL; }
-    /* Closing the job kills anything the children spawned (uvicorn reloader,
-     * next's worker processes). Recreate it for a later restart. */
+    /* TerminateProcess only queues the kill. Wait for each process to be gone,
+     * or Restart's portOpen() below still finds the old server listening, takes
+     * it for an external one and starts nothing - the backend then stays down. */
+    if (g_backendProc) {
+        TerminateProcess(g_backendProc, 0);
+        WaitForSingleObject(g_backendProc, 5000);
+        CloseHandle(g_backendProc);
+        g_backendProc = NULL;
+    }
+    if (g_frontendProc) {
+        TerminateProcess(g_frontendProc, 0);
+        WaitForSingleObject(g_frontendProc, 5000);
+        CloseHandle(g_frontendProc);
+        g_frontendProc = NULL;
+    }
+    /* Closing the job kills anything the children spawned (uvicorn reloader's
+     * worker - the process that actually holds the port - and next's workers).
+     * Kill them explicitly and wait until the job is empty, for the same reason.
+     * Recreate it for a later restart. */
     if (g_job) {
+        TerminateJobObject(g_job, 0);
+        for (int i = 0; i < 50; i++) {
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION acc;
+            if (!QueryInformationJobObject(g_job, JobObjectBasicAccountingInformation,
+                                           &acc, sizeof(acc), NULL)
+                || acc.ActiveProcesses == 0) break;
+            Sleep(100);
+        }
         CloseHandle(g_job);
         g_job = CreateJobObjectW(NULL, NULL);
         if (g_job) {
@@ -525,6 +561,23 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 setTip(APP_NAME L" - frontend stopped");
             }
 
+            /* A server we attached to (not ours) that has gone away: from now on
+             * it is ours to run. Without this an attach that raced a dying
+             * server left the stack down with nothing watching it. */
+            if ((now / 1000) % 5 == 0) {
+                if (g_backendExternal && !portOpen(g_backendPort)) {
+                    g_backendExternal = FALSE;
+                    g_backendDiedAt = now;
+                    g_healthy = FALSE;
+                    setTip(APP_NAME L" - backend stopped");
+                }
+                if (g_frontendExternal && !portOpen(g_frontendPort)) {
+                    g_frontendExternal = FALSE;
+                    g_frontendDiedAt = now;
+                    setTip(APP_NAME L" - frontend stopped");
+                }
+            }
+
             /* Bring it back. The delay keeps a crash-on-start from spinning. */
             if (g_backendDiedAt && now - g_backendDiedAt >= RESTART_DELAY_MS) {
                 if (g_backendRestarts < MAX_RESTARTS) {
@@ -590,6 +643,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             g_healthy = FALSE;
             g_healthTicks = 0;
             setTip(APP_NAME L" — restarting...");
+            /* The servers we just stopped may hold their sockets a moment longer.
+             * Only one still answering after this is someone else's. */
+            if (!g_backendExternal)  waitPortFree(g_backendPort, 8000);
+            if (!g_frontendExternal) waitPortFree(g_frontendPort, 8000);
             startServers();
             break;
         case IDM_LOGS:
@@ -625,7 +682,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 /* ── entry point ────────────────────────────────────────────────────────── */
 
-static void parseArgs(BOOL *installStartup, BOOL *uninstallStartup, BOOL *stop)
+static void parseArgs(BOOL *installStartup, BOOL *uninstallStartup, BOOL *stop, BOOL *restart)
 {
     int argc = 0;
     LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -639,6 +696,7 @@ static void parseArgs(BOOL *installStartup, BOOL *uninstallStartup, BOOL *stop)
         else if (!wcscmp(argv[i], L"--install-startup"))   *installStartup = TRUE;
         else if (!wcscmp(argv[i], L"--uninstall-startup")) *uninstallStartup = TRUE;
         else if (!wcscmp(argv[i], L"--stop"))              *stop = TRUE;
+        else if (!wcscmp(argv[i], L"--restart"))           *restart = TRUE;
         else if (!wcscmp(argv[i], L"--backend-port")  && i + 1 < argc) g_backendPort  = _wtoi(argv[++i]);
         else if (!wcscmp(argv[i], L"--frontend-port") && i + 1 < argc) g_frontendPort = _wtoi(argv[++i]);
         else if (!wcscmp(argv[i], L"--root") && i + 1 < argc) {
@@ -662,8 +720,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE prev, LPWSTR cmdLine, int show)
 {
     (void)prev; (void)cmdLine; (void)show;
 
-    BOOL doInstall = FALSE, doUninstall = FALSE, doStop = FALSE;
-    parseArgs(&doInstall, &doUninstall, &doStop);
+    BOOL doInstall = FALSE, doUninstall = FALSE, doStop = FALSE, doRestart = FALSE;
+    parseArgs(&doInstall, &doUninstall, &doStop, &doRestart);
 
     if (doInstall) {
         MessageBoxW(NULL, startupInstall()
@@ -678,10 +736,13 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE prev, LPWSTR cmdLine, int show)
                     MB_OK | MB_ICONINFORMATION);
         return 0;
     }
-    if (doStop) {
-        HWND other = FindWindowW(WNDCLASS_NAME, NULL);
-        if (other) PostMessageW(other, WM_COMMAND, IDM_QUIT, 0);
-        return 0;
+    if (doStop || doRestart) {
+        /* The launcher's window is message-only: FindWindowEx(HWND_MESSAGE)
+         * is what finds it; FindWindow is kept as the fallback it always was. */
+        HWND other = FindWindowExW(HWND_MESSAGE, NULL, WNDCLASS_NAME, NULL);
+        if (!other) other = FindWindowW(WNDCLASS_NAME, NULL);
+        if (other) PostMessageW(other, WM_COMMAND, doStop ? IDM_QUIT : IDM_RESTART, 0);
+        return other ? 0 : 1;
     }
 
     /* Single instance: a second launch just opens the browser. */

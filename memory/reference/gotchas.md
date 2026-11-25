@@ -7,6 +7,12 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### Tray "Restart servers" → backend never comes back (fixed 2026-11-25)
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| After Restart the frontend is up but `:9317` refuses; `logs/backend.log` has no new start-up lines; no python child under `BloombergTerminal.exe` | `IDM_RESTART` ran `TerminateProcess` + closed the job, then `startServers()` → `portOpen(9317)` **immediately**. Termination is asynchronous: the dev_server worker still held the port, so the launcher marked the backend *external*, spawned nothing, and nothing watches an external server | `launcher.c`: `stopServers()` waits for each process + `TerminateJobObject` until the job is empty; Restart waits ≤ 8 s for the ports; the timer takes over an external server whose port closes. `BloombergTerminal.exe --restart` triggers the same path from a shell (tested 4× in a row). Any "check port then decide" after a kill must wait for the kill first |
+
 ### CAL: a FRED release (GDP…) missing, or only 8 of the FRED data the app reads had dates (fixed 2026-11-25)
 
 | Symptom | Root cause | Fix |
@@ -2723,3 +2729,16 @@ left with new whitespace: `portfolio-review-20260925/evidence/dime-activity/dime
 **Rule:** run biome only on the frontend files you changed (`npx biome format --write <file> …`), never on `backend/`
 or a whole directory you did not write. Evidence files are pinned by hash: never reformat, re-save or "pretty-print"
 anything under `backend/backups/` or `backend/evidence/`.
+
+## WATCHLIST "UPDATE DELAYED · 1 signals" for a stock that just listed (2026-11-25)
+
+**Symptom:** strip `PRICES 37/37 · SIGNALS 36/37 · UPDATE DELAYED · 0 prices / 1 signals` that never clears; tooltip
+`ANT: Insufficient history for ANT`. ANT listed 2026-11-19 → 4 daily bars; `_scan` needs `MIN_BARS` (30). The endpoint
+answered with an error status (404), so the client retried it and counted it as a failed update.
+**Fix:** a symbol too new to scan is `status: ready` with no entry in `signals`, listed under `tooShort` (symbol → bars)
+(`routers/watchlist_signals.py`); the signals batcher resolves it to `null` (like Polymarket's "no market"), the hook
+returns `tooShort`, the strip shows `· N too new` only when it is up for another reason. The row's signal cells stay
+`·` until the stock has 30 bars (picked up on the 15-min refresh).
+**Rule:** "there is nothing to compute yet" is an answer, not an error — never return it as a failed status, or the UI
+reports a delay and React Query retries something that cannot succeed. Test:
+`test_new_listing_is_ready_without_scan_not_an_error`.
