@@ -55,6 +55,7 @@ import {
   hitTestTrendLines,
   sameTrendBar,
 } from "./indicators/trend-line";
+import { createPriceRangeOverlay } from "./indicators/price-range";
 import type {
   BarInterval,
   CanvasOverlay,
@@ -266,6 +267,26 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
   // records where every line landed on screen into `trendHitsRef`.
   const [selectedTrendId, setSelectedTrendId] = useState<string | null>(null);
   const trendHitsRef = useRef(createTrendHitMap());
+
+  // ── Price Range (measure): two clicks, never saved ──
+  // Same ref + state split as the trend line. `rangeEnd` set = a finished
+  // measurement on screen until the next chart click / Esc / the button.
+  const [rangeArmed, setRangeArmed] = useState(false);
+  const rangeStartRef = useRef<TrendPoint | null>(null);
+  const [rangeStart, setRangeStartState] = useState<TrendPoint | null>(null);
+  const [rangeEnd, setRangeEnd] = useState<TrendPoint | null>(null);
+  const rangePreviewRef = useRef<TrendPreview>({ current: null });
+  // Read by the pointer-move handler, which is created once.
+  const rangeArmedRef = useRef(false);
+  rangeArmedRef.current = rangeArmed;
+  const clearRange = useCallback(() => {
+    rangeStartRef.current = null;
+    rangePreviewRef.current.current = null;
+    setRangeStartState(null);
+    setRangeEnd(null);
+    setRangeArmed(false);
+  }, []);
+
   const trendLines: StoredTrendLine[] = useMemo(() => {
     if (!symbol) return [];
     return drawings
@@ -594,6 +615,9 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
       trendHitsRef.current.segments = [];
       trendHitsRef.current.deleteBox = null;
     }
+    if (rangeStart) {
+      parts.push(createPriceRangeOverlay(rangeStart, rangeEnd, rangePreviewRef.current));
+    }
     if (parts.length === 0) return null;
     return {
       id: "drawings",
@@ -604,7 +628,15 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
         for (const part of parts) part.draw(...args);
       },
     };
-  }, [regressionChannels, activeRegression?.id, trendLines, trendPending, selectedTrendId]);
+  }, [
+    regressionChannels,
+    activeRegression?.id,
+    trendLines,
+    trendPending,
+    selectedTrendId,
+    rangeStart,
+    rangeEnd,
+  ]);
 
   // ── Toggles ──────────────────────────────────────────────────────────────
 
@@ -628,6 +660,29 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
    */
   const handleChartClick = useCallback(
     (time: string | number, ctx?: ChartClickContext) => {
+      // Price Range: first click = start, second = end (then disarms).
+      if (rangeArmed) {
+        if (ctx?.price == null) return;
+        const at: TrendPoint = ctx.futureBars
+          ? { time, price: ctx.price, futureBars: ctx.futureBars }
+          : { time, price: ctx.price };
+        const start = rangeStartRef.current;
+        if (!start) {
+          rangeStartRef.current = at;
+          setRangeStartState(at);
+          return;
+        }
+        if (sameTrendBar(at, start) && at.price === start.price) return;
+        rangePreviewRef.current.current = null;
+        setRangeEnd(at);
+        setRangeArmed(false);
+        return;
+      }
+      // A finished measurement goes away on the next click, which does nothing else.
+      if (rangeStartRef.current) {
+        clearRange();
+        return;
+      }
       // Trend line: two clicks on the price pane. A click off the price pane
       // (indicator sub-panes) has no price and is ignored while armed.
       if (trendArmed) {
@@ -705,6 +760,8 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
       }
     },
     [
+      rangeArmed,
+      clearRange,
       trendArmed,
       setTrendPending,
       saveDrawing,
@@ -732,7 +789,19 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     setTrendPending(null);
     setTrendArmed(false);
     setSelectedTrendId(null);
+    clearRange();
   }, [symbol, barInterval, chartType]);
+
+  // Escape drops the measurement (armed or finished).
+  const rangeShown = rangeArmed || rangeStart != null;
+  useEffect(() => {
+    if (!rangeShown) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") clearRange();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [rangeShown, clearRange]);
 
   // Delete / Backspace removes the selected line, Escape lets go of it. Ignored
   // while typing in a field, so editing a symbol can't delete a drawing.
@@ -766,8 +835,9 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     setAnchor(null);
     setTrendPending(null);
     setTrendArmed(false);
+    clearRange();
     setRegressionArmed((v) => !v);
-  }, [setAnchor, setTrendPending]);
+  }, [setAnchor, setTrendPending, clearRange]);
 
   /** Arm one trend line (two clicks). Clicking again cancels. */
   const toggleTrendLine = useCallback(() => {
@@ -775,8 +845,23 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     setRegressionArmed(false);
     setTrendPending(null);
     setSelectedTrendId(null);
+    clearRange();
     setTrendArmed((v) => !v);
-  }, [setAnchor, setTrendPending]);
+  }, [setAnchor, setTrendPending, clearRange]);
+
+  /** Arm a measurement; pressed again (armed, or one on screen) clears it. */
+  const togglePriceRange = useCallback(() => {
+    if (rangeArmed || rangeStartRef.current) {
+      clearRange();
+      return;
+    }
+    setAnchor(null);
+    setRegressionArmed(false);
+    setTrendPending(null);
+    setTrendArmed(false);
+    setSelectedTrendId(null);
+    setRangeArmed(true);
+  }, [rangeArmed, clearRange, setAnchor, setTrendPending]);
 
   /** Undo: drop the newest line on this chart. */
   const removeLastTrendLine = useCallback(() => {
@@ -816,6 +901,19 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
 
   /** Pass to <ModularChart onPointerMove> — drives the half-drawn line's preview. */
   const handlePointerMove = useCallback((p: ChartHoverPoint | null): boolean => {
+    // Live measurement while the start is placed and the end is not.
+    const rStart = rangeStartRef.current;
+    const rPreview = rangePreviewRef.current;
+    if (rStart && rangeArmedRef.current) {
+      const next: TrendPoint | null = p
+        ? { time: p.time, price: p.price, ...(p.futureBars > 0 ? { futureBars: p.futureBars } : {}) }
+        : null;
+      const prev = rPreview.current;
+      if (next && prev && sameTrendBar(next, prev) && next.price === prev.price) return false;
+      if (!next && !prev) return false;
+      rPreview.current = next;
+      return true;
+    }
     const preview = trendPreviewRef.current;
     const first = trendPendingRef.current;
     if (!first) {
@@ -861,10 +959,15 @@ export function useChartIndicators(options: ChartIndicatorOptions = {}) {
     toggleTrendLine,
     removeLastTrendLine,
     clearTrendLines,
+    // ── Price Range / measure (two clicks, not saved) ──
+    rangeArmed,
+    rangePending: rangeArmed && rangeStart != null,
+    rangeShown: rangeEnd != null,
+    togglePriceRange,
     /** Any click-to-draw tool is waiting for a click — show the crosshair cursor. */
-    drawingArmed: regressionArmed || trendArmed,
+    drawingArmed: regressionArmed || trendArmed || rangeArmed,
     /** <ModularChart futureRoomBars> — a trend line may end in the future, the Ichimoku cloud does. */
-    drawingFutureRoom: Math.max(trendArmed ? 12 : 0, ichimokuFutureRoom),
+    drawingFutureRoom: Math.max(trendArmed || rangeArmed ? 12 : 0, ichimokuFutureRoom),
     handleChartClick,
     handlePointerMove,
     // Lookback window unit: "bars" (raw candles) vs "days" (session time)
