@@ -269,6 +269,7 @@ components/bloomberg/
 | `chart/price-scaling.ts` | `usdPriceSymbol`, `scaleBars` — quote-currency→USD→selected-unit OHLC conversion; skips dates without a usable rate |
 | `chart/RegressionControls.tsx` | `RegressionControls` |
 | `chart/TrendLineControls.tsx` | `TrendLineControls` |
+| `chart/PriceRangeControls.tsx` | `PriceRangeControls` — ruler button: Price Range / measure (2 clicks → Δprice, Δ% vs first click, bars; not saved; next chart click / Esc / button clears). Overlay + pure math in `chart/indicators/price-range.ts`, state in `useChartIndicators` (`rangeArmed` · `rangePending` · `rangeShown` · `togglePriceRange`) |
 | `chart/useChartDrawings.ts` | `useChartDrawings` (React Query `["chart-drawings"]`, optimistic `saveDrawing`/`removeDrawings`, one-time localStorage import), `ChartDrawingRow` |
 | `chart/indicators/zigzag.ts` | `createZigZag`, `calcZigZag`, `ZigZagPivot`, `ZigZagResult`, `ZIGZAG_SOURCES`, `ZIGZAG_LIVE`, `ZIGZAG_LABELS` |
 | `chart/indicators/sd-zones.ts` | `createSdZones`, `createSdZonesOverlay`, `createSdTrapsOverlay`, `calcSdZones`, `scanSdZones`, `calcPivotZones`, `scanPivotZones`, `calcBaseZones`, `scanBaseZones`, `fillAlpha`, `hexToRgb`, `zoneTag`, `trapLabel`, `SdZone`, `SdTrap`, `SdScan`, `BreakRule`, `TrapRule`, `SdZoneKind`, `SdPattern`, `SD_ZONE_PARAMS`, `SD_TRAP_OPTIONS` |

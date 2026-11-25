@@ -27,6 +27,7 @@ import { ModularChart } from "./ModularChart";
 import { PEPane } from "./PEPane";
 import { RegressionControls } from "./RegressionControls";
 import { TimeframeRow } from "./TimeframeRow";
+import { PriceRangeControls } from "./PriceRangeControls";
 import { TrendLineControls } from "./TrendLineControls";
 import { VolumeEventPanel } from "./VolumeEventPanel";
 import type { BarInterval, OhlcvBar, TimePeriod } from "./types";
@@ -154,6 +155,10 @@ export function ChartPanel({
     trendArmed,
     trendPending,
     toggleTrendLine,
+    rangeArmed,
+    rangePending,
+    rangeShown,
+    togglePriceRange,
     drawingArmed,
     drawingFutureRoom,
     handleChartClick,
@@ -380,6 +385,14 @@ export function ChartPanel({
               armed={trendArmed}
               pending={trendPending}
               onToggle={toggleTrendLine}
+              border={colors.border}
+              muted={colors.textSecondary}
+            />
+            <PriceRangeControls
+              armed={rangeArmed}
+              pending={rangePending}
+              shown={rangeShown}
+              onToggle={togglePriceRange}
               border={colors.border}
               muted={colors.textSecondary}
             />

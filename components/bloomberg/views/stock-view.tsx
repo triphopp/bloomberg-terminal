@@ -43,6 +43,7 @@ import {
 import type { IndicatorRegistryEntry, OhlcvBar } from "../chart";
 import { FearGreedPane } from "../chart/FearGreedPane";
 import { PEPane } from "../chart/PEPane";
+import { PriceRangeControls } from "../chart/PriceRangeControls";
 import { TrendLineControls } from "../chart/TrendLineControls";
 import { VolumeEventPanel } from "../chart/VolumeEventPanel";
 import { useSdBands } from "../chart/useSdBands";
@@ -4323,6 +4324,10 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
     trendArmed,
     trendPending,
     toggleTrendLine,
+    rangeArmed,
+    rangePending,
+    rangeShown,
+    togglePriceRange,
     drawingArmed,
     drawingFutureRoom,
     handleChartClick,
@@ -5043,6 +5048,15 @@ export default function StockView({ onBack, defaultSymbol }: StockViewProps) {
                       armed={trendArmed}
                       pending={trendPending}
                       onToggle={toggleTrendLine}
+                      border={colors.border}
+                      muted={colors.textSecondary}
+                    />
+                    {/* Price Range — click start + end: Δprice, Δ%, bars (not saved) */}
+                    <PriceRangeControls
+                      armed={rangeArmed}
+                      pending={rangePending}
+                      shown={rangeShown}
+                      onToggle={togglePriceRange}
                       border={colors.border}
                       muted={colors.textSecondary}
                     />

@@ -88,6 +88,7 @@ import { FearGreedPane } from "../chart/FearGreedPane";
 import { FooterGauges } from "../chart/FooterGauges";
 import { PEPane } from "../chart/PEPane";
 import { RegressionControls } from "../chart/RegressionControls";
+import { PriceRangeControls } from "../chart/PriceRangeControls";
 import { TrendLineControls } from "../chart/TrendLineControls";
 import { VolumeEventPanel } from "../chart/VolumeEventPanel";
 import { scaleBars, usdPriceSymbol } from "../chart/price-scaling";
@@ -1677,6 +1678,10 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
     trendArmed: mktTrendArmed,
     trendPending: mktTrendPending,
     toggleTrendLine: toggleMktTrendLine,
+    rangeArmed: mktRangeArmed,
+    rangePending: mktRangePending,
+    rangeShown: mktRangeShown,
+    togglePriceRange: toggleMktPriceRange,
     drawingArmed: mktDrawingArmed,
     toggleVolumeProfile: toggleHeatmapVP,
     showVolumeEvents: heatmapShowVolumeEvents,
@@ -3340,6 +3345,14 @@ export function MarketView({ isDarkMode: _ }: MarketViewProps) {
               armed={mktTrendArmed}
               pending={mktTrendPending}
               onToggle={toggleMktTrendLine}
+              border={colors.border}
+              muted={colors.textSecondary}
+            />
+            <PriceRangeControls
+              armed={mktRangeArmed}
+              pending={mktRangePending}
+              shown={mktRangeShown}
+              onToggle={toggleMktPriceRange}
               border={colors.border}
               muted={colors.textSecondary}
             />
