@@ -22,6 +22,8 @@ import type { Dividend, Summary, Trade } from "../types";
 import { AccBadge } from "../ui/AccBadge";
 import { AllocationBasisCard } from "../ui/AllocationBasisCard";
 import { DailyPnlHeatmap } from "../ui/DailyPnlHeatmap";
+import { DividendGrowthPanel } from "../ui/DividendGrowthPanel";
+import { type GrowthMode, dividendGrowth, rollingTtm } from "../ui/dividend-growth";
 import { NavGrowthChart } from "../ui/NavGrowthChart";
 import { OptionAttributionCard } from "../ui/OptionAttributionCard";
 import {
@@ -1099,6 +1101,7 @@ export function AnalyticsTab({
   // biome-ignore lint/suspicious/noExplicitAny: untyped API response
   const [navHistory, setNavHistory] = useState<any[]>([]);
   const [divPeriod, setDivPeriod] = useState<"M" | "Q" | "Y">("M");
+  const [divGrowthMode, setDivGrowthMode] = useState<GrowthMode>("TTM");
   const [capm, setCapm] = useState<CapmResponse | null>(null);
   const [rets, setRets] = useState<ReturnsResponse | null>(null);
   const [benchmark, setBenchmark] = useState<"SPY" | "QQQ" | "ACWI">("SPY");
@@ -1384,6 +1387,18 @@ export function AnalyticsTab({
       .sort()
       .map(([label, total]) => ({ month: label, total }));
   }, [dividends, divPeriod]);
+
+  // Dividend growth is measured up to today (local date), the same day the
+  // ledger's auto-dividends are booked on.
+  const divAsOf = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }, []);
+  const divGrowth = useMemo(
+    () => dividendGrowth(dividends, divGrowthMode, divAsOf),
+    [dividends, divGrowthMode, divAsOf]
+  );
+  const divTtm = useMemo(() => rollingTtm(dividends, divAsOf), [dividends, divAsOf]);
 
   const accStats = summary?.accounts ?? [];
   const filteredStats = isBookScope(accountId)
@@ -2865,6 +2880,44 @@ export function AnalyticsTab({
               </div>
             );
           })()}
+        </Card>
+      )}
+
+      {/* ── Dividend growth: how much more the book is paid, and why ─────── */}
+      {divTtm.length > 0 && (
+        <Card
+          colors={colors}
+          title="DIVIDEND GROWTH"
+          sub="by pay date · vs the same period a year before"
+          right={
+            <Seg
+              colors={colors}
+              options={[
+                ["12M", "TTM"],
+                ["YTD", "YTD"],
+              ]}
+              value={divGrowthMode}
+              onChange={setDivGrowthMode}
+            />
+          }
+          note={
+            <>
+              12M = 12 เดือนล่าสุด เทียบ 12 เดือนก่อนหน้านั้น · YTD = ต้นปีถึงวันนี้ เทียบช่วงเดียวกันของปีก่อน.
+              WHY IT CHANGED แยกส่วนที่เปลี่ยนให้รวมกันได้พอดี: NEW = หุ้นที่ช่วงก่อนไม่ได้ปันผล · STOPPED =
+              หุ้นที่ช่วงนี้ไม่ได้แล้ว · FX = ค่าเงิน · UNITS = ถือหุ้นมาก/น้อยขึ้น (เงินที่เราใส่) · DPS =
+              บริษัทจ่ายต่อหุ้นมาก/น้อยขึ้น — ส่วนนี้เท่านั้นคือปันผลที่โตขึ้นเอง. เส้น 12 เดือนตัดฤดูกาลออก
+              (หุ้นไทยจ่ายปีละ 1–2 ครั้ง ดูรายเดือนจะขึ้นลงตามรอบจ่าย) ช่วงที่ข้อมูลยังไม่ครบ 12 เดือนเป็นเส้นประสีเทา
+              เพราะเส้นขึ้นจากการสะสมข้อมูล ไม่ใช่ปันผลโต. นับตามวันจ่าย (pay date) ของ ledger ใน PORT.
+            </>
+          }
+        >
+          <DividendGrowthPanel
+            growth={divGrowth}
+            ttm={divTtm}
+            colors={colors}
+            sym={sym}
+            tooltipContentStyle={tooltipContentStyle}
+          />
         </Card>
       )}
 
