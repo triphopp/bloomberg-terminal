@@ -80,7 +80,7 @@ export function riskTargetOf(e: Pick<AlertEvent, "ruleId">): RiskSubTabRequest |
 
 /** Label of the link that goes there. */
 export function riskLinkLabel(target: RiskSubTabRequest): string {
-  return target === "rebalance" ? "RISK → REBALANCE" : "OPEN RISK";
+  return target === "rebalance" ? "OPEN REBALANCE" : "OPEN RISK";
 }
 
 export function isModalEvent(e: AlertEvent): boolean {

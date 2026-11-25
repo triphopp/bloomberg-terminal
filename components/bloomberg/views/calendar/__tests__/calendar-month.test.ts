@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  alertWhen,
   calendarDateOf,
   calendarTargetOf,
   calendarToasts,
@@ -173,13 +174,19 @@ test("a reminder is worded from its date when it is read", () => {
   assert.equal(whenText("2026-10-29", "2026-10-28"), "พรุ่งนี้");
   assert.equal(whenText("2026-11-02", "2026-10-30"), "อีก 3 วัน");
   assert.equal(whenText("2026-10-29", "2026-10-31"), "ผ่านมา 2 วัน");
+  // Alert surfaces (ticker, list, toast) speak English.
+  assert.equal(alertWhen("2026-10-29", "2026-10-29"), "today");
+  assert.equal(alertWhen("2026-10-29", "2026-10-28"), "tomorrow");
+  assert.equal(alertWhen("2026-10-29", "2026-10-30"), "yesterday");
+  assert.equal(alertWhen("2026-11-02", "2026-10-30"), "in 3 days");
+  assert.equal(alertWhen("2026-10-29", "2026-10-31"), "2 days ago");
   assert.equal(calendarDateOf(alert({})), "2026-10-29");
   assert.equal(
     describeCalendar(
       alert({ date: "2026-10-29", detail: "EPS est 0.39", thesis_symbol: "INTC", symbol: "INTC" }),
       "2026-10-28"
     ),
-    "พรุ่งนี้ · 2026-10-29 · EPS est 0.39"
+    "tomorrow · 2026-10-29 · EPS est 0.39"
   );
 });
 
@@ -231,13 +238,13 @@ test("a batch of reminders is one toast per thesis", () => {
   );
   assert.deepEqual(toasts, [
     {
-      title: "MEM · 3 เรื่องในปฏิทิน",
-      description: "วันนี้: Scenario 1 · วันนี้: Scenario 2 · +1",
+      title: "MEM · 3 calendar events",
+      description: "today: Scenario 1 · today: Scenario 2 · 1 more",
       target: { sub: "theses", thesisId: "T1", thesisSub: "notes" },
     },
     {
       title: "ORCL · Ex-dividend",
-      description: "พรุ่งนี้ · 2026-10-30",
+      description: "tomorrow · 2026-10-30",
       target: { sub: "theses", thesisId: "T2", thesisSub: "thesis" },
     },
   ]);
