@@ -108,10 +108,40 @@ function EventRow({
         )}
       </div>
 
-      {e.detail && (
-        <div className="text-[9px]" style={{ color: colors.text }}>
-          {e.detail}
-        </div>
+      {e.actual && e.actual.length > 0 ? (
+        <>
+          {e.actual.map((a) => (
+            <div key={a.series} className="text-[9px] flex items-baseline gap-1.5 flex-wrap">
+              <span style={dim}>{a.label}</span>
+              <span className="font-mono font-bold text-[11px]" style={{ color: colors.text }}>
+                {a.text}
+              </span>
+              <span className="text-[8px]" style={dim}>
+                {a.period}
+                {a.prev_text ? ` · ก่อนหน้า ${a.prev_text}` : ""}
+              </span>
+            </div>
+          ))}
+          {/* the series it carries — the figures are already above */}
+          {e.detail.includes("FRED release") && (
+            <div className="text-[8px]" style={dim}>
+              {e.detail.slice(e.detail.indexOf("FRED release"))}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          {e.actual && e.days_until <= 0 && (
+            <div className="text-[8px]" style={{ color: "#fbbf24" }}>
+              ยังไม่มีตัวเลขบน FRED — FRED รับตัวเลขหลังหน่วยงานประกาศ (บางชุด เช่น UMich ช้าเป็นเดือน)
+            </div>
+          )}
+          {e.detail && (
+            <div className="text-[9px]" style={{ color: colors.text }}>
+              {e.detail}
+            </div>
+          )}
+        </>
       )}
 
       {e.source && (

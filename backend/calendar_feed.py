@@ -4,7 +4,8 @@ One calendar over every dated thing the terminal already knows about.
 Nothing new is stored here. Four kinds of date lived in four places, each with
 its own screen, and none of them knew about the others:
 
-  MACRO    event_calendar.py — FOMC, FRED release dates, rule dates (TAIL strip)
+  MACRO    event_calendar.py — FOMC, rule dates (TAIL strip); fred_release_dates.py —
+           the release dates of every FRED series the backend reads
   COMPANY  earnings and dividends per symbol, from Yahoo (stock view, chart rail)
   THESIS   thesis_notes.watch_date and question_dates, with the tracked numbers
            that wait on them (PORT → TOOLS)
@@ -39,6 +40,7 @@ from typing import Optional
 
 import account_scope
 import event_calendar as ec
+import fred_release_dates
 from db import get_db
 from persist_cache import PersistentStore
 
@@ -90,30 +92,30 @@ def _event(eid: str, day: str, category: str, kind: str, title: str, *, symbol: 
            impact: Optional[str] = None, estimated: bool = False, source: str = "",
            source_url: str = "", detail: str = "", done: bool = False, due: bool = False,
            theses: Optional[list[dict]] = None, ref: Optional[dict] = None,
-           tag: Optional[str] = None) -> dict:
+           tag: Optional[str] = None, actual: Optional[list[dict]] = None) -> dict:
     return {
         "id": eid, "date": day, "category": category, "kind": kind, "title": title,
         "symbol": symbol, "impact": impact, "estimated": estimated,
         "source": source, "source_url": source_url, "detail": detail,
         "done": done, "due": due, "theses": theses or [], "ref": ref, "tag": tag,
+        # MACRO from FRED, once its day has come: the figures it published
+        # ([] = not held yet); None everywhere else.
+        "actual": actual,
     }
 
 
 # ── MACRO ────────────────────────────────────────────────────────────────────
 
-def macro_events(start: date, end: date) -> tuple[list[dict], dict]:
-    """FOMC + FRED releases + rule dates in [start, end].
+def macro_events(start: date, end: date, *, fetch: bool = True, force: bool = False,
+                 today: Optional[date] = None) -> tuple[list[dict], dict]:
+    """FOMC + FRED release dates + rule dates in [start, end].
 
-    FRED is asked a calendar year at a time, not for the window on screen:
-    event_calendar caches by the exact range, and a month grid that moves by a
-    month would otherwise be eight new calls on every click.
+    FOMC and rule dates need no network. FRED release dates — every release the
+    backend reads a series from, not only the ones TAIL watches — come from
+    `fred_release_dates`, pulled behind the request like company dates: the
+    route never waits on FRED, and what is still out is listed in `pending`.
     """
-    releases: list[dict] = []
-    releases_ok = True
-    for year in range(start.year, end.year + 1):
-        rows, ok = ec.release_events(date(year, 1, 1), date(year, 12, 31))
-        releases_ok = releases_ok and ok
-        releases += [r for r in rows if start <= _d(r["date"]) <= end]
+    releases, fred = fred_release_dates.events(start, end, fetch=fetch, force=force, today=today)
 
     out: dict[str, dict] = {}
     for e in ec.fomc_events(start, end) + releases + ec.rule_events(start, end):
@@ -121,16 +123,26 @@ def macro_events(start: date, end: date) -> tuple[list[dict], dict]:
         eid = f"macro:{e['kind']}:{day}"
         if eid in out:  # ISM prints two reports on some days; keep them apart
             eid = f"{eid}:{hashlib.sha1(e['label'].encode()).hexdigest()[:6]}"
+        rid = e.get("release_id")
+        printed = "; ".join(
+            f"{a['label']} {a['text']} ({a['period']}" + (f", prev {a['prev_text']})" if a["prev_text"] else ")")
+            for a in e.get("actual") or [])
         out[eid] = _event(
             eid, day, "MACRO", e["kind"], e["label"], impact=e.get("impact"),
             # A rule date is the scheduled day, not the publisher's confirmation.
             estimated=e.get("source") == "rule",
             source=e.get("source") or "",
-            source_url=FOMC_URL if e["kind"] == "FOMC" else "",
+            source_url=FOMC_URL if e["kind"] == "FOMC" else
+            fred_release_dates.release_url(rid) if rid else "",
+            detail=(f"{printed} · " if printed else "") + (
+                (f"FRED release {rid}" + (f" · the terminal reads {', '.join(e['series'])}"
+                                          if e.get("series") else "")) if rid else ""),
+            actual=e.get("actual"),
         )
     last = _d(ec.FOMC_CALENDAR_THROUGH)
     return list(out.values()), {
-        "ok": releases_ok, "releases_ok": releases_ok,
+        "ok": fred["ok"], "releases_ok": fred["ok"],
+        "fred_releases": fred["releases"], "pending": fred["pending"], "failed": fred["failed"],
         "fomc_through": ec.FOMC_CALENDAR_THROUGH,
         # Asked for days past the hardcoded list: "no FOMC" there means "not entered".
         "fomc_missing": end > last,
@@ -572,7 +584,7 @@ def build(start: date, end: date, today: Optional[date] = None, *, fetch: bool =
     sources: dict[str, dict] = {}
 
     try:
-        rows, sources["macro"] = macro_events(start, end)
+        rows, sources["macro"] = macro_events(start, end, fetch=fetch, force=force, today=today)
         events += rows
     except Exception as exc:  # noqa: BLE001
         sources["macro"] = {"ok": False, "error": type(exc).__name__}

@@ -428,8 +428,20 @@ The one calendar (the CAL view, key `6`). Read-only; logic in `backend/calendar_
 - `GET /api/calendar?start=YYYY-MM-DD&end=YYYY-MM-DD&refresh=false` — default a week back → 45 days ahead; 422 on a bad
   date, `end < start`, or a window over 400 days. → `{as_of, start, end, events:[CalEvent], sources, theses}` (shape in
   `data-shapes.md`), soonest first. `refresh=true` queues a new Yahoo pull for every company symbol.
-- Sources: MACRO = `event_calendar` (FOMC hardcoded, FRED `release/dates` asked a calendar year at a time so a month
-  move hits its 12 h cache, rule dates); COMPANY = `stock_earnings_calendar` + `stock_dividends` per symbol, pulled on
+- Sources: MACRO = `event_calendar` (FOMC hardcoded, rule dates) + `fred_release_dates` (2026-11-25): the release
+  dates of **every FRED release the backend reads a series from** — 27 releases (`RELEASES`: TAIL's 8 + Z.1, H.8,
+  UMich, CBO, STLFSI, PMMS mortgage, SLOOS, OECD MEI, CFNAI, NFCI, delinquency, recession probabilities, Empire /
+  Philly / Dallas Fed, Kim–Wright, GDP-based recession index, Sahm; weekly ones `impact: low`), each event's `detail`
+  naming the series read and `source_url` the FRED release calendar. Daily releases (H.15, ICE BofA, spreads, VIX,
+  Moody's, FOMC press release, USREC) are left out on purpose (`SKIPPED`). Pulled one release-year per call on a
+  daemon thread, kept in `backend/cache/calendar_fred.json` (fresh 12 h · failed 30 min, 6 h after three in a row ·
+  last good kept 60 d) — the request never waits on FRED; `sources.macro.pending` lists `"<rid>:<year>"` still out,
+  `failed` what failed (last good dates stay shown); `refresh=true` re-pulls them too. A FRED release whose day has
+  come carries `actual` = the headline figures it printed (`HEADLINES`: GDP q/q saar, CPI / PCE y/y, payrolls,
+  claims, NFCI …), **as first published that day** — read from the FRED vintage (`series/observations` with a
+  realtime window, one call per series per year, `backend/cache/calendar_fred_values.json`, past years 30 d, this
+  year 12 h, a release of the last 3 days not yet on FRED re-asked every 30 min); the same figures lead `detail`, so
+  reminders, Google Calendar and ASK read them too. COMPANY = `stock_earnings_calendar` + `stock_dividends` per symbol, pulled on
   daemon threads and kept in `backend/cache/calendar_company.json` (fresh 6 h · failed 30 min, 6 h after three in a row
   · last good shown up to 30 d) — the request never waits, `sources.company.pending` lists what is still out; THESIS =
   `thesis_notes.watch_date`, `question_dates` (+ linked questions, tracked numbers), forecasts with only a `due_date`;

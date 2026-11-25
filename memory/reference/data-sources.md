@@ -221,7 +221,7 @@ thesis `MEM-KRJP` (Samsung · SK hynix · Kioxia) ใช้แหล่งชุ
 |---|---|---|
 | **Tavily / Brave Search** | ⬜ ยังไม่มี key — ใส่ `TAVILY_API_KEY` หรือ `BRAVE_API_KEY` ใน `backend/.env` (free tier) | ค้นเว็บทั่วไปสำหรับ NEWS → ASK (`web_search` tool) — ไม่มี key ก็ยังค้นข่าว + เปิดอ่านหน้าเว็บได้ |
 | **ธปท. (BOT API Portal)** | ✅ มี `BOT_*_TOKEN` ใน `backend/.env` — rates / auctions / statistics ใช้ได้; **FX ยังไม่ได้ subscribe** | ข้อมูลเศรษฐกิจไทยทั้งหมด → ใช้ผ่าน §2 |
-| **FRED** | ✅ `FRED_API_KEY` | series สหรัฐเกือบทั้งหมด — ผ่าน §2 |
+| **FRED** | ✅ `FRED_API_KEY` | series สหรัฐเกือบทั้งหมด — ผ่าน §2. วันประกาศของ release ใดๆ (รวมวันในอนาคต): `fred/release/dates?release_id=…&include_release_dates_with_no_data=true`; series อยู่ release ไหน: `fred/series/release?series_id=…` — ตาราง series → release ที่ backend อ่านอยู่ใน `backend/fred_release_dates.py` (ขึ้น CAL) |
 | **ก.ล.ต. (SEC TH)** | ✅ `SEC_*` keys | กองทุน, หุ้นกู้, One Report — ผ่าน §2 |
 | **Fiscal.ai** | ✅ `FISCAL_AI_API_KEY` (โควตารายวัน) | fundamentals, transcripts — ผ่าน MCP |
 | **Webull OpenAPI (TH)** | ✅ `WEBULL_APP_KEY` + `WEBULL_APP_SECRET` + token (2FA ในแอป) | L2 depth US stocks/ETFs — docs: developer.webull.co.th; ไม่มี SET, ไม่มี option depth |
@@ -256,6 +256,8 @@ thesis `MEM-KRJP` (Samsung · SK hynix · Kioxia) ใช้แหล่งชุ
 - **IMF DataMapper** (`imf.org/external/datamapper/api/v1`) — ส่ง User-Agent แบบเบราว์เซอร์ → 403 (Akamai); ใช้ได้กับ UA ปกติแต่ช้า ~10s และคืนทุกประเทศ → **ใช้ IMF SDMX แทน**
 - **รหัสประเทศไม่เหมือนกัน** — backend `/api/sovereign` = ISO-2 (`TH`), IMF / World Bank ตรง = ISO-3 (`THA`), UN Comtrade = ตัวเลข M49 (`764`)
 - **FRED series ที่ถูกลบ** ถูก retry ซ้ำไม่รู้จบถ้าไม่ negative-cache (เคสจริง `BAMLHE00EHY0D`, ดู `CLAUDE.md`)
+- **FRED release/dates ของปีที่ยังไม่มาถึง** ตอบ `[]` (200) จนกว่า FRED จะลงตาราง — ไม่ใช่ error; `realtime_start` ในอนาคตใช้ได้ (ตรวจ 2026-11-25)
+- **FRED ตอบ 200 แต่ไม่ใช่ JSON** (หน้า maintenance, เคส 2026-10-21) — requests hook นับเป็นสำเร็จ; โค้ดที่ parse ต้องจับ `ValueError` เอง
 - **ข้อมูลรายปีของ World Bank ช้ากว่า 1 ปี** — ตัวเลขปีล่าสุดอาจยังว่าง; ระบุปีของข้อมูลทุกครั้ง
 - **WEO ออกปีละ 2 รอบ** (เม.ย. + ต.ค.) — ระบุ vintage (`PUBLICATION_DATE`) ทุกครั้งที่อ้างประมาณการ
 - **openai.com/index/* และ datacenterdynamics.com → 403** กับ WebFetch (ตรวจ 2026-10-02) — ใช้ข่าวแจกของคู่สัญญาแทน (nvidianews.nvidia.com, AMD 8-K บน EDGAR)

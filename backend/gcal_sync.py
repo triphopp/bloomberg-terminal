@@ -400,6 +400,12 @@ def event_body(e: dict) -> dict:
     title = e["title"]
     sym = e.get("symbol")
     summary = title if not sym or sym in title else f"{sym} · {title}"
+    # A FRED release whose day has come: its headline figure, as on the CAL grid
+    # ("GDP 4.30%"). The body hash covers the summary, so the event is rewritten
+    # once the figure arrives.
+    printed = e.get("actual") or []
+    if printed:
+        summary = f"{summary} {printed[0]['text']}"
     if e.get("estimated"):
         summary = "≈ " + summary
     if e.get("done"):
