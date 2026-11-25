@@ -2615,6 +2615,40 @@ def init_bond_issuance_schema() -> None:
         """)
 
 
+def init_tail_snapshot_schema() -> None:
+    """One row per market date: the whole TAIL board as it read that day.
+
+    Credit, DCC, regime, the named market events and the composite risk level
+    are point-in-time — nothing upstream keeps their history, so a day nobody
+    recorded is a permanent hole (the vol/flow signals can be rebuilt instead:
+    `GET /api/tail-risk/history`). Written by `tail_snapshots.record`. Local to
+    this machine and not in SYNC_TABLES: each machine reads the same public
+    data, so there is nothing to merge.
+    """
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tail_signal_snapshots (
+                snapshot_date         TEXT PRIMARY KEY,
+                first_taken_at        TEXT NOT NULL,
+                taken_at              TEXT NOT NULL,
+                payload_ts            TEXT NOT NULL,
+                reads                 INTEGER NOT NULL DEFAULT 1,
+                risk_level            TEXT,
+                risk_level_dimensions TEXT,
+                risk_driver           TEXT,
+                events_floor          TEXT,
+                alert_dimensions      TEXT NOT NULL DEFAULT '[]',
+                watch_dimensions      TEXT NOT NULL DEFAULT '[]',
+                signals_json          TEXT NOT NULL DEFAULT '[]',
+                dimensions_json       TEXT NOT NULL DEFAULT '[]',
+                events_json           TEXT NOT NULL DEFAULT '[]',
+                context_json          TEXT NOT NULL DEFAULT '{}',
+                unknown_signals       TEXT NOT NULL DEFAULT '[]'
+            )
+        """)
+        conn.commit()
+
+
 def init_cot_schema() -> None:
     """CFTC Commitments of Traders, long-form (routers/cot.py).
 

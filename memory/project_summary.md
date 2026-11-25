@@ -100,6 +100,7 @@ QUOTE_PROVIDER_DEFAULT / QUOTE_AUTO_FAILOVER — quote registry
 QUOTE_STREAM_MAX_SYMBOLS (default 900) — live stream budget across all Yahoo sockets (90/socket)
 IV_SNAPSHOT_INTERVAL (default 10800, 0 = off) / IV_SNAPSHOT_SYMBOLS — ATM IV recorder
 SERIES_REFRESH_INTERVAL — indicator series collectors
+TAIL_SNAPSHOT_INTERVAL (default 3600, 0 = off) — TAIL board recorder (tail_snapshots.py); every successful /signals compute records too
 ALERT_SCAN_INTERVAL   — alert rule scanner
 TRADE_GUARD_SCAN_INTERVAL (default 900, 0 = off) — TRADE GUARD notifier (guard_scheduler.py)
 MARGIN_SCAN_INTERVAL (default 300, 0 = off) — MARGIN notifier (margin_scheduler.py): account level worsens → alert_events `margin:<LEVEL>`
@@ -539,6 +540,11 @@ series_meta         (id TEXT PK 'dx.spot.dram.<item>', group_key ('memory' — t
 series_points       (series_id, date, value, high, low, change_pct, captured_at,
                      PK(series_id, date))   ← one published number on one day; merge = union.
                      `date` is the PUBLISHER's stamp, never the reader's clock
+tail_signal_snapshots (snapshot_date PK = the board's data_date, first_taken_at, taken_at, payload_ts,
+                     reads, risk_level, risk_level_dimensions, risk_driver, events_floor,
+                     alert_dimensions/watch_dimensions/signals_json/dimensions_json/events_json/
+                     context_json/unknown_signals JSON)   ← TAIL board once per market date, newest
+                     reading of a date wins (2026-11-25). Local, NOT in SYNC_TABLES
 
 **Op-log sync (`backend/sync/oplog.py`, `OPLOG_ENABLED=true`, 2026-09-27) — replaces the snapshot merge below.** Triggers (`init_oplog_layer()`, last at startup) note changed rows in `sync_pending`; each becomes an op (full row or delete, HLC stamp, `parent` = the op this device last saw for that row) in `sync_oplog`. A device appends only its own ops to `<SYNC_DIR>/oplog/<device>/<from>-<to>.jsonl` (never rewritten) and applies peers' ops sorted by (hlc, device, seq): parent == head → fast-forward; otherwise both devices keep the higher (hlc, device, op_id) and log the loser in `sync_conflicts` (header chip → REVIEW). Each device publishes `state.json` (applied-op vector + money-table fingerprint); same vector + different fingerprint = DIVERGED. Genesis: both DBs must be identical when switched on (`adopt_db_copy.py`).
 

@@ -36,10 +36,12 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 import pandas as pd
 import yfinance as yf
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 
 import last_good
 import tail_events
+import tail_snapshots
 from cache import TTLCache
 from vol_indices import VolFrame, load_vol_indices
 
@@ -1242,31 +1244,8 @@ def _compute() -> dict:
         ),
     }
 
-    # ── History — same frames, 90 sessions ────────────────────────────────────
-    history: list[dict] = []
-    hist_cols = [c for c in _HISTORICAL_SIGNALS if c in vol_frame.columns or c in flow_frame.columns]
-    if hist_cols:
-        parts = []
-        if not vol_frame.empty:
-            parts.append(vol_frame)
-        if not flow_frame.empty:
-            parts.append(flow_frame.reindex(vol_frame.index) if not vol_frame.empty else flow_frame)
-        combined = pd.concat(parts, axis=1).fillna(False) if parts else pd.DataFrame()
-        if not combined.empty:
-            dim_of = {s: SIGNAL_META[s]["dimension"] for s in combined.columns if s in SIGNAL_META}
-            tail = combined.tail(90)
-            for date, row in tail.iterrows():
-                per_dim: dict[str, int] = {}
-                for sig, on in row.items():
-                    if bool(on) and sig in dim_of:
-                        per_dim[dim_of[sig]] = per_dim.get(dim_of[sig], 0) + 1
-                history.append(
-                    {
-                        "date": date.strftime("%Y-%m-%d"),
-                        "signals_on": int(sum(bool(v) for v in row.values)),
-                        "alert_dimensions": sum(1 for c in per_dim.values() if c >= 2),
-                    }
-                )
+    # ── History — same frames, 90 sessions (the export uses every row) ────────
+    history = _history_rows(_combined_frame(vol_frame, flow_frame).tail(90))
 
     health = vf.health_payload()
     health["sources"] = {
@@ -1326,6 +1305,169 @@ def _compute() -> dict:
     }
 
 
+# ─── Signal history — the 90D chart and the export read the same frame ───────
+
+
+def _combined_frame(vol_frame: pd.DataFrame, flow_frame: pd.DataFrame) -> pd.DataFrame:
+    """Every series-derived signal on one calendar (the vol calendar when there
+    is one; flow-only dates are dropped, as the chart always did). A signal with
+    no reading on a date is False here — the export marks those unknown."""
+    parts = []
+    if not vol_frame.empty:
+        parts.append(vol_frame)
+    if not flow_frame.empty:
+        parts.append(flow_frame.reindex(vol_frame.index) if not vol_frame.empty else flow_frame)
+    if not parts:
+        return pd.DataFrame()
+    combined = pd.concat(parts, axis=1).fillna(False).astype(bool)
+    return combined[[c for c in combined.columns if c in _HISTORICAL_SIGNALS]]
+
+
+def _dimension_counts(row: pd.Series) -> dict[str, int]:
+    per_dim: dict[str, int] = {}
+    for sig, on in row.items():
+        dim = SIGNAL_META.get(sig, {}).get("dimension")
+        if bool(on) and dim:
+            per_dim[dim] = per_dim.get(dim, 0) + 1
+    return per_dim
+
+
+def _history_rows(combined: pd.DataFrame) -> list[dict]:
+    rows = []
+    for date, row in combined.iterrows():
+        per_dim = _dimension_counts(row)
+        rows.append(
+            {
+                "date": date.strftime("%Y-%m-%d"),
+                "signals_on": int(sum(bool(v) for v in row.values)),
+                "alert_dimensions": sum(1 for c in per_dim.values() if c >= 2),
+            }
+        )
+    return rows
+
+
+#: The reading each signal is decided on. Where it is missing on a date (before
+#: the series starts, inside a rolling window's warm-up) the export says the
+#: signal was unknown that day, not off.
+SIGNAL_INPUT = {
+    "vix_level": "VIX_z20",  # or VIX > 30 alone, which needs no window
+    "vix_momentum": "VIX_chg5_pct",
+    "vix_term_inversion": "VIX",
+    "skew_elevated": "SKEW",
+    "vvix_elevated": "VVIX",
+    "vvix_vix_ratio": "VVIX_VIX_z63",
+    "ovx_spike": "OVX_z63",
+    "gvz_spike": "GVZ_z63",
+    "move_spike": "MOVE_z63",
+    "vxn_vix_spread": "VXN_VIX_z63",
+    "rsi_oversold": "SPY_RSI14",
+    "volume_surge": "SPY_volume_z63",
+    "layer_a_bearish": "layer_a_z",
+}
+
+EVIDENCE_COLUMNS = {
+    "VIX": "VIX close (CBOE)",
+    "VIX_z20": "z of VIX vs its trailing 20 sessions — vix_level fires > 1.5 (or VIX > 30)",
+    "VIX_chg5_pct": "VIX % change over 5 sessions — vix_momentum fires ≥ 20",
+    "VIX9D": "VIX9D close — vix_term_inversion fires when VIX9D > VIX",
+    "VIX3M": "VIX3M close — vix_term_inversion fires when VIX > VIX3M",
+    "SKEW": "CBOE SKEW — skew_elevated fires > 145",
+    "VVIX": "VVIX — vvix_elevated fires > 110",
+    "VVIX_VIX_z63": "z of VVIX/VIX vs 63 sessions — vvix_vix_ratio fires > 1.5",
+    "OVX": "OVX close", "OVX_z63": "z of OVX vs 63 sessions — ovx_spike fires > 1.5",
+    "GVZ": "GVZ close", "GVZ_z63": "z of GVZ vs 63 sessions — gvz_spike fires > 1.5",
+    "MOVE": "MOVE close", "MOVE_z63": "z of MOVE vs 63 sessions — move_spike fires > 1.5",
+    "VXN": "VXN close", "VXN_VIX_z63": "z of VXN−VIX vs 63 sessions — vxn_vix_spread fires > 1.5",
+    "SPY": "SPY close (adjusted)", "AGG": "AGG close (adjusted)", "SPY_volume": "SPY volume",
+    "SPY_RSI14": "Wilder RSI(14) of SPY — rsi_oversold fires < 35",
+    "SPY_volume_z63": "z of SPY volume vs 63 sessions — volume_surge fires > 2",
+    "layer_a_z": "z of SPY−AGG 20d relative return vs 252 sessions — layer_a_bearish fires < −0.5",
+}
+
+
+def _evidence_frame(vf: VolFrame, market: pd.DataFrame | None) -> pd.DataFrame:
+    """The readings behind each series signal, each on its own dates."""
+    cols: dict[str, pd.Series] = {}
+    vix = vf.get("VIX")
+    if vix is not None:
+        cols["VIX"] = vix
+        cols["VIX_z20"] = _rolling_z(vix, 20)
+        cols["VIX_chg5_pct"] = vix.pct_change(5) * 100
+    for name in ("VIX9D", "VIX3M", "SKEW", "VVIX"):
+        s = vf.get(name)
+        if s is not None:
+            cols[name] = s
+    vvix = vf.get("VVIX")
+    if vvix is not None and vix is not None:
+        cols["VVIX_VIX_z63"] = _rolling_z((vvix / vix.replace(0, np.nan)).dropna(), 63)
+    for name in ("OVX", "GVZ", "MOVE"):
+        s = vf.get(name)
+        if s is not None:
+            cols[name] = s
+            cols[f"{name}_z63"] = _rolling_z(s, 63)
+    vxn = vf.get("VXN")
+    if vxn is not None:
+        cols["VXN"] = vxn
+        if vix is not None:
+            cols["VXN_VIX_z63"] = _rolling_z((vxn - vix).dropna(), 63)
+    if market is not None and not market.empty:
+        spy, agg, vol = market["spy"], market["agg"], market["spy_vol"]
+        cols["SPY"], cols["AGG"], cols["SPY_volume"] = spy, agg, vol
+        cols["SPY_RSI14"] = _wilder_rsi(spy, 14)
+        if len(vol.dropna()) >= 63:
+            cols["SPY_volume_z63"] = _rolling_z(vol, 63)
+        rel20 = spy.pct_change(20) - agg.pct_change(20)
+        daily = spy.pct_change() - agg.pct_change()
+        if len(daily.dropna()) >= 252:
+            cols["layer_a_z"] = (rel20 - daily.rolling(252).mean()) / daily.rolling(252).std().replace(0, np.nan)
+    if not cols:
+        return pd.DataFrame()
+    index = pd.DatetimeIndex(sorted(set().union(*(s.index for s in cols.values()))))
+    return pd.DataFrame({k: v.reindex(index) for k, v in cols.items()}, index=index)
+
+
+def signal_history_table(
+    vol_frame: pd.DataFrame, flow_frame: pd.DataFrame, evidence: pd.DataFrame
+) -> pd.DataFrame:
+    """Every date of the series signals: each signal 1 / 0 / blank (unknown),
+    the chart's two counts, the per-dimension count, then the readings.
+
+    The states are the live board's own frames, so the last row is what TAIL
+    shows today and the last 90 rows are the 90D chart."""
+    combined = _combined_frame(vol_frame, flow_frame)
+    if combined.empty:
+        return pd.DataFrame()
+    idx = combined.index
+    ev = evidence.reindex(idx) if not evidence.empty else pd.DataFrame(index=idx)
+    out = pd.DataFrame(index=idx)
+    for sig in _HISTORICAL_SIGNALS:
+        if sig not in combined.columns:
+            out[sig] = pd.Series(pd.NA, index=idx, dtype="Int64")
+            continue
+        state = combined[sig].astype("Int64")
+        src = SIGNAL_INPUT.get(sig)
+        if src in evidence.columns:
+            # Same carry the vol frame applies across a missing bar.
+            known = evidence[src].reindex(idx).ffill(limit=_CARRY_BARS).notna()
+            if sig == "vix_level" and "VIX" in evidence.columns:
+                known |= evidence["VIX"].reindex(idx).ffill(limit=_CARRY_BARS) > 30
+            state = state.where(known, pd.NA)
+        out[sig] = state
+    rows = _history_rows(combined)
+    out["signals_on"] = [r["signals_on"] for r in rows]
+    out["alert_dimensions"] = [r["alert_dimensions"] for r in rows]
+    dims = sorted({SIGNAL_META[s]["dimension"] for s in combined.columns if s in SIGNAL_META})
+    counts = [_dimension_counts(row) for _, row in combined.iterrows()]
+    for d in dims:
+        out[f"{d}_on"] = [c.get(d, 0) for c in counts]
+    for col in EVIDENCE_COLUMNS:
+        if col in ev.columns:
+            out[col] = ev[col].round(6)
+    out.index = out.index.strftime("%Y-%m-%d")
+    out.index.name = "date"
+    return out
+
+
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 
@@ -1333,7 +1475,7 @@ def _compute() -> dict:
 def get_signals():  # sync: blocking requests/yfinance — FastAPI runs it in a threadpool
     def build() -> dict:
         try:
-            return _compute()
+            result = _compute()
         except Exception as exc:  # never hand the UI a bare {}
             print(f"[tail_risk] compute failed: {exc}")
             return {
@@ -1349,6 +1491,13 @@ def get_signals():  # sync: blocking requests/yfinance — FastAPI runs it in a 
                 "event_log": [],
                 "data_health": {"ok": False, "degraded": ["all"], "indices": []},
             }
+        # The board's only history for credit / DCC / regime / events / the
+        # composite is what gets written down here (tail_snapshots).
+        try:
+            tail_snapshots.record(result)
+        except Exception as exc:
+            print(f"[tail_risk] snapshot not recorded: {exc}")
+        return result
 
     # Stale-while-revalidate: the compute takes 6 s warm and minutes while Yahoo
     # is slow, and the ribbon on every view asks for it. The payload carries
@@ -1657,6 +1806,94 @@ def get_oil():  # sync: one EIA call per 6h, FRED prices per hour — otherwise 
     axes = (ctx.get("macro_read") or {}).get("axes") or []
     energy = next((a for a in axes if a.get("id") == "energy"), None) or read_energy(oil)
     return {"oil": oil, "energy": energy}
+
+
+def _check_date(name: str, value: str | None) -> str | None:
+    if value is None or value == "":
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date().isoformat()
+    except ValueError:
+        raise HTTPException(422, f"{name} must be YYYY-MM-DD, got {value!r}") from None
+
+
+def _csv_response(text: str, stem: str) -> Response:
+    day = datetime.now(timezone.utc).date().isoformat()
+    return Response(
+        content=text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{stem}-{day}.csv"'},
+    )
+
+
+_HISTORY_NOTES = [
+    "Rebuilt from daily series with today's rules and today's copy of the data — "
+    "the same frames the live board and the 90D chart read; the last row is today's board.",
+    "1 = on, 0 = off, blank = unknown (the reading did not exist yet that day: "
+    "series not started, or a rolling window still filling).",
+    "signals_on / alert_dimensions = the 90D chart's two numbers (unknown counts as off there). "
+    "<dimension>_on = signals on in that dimension; a dimension is ALERT at 2.",
+    "Vol series: CBOE daily files, 5 years. SPY/AGG (rsi_oversold, volume_surge, layer_a_bearish): Yahoo, 2 years.",
+    "Credit, DCC, regime, Fear & Greed, market events and the composite risk level cannot be rebuilt — "
+    "they are in /api/tail-risk/snapshots from the day recording started.",
+]
+
+
+@router.get("/history")
+def get_signal_history(
+    format: str = Query("csv", pattern="^(csv|json)$"),
+    start: str | None = Query(None, description="YYYY-MM-DD, inclusive"),
+    end: str | None = Query(None, description="YYYY-MM-DD, inclusive"),
+):
+    """Every date of the 13 series-derived signals, for analysis outside the app."""
+    start_d, end_d = _check_date("start", start), _check_date("end", end)
+    vf = load_vol_indices()
+    market = _fetch_market()
+    vol_frame, _ = _vol_signal_frame(vf)
+    flow_frame, _ = _flow_signal_frame(market)
+    table = signal_history_table(vol_frame, flow_frame, _evidence_frame(vf, market))
+    if not table.empty:
+        if start_d:
+            table = table[table.index >= start_d]
+        if end_d:
+            table = table[table.index <= end_d]
+    if format == "csv":
+        return _csv_response(table.to_csv(lineterminator="\n"), "tail-signal-history")
+    records = [
+        {"date": d, **{k: (None if pd.isna(v) else (int(v) if k in _HISTORICAL_SIGNALS else v))
+                       for k, v in row.items()}}
+        for d, row in table.iterrows()
+    ]
+    return {
+        "rows": records,
+        "count": len(records),
+        "first": records[0]["date"] if records else None,
+        "last": records[-1]["date"] if records else None,
+        "signals": {s: {"label": SIGNAL_META[s]["label"], "dimension": SIGNAL_META[s]["dimension"],
+                        "rule": SIGNAL_META[s]["rule"], "input": SIGNAL_INPUT.get(s)}
+                    for s in _HISTORICAL_SIGNALS},
+        "evidence": EVIDENCE_COLUMNS,
+        "notes": _HISTORY_NOTES,
+    }
+
+
+@router.get("/snapshots/summary")
+def get_snapshot_summary():
+    """How much of the board has been recorded — answered from SQLite only."""
+    return tail_snapshots.summary()
+
+
+@router.get("/snapshots")
+def get_snapshots(
+    format: str = Query("csv", pattern="^(csv|json)$"),
+    start: str | None = Query(None, description="YYYY-MM-DD, inclusive"),
+    end: str | None = Query(None, description="YYYY-MM-DD, inclusive"),
+):
+    """The board as recorded, one row per market date (`tail_signal_snapshots`)."""
+    rows = tail_snapshots.list_rows(_check_date("start", start), _check_date("end", end))
+    if format == "csv":
+        return _csv_response(tail_snapshots.to_csv(rows, list(SIGNAL_META)), "tail-board-snapshots")
+    return {"rows": rows, "count": len(rows), **tail_snapshots.summary()}
 
 
 @router.get("/vix-term")

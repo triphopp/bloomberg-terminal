@@ -490,6 +490,48 @@ function DimensionCard({
 
 // ── History ───────────────────────────────────────────────────────────────────
 
+/**
+ * The two downloads behind the chart. SIGNALS = the 13 series signals rebuilt
+ * day by day from their daily data (years back, same frames as the chart);
+ * BOARD = the whole board as recorded once per market date, the only history
+ * of credit / DCC / regime / events / the risk level (backend/tail_snapshots.py).
+ */
+function HistoryExports() {
+  const { data } = useQuery<{ count: number; first: string | null; last: string | null }>({
+    queryKey: ["tail-risk", "snapshots", "summary"],
+    queryFn: () => fetch("/api/tail-risk/snapshots/summary").then((r) => r.json()),
+    staleTime: 10 * 60_000,
+  });
+  const link = { color: "#33DDFF", fontSize: 9, letterSpacing: "0.08em" } as const;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5" style={{ fontSize: 9 }}>
+      <a
+        href="/api/tail-risk/history"
+        download
+        style={link}
+        title="ทุกวันที่มีข้อมูล (vol 5 ปี · SPY/AGG 2 ปี): สัญญาณ 13 ตัว 1/0/ว่าง=ยังไม่มีข้อมูล + ค่าที่ใช้ตัดสิน — คำนวณจากกฎและข้อมูลชุดเดียวกับกราฟ"
+      >
+        DOWNLOAD SIGNALS CSV
+      </a>
+      <a
+        href="/api/tail-risk/snapshots"
+        download
+        style={link}
+        title="กระดานทั้งหมดที่บันทึกไว้ วันละแถว: risk level, events, credit, DCC, regime, Fear & Greed และทุกสัญญาณ — ย้อนหลังไม่ได้ เริ่มนับจากวันที่เริ่มบันทึก"
+      >
+        DOWNLOAD BOARD CSV
+      </a>
+      <span style={{ color: "#555" }}>
+        {data == null
+          ? ""
+          : data.count
+            ? `board recorded ${data.count} day${data.count === 1 ? "" : "s"} since ${data.first}`
+            : "board recording starts today"}
+      </span>
+    </div>
+  );
+}
+
 function HistoryChart({ history, events }: { history: HistoryItem[]; events: MacroEvent[] }) {
   // Only high-impact events, and only on dates the chart actually has a bar for
   // — a category axis silently drops a ReferenceLine whose x is not a category.
@@ -809,6 +851,7 @@ export function TailRiskView() {
                   90D SIGNAL HISTORY
                 </span>
                 <HistoryChart history={data.history} events={chartEvents} />
+                <HistoryExports />
               </div>
             </div>
 

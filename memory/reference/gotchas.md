@@ -447,6 +447,7 @@ HTTP 200 / `status: ok`; live SNDK 2026-10-16 SVI returned `ok` for 56 call and
 | Google `redirect_uri_mismatch` on CONNECT | the OAuth client is type **Web application** — add `http://localhost:9317/api/gcal/callback` to its Authorized redirect URIs (or use a Desktop app client, which needs none) |
 | Google "access blocked … has not completed verification" | OAuth app in Testing and the account is not a Test user — add it, or Publish the app (then "unverified app" → Advanced → continue) |
 | `GOOGLE_CALENDAR_CLIENT_ID` / `_SECRET` unset | CAL → GOOGLE says "not set up"; nothing goes to Google. An OAuth app left in **Testing** has its refresh token expire after 7 days → status `revoked`, press CONNECT again (Publish the app to stop it) |
+| `TAIL_SNAPSHOT_INTERVAL=0` | TAIL board recorder pass off (default 3600 s); a /signals compute still records its day — a day nobody opens TAIL then leaves no row in `tail_signal_snapshots`, and credit / DCC / regime / events / risk level for that day are gone for good |
 | `CALENDAR_SCAN_INTERVAL=0` | CALENDAR reminders off (default 1800 s) — the CAL view still works; no `cal:<KIND>` rows reach the alert strip |
 | `IV_SNAPSHOT_INTERVAL=0` | ATM IV recorder off → SD heatmap stops gaining columns. **The gap is permanent**: the provider exposes only the CURRENT IV of a chain, so a day nobody recorded can never be back-filled |
 

@@ -22,6 +22,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
         { status: res.status }
       );
     }
+    // The history / snapshot exports are CSV downloads: hand them through as-is.
+    const type = res.headers.get("content-type") ?? "";
+    if (type.startsWith("text/csv")) {
+      return new NextResponse(await res.text(), {
+        headers: {
+          "content-type": type,
+          "content-disposition": res.headers.get("content-disposition") ?? "attachment",
+          "cache-control": "no-store",
+        },
+      });
+    }
     return etagJson(req, await res.json());
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 502 });
