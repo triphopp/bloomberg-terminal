@@ -4,10 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  alertWhen,
   calendarDateOf,
   calendarHeadline,
   isCalendarEvent,
-  whenText,
 } from "../alerts/calendar-alert";
 import {
   type AlertTarget,
@@ -274,7 +274,7 @@ function groupRuleEvents(events: AlertEvent[]): SymbolAlertGroup[] {
           : ruleDisplayName(event.ruleName, event.symbol),
       // Worded from the date as it is read: "tomorrow" becomes "today" overnight.
       values: calendar
-        ? whenText(calendarDateOf(event))
+        ? alertWhen(calendarDateOf(event))
         : webull
           ? webullWhen(event)
           : snapshotValues(event),
@@ -313,7 +313,7 @@ function AlertLine({ symbol, c }: { symbol: string; c: RuleCondition }) {
         {symbol}
       </span>{" "}
       <span style={{ color: "#ddd" }}>{conditionText(c)}</span>
-      {c.target && <span style={{ color: "#33DDFF" }}> — {alertLinkLabel(c.target)} →</span>}
+      {c.target && <span style={{ color: "#33DDFF" }}> · {alertLinkLabel(c.target)}</span>}
     </>
   );
 }
@@ -544,7 +544,12 @@ export function AlertTicker() {
             <>
               <span className="shrink-0">●</span>
               <span className="truncate">{chipText}</span>
-              {chipTarget && <span className="shrink-0">→</span>}
+              {/* Plain words, no arrow: the chip is a link to where it is handled. */}
+              {chipTarget && (
+                <span className="shrink-0" style={{ color: "#33DDFF" }}>
+                  OPEN
+                </span>
+              )}
             </>
           );
           return (
@@ -562,7 +567,7 @@ export function AlertTicker() {
                   style={chipStyle}
                   title={`${alertTitle}
 
-${alertLinkLabel(chipTarget)} →`}
+Click to ${alertLinkLabel(chipTarget).toLowerCase()}`}
                   aria-label={`${alertCount} active alerts: ${alertTitle} — ${alertLinkLabel(chipTarget)}`}
                   onClick={() => openTarget(chipTarget)}
                 >
@@ -585,7 +590,7 @@ ${alertLinkLabel(chipTarget)} →`}
                   aria-pressed={listAt != null}
                   className="shrink-0 select-none px-1.5 font-bold h-full hover:opacity-80"
                   style={{ color: "#33DDFF", fontSize: 9 }}
-                  title={`ดูทั้ง ${alertCount} รายการ`}
+                  title={`Show all ${alertCount} alerts`}
                   aria-label={`All ${alertCount} active alerts`}
                   onClick={(e) => {
                     const r = e.currentTarget.getBoundingClientRect();
@@ -599,7 +604,7 @@ ${alertLinkLabel(chipTarget)} →`}
                     );
                   }}
                 >
-                  +{alertCount - 1}
+                  +{alertCount - 1} MORE
                 </button>
               )}
               {listAt && (

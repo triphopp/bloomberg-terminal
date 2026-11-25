@@ -50,6 +50,17 @@ export function whenText(dateIso: string, today: string = todayIso()): string {
   return n > 0 ? `อีก ${n} วัน` : `ผ่านมา ${-n} วัน`;
 }
 
+/** The same in English, for the alert surfaces (ticker, alert list, toast):
+ *  "today" / "tomorrow" / "yesterday" / "in 3 days" / "2 days ago". The CAL page
+ *  keeps `whenText`. */
+export function alertWhen(dateIso: string, today: string = todayIso()): string {
+  const n = daysBetween(today, dateIso);
+  if (n === 0) return "today";
+  if (n === 1) return "tomorrow";
+  if (n === -1) return "yesterday";
+  return n > 0 ? `in ${n} days` : `${-n} days ago`;
+}
+
 /**
  * Where a calendar reminder leads: the thesis the date belongs to — on NOTES
  * at the note when it is one, on QUESTIONS when a question waits on it — and
@@ -87,7 +98,7 @@ export function describeCalendar(
 ): string {
   const s = e.snapshot as Snap;
   const day = calendarDateOf(e);
-  const bits = [`${whenText(day, today)} · ${day}${s.estimated === true ? " (ประมาณ)" : ""}`];
+  const bits = [`${alertWhen(day, today)} · ${day}${s.estimated === true ? " (estimated)" : ""}`];
   const detail = str(s.detail);
   if (detail) bits.push(detail);
   const thesis = str(s.thesis_symbol);
@@ -130,11 +141,11 @@ export function calendarToasts(
     const thesisId = str(s.thesis_id);
     const heads = list
       .slice(0, 2)
-      .map((e) => `${whenText(calendarDateOf(e), today)}: ${calendarHeadline(e)}`);
+      .map((e) => `${alertWhen(calendarDateOf(e), today)}: ${calendarHeadline(e)}`);
     const more = list.length - heads.length;
     return {
-      title: `${str(s.thesis_symbol) ?? first.symbol} · ${list.length} เรื่องในปฏิทิน`,
-      description: `${heads.join(" · ")}${more > 0 ? ` · +${more}` : ""}`,
+      title: `${str(s.thesis_symbol) ?? first.symbol} · ${list.length} calendar events`,
+      description: `${heads.join(" · ")}${more > 0 ? ` · ${more} more` : ""}`,
       target: thesisId
         ? {
             sub: "theses",
