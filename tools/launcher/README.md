@@ -77,6 +77,13 @@ rewritten to `https://` before it ever reaches the dev server and fails. Use
 | `--install-startup` | register in `HKCU\...\Run` and exit |
 | `--uninstall-startup` | remove that entry and exit |
 | `--stop` | tell a running instance to quit (stops the servers) and exit |
+| `--restart` | tell a running instance to restart both servers (= tray "Restart servers"); exit 1 when none runs |
+
+**Restart waits for the old servers to be gone** (2026-11-25). Before, Restart killed the
+processes and checked the ports at once; the old backend worker was still listening, so the
+launcher took it for someone else's server, started nothing, and the backend stayed down
+once the worker died. Now it waits for the processes and the job, then for the ports
+(≤ 8 s), and a server it attached to that later disappears is taken over and started.
 
 The start-up registration runs the exe with `--no-browser`, so logging into
 Windows brings the terminal up quietly in the tray rather than throwing a

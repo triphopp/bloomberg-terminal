@@ -7,6 +7,12 @@
 
 ## Error Dictionary — Symptoms → Root Cause → Fix
 
+### Tray "Restart servers" → backend never comes back (fixed 2026-11-25)
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| After Restart the frontend is up but `:9317` refuses; `logs/backend.log` has no new start-up lines; no python child under `BloombergTerminal.exe` | `IDM_RESTART` ran `TerminateProcess` + closed the job, then `startServers()` → `portOpen(9317)` **immediately**. Termination is asynchronous: the dev_server worker still held the port, so the launcher marked the backend *external*, spawned nothing, and nothing watches an external server | `launcher.c`: `stopServers()` waits for each process + `TerminateJobObject` until the job is empty; Restart waits ≤ 8 s for the ports; the timer takes over an external server whose port closes. `BloombergTerminal.exe --restart` triggers the same path from a shell (tested 4× in a row). Any "check port then decide" after a kill must wait for the kill first |
+
 ### CAL: a FRED release (GDP…) missing, or only 8 of the FRED data the app reads had dates (fixed 2026-11-25)
 
 | Symptom | Root cause | Fix |
