@@ -24,7 +24,7 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
 from cache import TTLCache
 from market_requests import collect, error_item, parse_symbols
@@ -39,6 +39,9 @@ router = APIRouter(prefix="/api/watchlist", tags=["Watchlist"])
 _cache = TTLCache(ttl=900, maxsize=8192)
 
 MAX_SYMBOLS = 60  # request size, never a total-watchlist limit
+# Fewer daily bars than this and no indicator in the panel can be read (a stock
+# that listed a few weeks ago). The endpoint reports it under `tooShort`.
+MIN_BARS = 30
 
 RSI_PERIOD = 14
 ATR_PERIOD = 14
@@ -147,7 +150,7 @@ def _trend_state(close: float, e20: Optional[float], e50: Optional[float]) -> st
 def _scan(df: pd.DataFrame) -> Optional[dict[str, Any]]:
     """Compute the full signal panel for one symbol's OHLCV frame."""
     df = df.dropna(subset=["Close"])
-    if len(df) < 30:
+    if len(df) < MIN_BARS:
         return None
 
     close = df["Close"].astype(float)
@@ -306,6 +309,7 @@ def get_watchlist_signals(
     """Per-symbol cached scan; callers chunk large lists without dropping their tail."""
     syms = parse_symbols(symbols, limit=MAX_SYMBOLS)
     results, statuses = {}, {}
+    too_short: dict[str, int] = {}
     missing = []
     for sym in syms:
         cached = _cache.get(sym)
@@ -320,11 +324,17 @@ def get_watchlist_signals(
         try:
             scan = _scan(df)
             if scan is None:
-                raise HTTPException(404, f"Insufficient history for {sym}")
+                # A new listing has too few daily bars for any indicator. That is
+                # the answer, not a failed fetch: "ready" with no scan, so the
+                # client stops retrying and does not report the update delayed.
+                too_short[sym] = int(df["Close"].notna().sum()) if "Close" in df else 0
+                statuses[sym] = {"status": "ready"}
+                continue
             _cache.set(sym, scan)
             results[sym] = scan
         except Exception as exc:
             statuses[sym] = error_item(exc)
     errors = [f"{s}: {v['error']}" for s, v in statuses.items() if v["status"] != "ready"]
     return {"signals": results, "statuses": statuses, "errors": errors,
+            "tooShort": too_short, "minBars": MIN_BARS,
             "count": len(results), "requestedCount": len(syms)}

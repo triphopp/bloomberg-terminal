@@ -1672,6 +1672,7 @@ export const PinnedAssets = memo(function PinnedAssets({
     isLoading: signalsLoading,
     errors: signalErrors,
     cached: signalsCached,
+    tooShort: signalsTooShort,
   } = useWatchlistSignals(signalSymbols, !collapsed);
   // Polymarket is shown only by the TABLE view; sorting by PM needs every row,
   // otherwise only the rows on screen are searched (1.4–4 s per 10 symbols).
@@ -2498,6 +2499,13 @@ export const PinnedAssets = memo(function PinnedAssets({
                   SIGNALS {Object.keys(signals).length}/{quoteTotal}
                   {signalsCached > 0 && signalsLoading ? ` · ${signalsCached} cached` : ""}
                   {signalsLoading ? " · updating" : ""}
+                  {signalsTooShort.length > 0 && (
+                    <span
+                      title={`Listed too recently for signals — fewer than 30 daily bars: ${signalsTooShort.join(", ")}`}
+                    >
+                      {` · ${signalsTooShort.length} too new`}
+                    </span>
+                  )}
                 </span>
                 {(Object.keys(quoteErrors).length > 0 ||
                   signalErrors.length > 0 ||

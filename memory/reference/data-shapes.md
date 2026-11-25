@@ -948,10 +948,16 @@ pool past its 10-min TTL while the new one downloads — `usePolymarketSignals` 
       "flags":    ["TREND_UP", "GOLDEN_CROSS", "BREAKOUT_UP", "VOL_QUIET", "NEAR_52W_HIGH"]
     }
   },
+  "statuses": { "AAPL": { "status": "ready" }, "ANT": { "status": "ready" } },
   "errors": [],
-  "count": 1
+  "tooShort": { "ANT": 4 },
+  "minBars": 30,
+  "count": 1,
+  "requestedCount": 2
 }
 ```
+`tooShort` = symbols with fewer than `minBars` daily bars (new listings): `ready`, no entry in `signals`, not an error
+(2026-11-25). The client batcher resolves them to `null`; `useWatchlistSignals().tooShort` lists them.
 Flags: `TREND_UP`/`TREND_DOWN`, `GOLDEN_CROSS`/`DEATH_CROSS`, `RSI_OVERBOUGHT`/`RSI_OVERSOLD`,
 `MACD_CROSS_FRESH` (≤3 bars), `BREAKOUT_UP`/`BREAKDOWN`, `VOL_SPIKE`/`VOL_QUIET`,
 `NEAR_52W_HIGH`/`NEAR_52W_LOW`. Frontend type: `WatchlistSignal` in `hooks/useWatchlistSignals.ts`.
